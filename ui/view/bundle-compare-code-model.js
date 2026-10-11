@@ -21,26 +21,99 @@ export const EXPAND_STEP = 20
 // fold's own row would take nearly the room they do.
 const MIN_FOLD = 4
 
+// A word of a line as renamedAlone reads it: a comment, a string or template
+// on that line (to its end, where it does not close there), a name, a run of
+// whitespace, or any other character.
+const LINE_WORD = /\/\/.*|\/\*.*?\*\/|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?|[A-Za-z_$][\w$]*|\s+|[^]/uy
+// A regular expression on a line, from its `/` to the next one neither
+// escaped nor in a class, and its flags, or to the line's end.
+const REGEX_WORD = /\/(?:[^/\\[]|\\.|\[(?:[^\]\\]|\\.)*\]?)*\/?[A-Za-z]*/uy
+// Names after which an expression starts: a `/` after one is a regular
+// expression's (`return /a/`), as after a name it is otherwise a division's.
+const BEFORE_EXPRESSION = new Set(['await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw', 'typeof', 'void', 'yield'])
+// A name a minifier gives, and words of its length that are no variable's.
+const SHORT_NAME = /^[A-Za-z_$][\w$]{0,2}$/u
+const SHORT_KEYWORDS = new Set(['as', 'do', 'for', 'get', 'if', 'in', 'let', 'new', 'of', 'set', 'try', 'var'])
+
+// A line's words, as LINE_WORD reads them, and a regular expression whole:
+// a `/` is read as a division only after a name (none of BEFORE_EXPRESSION),
+// a number or a `]`, and as a regular expression's start after anything else,
+// even where it divides (`(a) / b`), so that no name in a regular expression
+// is read as a variable's: a division read so keeps the rest of its line
+// whole, which can only keep a block from being marked.
+function lineWords(line, ignoreWhitespace) {
+  const words = []
+  LINE_WORD.lastIndex = 0
+  for (let prior = ''; LINE_WORD.lastIndex < line.length;) {
+    const at = LINE_WORD.lastIndex
+    let [word] = LINE_WORD.exec(line)
+    if (word === '/' && prior !== ']' && !(/^[\w$]+$/u.test(prior) && !BEFORE_EXPRESSION.has(prior))) {
+      REGEX_WORD.lastIndex = at;
+      [word] = REGEX_WORD.exec(line)
+      LINE_WORD.lastIndex = at + word.length
+    }
+    if (/\S/u.test(word)) prior = word
+    if (!ignoreWhitespace || /\S/u.test(word)) words.push(word)
+  }
+  return words
+}
+
+// Whether two lines differ in short names alone, as a minifier renames them:
+// the same words otherwise, in order, and each name changed none after a `.`
+// or `#` (a property's) or before a `:` (a key's, a label's, or a ternary's,
+// told apart from none), nor a keyword. A check apart from the server's on
+// the blocks it marks (rename-diff-worker.js), which can only keep a block
+// from being marked: it reads no string, regular expression or template
+// across lines, which the server's renaming never touches.
+export function renamedAlone(before, after, ignoreWhitespace = false) {
+  const [x, y] = [lineWords(before, ignoreWhitespace), lineWords(after, ignoreWhitespace)]
+  if (x.length !== y.length) return false
+  const near = (list, from, step) => {
+    for (let k = from; k >= 0 && k < list.length; k += step) if (/\S/u.test(list[k])) return list[k]
+    return ''
+  }
+  let changed = false
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] === y[i]) continue
+    if (![x[i], y[i]].every(word => SHORT_NAME.test(word) && !SHORT_KEYWORDS.has(word))) return false
+    if ([x, y].some(list => ['.', '#'].includes(near(list, i - 1, -1)) || near(list, i + 1, 1) === ':')) return false
+    changed = true
+  }
+  return changed
+}
+
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
 // three kinds of change share one model. `ignoreWhitespace` is diff -w:
 // lines differing only in whitespace pair up as unchanged. `changes` are
 // blocks found elsewhere: the server's, its old side given the new one's
-// names (server-managed/rename-diff.ts).
-export function lineDiff(before, after, { ignoreWhitespace = false, changes = null } = {}) {
+// names (server-managed/rename-diff.ts). `marks` are the blocks the server
+// found to differ in renamed names alone (rename-diff-worker.js): those of
+// these blocks that are one of them and that differ so line by line here too
+// (renamedAlone) are `marked`, counted apart from the lines added and
+// removed (`renamed`), for a view to draw them apart rather than hiding them.
+export function lineDiff(before, after, { ignoreWhitespace = false, changes = null, marks = null } = {}) {
   const a = textLines(before), b = textLines(after)
   const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
-  let additions = 0, deletions = 0
-  for (const block of blocks) {
-    additions += block.b1 - block.b0
-    deletions += block.a1 - block.a0
-  }
+  const told = new Set((marks ?? []).map(({ a0, a1, b0, b1 }) => `${a0},${a1},${b0},${b1}`))
+  const marked = new Set()
+  blocks.forEach(({ a0, a1, b0, b1 }, i) => {
+    if (told.has(`${a0},${a1},${b0},${b1}`) && a1 - a0 === b1 - b0 && a.slice(a0, a1).every((line, k) => renamedAlone(line, b[b0 + k], ignoreWhitespace))) marked.add(i)
+  })
+  let additions = 0, deletions = 0, renamed = 0
+  blocks.forEach((block, i) => {
+    if (marked.has(i)) renamed += block.b1 - block.b0
+    else {
+      additions += block.b1 - block.b0
+      deletions += block.a1 - block.a0
+    }
+  })
   // A last line with no newline after it: shown on a changed row, since a
   // newline added or dropped at the end is a change of that line alone.
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
-  return { a, b, blocks, additions, deletions, noEol, words: new Map() }
+  return { a, b, blocks, additions, deletions, renamed, marked, noEol, words: new Map() }
 }
 
 // The blanks diff -w leaves out of a line: the C locale's.

@@ -16,7 +16,7 @@ import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { prettyExtension } from '../common/pretty-print.js'
-import type { ChangeBlock } from '../common/line-diff.js'
+import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import { PrettyError, type PrettyRequest } from './pretty-print.ts'
@@ -36,7 +36,7 @@ const MAX_DIFF_CHARS = 64 * 1024 * 1024
 // Answers kept, the one read last last: each holds the old side as diffed.
 const KEPT_DIFFS = 8
 
-export interface RenameDiff { before: string; blocks: ChangeBlock[]; reason: string | null }
+export interface RenameDiff { before: string; blocks: ChangeBlock[]; reason: string | null; reads: string[]; marks: ChangeBlock[] }
 
 export interface RenameDiffRequest { base: PrettyRequest; other: PrettyRequest; ignoreWhitespace: boolean }
 
@@ -90,6 +90,34 @@ async function inTurn<T>(deadline: number, work: () => Promise<T>): Promise<T> {
   try { return await work() } finally { done() }
 }
 
+// Whether a worker's answer is one as rename-diff-worker.js gives it, its
+// blocks taking the old side it answered to the new one asked of: checked
+// again here, apart from the worker, as an answer that is not would hide a
+// change.
+function answers(diff: unknown, original: string, after: string, ignoreWhitespace: boolean): diff is RenameDiff {
+  const { before, blocks, reason, reads, marks } = (diff ?? {}) as Partial<RenameDiff>
+  return typeof before === 'string' && (reason === null || typeof reason === 'string') && blocksHold(before, after, blocks, ignoreWhitespace)
+    && Array.isArray(reads) && reads.every(read => typeof read === 'string') && marksFit(original, after, marks)
+}
+
+// Whether marked blocks (rename-diff-worker.js) are blocks of the diff of the
+// two files as they are: in order, apart, within both, each as many lines on
+// either side.
+function marksFit(before: string, after: string, marks: unknown): boolean {
+  if (!Array.isArray(marks)) return false
+  const [olds, news] = [textLines(before).length, textLines(after).length]
+  let i = 0, j = 0
+  for (const mark of marks as Partial<ChangeBlock>[]) {
+    const { a0, a1, b0, b1 } = mark ?? {}
+    if (![a0, a1, b0, b1].every(Number.isInteger)) return false
+    const [x0, x1, y0, y1] = [a0, a1, b0, b1] as [number, number, number, number]
+    if (x0 < i || y0 < j || x1 <= x0 || x1 - x0 !== y1 - y0 || x1 > olds || y1 > news) return false
+    i = x1
+    j = y1
+  }
+  return true
+}
+
 // Settled once the worker is gone, so that its turn is given up only then.
 function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
@@ -106,7 +134,11 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
   return new Promise<RenameDiff>((resolve, reject) => {
     let diff: RenameDiff | null = null, failure = new PrettyError(422, 'undiffable')
     const timer = setTimeout(() => { failure = new PrettyError(504, 'diff-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (answer: RenameDiff) => { diff = answer; void worker.terminate() })
+    worker.once('message', (answer: unknown) => {
+      if (answers(answer, before, after, ignoreWhitespace)) diff = answer
+      else console.warn('managed: a rename diff answered what does not take its old side to the new')
+      void worker.terminate()
+    })
     worker.once('error', err => { console.warn('managed: a rename diff failed:', err) })
     // Gone: answered, run out of memory, or terminated.
     worker.once('exit', () => {

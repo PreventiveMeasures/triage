@@ -49,19 +49,59 @@ test('oxc\'s minifier tells a rename that binds otherwise from one that does not
 })
 
 test('a var is named as no declaration of a block it passes through, nor a body\'s variable as a parameter', () => {
-  // The new side as oxc's minifier writes such a file, which does not compile: a `var`
-  // named as the `const` of a block it is written in, past which it hoists. The two keep
-  // their names, the rest of the file taking its own.
-  const blocks = (parameter, constant, variable) => ['"use strict";', `function f(${parameter}) {`, '  {', `    const ${constant} = 5;`, `    log(${constant} + ${parameter});`,
-    '    {', `      var ${variable} = ${parameter};`, '    }', '  }', '}', 'module.exports = f;'].map(line => `${line}\n`).join('')
-  const mapped = renameMap(blocks('x', 'a', 'c'), blocks('t', 'e', 'e'), { extension: 'cjs' })
-  assert.equal(mapped.text, blocks('t', 'a', 'c'))
-  assert.ok(compiles(mapped.text))
+  // A new side that does not compile, as oxc's minifier writes some: a `var` named as the `const` of a
+  // block it hoists past. It gives no names, whether oxc's semantic check finds the redeclaration or,
+  // beside a `catch` parameter of the name, misses it and analysis finds it, as it does in a renamed text.
+  const found = (constant, variable) => `"use strict";\nfunction f() {\n  {\n    const ${constant} = 5;\n    log(${constant});\n    {\n      var ${variable} = 1;\n    }\n  }\n}\n`
+  assert.equal(renameMap(found('a', 'c'), found('e', 'e'), { extension: 'cjs' }).reason, 'unparsed')
+  const missed = (parameter, constant, caught) => ['"use strict";', `function f(${parameter}) {`, '  {', `    const ${constant} = 5;`, `    log(${constant} + ${parameter});`,
+    '    try {', '      g();', `    } catch (${caught}) {`, `      var ${caught} = ${parameter};`, '    }', '  }', '}', 'module.exports = f;'].map(line => `${line}\n`).join('')
+  assert.ok(!compiles(missed('t', 'e', 'e')), 'the new side does not compile')
+  assert.equal(renameMap(missed('x', 'a', 'c'), missed('t', 'e', 'e'), { extension: 'cjs' }).reason, 'unparsed')
+  assert.equal(renameMap(missed('x', 'a', 'c'), missed('t', 'a', 'c'), { extension: 'cjs' }).text, missed('t', 'a', 'c'), 'one that compiles gives its names')
   // Past a default, a body's `var` named as a parameter starts as its value: `typeof c` reads
   // undefined, `typeof b` would read 1.
   const defaults = name => `function f(a, b = 1) {\n  log(typeof ${name});\n  var ${name} = 2;\n  return ${name} + a;\n}\nmodule.exports = f;\n`
   const renamed = renameMap(defaults('c'), defaults('b'), { extension: 'cjs' })
   assert.deepEqual(run(`${renamed.text}module.exports(1);`), run(`${defaults('c')}module.exports(1);`), renamed.text)
+})
+
+test('a name is renamed only from and to an ASCII one, as a minifier gives: none a reader can\'t tell from another', () => {
+  const text = name => `var ${name} = 1;\nf(${name});\nexport {}\n`
+  assert.equal(renameMap(text('a'), text('b')).text, text('b'))
+  for (const [from, to] of [['a', '\u0430'], ['\u0430', 'b'], ['a', 'a\u200D']]) assert.equal(renameMap(text(from), text(to)).text, text(from), `${JSON.stringify(from)} → ${JSON.stringify(to)} kept`)
+})
+
+test('a declaration others now follow pairs its name, though the lines around it changed in number', () => {
+  // `let t = …;` → `let t = …,`, two lines then: the change grew from two lines to five, so no
+  // line's place in it pairs; its declaration pairs as it reads alike but for its end.
+  const lines = list => list.map(line => `${line}\n`).join('')
+  const before = name => lines(['"use strict";', 'function f(e) {', `  let ${name} = g(e);`, `  return h(${name});`, '}', 'module.exports = f;'])
+  const after = lines(['"use strict";', 'function f(e) {', '  let t = g(e),', '    i = 2,', '    s = 3;', '  return k(t, i, s);', '}', 'module.exports = f;'])
+  for (const name of ['a', 't', 'i']) assert.equal(renameMap(before(name), after, { extension: 'cjs' }).text, before('t'), `${name}: none apart as t_old or i_old`)
+})
+
+test('the properties through which either side reads names are told, as a rename may change what it then does', () => {
+  const text = (name, read) => `function ${name}() {}\nmodule.exports = ${read};\n`
+  assert.deepEqual(renameMap(text('a', 'a'), text('b', 'b'), { extension: 'cjs' }).reads, [])
+  assert.deepEqual(renameMap(text('a', 'a.name'), text('b', 'b.name'), { extension: 'cjs' }).reads, ['name'])
+  assert.deepEqual(renameMap(text('a', 'a["toString"]()'), text('b', 'b.stack'), { extension: 'cjs' }).reads, ['stack', 'toString'], 'either side, by a string too')
+  for (const read of ['(({ name: n }) => n)(a)', '(({ name }) => name)(a)', '(({ "name": n }) => n)(a)', '(({ [`name`]: n }) => n)(a)', 'a[`name`]', '(() => { let n; ({ name: n } = a); return n })()',
+    'Reflect.get(a, "name")', 'Object.getOwnPropertyDescriptor(a, `name`).value', '(() => { const k = "name"; return a[k] })()']) {
+    assert.deepEqual(renameMap(text('a', read), text('b', read.replaceAll('a)', 'b)').replace('a[', 'b[').replace('= a)', '= b)')), { extension: 'cjs' }).reads, ['name'], read)
+  }
+  assert.deepEqual(renameMap(text('a', '{ name: a }'), text('b', '{ name: b }'), { extension: 'cjs' }).reads, [], 'a key written, not read')
+})
+
+test('a check that should never fail, failing, shows the file with its names, and tells what failed', () => {
+  // A name written with an escape is no span renaming may replace as written.
+  const mapped = renameMap('var \\u0061 = 1;\nf(\\u0061);\nmodule.exports = 1;\n', 'var b = 1;\nf(b);\nmodule.exports = 1;\n', { extension: 'cjs' })
+  assert.equal(mapped.reason, 'unverified')
+  assert.equal(mapped.text, undefined)
+  assert.match(mapped.invariant, /a at 4 written otherwise/u)
+  // So does anything else that goes wrong.
+  const throwing = { get extension() { throw new TypeError('no extension') } }
+  assert.deepEqual(renameMap('var a = 1;\n', 'var b = 1;\n', throwing), { reason: 'unverified', invariant: 'TypeError: no extension' })
 })
 
 test('programs made at random run as they did given the names oxc\'s minifier gave them, which they mostly take whole', async () => {
@@ -75,6 +115,8 @@ test('programs made at random run as they did given the names oxc\'s minifier ga
     if (!compiles(after)) continue
     total++
     const mapped = renameMap(before, after, { extension: 'cjs' })
+    assert.equal(mapped.invariant, undefined, `seed ${seed}: no check that should never fail does`)
+    assert.equal(renameMap(before, before, { extension: 'cjs' }).text, before, `seed ${seed} renamed as itself reads as it is`)
     if (mapped.reason) { assert.equal(mapped.reason, 'unverified', `seed ${seed}`); continue }
     assert.ok(compiles(mapped.text), `seed ${seed} compiles`)
     assert.deepEqual(run(mapped.text), run(before), `seed ${seed} runs as it did`)
@@ -108,6 +150,7 @@ test('an edited program shows its edit, mostly alone, however its names moved', 
       const after = await minified(edited, 'cjs'), before = await pretty(source, 'cjs')
       if (!compiles(after)) continue
       const mapped = renameMap(before, after, { extension: 'cjs' })
+      assert.equal(mapped.invariant, undefined, `${kind} seed ${seed}: no check that should never fail does`)
       if (mapped.reason) continue
       assert.ok(compiles(mapped.text), `${kind} seed ${seed} compiles`)
       assert.deepEqual(run(mapped.text), run(before), `${kind} seed ${seed} runs as it did`)
@@ -121,7 +164,7 @@ test('an edited program shows its edit, mostly alone, however its names moved', 
   }
 })
 
-test('real files minified before and after a function added show that function alone', async () => {
+test('real files minified before and after a function added show that function, and little else', async () => {
   const helper = 'function addedHelper(value, other) {\n  const sum = value + other\n  return sum * 2\n}\n'
   for (const file of ['server-managed/rename-map.js', 'ui/view/bundle-compare-code-model.js', 'ui/view/rename-diff.js', 'ui/managed/bundle-data.js']) {
     const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -130,6 +173,8 @@ test('real files minified before and after a function added show that function a
     const mapped = renameMap(before, after, { extension: 'mjs' })
     assert.equal(mapped.reason, undefined, file)
     assert.ok(mapped.renamed > 0, `${file}: the names it moved renamed`)
-    assert.equal(shown(mapped.text, after), 4, `${file}: its 4 lines shown, of ${shown(before, after)} raw`)
+    // A function the helper is added before may read like it, names set aside, and show too.
+    const [hidden, raw] = [shown(mapped.text, after), shown(before, after)]
+    assert.ok(hidden >= 4 && hidden <= 10 && hidden < raw, `${file}: its 4 lines shown, ${hidden} in all, of ${raw} raw`)
   }
 })

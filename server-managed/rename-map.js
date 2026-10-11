@@ -22,8 +22,18 @@ import { parseSync } from 'oxc-parser'
 import { changeBlocks } from '../common/line-diff.js'
 
 // Names a minifier gives: longer ones are an API's or a person's, and one
-// changed is a change.
+// changed is a change. ASCII alone, as a minifier gives: no name renamed to
+// or from one a reader can't tell from another (Cyrillic `а` for `a`, or one
+// with a zero-width joiner in it).
 const RENAMED_MAX_LENGTH = 3
+const MINIFIED = /^[A-Za-z_$][\w$]*$/u
+// Properties through which code reads names: a function's or a class's
+// (`name`, its source by `toString`, a stack's frames, `arguments.callee` and
+// `caller`), which renaming changes. Read where code says so: a member or a
+// pattern's key (`f.name`, `const { name } = f`), or any string written out
+// as one (`f["name"]`, `Reflect.get(f, "name")`, `const k = "name"; f[k]`),
+// not where it reads one otherwise (`'' + f`, a key built up).
+const NAME_READS = new Set(['name', 'toString', 'stack', 'callee', 'caller'])
 // What a name renamed apart ends in, numbered past the first as it takes to
 // be one neither side uses: `e_old`, `e_old2`.
 const APART = '_old'
@@ -36,6 +46,20 @@ const BLOCKS = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'For
 // A CommonJS module's own names, read where no declaration stands for them:
 // its top level is a function's, not every script's.
 const COMMONJS = new Set(['exports', 'module', 'require'])
+// Words no variable may be named: reserved anywhere, in strict code or in a
+// module, and the two strict code forbids binding.
+const RESERVED = new Set(['await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum', 'export',
+  'extends', 'false', 'finally', 'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package',
+  'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with',
+  'yield', 'arguments', 'eval'])
+const IDENTIFIER = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u
+
+// A check that should never fail, a failure being a mistake here: the names
+// are then not given (renameMap), and what failed is told.
+class Broken extends Error {}
+function holds(condition, what) {
+  if (!condition) throw new Broken(what)
+}
 
 // The names a pattern declares: `{ a, b: [c, ...d] = e }` declares a, c and d.
 function declared(pattern, out = []) {
@@ -83,7 +107,8 @@ function analyze(text, extension) {
   let program
   try {
     const sourceType = extension === 'mjs' ? 'module' : extension === 'cjs' ? 'commonjs' : 'unambiguous'
-    const parsed = parseSync('file.js', text, { lang: 'jsx', sourceType })
+    // With oxc's semantic errors too: a text it finds one in it can't vouch for.
+    const parsed = parseSync('file.js', text, { lang: 'jsx', sourceType, showSemanticErrors: true })
     if (parsed.errors.length > 0) return { reason: 'unparsed' }
     program = parsed.program
   } catch { return { reason: 'unparsed' } }
@@ -118,7 +143,7 @@ function analyze(text, extension) {
   }
   // Names that are none of a variable's (a property, a key, a label), and
   // those whose variable keeps its name.
-  const keeping = new Set(), others = new Set()
+  const keeping = new Set(), others = new Set(), reads = new Set()
   const root = Object.assign(scope(null, true), { strict: program.sourceType === 'module' || saysStrict(program.body) })
   // Each node with the scope it is read in, a work list rather than a
   // recursion, as a minified file's expressions can nest deeply.
@@ -179,7 +204,15 @@ function analyze(text, extension) {
       case 'ExportDefaultDeclaration': if (node.declaration.id) keeping.add(node.declaration.id); break
       case 'ExportAllDeclaration': if (node.exported) others.add(node.exported); break
       case 'ImportAttribute': others.add(node.key); break
-      case 'MemberExpression': if (!node.computed) others.add(node.property); break
+      case 'MemberExpression':
+        if (!node.computed) others.add(node.property)
+        if (!node.computed && NAME_READS.has(node.property.name)) reads.add(node.property.name)
+        break
+      case 'ObjectPattern':
+        for (const { type, computed, key } of node.properties) if (type === 'Property' && !computed && NAME_READS.has(key.name)) reads.add(key.name)
+        break
+      case 'Literal': if (NAME_READS.has(node.value)) reads.add(node.value); break
+      case 'TemplateLiteral': for (const { value } of node.quasis) if (NAME_READS.has(value.cooked)) reads.add(value.cooked); break
       case 'Property': case 'MethodDefinition': case 'PropertyDefinition': case 'AccessorProperty':
         if (node.computed) break
         if (node.shorthand) keeping.add(node.key)
@@ -226,6 +259,20 @@ function analyze(text, extension) {
       else if (value && typeof value.type === 'string' && field !== 'type') work.push([value, field === 'discriminant' ? where : inner])
     }
   }
+  // A `var` named as a name a block it hoists past declares does not compile
+  // (`{ let a; { var a } }`), but past a `catch` whose simple parameter it is,
+  // or past one of its name beyond such a one: a redeclaration oxc's semantic
+  // check misses beside a `catch`, told here as one it finds.
+  for (const variable of variables) {
+    for (const path of variable.through ?? []) {
+      let caught = false
+      for (const at of path) {
+        const there = at.names.get(variable.name)
+        if (there === variable) caught ||= Boolean(at.caught)
+        else if (there && !(at.caught && at.simple && caught)) return { reason: 'unparsed' }
+      }
+    }
+  }
   // Every name read resolved, from where it is read outward; one no
   // declaration stands for is a global's.
   let commonjs = false
@@ -243,14 +290,84 @@ function analyze(text, extension) {
   }
   for (const [node, variable] of occurrences) if (keeping.has(node)) variable.kept = true
   const own = program.sourceType === 'module' || program.sourceType === 'commonjs' || commonjs
-  for (const variable of variables) variable.aside = variable.name.length <= RENAMED_MAX_LENGTH && !variable.kept && (own || variable.scope !== root)
+  for (const variable of variables) variable.aside = variable.name.length <= RENAMED_MAX_LENGTH && MINIFIED.test(variable.name) && !variable.kept && (own || variable.scope !== root)
   // A shorthand property's two names are one, at one place.
   const byStart = (x, y) => x[0].start - y[0].start
   occurrences.sort(byStart)
   globals.sort(byStart)
+  for (let i = 1; i < occurrences.length; i++) {
+    const [[node, variable], [previous, other]] = [occurrences[i], occurrences[i - 1]]
+    holds(node.start !== previous.start || variable === other, `${node.name} at ${node.start} two variables'`)
+  }
   const deduplicated = occurrences.filter((entry, i) => i === 0 || entry[0].start !== occurrences[i - 1][0].start)
   const names = new Set([...variables.map(({ name }) => name), ...globals.map(([node]) => node.name)])
-  return { scopes, variables, occurrences: deduplicated, globals, names, module: program.sourceType === 'module', commonjs: program.sourceType === 'commonjs', own }
+  return { scopes, variables, occurrences: deduplicated, globals, names, reads, module: program.sourceType === 'module', commonjs: program.sourceType === 'commonjs', own }
+}
+
+// A text's analysis checked to hang together: each name it would rename
+// written as that name where it is, read once and in order, none both a
+// variable's and a global's, each variable declared and read by its own name,
+// standing in its scopes by that name.
+function checkAnalysis(text, { scopes, variables, occurrences, globals }) {
+  const known = new Set(variables), read = new Set()
+  let end = 0
+  for (const [node, variable] of occurrences) {
+    holds(known.has(variable), `${node.name} at ${node.start} read as a variable none declares`)
+    holds(node.name === variable.name, `${node.name} at ${node.start} read as ${variable.name}`)
+    holds(node.start >= end && node.end > node.start, `${node.name} at ${node.start} out of order`)
+    holds(text.slice(node.start, node.end) === node.name, `${node.name} at ${node.start} written otherwise`)
+    end = node.end
+    read.add(node.start)
+  }
+  for (const [node] of globals) holds(!read.has(node.start), `${node.name} at ${node.start} both a variable's and a global's`)
+  const standing = new Set(occurrences.map(([, variable]) => variable))
+  for (const variable of variables) holds(standing.has(variable), `${variable.name} read nowhere`)
+  for (const at of scopes) for (const [name, variable] of at.names) holds(known.has(variable) && variable.name === name, `a scope's ${name} no variable of its name`)
+}
+
+// Which old variable became which new one, checked: renamable variables
+// alone, each new one taken once, the weak among those paired.
+function checkPairing(a, b, { map, weak }) {
+  const news = new Set(b.variables), taken = new Set()
+  for (const [variable, to] of map) {
+    holds(variable.aside && to.aside && news.has(to), `${variable.name} paired with ${to.name}, the two not both renamable`)
+    holds(!taken.has(to), `two variables paired with ${to.name}`)
+    taken.add(to)
+  }
+  for (const variable of weak) holds(map.has(variable), `${variable.name} weak, and paired with none`)
+}
+
+// The names given, checked: each changed one a renamable variable's, a name a
+// variable may have, and either its counterpart's or one apart no side holds.
+function checkGiven(a, b, map, given) {
+  for (const variable of a.variables) {
+    const name = given.get(variable)
+    if (name === variable.name) continue
+    holds(variable.aside, `${variable.name}, which keeps its name, named ${name}`)
+    holds(IDENTIFIER.test(name) && MINIFIED.test(name) && !RESERVED.has(name), `${variable.name} named ${name}, which no variable may be`)
+    holds(map.has(variable) ? map.get(variable).name === name : name.startsWith(variable.name + APART) && !a.names.has(name) && !b.names.has(name),
+      `${variable.name} named ${name}, neither its counterpart's name nor one apart`)
+  }
+}
+
+// The renamed text read again as the old one was: each name where it was,
+// written as given, the names of one variable still one variable's and those
+// of two still two's, and the same globals read.
+function checkRenamed(a, given, text, extension) {
+  const r = analyze(text, extension)
+  holds(!r.reason, `the renamed text read again: ${r.reason}`)
+  checkAnalysis(text, r)
+  holds(r.occurrences.length === a.occurrences.length && r.globals.length === a.globals.length && r.variables.length === a.variables.length,
+    'the renamed text reads another number of names')
+  const backward = new Map(), forward = new Map()
+  a.occurrences.forEach(([, variable], i) => {
+    const [node, other] = r.occurrences[i]
+    holds(node.name === given.get(variable), `${variable.name} written ${node.name}, not ${given.get(variable)}`)
+    holds((forward.get(variable) ?? other) === other && (backward.get(other) ?? variable) === variable, `${variable.name}'s names read as another variable's`)
+    forward.set(variable, other)
+    backward.set(other, variable)
+  })
+  a.globals.forEach(([node], i) => holds(r.globals[i][0].name === node.name, `the global ${node.name} read as ${r.globals[i][0].name}`))
 }
 
 // A text's lines with its renamable variables' names set aside (`key`), and
@@ -296,6 +413,7 @@ function pairing(before, after, a, b) {
     olds.forEach((variable, k) => { count(forward, variable, news[k]); count(backward, news[k], variable) })
   }
   const changed = tallies(), unchanged = tallies()
+  const keysA = ka.key.split('\n'), keysB = kb.key.split('\n')
   let i = 0, j = 0
   // Lines differing in whitespace alone pair too: it never tells a name apart.
   for (const block of [...changeBlocks(ka.key, kb.key, true), { a0: ka.lines.length, a1: ka.lines.length, b0: kb.lines.length, b1: kb.lines.length }]) {
@@ -305,6 +423,19 @@ function pairing(before, after, a, b) {
     const anchored = block.a0 - i >= ANCHORED_RUN
     while (i < block.a0) tally(anchored ? unchanged : changed, i++, j++)
     if (block.a1 - block.a0 === block.b1 - block.b0) for (let k = 0; k < block.a1 - block.a0; k++) tally(changed, block.a0 + k, block.b0 + k)
+    // In a change of unlike lengths, its lines that read alike but for a
+    // final `;` or `,` (a declaration others now follow: `let t = …;` → `let
+    // t = …,`) pair as their own diff has them, in order.
+    else if (block.a1 > block.a0 && block.b1 > block.b0) {
+      const trimmed = (lines, from, to) => `${lines.slice(from, to).map(line => line.replace(/[;,]\s*$/u, '')).join('\n')}\n`
+      let x = 0, y = 0
+      for (const inner of [...changeBlocks(trimmed(keysA, block.a0, block.a1), trimmed(keysB, block.b0, block.b1), true),
+        { a0: block.a1 - block.a0, a1: block.a1 - block.a0, b0: block.b1 - block.b0, b1: block.b1 - block.b0 }]) {
+        while (x < inner.a0) tally(changed, block.a0 + x++, block.b0 + y++)
+        x = inner.a1
+        y = inner.b1
+      }
+    }
     i = block.a1
     j = block.b1
   }
@@ -409,15 +540,29 @@ export function bindsAlike(before, renamed, { module = false, commonjs = false, 
   return code !== null && code === mangled(renamed)
 }
 
-// The old text with the new one's names, as above: `{ text, renamed, apart }`,
-// counting the variables renamed to a new one's name and those renamed apart,
-// or `{ reason }` where it can't be, as analyze has it, or where the renamed
-// text would not bind as the old one does (`unverified`); the old text a
-// file's with `extension`, the new one with `otherExtension`.
-export function renameMap(before, after, { extension = 'js', otherExtension = extension } = {}) {
+// The old text with the new one's names, as above: `{ text, renamed, apart,
+// kind, reads }`, counting the variables renamed to a new one's name and
+// those renamed apart, `kind` how bindsAlike reads the old text, `reads` the
+// properties through which either text reads names (NAME_READS), as a
+// rename may then change what it does; or `{ reason }`
+// where it can't be, as analyze has it, or where the renamed text would not
+// bind as the old one does (`unverified`), with what failed (`invariant`)
+// where a check that should never fail did, or anything else went wrong: a
+// mistake here shows a file with its names, never with names it does not
+// have. The old text a file's with `extension`, the new one with
+// `otherExtension`.
+export function renameMap(before, after, options = {}) {
+  try { return renamedNames(before, after, options) }
+  catch (err) { return { reason: 'unverified', invariant: err instanceof Broken ? err.message : `${err?.name ?? 'Error'}: ${err?.message ?? err}` } }
+}
+
+function renamedNames(before, after, { extension = 'js', otherExtension = extension }) {
   const a = analyze(before, extension), b = analyze(after, otherExtension)
   if (a.reason || b.reason) return { reason: a.reason ?? b.reason }
+  checkAnalysis(before, a)
+  checkAnalysis(after, b)
   const { map, weak } = pairing(before, after, a, b)
+  checkPairing(a, b, { map, weak })
   const apart = name => {
     let named = name + APART
     for (let n = 2; a.names.has(named) || b.names.has(named); n++) named = `${name}${APART}${n}`
@@ -437,12 +582,15 @@ export function renameMap(before, after, { extension = 'js', otherExtension = ex
     const dropped = yielding.filter(variable => map.delete(variable))
     if (dropped.length === 0) return { reason: 'unverified' }
   }
+  checkGiven(a, b, map, given)
   let at = 0, text = ''
   for (const [node, variable] of a.occurrences) {
     text += before.slice(at, node.start) + given.get(variable)
     at = node.end
   }
   text += before.slice(at)
+  holds(before !== after || text === before, 'a text renamed as itself changed')
+  checkRenamed(a, given, text, extension)
   if (!bindsAlike(before, text, a)) return { reason: 'unverified' }
   let renamed = 0, separated = 0
   for (const variable of a.variables) {
@@ -450,5 +598,6 @@ export function renameMap(before, after, { extension = 'js', otherExtension = ex
     if (map.has(variable)) renamed++
     else separated++
   }
-  return { text, renamed, apart: separated }
+  const reads = [...new Set([...a.reads, ...b.reads])].toSorted()
+  return { text, renamed, apart: separated, kind: { module: a.module, commonjs: a.commonjs, own: a.own }, reads }
 }
