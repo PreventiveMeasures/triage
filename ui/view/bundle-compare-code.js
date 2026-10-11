@@ -29,6 +29,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { npmFileReadability } from './file-readability.js'
 import { renameParts } from './bundle-compare-diff.js'
 import { renameTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
@@ -67,6 +68,15 @@ export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 export const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
+// Whether a text was minified (file-readability.js), by bundle and path: its
+// short names then a minifier's, not its author's.
+const minifiedTexts = new WeakMap()
+function minified(details, path, text) {
+  let files = minifiedTexts.get(details)
+  if (!files) minifiedTexts.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, npmFileReadability(path, text).category === 'minified')
+  return files.get(path)
+}
 
 // A file's line model by what it was diffed with: the settings, and whether
 // its sides were pretty-printed (see _pretty).
@@ -408,9 +418,18 @@ export class BundleCompareCode extends LitElement {
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
     const pretty = textual ? this._pretty(path, entry, contents, prettyAllowed) : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
-    const key = modelKey(path, pretty?.status === 'ready')
+    const generated = textual && renamable(path) && this._generated(path, entry, contents)
+    const renames = generated && prefs.ignoreRenames
+    const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreRenames: renames })
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
-    return { before, after, textual, large, pretty, key, model: textual && !large ? this._model(key, before, after, hidesRenames(path)) : null }
+    return { before, after, textual, large, pretty, key, generated, renames, model: textual && !large ? this._model(key, before, after, renames) : null }
+  }
+
+  // Whether a file's names are a minifier's on both sides, each minified:
+  // renamed names are hidden there alone, an author's renamed to a
+  // minifier's (or to another author's) a change.
+  _generated(path, { kind, basePath = path }, { before, after }) {
+    return kind !== 'repointed' && minified(this.base, basePath, before) && minified(this.other, path, after)
   }
 
   // Whether each side of a file with text can be pretty-printed.
@@ -438,7 +457,7 @@ export class BundleCompareCode extends LitElement {
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind }, { before, after, textual, large, model }) {
+  _fileMessage(path, { kind }, { before, after, textual, large, model, renames }) {
     const size = value => formatBytes(value ?? 0)
     if (!textual) {
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
@@ -452,11 +471,11 @@ export class BundleCompareCode extends LitElement {
       </div>`
     }
     if (model.blocks.length > 0) return null
-    const hidden = [prefs.ignoreWhitespace && 'whitespace', hidesRenames(path) && 'renamed names'].filter(Boolean)
+    const hidden = [prefs.ignoreWhitespace && 'whitespace', renames && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
       <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
       ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
-      ${hidesRenames(path) ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
+      ${renames ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
   }
 
@@ -535,7 +554,7 @@ export class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
           </button>
         </span>` : nothing}
-        ${this._toggles(diffable, textual, file.pretty, renamable(path))}
+        ${this._toggles(diffable, textual, file.pretty, file.generated)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
@@ -545,8 +564,8 @@ export class BundleCompareCode extends LitElement {
 
   // The diff's pretty-print, layout, whitespace, renamed names and wrap
   // toggles, as a file has use for them: pretty-printing a minified file
-  // (`pretty` from _pretty), a diff the next two and, in JavaScript
-  // (`renames`), renamed names, a text the wrap.
+  // (`pretty` from _pretty), a diff the next two and, in JavaScript minified
+  // on both sides (`renames`, _generated), renamed names, a text the wrap.
   _toggles(diffable, textual, pretty = null, renames = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}

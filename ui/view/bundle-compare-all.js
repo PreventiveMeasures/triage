@@ -9,7 +9,7 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { stripCommonPathPrefix } from './format.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, renamable } from './bundle-compare-code.js'
+import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
 // Minified files pretty-printed together, both sides of each among the
@@ -82,7 +82,7 @@ class BundleCompareAll extends BundleCompareCode {
         ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
         ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), pretty,
-          shown.some(({ path, file }) => file.textual && renamable(path)))}
+          shown.some(({ file }) => file.generated))}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
         ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`

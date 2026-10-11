@@ -134,6 +134,15 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
 })
 
+test('names are hidden renamed only as a minifier gave them, each side minified: an author\'s renamed shows', t => {
+  t.after(() => { element._setRenames(false) })
+  const element = view('dist/app.js', [{ 'dist/app.js': 'const fn = require("m");\nfn(1);\n' }, { 'dist/app.js': 'const cb = require("m");\ncb(1);\n' }])
+  element._setRenames(true)
+  const diff = renderText(element.render())
+  assert.match(diff, /class="add">\+2<\/span><span class="del">−2/u)
+  assert.doesNotMatch(diff, /Hide renamed names/u, 'nor is it offered')
+})
+
 test('names are hidden renamed in JavaScript alone: in CSS a short selector changed shows', t => {
   t.after(() => { element._setRenames(false) })
   const element = view('dist/app.css', [{ 'dist/app.css': '#foo{color:red}\n' }, { 'dist/app.css': '#bar{color:red}\n' }])
@@ -312,7 +321,7 @@ test('the Diff view lists every changed file\'s diff in one list, and counts the
   assert.deepEqual(heads, ['assets/logo.png', 'node_modules/left-pad/index.js', 'node_modules/zod/index.js', 'src/api.js', 'src/features/search.js', 'src/legacy.js'],
     'every added, removed and changed file, by path; a repointed importer has no text that changed')
   assert.match(markup, /6 files changed/u)
-  assert.match(markup, /aria-label="Hide renamed names"/u, 'its JavaScript files offer renamed names hidden')
+  assert.doesNotMatch(markup, /aria-label="Hide renamed names"/u, 'its JavaScript files, an author\'s names in them, offer no renamed names hidden')
   assert.match(markup, /Binary file changed/u)
   assert.equal([...markup.matchAll(/class=bundle-compare-diff-table/gu)].length, 5, 'a diff for every text file')
   assert.ok(counted.rows > heads.length && counted.rows < COMBINED_DIFF_MAX)

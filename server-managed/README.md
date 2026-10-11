@@ -1162,10 +1162,15 @@ control. A version shows in the bundle view with four tabs:
   and Diff review the changes as for bundles: with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** leaves out lines of a JavaScript file (`.js`, `.mjs`,
-  `.cjs` without JSX, what a minifier renames) that differ only in short names (three
-  characters at most, as a minifier gives them) a declaration in scope
-  stands for, renamed alike throughout the file; a global (`Map`, `$`) is
-  kept. A line is left out only where each of its names
+  `.cjs` without JSX) minified on both sides, its names a minifier's, that
+  differ only in short names (three characters at most, as a minifier gives
+  them) a declaration in scope stands for, renamed alike throughout the file.
+  It is offered for those files alone: an author's name renamed, to a
+  minifier's or to another author's, always shows. A global (`Map`, `$`) is
+  kept, as is a name declared at a script's top level, a global another
+  script may read; a module's (`import`, `export`) or a CommonJS one's
+  (`require(…)`, `module.exports`, `exports.…`) is its own. A line is left
+  out only where each of its names
   stands for one other in every line, unchanged ones included, and neither
   side's name ever stands for a second one; such lines are marked `≈`, naming
   the line they were. A name renamed two ways, or two names renamed to one
