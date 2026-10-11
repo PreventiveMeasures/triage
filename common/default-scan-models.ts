@@ -20,6 +20,7 @@ export function defaultScanModels(provider: string | null = null) {
     'qwen/qwen3.8-max',
     'deepseek/deepseek-v4.1-flash',
     'deepseek/deepseek-v4-pro',
+    'mistralai/mistral-large-4-0',
   ]
   // OpenRouter routes all listed providers. Direct-provider credentials only
   // expose that provider's models; no selection leaves the catalogue intact.
