@@ -7,6 +7,7 @@ import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
+import { controlMarkup } from './control-chars.js'
 import { historyFor } from './focus-code-history.js'
 import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -38,7 +39,7 @@ function kickHighlight(integrity, file, content, format, resolveString, cache = 
   pending.add(key)
   ;(async () => {
     const html = await prismHighlight(content, lang, resolveString)
-    cache.set(key, html ?? null)
+    cache.set(key, typeof html === 'string' ? controlMarkup(html) : null)
     pending.delete(key)
     state.focusCodeTick++
     queueMicrotask(render)

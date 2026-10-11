@@ -245,3 +245,14 @@ test('the Diff view lists every changed file\'s diff in one list, and counts the
   assert.ok(capped.rows >= 13 && Number.isFinite(capped.rows), `${capped.rows}`)
   assert.equal(combinedDiffRows(code.base, code.other, code.files, 12).rows, Infinity)
 })
+
+test('a diff shows control characters as boxes, and a CRLF\'s CR only where it is what changed', () => {
+  const before = 'const a = 1\r\nconst b = "\u001B"\r\nconst c = 3\r\n'
+  const after = 'const a = 1\nconst b = "\u001B"\r\nconst c = 4\r\n'
+  const markup = renderText(view('src/eol.js', [{ 'src/eol.js': before }, { 'src/eol.js': after }]).render())
+  const rows = Object.groupBy([...markup.matchAll(/<div class="?diff-row (\w+)[^]*?<\/div>/gu)], ([, kind]) => kind)
+  const boxes = row => [...row[0].matchAll(/class="code-control" data-tooltip=[^>]*>(\w+)</gu)].map(m => m[1])
+  assert.deepEqual(rows.del.map(boxes), [['CR'], []], 'the CR a line lost shows, not the one both sides end a line with')
+  assert.deepEqual(rows.add.map(boxes), [[], []])
+  assert.deepEqual(rows.ctx.map(boxes), [['ESC']])
+})

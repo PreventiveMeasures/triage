@@ -223,6 +223,14 @@ test('plain sources stay in text nodes Chromium paints, and a line too wide to l
   assert.ok(code(`${first}${wide.slice(1)}`).every(part => typeof part === 'string'))
 })
 
+test('plain sources show control characters as boxes, a CRLF as the line end it is', () => {
+  state.bundleDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: ['const a = "\u001B[0m"\r\nconst b = 1\rconst c = 2\n'] } }
+  const markup = renderText(renderBundleSourceModal())
+  const code = markup.slice(markup.indexOf('<code'), markup.indexOf('</code>'))
+  assert.equal(code.replace(/^<code[^>]*>/u, ''),
+    'const a = "<span class="code-control" data-tooltip=U+001B ESCAPE>ESC</span>[0m"\r\nconst b = 1<span class="code-control" data-tooltip=U+000D CARRIAGE RETURN>CR</span>const c = 2\n')
+})
+
 test('only a loaded bundle without the file content shows the missing-source message', () => {
   for (const sourcesContent of [[], [null]]) {
     state.bundleDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent } }

@@ -45,6 +45,7 @@ import {
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
+import { sourceText } from './source-text.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
 import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
@@ -1022,6 +1023,14 @@ function kanbanCardTemplate(g, opts = {}) {
   >${inner}</div>`
 }
 
+// The Code panel's plain text, kept for the next render of the same file:
+// looking for control characters to box takes a while over a large one.
+let focusPlain = { content: '', parts: '' }
+function focusPlainText(content) {
+  if (focusPlain.content !== content) focusPlain = { content, parts: sourceText(content) }
+  return focusPlain.parts
+}
+
 // Per-line rendering for the focus view's inline Code panel.
 // Two-column layout (gutter + source) mirroring the bundle source
 // viewer's structure — line numbers in a sticky narrow rail, the
@@ -1046,7 +1055,7 @@ function focusCodeLinesTemplate(code) {
     </aside>
     <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
-      : content}</code></pre>
+      : focusPlainText(content)}</code></pre>
   </div>`
 }
 
