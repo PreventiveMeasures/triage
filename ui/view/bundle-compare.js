@@ -700,7 +700,6 @@ class BundleCompare extends LitElement {
           <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
           ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
         </div>
-      </div>
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
         ${[['overview', 'Overview'], ['code', 'Code'], ...this._diffFits ? [['diff', 'Diff']] : []]

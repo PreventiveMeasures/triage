@@ -267,12 +267,14 @@ export function layoutPackageDirs(baseDirs, otherDirs, { root, paths }) {
   return new Map([...[...baseDirs ?? []].map(([path, dir]) => [paths.get(path) ?? path, rootDir(root, dir)]), ...otherDirs ?? []])
 }
 
-// A base directory as the other bundle lays it out: moved with the root, the
-// root itself `.`, and `.` or one outside a base root as it is.
+// A base directory as the other bundle lays it out, as rootPaths lays out its
+// files: moved with the root, the root itself `.`, one outside a base root a
+// `../` for each of its levels above it, and `.` as it is.
 export function rootDir(root, dir) {
   if (!root || dir === '.') return dir
   const to = through(root, `${dir}/`)
-  return to === null ? dir : to.slice(0, -1) || '.'
+  if (to === null) return `${'../'.repeat(root.base.split('/').length - 1)}${dir}`
+  return to.slice(0, -1) || '.'
 }
 
 // The directory a view leaves off paths, `prefix` (the other bundle's

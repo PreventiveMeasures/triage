@@ -519,8 +519,8 @@ describe('bundles taken from different roots', () => {
     assert.deepEqual([...againstStasis.packages.onlyBase, ...againstStasis.packages.onlyOther], [])
     assert.equal(layoutPackageDirs(null, null, { root: null, paths: new Map() }), null)
     assert.deepEqual([...layoutPackageDirs(new Map([['src/a.js', 'src'], ['src/b/c.js', 'src/b'], ['tools/t.js', 'tools']]), null,
-      { root: { base: 'src/', other: '' }, paths: new Map([['src/a.js', 'a.js'], ['src/b/c.js', 'b/c.js']]) })],
-    [['a.js', '.'], ['b/c.js', 'b'], ['tools/t.js', 'tools']], 'the root itself reads as `.`, a directory outside it as it is')
+      { root: { base: 'src/', other: '' }, paths: new Map([['src/a.js', 'a.js'], ['src/b/c.js', 'b/c.js'], ['tools/t.js', '../tools/t.js']]) })],
+    [['a.js', '.'], ['b/c.js', 'b'], ['../tools/t.js', '../tools']], 'the root itself reads as `.`, a directory outside it as its files do')
   })
 
   it('takes no root where two would pair as many, so the open bundle never decides', () => {
@@ -540,7 +540,8 @@ describe('bundles taken from different roots', () => {
     assert.equal(rootDir({ base: '', other: 'src/' }, '.'), '.')
     assert.equal(rootDir({ base: 'src/', other: '' }, 'src/crates/foo'), 'crates/foo')
     assert.equal(rootDir({ base: 'src/', other: '' }, 'src'), '.')
-    assert.equal(rootDir({ base: 'src/', other: '' }, 'tools'), 'tools')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'tools'), '../tools', 'outside the root, as its files read')
+    assert.equal(rootDir({ base: 'a/b/', other: '' }, 'tools'), '../../tools')
   })
 
   it('keeps paths as they are where they line up, or only a few would move', () => {
