@@ -72,6 +72,22 @@ test('a name is renamed only from and to an ASCII one, as a minifier gives: none
   for (const [from, to] of [['a', '\u0430'], ['\u0430', 'b'], ['a', 'a\u200D']]) assert.equal(renameMap(text(from), text(to)).text, text(from), `${JSON.stringify(from)} → ${JSON.stringify(to)} kept`)
 })
 
+test('a declaration others now follow pairs its name, though the lines around it changed in number', () => {
+  // `let t = …;` → `let t = …,`, two lines then: the change grew from two lines to five, so no
+  // line's place in it pairs; its declaration pairs as it reads alike but for its end.
+  const lines = list => list.map(line => `${line}\n`).join('')
+  const before = name => lines(['"use strict";', 'function f(e) {', `  let ${name} = g(e);`, `  return h(${name});`, '}', 'module.exports = f;'])
+  const after = lines(['"use strict";', 'function f(e) {', '  let t = g(e),', '    i = 2,', '    s = 3;', '  return k(t, i, s);', '}', 'module.exports = f;'])
+  for (const name of ['a', 't', 'i']) assert.equal(renameMap(before(name), after, { extension: 'cjs' }).text, before('t'), `${name}: none apart as t_old or i_old`)
+})
+
+test('the properties through which either side reads names are told, as a rename may change what it then does', () => {
+  const text = (name, read) => `function ${name}() {}\nmodule.exports = ${read};\n`
+  assert.deepEqual(renameMap(text('a', 'a'), text('b', 'b'), { extension: 'cjs' }).reads, [])
+  assert.deepEqual(renameMap(text('a', 'a.name'), text('b', 'b.name'), { extension: 'cjs' }).reads, ['name'])
+  assert.deepEqual(renameMap(text('a', 'a["toString"]()'), text('b', 'b.stack'), { extension: 'cjs' }).reads, ['stack', 'toString'], 'either side, by a string too')
+})
+
 test('a check that should never fail, failing, shows the file with its names, and tells what failed', () => {
   // A name written with an escape is no span renaming may replace as written.
   const mapped = renameMap('var \\u0061 = 1;\nf(\\u0061);\nmodule.exports = 1;\n', 'var b = 1;\nf(b);\nmodule.exports = 1;\n', { extension: 'cjs' })

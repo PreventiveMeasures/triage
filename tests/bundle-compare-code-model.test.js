@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, changeStart, diffRows, lineDiff, markHighlighted, markSegments, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, changeStart, diffRows, lineDiff, markHighlighted, markSegments, renamedAlone, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -101,4 +101,27 @@ test('changeStart finds the first row of the next change block', () => {
   assert.deepEqual(starts.map(i => [rows[i].kind, rows[i].change]), [['del', 0], ['del', 1]])
   assert.equal(changeStart(rows, starts[0] + 1), starts[1], 'a block\'s later rows are not starts')
   assert.equal(changeStart(rows, starts[1] + 1), -1)
+})
+
+test('a block the server marks is marked only where its lines differ in short names alone, by a check of the view\'s own', () => {
+  assert.equal(renamedAlone('f(a, b);', 'f(c, d);'), true)
+  for (const [before, after] of [['x.ab = 1;', 'x.cd = 1;'], ['f("ab");', 'f("cd");'], ['for (a in b)', 'for (a of b)'], ['{ ab: 1 }', '{ cd: 1 }'],
+    ['return a + 1;', 'return a + 2;'], ['var abcd;', 'var efgh;'], ['f(a);', 'f(a);'], ['f(a) // ab', 'f(a) // cd'], ['f(a ,b)', 'f(a, b)'],
+    ['a.replace(/ab/g, b)', 'a.replace(/cd/g, b)'], ['if (a) /x[/]ab/.test(b);', 'if (a) /x[/]cd/.test(b);'], ['return /ab/;', 'return /cd/;'],
+    ['f((a) / b);', 'f((c) / d);']]) {
+    assert.equal(renamedAlone(before, after), false, `${before} → ${after}`)
+  }
+  assert.equal(renamedAlone('f(a ,b)', 'f(c, d)', true), true, 'whitespace ignored where the diff ignores it')
+  for (const [before, after] of [['f(a / b, c[0] / 2);', 'f(d / e, g[0] / 2);'], ['x = this.n / a;', 'x = this.n / b;']]) assert.equal(renamedAlone(before, after), true, `${before} → ${after}: a division`)
+  const after = 'function q(b) {\n  return b + 2;\n}\n', before = 'function q(a) {\n  return a + 1;\n}\n'
+  const blocks = lineDiff(before, after).blocks
+  assert.deepEqual(blocks, [{ a0: 0, a1: 2, b0: 0, b1: 2 }])
+  // Told the block differs in names alone, the view finds `1` → `2` in it, and marks none.
+  const told = lineDiff(before, after, { marks: blocks })
+  assert.equal(told.marked.size, 0)
+  assert.deepEqual([told.additions, told.deletions, told.renamed], [2, 2, 0])
+  const renamed = lineDiff('function q(a) {\n  return a;\n}\nf(1);\n', 'function q(b) {\n  return b;\n}\nf(2);\n')
+  const marked = lineDiff('function q(a) {\n  return a;\n}\nf(1);\n', 'function q(b) {\n  return b;\n}\nf(2);\n', { marks: [renamed.blocks[0]] })
+  assert.deepEqual([...marked.marked], [0])
+  assert.deepEqual([marked.additions, marked.deletions, marked.renamed], [1, 1, 2], 'the renamed lines counted apart')
 })

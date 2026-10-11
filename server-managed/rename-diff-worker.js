@@ -3,11 +3,16 @@
 // the new side's names (rename-map.js), formatted again as the new side was
 // (pretty-format.ts), then the two diffed as they are. `{ before, blocks,
 // reason }`: the old side as diffed, the change blocks, and why the old side
-// is as it was, where its names could not be given safely (as renameMap says).
+// is as it was, where its names could not be given safely (as renameMap says),
+// `reads`, the properties through which either side reads names (a view
+// hiding renamed names hides none where any are read, as a rename may then
+// change what the code does), and `marks`, the blocks of the diff of the
+// files as they are, the old side's own names, that differ in names renamed
+// alone: what a view marking renamed lines draws apart rather than hiding.
 // Where the blocks found would not take the old side to the new, it answers
 // nothing, so that no change is hidden.
 import { parentPort, workerData } from 'node:worker_threads'
-import { blocksHold, changeBlocks } from '../common/line-diff.js'
+import { blocksHold, changeBlocks, markedBlocks } from '../common/line-diff.js'
 import { formatChecked } from './pretty-format.ts'
 import { bindsAlike, renameMap } from './rename-map.js'
 
@@ -27,6 +32,11 @@ if (!mapped.reason) {
 }
 const blocks = changeBlocks(renamed, after, ignoreWhitespace)
 if (!blocksHold(renamed, after, blocks, ignoreWhitespace)) throw new Error('change blocks that do not take the old side to the new')
+// Read off the renamed text before formatting, whose lines are the old
+// side's line for line: a block marked is one whose old lines, given the new
+// names, are its new lines, exactly.
+const marks = mapped.reason ? [] : markedBlocks(before, mapped.text, after, ignoreWhitespace)
+if (marks === null) console.warn('managed: a renamed text with lines the old one does not have; none marked')
 // Node worker messages have no browser target origin.
 // oxlint-disable-next-line unicorn/require-post-message-target-origin
-parentPort.postMessage({ before: renamed, blocks, reason: mapped.reason ?? null })
+parentPort.postMessage({ before: renamed, blocks, reason: mapped.reason ?? null, reads: mapped.reads ?? [], marks: marks ?? [] })

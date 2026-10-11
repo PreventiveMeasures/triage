@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
-import { changeBlocks } from '../common/line-diff.js'
+import { changeBlocks, markedBlocks } from '../common/line-diff.js'
 import { renameMap } from '../server-managed/rename-map.js'
 
 const state = {}
@@ -22,8 +22,9 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     renameDiffs.push({ id, other, ...params })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
     if (before instanceof Error) return Promise.reject(before)
-    const { text = before, reason = null } = renameMap(before, after)
-    return Promise.resolve({ before: text, blocks: misanswered.has(id) ? [] : changeBlocks(text, after, params.ignoreWhitespace), reason })
+    const { text = before, reason = null, reads = [] } = renameMap(before, after)
+    const marks = misanswered.has(`${id}:marks`) ? changeBlocks(before, after, params.ignoreWhitespace) : reason ? [] : markedBlocks(before, text, after, params.ignoreWhitespace) ?? []
+    return Promise.resolve({ before: text, blocks: misanswered.has(id) ? [] : changeBlocks(text, after, params.ignoreWhitespace), reason, reads, marks })
   },
   fetchNpmRenameDiff() {},
 } })
@@ -436,6 +437,52 @@ test('a diff the server answers that would hide a change shows the names, and is
   assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
   assert.match(shown, /diff-row add/u, 'the change shown')
   assert.doesNotMatch(shown, /Only renamed names changed/u)
+})
+
+test('names a file reads keep renamed names from being hidden, and they can be marked instead, the file as it is', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
+  const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=1;${'q(X);'.repeat(250)}f(X.name);\n` }])
+  element.base.managedId = 'b13'
+  element.other.managedId = 'b14'
+  // Three lines differing in names alone, one between them unchanged, and a number changed.
+  pretty.set('b13:dist/named.min.js', 'var Y = 1;\nq(Y);\nf(Y.name);\nh();\ng(1);\nmodule.exports = 1;\n')
+  pretty.set('b14:dist/named.min.js', 'var X = 1;\nq(X);\nf(X.name);\nh();\ng(2);\nmodule.exports = 1;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const settle = async () => { for (let i = 0; i < 200 && /(?:Hiding renamed names|Marking renamed lines)…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  element._setRenames(true)
+  await settle()
+  const read = renderText(element.render())
+  assert.match(read, /Renamed names are shown: the file reads names \(\.name\), which a rename changes\./u)
+  assert.match(read, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is')
+  assert.match(read, /class="add">\+4<\/span><span class="del">−4/u)
+  element._setMarks(true)
+  const marked = renderText(element.render())
+  assert.match(marked, /aria-pressed=true aria-label="Mark renamed lines"/u)
+  assert.match(marked, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is, marked')
+  assert.match(marked, /diff-row del renamed/u)
+  assert.match(marked, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
+  assert.match(marked, /≈3/u, 'the renamed lines counted apart')
+  assert.doesNotMatch(marked, /Renamed names are shown/u)
+})
+
+test('a block the server marks that the view finds a change in is drawn as one', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
+  const element = view('dist/told.min.js', [{ 'dist/told.min.js': `var Y=1;${'q(Y);'.repeat(250)}f("a");\n` }, { 'dist/told.min.js': `var X=1;${'q(X);'.repeat(250)}f("b");\n` }])
+  element.base.managedId = 'b15'
+  element.other.managedId = 'b16'
+  pretty.set('b15:dist/told.min.js', 'var Y = 1;\nq(Y);\nf("a");\n')
+  pretty.set('b16:dist/told.min.js', 'var X = 1;\nq(X);\nf("b");\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  // The server marks every block of the diff, `f("a")` → `f("b")` among them.
+  misanswered.add('b15:marks')
+  element._setRenames(true)
+  element._setMarks(true)
+  for (let i = 0; i < 200 && /Marking renamed lines…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /diff-row (?:del|add|change) renamed/u, 'no block marked')
+  assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {

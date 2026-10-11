@@ -41,3 +41,16 @@ export function blocksHold(before, after, blocks, ignoreWhitespace = false) {
   }
   return true
 }
+
+// The blocks of the diff of `before` and `after` whose lines differ in names
+// renamed alone: those whose old lines, as `given` has them (the old text with
+// the new side's names, line for line), are their new lines, alike as the
+// diff has lines alike. None (null) where `given` has other lines than
+// `before`.
+export function markedBlocks(before, given, after, ignoreWhitespace = false) {
+  const news = textLines(after), renamed = textLines(given)
+  if (renamed.length !== textLines(before).length) return null
+  const alike = ignoreWhitespace ? (x, y) => x.replaceAll(/\s/gu, '') === y.replaceAll(/\s/gu, '') : (x, y) => x === y
+  return changeBlocks(before, after, ignoreWhitespace)
+    .filter(({ a0, a1, b0, b1 }) => a1 - a0 === b1 - b0 && renamed.slice(a0, a1).every((line, k) => alike(line, news[b0 + k])))
+}

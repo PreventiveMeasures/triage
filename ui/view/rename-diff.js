@@ -12,9 +12,11 @@ import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 const KEPT_DIFFS = 16
 
 // Diffs by both sides' integrity and path and the whitespace setting:
-// `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason }` (the
-// old side as diffed, the change blocks, and why its names are its own where
-// they could not be given safely), or `{ status: 'error', message, retry }`,
+// `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason, reads,
+// marks }` (the old side as diffed, the change blocks, why its names are its
+// own where they could not be given safely, the properties through which
+// either side reads names, and the blocks of the diff of the files as they
+// are that differ in renamed names alone), or `{ status: 'error', message, retry }`,
 // `retry` where asking again may succeed (the server busy, a timeout).
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
@@ -36,11 +38,12 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const [hash, otherHash] = await Promise.all([[base, basePath, before], [other, path, after]]
       .map(([details, file, text]) => details.fileHashes?.get(file) ?? computeFileHash(text)))
     const params = { path: basePath, hash, otherPath: path, otherHash, ignoreWhitespace }
-    const { before: renamed, blocks, reason } = base.npm
+    const { before: renamed, blocks, reason, reads, marks } = base.npm
       ? await fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
       : await fetchBundleRenameDiff(base.managedId, other.managedId, params)
     next = typeof renamed === 'string' && Array.isArray(blocks) && (reason == null || typeof reason === 'string')
-      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null }
+      && Array.isArray(reads) && reads.every(read => typeof read === 'string') && Array.isArray(marks)
+      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null, reads, marks }
       : { status: 'error', message: MISMATCH, retry: false }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.

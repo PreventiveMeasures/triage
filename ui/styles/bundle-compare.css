@@ -633,6 +633,13 @@ bundle-compare-code > .bundle-code-view {
   & .add { color: var(--green); }
   & .del { color: var(--critical); }
 }
+.bundle-compare-code-renamed {
+  flex: none;
+  font-size: .72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
 .bundle-compare-code-layout { flex: none; }
 .bundle-compare-code-toggle {
   flex: none;
@@ -755,6 +762,9 @@ bundle-compare-code > .bundle-code-view {
   & .diff-sign { color: var(--critical); }
   & .diff-word { background: var(--diff-del-word); }
 }
+/* A block differing in renamed names alone, marked rather than hidden: drawn
+   faint, its changed names still marked. */
+.diff-row.renamed { opacity: .55; }
 .diff-word {
   color: inherit;
   border-radius: 2px;

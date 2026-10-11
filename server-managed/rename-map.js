@@ -27,6 +27,11 @@ import { changeBlocks } from '../common/line-diff.js'
 // with a zero-width joiner in it).
 const RENAMED_MAX_LENGTH = 3
 const MINIFIED = /^[A-Za-z_$][\w$]*$/u
+// Properties through which code reads names: a function's or a class's
+// (`name`, its source by `toString`, a stack's frames, `arguments.callee` and
+// `caller`), which renaming changes. Read where it says so (`f.name`,
+// `f["name"]`), not where it does otherwise (`'' + f`, `f[k]`).
+const NAME_READS = new Set(['name', 'toString', 'stack', 'callee', 'caller'])
 // What a name renamed apart ends in, numbered past the first as it takes to
 // be one neither side uses: `e_old`, `e_old2`.
 const APART = '_old'
@@ -136,7 +141,7 @@ function analyze(text, extension) {
   }
   // Names that are none of a variable's (a property, a key, a label), and
   // those whose variable keeps its name.
-  const keeping = new Set(), others = new Set()
+  const keeping = new Set(), others = new Set(), reads = new Set()
   const root = Object.assign(scope(null, true), { strict: program.sourceType === 'module' || saysStrict(program.body) })
   // Each node with the scope it is read in, a work list rather than a
   // recursion, as a minified file's expressions can nest deeply.
@@ -197,7 +202,12 @@ function analyze(text, extension) {
       case 'ExportDefaultDeclaration': if (node.declaration.id) keeping.add(node.declaration.id); break
       case 'ExportAllDeclaration': if (node.exported) others.add(node.exported); break
       case 'ImportAttribute': others.add(node.key); break
-      case 'MemberExpression': if (!node.computed) others.add(node.property); break
+      case 'MemberExpression': {
+        if (!node.computed) others.add(node.property)
+        const property = node.computed ? (node.property.type === 'Literal' && typeof node.property.value === 'string' ? node.property.value : null) : node.property.name
+        if (NAME_READS.has(property)) reads.add(property)
+        break
+      }
       case 'Property': case 'MethodDefinition': case 'PropertyDefinition': case 'AccessorProperty':
         if (node.computed) break
         if (node.shorthand) keeping.add(node.key)
@@ -286,7 +296,7 @@ function analyze(text, extension) {
   }
   const deduplicated = occurrences.filter((entry, i) => i === 0 || entry[0].start !== occurrences[i - 1][0].start)
   const names = new Set([...variables.map(({ name }) => name), ...globals.map(([node]) => node.name)])
-  return { scopes, variables, occurrences: deduplicated, globals, names, module: program.sourceType === 'module', commonjs: program.sourceType === 'commonjs', own }
+  return { scopes, variables, occurrences: deduplicated, globals, names, reads, module: program.sourceType === 'module', commonjs: program.sourceType === 'commonjs', own }
 }
 
 // A text's analysis checked to hang together: each name it would rename
@@ -398,6 +408,7 @@ function pairing(before, after, a, b) {
     olds.forEach((variable, k) => { count(forward, variable, news[k]); count(backward, news[k], variable) })
   }
   const changed = tallies(), unchanged = tallies()
+  const keysA = ka.key.split('\n'), keysB = kb.key.split('\n')
   let i = 0, j = 0
   // Lines differing in whitespace alone pair too: it never tells a name apart.
   for (const block of [...changeBlocks(ka.key, kb.key, true), { a0: ka.lines.length, a1: ka.lines.length, b0: kb.lines.length, b1: kb.lines.length }]) {
@@ -407,6 +418,19 @@ function pairing(before, after, a, b) {
     const anchored = block.a0 - i >= ANCHORED_RUN
     while (i < block.a0) tally(anchored ? unchanged : changed, i++, j++)
     if (block.a1 - block.a0 === block.b1 - block.b0) for (let k = 0; k < block.a1 - block.a0; k++) tally(changed, block.a0 + k, block.b0 + k)
+    // In a change of unlike lengths, its lines that read alike but for a
+    // final `;` or `,` (a declaration others now follow: `let t = …;` → `let
+    // t = …,`) pair as their own diff has them, in order.
+    else if (block.a1 > block.a0 && block.b1 > block.b0) {
+      const trimmed = (lines, from, to) => `${lines.slice(from, to).map(line => line.replace(/[;,]\s*$/u, '')).join('\n')}\n`
+      let x = 0, y = 0
+      for (const inner of [...changeBlocks(trimmed(keysA, block.a0, block.a1), trimmed(keysB, block.b0, block.b1), true),
+        { a0: block.a1 - block.a0, a1: block.a1 - block.a0, b0: block.b1 - block.b0, b1: block.b1 - block.b0 }]) {
+        while (x < inner.a0) tally(changed, block.a0 + x++, block.b0 + y++)
+        x = inner.a1
+        y = inner.b1
+      }
+    }
     i = block.a1
     j = block.b1
   }
@@ -512,8 +536,10 @@ export function bindsAlike(before, renamed, { module = false, commonjs = false, 
 }
 
 // The old text with the new one's names, as above: `{ text, renamed, apart,
-// kind }`, counting the variables renamed to a new one's name and those
-// renamed apart, `kind` how bindsAlike reads the old text; or `{ reason }`
+// kind, reads }`, counting the variables renamed to a new one's name and
+// those renamed apart, `kind` how bindsAlike reads the old text, `reads` the
+// properties through which either text reads names (NAME_READS), as a
+// rename may then change what it does; or `{ reason }`
 // where it can't be, as analyze has it, or where the renamed text would not
 // bind as the old one does (`unverified`), with what failed (`invariant`)
 // where a check that should never fail did, or anything else went wrong: a
@@ -567,5 +593,6 @@ function renamedNames(before, after, { extension = 'js', otherExtension = extens
     if (map.has(variable)) renamed++
     else separated++
   }
-  return { text, renamed, apart: separated, kind: { module: a.module, commonjs: a.commonjs, own: a.own } }
+  const reads = [...new Set([...a.reads, ...b.reads])].toSorted()
+  return { text, renamed, apart: separated, kind: { module: a.module, commonjs: a.commonjs, own: a.own }, reads }
 }

@@ -17,7 +17,7 @@ import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../serv
 import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
-import { changeBlocks } from '../common/line-diff.js'
+import { changeBlocks, markedBlocks } from '../common/line-diff.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -105,7 +105,9 @@ const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-
 // new one's names, formatted, diffed with the new one.
 async function renamedBuilds(ignoreWhitespace = false) {
   const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
-  return { before, blocks: changeBlocks(before, await formatted(rebuilt), ignoreWhitespace), reason: null }
+  const after = await formatted(rebuilt)
+  // No name read; the function's two lines differ in its renamed names alone.
+  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks: markedBlocks(await formatted(built), before, after, ignoreWhitespace) }
 }
 // A minifier's two builds of a module: a function's names renamed, a number changed.
 const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
