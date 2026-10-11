@@ -161,6 +161,8 @@ function nameless(text) {
     const ends = line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
       : !/(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
+    // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
+    if (ends && bare) last = ';'
     if (ends || segment.includes(',') || segment.includes(';')) endArrows(opens.length)
     if (ends || segment.includes(';')) endLoops(opens.length)
     let end = segment.length

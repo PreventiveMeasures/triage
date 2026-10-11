@@ -9,7 +9,8 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // The server's pretty-printed copies, by bundle and path.
 const pretty = new Map()
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleFile: (id, path) => Promise.resolve(pretty.get(`${id}:${path}`)), fetchPrettyNpmFile() {},
+  fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
+  fetchPrettyNpmFile() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
@@ -158,6 +159,26 @@ test('the Diff view pretty-prints no more minified files together than it keeps 
   const markup = renderText(all.render())
   assert.match(markup, /\?disabled=true\s+data-tooltip=Too many minified files to pretty-print together: open one in Code/u)
   assert.doesNotMatch(markup, /is-loading/u, 'none asked for')
+})
+
+test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  await import('../ui/view/bundle-compare-all.js')
+  const files = ['dist/g0.min.js', 'dist/g1.min.js']
+  const code = view(files[0], [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
+  code.base.managedId = 'b3'
+  code.other.managedId = 'b4'
+  for (const id of ['b3', 'b4']) {
+    pretty.set(`${id}:${files[0]}`, 'var Y = 1;\n')
+    pretty.set(`${id}:${files[1]}`, Object.assign(new Error("This file couldn't be read as code."), { status: 422 }))
+  }
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print: This file couldn't be read as code\./u)
 })
 
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {

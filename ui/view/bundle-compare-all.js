@@ -73,12 +73,15 @@ class BundleCompareAll extends BundleCompareCode {
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
+    // The toggle's state for every file, as for one file's two sides (_pretty): a failure first, then one still coming.
+    const pretties = shown.map(({ file }) => file.pretty).filter(Boolean)
+    const pretty = pretties.find(copy => copy.status === 'error') ?? pretties.find(copy => copy.status === 'loading') ?? pretties[0]
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
         ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
         ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), shown.find(({ file }) => file.pretty)?.file.pretty,
+        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), pretty,
           shown.some(({ path, file }) => file.textual && renamable(path)))}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
