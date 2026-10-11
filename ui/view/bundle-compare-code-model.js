@@ -53,29 +53,56 @@ const COMMENT = /\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\
 // `dynamic` in nameless.
 const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
 
-// The code in a template's substitutions (`${…}`), read as code is (READ,
-// apart so its place stays): what lies between its tokens, its names and
-// brackets; of a regular expression (or a division read as one) its words
-// that read names; of a string or a comment nothing, so a brace, a `\` or a
-// word in one counts for none. Read amiss, a substitution runs on: more is
-// tested, not less.
+// Templates and their substitutions (`${…}`), read as code is (READ, apart
+// so its place stays): READ alone ends a template at a nested one's
+// backtick (`${c ? `x` : `y`}`). Read amiss, a substitution runs on to the
+// end: more is tested, not less.
 const SUBSTITUTION = new RegExp(READ.source, 'gu')
-const substituted = token => /^(?:["'`]|\/[/*]|<!--|-->|#!)/u.test(token) ? ' '
+// Where the template whose backtick is at `start` ends, past its own.
+function templateEnd(text, start) {
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === '\\') i++
+    else if (text[i] === '`') return i + 1
+    else if (text[i] === '$' && text[i + 1] === '{') i = substitutionEnd(text, i + 2) - 1
+  }
+  return text.length
+}
+// Where the substitution from `from` (past its `${`) ends, past its `}`: a
+// brace in a string, a regular expression or a comment counts for none.
+function substitutionEnd(text, from) {
+  let depth = 1
+  for (SUBSTITUTION.lastIndex = from; ;) {
+    const match = SUBSTITUTION.exec(text)
+    if (!match) return text.length
+    if (match[0][0] === '`') SUBSTITUTION.lastIndex = templateEnd(text, match.index)
+    else if ((depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0) === 0) return SUBSTITUTION.lastIndex
+  }
+}
+// What a token adds to a substitution's code: a name or a bracket itself, a
+// template its own substitutions', a regular expression (or a division read
+// as one) its words that read names, a string or a comment nothing.
+const substituted = token => token[0] === '`' ? substitutions(token) : /^(?:["']|\/[/*]|<!--|-->|#!)/u.test(token) ? ' '
   : token[0] === '/' ? ` ${token.match(/\b(?:eval|with)\b/gu)?.join(' ') ?? ''} ` : token
+// The code from `from` to `to`, what lies between its tokens with them.
+function substitutionCode(text, from, to) {
+  for (let at = from, code = ''; ;) {
+    SUBSTITUTION.lastIndex = at
+    const match = SUBSTITUTION.exec(text)
+    if (!match || match.index >= to) return `${code}${text.slice(at, to)}`
+    const next = match[0][0] === '`' ? Math.min(templateEnd(text, match.index), to) : SUBSTITUTION.lastIndex
+    code += `${text.slice(at, match.index)}${substituted(text.slice(match.index, next))}`
+    at = next
+  }
+}
+// The code in a template's substitutions, a nested template's too.
 function substitutions(template) {
   let code = ''
   for (let i = 1; i < template.length - 1; i++) {
     if (template[i] === '\\') i++
     else if (template[i] === '$' && template[i + 1] === '{') {
-      let depth = 1, from = i + 2, match = null
-      SUBSTITUTION.lastIndex = from
-      while (depth > 0 && (match = SUBSTITUTION.exec(template))) {
-        depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0
-        code += `${template.slice(from, match.index)}${depth > 0 ? substituted(match[0]) : '\n'}`
-        from = SUBSTITUTION.lastIndex
-      }
-      if (depth > 0) return `${code}${template.slice(from)}`
-      i = match.index
+      const end = substitutionEnd(template, i + 2)
+      code += `${substitutionCode(template, i + 2, end - 1)}\n`
+      i = end - 1
     }
   }
   return code
@@ -248,8 +275,10 @@ function nameless(text) {
     between(gap, code)
     lineEnd(code)
     if (!match) break
-    const [token] = match
-    const first = token[0]
+    const first = match[0][0]
+    // A template whole, its nested ones in it.
+    if (first === '`') READ.lastIndex = templateEnd(text, match.index)
+    const token = first === '`' ? text.slice(match.index, READ.lastIndex) : match[0]
     if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)))) {
       // A division: the `/` is an operator, and what follows is read again.
       at = match.index
