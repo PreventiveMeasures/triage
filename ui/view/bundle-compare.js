@@ -142,8 +142,8 @@ class BundleCompare extends LitElement {
     // Sections that open on demand (Files, Import resolutions): a large
     // comparison lists thousands of rows.
     _openSections: { state: true },
-    // 'overview' | 'code' | 'diff' (COMPARE_MODES), and the file the Code
-    // view shows (null: its first changed file).
+    // 'overview' | 'code' (compareModeOf), and the file Code shows or
+    // scrolls to (null: its first changed file).
     _mode: { state: true },
     _codePath: { state: true },
   }
@@ -646,17 +646,13 @@ class BundleCompare extends LitElement {
   // with the line models found on the way, kept with the comparison.
   _combinedFor() {
     const diff = this._diffFor()
-    return diff.combined ??= combinedDiffRows(this._otherDetails, this.details, diff.files)
+    return diff.combined ??= combinedDiffRows(this._otherDetails, this.details, diff.files, { resolutions: diff.resolutions.changed })
   }
 
-  // Whether the Diff view is offered: only while its list is short enough to
-  // read whole.
+  // Whether Code lists every file's diff in one list (bundle-compare-all.js):
+  // only while that list is short enough to read whole; else a file at a
+  // time (bundle-compare-code.js).
   get _diffFits() { return this._combinedFor().rows < COMBINED_DIFF_MAX }
-
-  // The mode shown: a link to Diff for a longer list shows the Overview.
-  get _shownMode() {
-    return this._mode === 'diff' && !this._diffFits ? 'overview' : this._mode
-  }
 
   // Summary band — dependency, size and line deltas, then the file delta
   // with its bucket chips beside it (a removed, added or changed count of
@@ -703,9 +699,8 @@ class BundleCompare extends LitElement {
         </div>
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
-        ${[['overview', 'Overview'], ['code', 'Code'], ...this._diffFits ? [['diff', 'Diff']] : []]
-          .map(([mode, label]) => html`<button type="button" role="tab"
-          aria-selected=${String(this._shownMode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
+        ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
+          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
       </div>
     </div>`
   }
@@ -817,17 +812,18 @@ class BundleCompare extends LitElement {
       body = this._renderDiff()
     }
 
-    const mode = this._baseReady && ready ? this._shownMode : 'overview'
+    const mode = this._baseReady && ready ? this._mode : 'overview'
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
-      ${mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+      ${mode === 'code' && this._diffFits ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+          .models=${this._combinedFor().models} .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
+          @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
+        : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
-        : mode === 'diff' ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files}
-          .models=${this._combinedFor().models} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}></bundle-compare-all>`
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }

@@ -205,14 +205,16 @@ summary counts files, size and lines of code (non-blank lines of its text
 files) on each side; a file's lines are in its size's tooltip. Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
 Unattached bundles cannot be compared with each other. Past its Overview,
-Compare reviews the changes in **Code**, a file at a time beside the tree of
-changed files, its Previous and Next file buttons stepping through them in
-the tree's order, or in **Diff**, every changed file's diff one after another in
-a single list, each under its name, in the tree's order beside the same tree:
-picking a file there scrolls the list to it, and the file at the list's top
-is marked there as it scrolls. Diff is offered only while that list is
-under 8,000 rows, its folded unchanged runs and each file's head counted; a
-link to a longer one opens the Overview. Their lines always wrap. Both can hide whitespace changes, as
+Compare reviews the changes in **Code**, beside the tree of changed files.
+While every changed file's diff fits in a list of under 25,000 rows (its
+folded unchanged runs, each file's head and each repointed import counted),
+Code lists them all, one after another, each under its name, in the tree's
+order: picking a file in the tree scrolls the list to it, and the file at
+the list's top is marked there as it scrolls; a file whose only change is a
+repointed import lists those imports alone. Past that, Code shows a file at
+a time, its Previous and Next file buttons stepping through them in the
+tree's order. A link naming the older Diff mode opens Code. Lines always
+wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
@@ -933,7 +935,7 @@ no newline added or dropped after the last (none where names were not
 given), each checked by the server to be such a diff's blocks, in order and
 as many lines on either side. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429
-`diff-busy` past that, as a Diff view asks for every file it shows at once),
+`diff-busy` past that, as Code's one list asks for every file it shows at once),
 for at most a minute, its wait included (504 `diff-timeout`); a file that does
 not format is refused as by `pretty`. The last few answers are kept
 in memory by both files' hashes, each side read through the pretty-print
@@ -1234,7 +1236,7 @@ control. A version shows in the bundle view with four tabs:
   are pickers in the same order as for bundles, the version compared with
   first: picking the open side's opens that version compared with the same
   one, and picking the other side's swaps them. Code
-  and Diff review the changes as for bundles: with the pretty-print toggle
+  reviews the changes as for bundles: with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
   without JSX) minified on both sides, its names a minifier's, with the old

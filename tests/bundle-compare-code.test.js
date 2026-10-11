@@ -307,6 +307,22 @@ test('a repointed file stays a source view with its line links while whitespace 
   assert.doesNotMatch(markup, /Unified<\/button>/u)
 })
 
+test('the one-list Code lists a file whose only change is a repointed import by its imports alone, counting them', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const CompareAll = customElements.get('bundle-compare-all')
+  const code = view()
+  const all = new CompareAll()
+  for (const name of ['base', 'other', 'files', 'resolutions', 'baseName', 'otherName']) all[name] = code[name]
+  all.models = combinedDiffRows(code.base, code.other, code.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const sections = Object.fromEntries(renderText(all.render()).split('<section class="bundle-compare-all-file" aria-label=').slice(1)
+    .map(part => [part.slice(0, part.indexOf(' ')), part]))
+  assert.match(sections['src/server.js'], /Repointed import/u)
+  assert.doesNotMatch(sections['src/server.js'], /class=bundle-compare-diff-table|aria-label="Source"/u, 'not its whole source')
+  assert.equal(combinedDiffRows(code.base, code.other, code.files, { resolutions: code.resolutions }).rows,
+    combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]
@@ -456,9 +472,9 @@ test('the Diff view lists every changed file\'s diff in one list, in its rail\'s
   assert.deepEqual([...counted.models.keys()].toSorted(), heads.filter(path => path !== 'assets/logo.png').toSorted(), 'the line models found counting')
   // Counted only until it passes the limit; two rows a file at least, so too
   // many files for it are told without a diff.
-  const capped = combinedDiffRows(code.base, code.other, code.files, 13)
+  const capped = combinedDiffRows(code.base, code.other, code.files, { max: 13 })
   assert.ok(capped.rows >= 13 && Number.isFinite(capped.rows), `${capped.rows}`)
-  assert.equal(combinedDiffRows(code.base, code.other, code.files, 12).rows, Infinity)
+  assert.equal(combinedDiffRows(code.base, code.other, code.files, { max: 12 }).rows, Infinity)
 })
 
 test('a diff shows control characters as boxes, and a CRLF\'s CR only where it is what changed', () => {

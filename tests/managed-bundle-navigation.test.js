@@ -148,7 +148,7 @@ test('route rewrites locate the Code tab\'s file shown and its marked lines, or 
     'a file asked for by path has no number while sources load, and its path never goes in a route')
 })
 
-test('Compare links name the bundle compared with by slug, then /code or /diff while it reviews the changes', () => {
+test('Compare links name the bundle compared with by slug, then /code while it reviews the changes; an older /diff opens Code', () => {
   const entries = [managedBundleEntry(a), managedBundleEntry(b)]
   for (const team of [teams[0], null]) {
     const prefix = team ? `/team/${team.slug}` : '/manage'
@@ -157,9 +157,9 @@ test('Compare links name the bundle compared with by slug, then /code or /diff w
     assert.equal(managedRoutePath(route({ compareMode: 'code' })), `${prefix}/bundle/a/compare/b/code`)
     assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(`${prefix}/bundle/a/compare/b/code`, 'https://triage.test')), teams, [a, b]),
       { view: 'bundles', bundleTab: 'compare', teamId: team?.id ?? null, bundleId: a.id, compareId: b.id, compareMode: 'code' })
-    assert.equal(managedRoutePath(route({ compareMode: 'diff' })), `${prefix}/bundle/a/compare/b/diff`)
+    assert.equal(managedRoutePath(route({ compareMode: 'diff' })), `${prefix}/bundle/a/compare/b/code`)
     assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(`${prefix}/bundle/a/compare/b/diff`, 'https://triage.test')), teams, [a, b]),
-      { view: 'bundles', bundleTab: 'compare', teamId: team?.id ?? null, bundleId: a.id, compareId: b.id, compareMode: 'diff' })
+      { view: 'bundles', bundleTab: 'compare', teamId: team?.id ?? null, bundleId: a.id, compareId: b.id, compareMode: 'code' })
     assert.equal(managedRoutePath(route({ compareMode: 'split' })), `${prefix}/bundle/a/compare/b`, 'no mode it does not know')
   }
   assert.equal(managedRoutePath(managedBundleRoute(teams, entries[0], 'uuid-first', 'graph', { compareId: b.id }, entries)), '/team/first/bundle/a/graph',
@@ -183,7 +183,7 @@ test('route rewrites locate Compare\'s bundle and mode for the open bundle only'
     bundleCompare: { bundle: a.integrity, target: b.integrity, mode: 'overview' } }
   assert.deepEqual(managedCompareLocation(state), { compareId: b.id })
   assert.deepEqual(managedCompareLocation({ ...state, bundleCompare: { ...state.bundleCompare, mode: 'code' } }), { compareId: b.id, compareMode: 'code' })
-  assert.deepEqual(managedCompareLocation({ ...state, bundleCompare: { ...state.bundleCompare, mode: 'diff' } }), { compareId: b.id, compareMode: 'diff' })
+  assert.deepEqual(managedCompareLocation({ ...state, bundleCompare: { ...state.bundleCompare, mode: 'diff' } }), { compareId: b.id, compareMode: 'code' })
   assert.deepEqual(managedTabLocation(state), { compareId: b.id })
   assert.equal(managedCompareLocation(state, 'code'), null, 'only Compare names one')
   assert.equal(managedCompareLocation({ ...state, selectedBundle: b.integrity }), null, 'never another bundle\'s')

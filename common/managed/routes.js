@@ -3,14 +3,15 @@ import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
 import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
 
-// How Compare reviews the changes, past its Overview: `code`, a file at a
-// time beside the tree of changed files, or `diff`, every file's diff in
-// one list. A link names the mode after the bundle or version compared with.
+// How Compare reviews the changes, past its Overview: `code`, beside the
+// tree of changed files. A link names the mode after the bundle or version
+// compared with; an older one's `diff`, a mode since folded into Code,
+// opens Code.
 export const COMPARE_MODES = new Set(['code', 'diff'])
-export const compareModeOf = mode => COMPARE_MODES.has(mode) ? mode : 'overview'
+export const compareModeOf = mode => COMPARE_MODES.has(mode) ? 'code' : 'overview'
 // A route's `compareMode` field, where `mode` is one; none for the Overview.
-export const compareModeField = mode => COMPARE_MODES.has(mode) ? { compareMode: mode } : {}
-const compareModeSuffix = mode => COMPARE_MODES.has(mode) ? `/${mode}` : ''
+export const compareModeField = mode => COMPARE_MODES.has(mode) ? { compareMode: 'code' } : {}
+const compareModeSuffix = mode => COMPARE_MODES.has(mode) ? '/code' : ''
 
 export const MANAGED_PAGES = Object.freeze({
   manage: '/manage',
