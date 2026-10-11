@@ -87,6 +87,8 @@ const LET = /\s*[\p{L}_$[{]/uy
 // What ends a concise arrow's body or begins a conditional in it: a `?` (not
 // `?.`, `??`), a `:`, a `,` or a `;`.
 const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
+// What follows a key before its value: spaces or comments, then `:`.
+const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
 // What follows an `import` that is no module's, a call (`import(…)`): not
 // `import.meta`, a module's alone.
 const IMPORT_CALL = /\s*\(/uy
@@ -264,8 +266,10 @@ function nameless(text) {
     lineEnd(code)
     if (!match) break
     const first = match[0][0], token = match[0]
-    if (first === '/' && token[1] !== '/' && token[1] !== '*'
-      && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)) || VALUE_END.test(code.trimEnd()))) {
+    // `of` is a `for`'s in its `(…)` alone, a name elsewhere (`of / 2`).
+    const head = loops.at(-1)?.body === false && loops.at(-1).depth === opens.length - 1
+    if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last)
+      || (last?.length > 1 && (!BEFORE_VALUE.has(last) || (last === 'of' && !head))) || VALUE_END.test(code.trimEnd()))) {
       // A division: the `/` is an operator, and what follows is read again.
       at = match.index
       READ.lastIndex = at + 1
@@ -349,10 +353,14 @@ function nameless(text) {
         && !inComputed(declaration.depth)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
-      // after it; a private one, `#` before it (`this.#a`); or a label, after
-      // `break` or `continue` (`break a`), which a line break still ends.
+      // after it, in a key's place spaces or a comment between too (`{ a : x }`),
+      // not a conditional's (`c ? a : b`); a private one, `#` before it
+      // (`this.#a`); or a label, after `break` or `continue` (`break a`), which
+      // a line break still ends.
       const jump = last === 'break' || last === 'continue'
-      const property = last === '.' || last === '#' || text[at] === ':' || jump
+      KEYED.lastIndex = at
+      const keyed = text[at] === ':' || (keyPlace && KEYED.test(text))
+      const property = last === '.' || last === '#' || keyed || jump
       // A label where a statement starts (`a: {`), not a key: its block a block.
       if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
       program.push(token)
@@ -364,7 +372,7 @@ function nameless(text) {
       }
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
-      const read = text[at] === ':' || last === '.' || last === '#'
+      const read = keyed || last === '.' || last === '#'
       // A function expression's name is its own body's, a class expression's nobody's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
