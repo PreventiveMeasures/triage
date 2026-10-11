@@ -125,6 +125,13 @@
 .bundle-compare-metric-delta.up { color: var(--green); }
 .bundle-compare-metric-delta.down { color: var(--critical); }
 .bundle-compare-pct { font-weight: 500; color: var(--muted); }
+/* The file count and the chips that break it down, read as one. */
+.bundle-compare-files {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem .75rem;
+  flex-wrap: wrap;
+}
 .bundle-compare-chips {
   display: inline-flex;
   gap: .3rem;

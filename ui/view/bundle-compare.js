@@ -658,9 +658,10 @@ class BundleCompare extends LitElement {
     return this._mode === 'diff' && !this._diffFits ? 'overview' : this._mode
   }
 
-  // Summary band — file + size (+ dependency) deltas plus the four
-  // bucket chips, wrapping on their own so the mode tabs keep to the right
-  // of the first line. Sits under the picker once a comparison is live.
+  // Summary band — dependency, size and line deltas, then the file delta
+  // with its four bucket chips beside it, wrapping on their own so the mode
+  // tabs keep to the right of the first line. Sits under the picker once a
+  // comparison is live.
   _renderSummary(diff) {
     const totals = diff.totals
     const vt = diff.versionUpdates.totals
@@ -671,11 +672,11 @@ class BundleCompare extends LitElement {
     const depDelta = vt.otherDeps - vt.baseDeps
     const pct = formatPct(totals.byteDelta, totals.baseBytes)
     return html`<div class="bundle-compare-summary"><div class="bundle-compare-stats">
-      <div class="bundle-compare-metric">
-        <span class="bundle-compare-metric-label">Files</span>
-        <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
-        <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
-      </div>
+      ${showDeps ? html`<div class="bundle-compare-metric">
+        <span class="bundle-compare-metric-label">Deps</span>
+        <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(depDelta)}`}>${formatCountDelta(depDelta)}</span>
+      </div>` : nothing}
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Size</span>
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
@@ -686,17 +687,20 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-metric-value">${totals.baseLines.toLocaleString()} → ${totals.otherLines.toLocaleString()}</span>
         <span class=${`bundle-compare-metric-delta ${dirClass(totals.otherLines - totals.baseLines)}`}>${formatCountDelta(totals.otherLines - totals.baseLines)}</span>
       </div>` : nothing}
-      ${showDeps ? html`<div class="bundle-compare-metric">
-        <span class="bundle-compare-metric-label">Deps</span>
-        <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
-        <span class=${`bundle-compare-metric-delta ${dirClass(depDelta)}`}>${formatCountDelta(depDelta)}</span>
-      </div>` : nothing}
-      <div class="bundle-compare-chips">
-        <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
-        <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
-        <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
-        <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
-        ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+      <div class="bundle-compare-files">
+        <div class="bundle-compare-metric">
+          <span class="bundle-compare-metric-label">Files</span>
+          <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
+          <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
+        </div>
+        <div class="bundle-compare-chips">
+          <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
+          <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
+          <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
+          <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
+          ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+        </div>
+      </div>
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
         ${[['overview', 'Overview'], ['code', 'Code'], ...this._diffFits ? [['diff', 'Diff']] : []]
