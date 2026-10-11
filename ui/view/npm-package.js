@@ -66,11 +66,13 @@ export function npmEntryFile(field, files) {
 const npmEntryPath = field => field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
 
 // The bundle view's entry for a package version. It has no managed id, so
-// nothing reads it through the bundle routes; `npm` names the version.
+// nothing reads it through the bundle routes; `npm` names the version, and
+// when it was published where the server had that (else null).
 export function npmPackageEntry(data) {
   return {
     integrity: data.integrity, kind: 'sourcemap', name: `${data.name}@${data.version}`, size: data.tarballSize,
-    npm: { name: data.name, version: data.version, private: data.private === true, manifest: data.manifest ?? {} },
+    npm: { name: data.name, version: data.version, private: data.private === true, published: typeof data.published === 'string' ? data.published : null,
+      manifest: data.manifest ?? {} },
   }
 }
 
@@ -507,8 +509,9 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   // Its repository, at the commit it was published from where npm recorded
   // one, and in the directory its repository names, as a bundle's links.
   const origin = github ? bundleOriginLinks({ repo: { github, directory: manifest.github.directory ?? '', commit: manifest.gitHead } })[0] : null
-  // When it was published, once the package's versions arrive.
-  const published = npmVersionList(entry.npm.name).times?.[entry.npm.version]
+  // When it was published: as it came with the version, else once the
+  // package's versions arrive.
+  const published = entry.npm.published ?? npmVersionList(entry.npm.name).times?.[entry.npm.version]
   // Its name and version are the header's (render-bundle.js), the version
   // to switch to there too.
   return html`<dl class="bundles-detail-meta npm-facts">

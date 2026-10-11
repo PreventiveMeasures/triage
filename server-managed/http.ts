@@ -2505,13 +2505,16 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // them is asked for meanwhile, so that what is answered by the time they
     // are encoded comes with them (npmKnown), and the rest is on its way when
     // the viewer asks. Nothing waits on it, and a failure is left for the
-    // viewer's own request to meet. Its version list, read only for its
-    // advisories, is read only where registry reads leave room for readers'.
+    // viewer's own request to meet. Its whole document, read for its
+    // advisories' version list and the time each version was published
+    // (npmPublishTime), is read only where registry reads leave room for
+    // readers'.
     if (!download) {
       const quiet = (asked: Promise<unknown>) => { asked.catch(() => {}) }
       quiet(npmDownloads(name))
       quiet(latestDoc().then(found => found && githubFigures(found)))
-      quiet(readNpmVersions(name, privileged, controller.signal, { spare: true }).then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
+      quiet(readNpmVersions(name, privileged, controller.signal, { times: true, spare: true })
+        .then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
       if (repo !== null && sha !== null) quiet(npmCommitTags(repo, sha, doc.version, githubToken))
       if (!doc.private) quiet(npmSocketReport(name, doc.version))
     }

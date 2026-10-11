@@ -150,6 +150,7 @@ test('anyone with workspace access opens a public version, asked of the registry
   const versions = await h.send('/api/npm/versions?name=%40pub%2Fpkg')
   assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' } },
     'tags of unlisted versions are left out; when each was published, from the whole document')
+  assert.equal((await h.send(packagePath('@pub/pkg', '1.2.3'))).json().published, '2025-01-01T00:00:00.000Z', 'kept, once a whole document said it, for the version to carry')
   const download = await h.send('/api/npm/download?name=%40pub%2Fpkg&version=1.2.3')
   assert.equal(download.status, 200)
   assert.equal(download.headers['content-type'], 'application/gzip')
@@ -282,7 +283,7 @@ test('reads of a version share its load and its encoded body; four load at once,
   assert.ok(bodies.every(body => body === bodies[0]), 'one encoded body for every reader')
   assert.equal(downloadsOf(pkgs[0]), 1)
   assert.deepEqual(JSON.parse(brotliDecompressSync(bodies[0])), { name: 'shared-a', version: '1.0.0', private: false, integrity: pkgs[0].doc.dist.integrity,
-    tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]], known: {} })
+    tarballSize: pkgs[0].tgz.length, published: null, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]], known: {} })
   await Promise.all(others.map(other => other.result))
   // Done, but their readers are still writing them out.
   await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u, 'a body still being written keeps its place')

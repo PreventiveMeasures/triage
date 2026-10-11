@@ -633,9 +633,9 @@ const _bundleHighlightPending = new Set()
 const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
-// Pretty-print toggle for the Code tab's bar, on a minified file the server
-// can format (pretty-source.js): busy while its copy is asked for, and
-// saying why where it failed.
+// Pretty-print toggle for a source viewer's bar, beside its wrap toggle, on
+// a minified file the server can format (pretty-source.js): busy while its
+// copy is asked for, and saying why where it failed.
 const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
 function renderPrettyToggle(copy) {
   const status = copy?.status
@@ -643,6 +643,19 @@ function renderPrettyToggle(copy) {
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
     data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
     aria-label="Pretty-print" data-tooltip=${tooltip}>${PRETTY_ICON}</button>`
+}
+
+// The open file as a source viewer shows it: a pretty-printed copy, once it
+// has come, in the file's place, with none of the file's findings, marks or
+// line links, which are on the file's lines; `toggle` the pretty-print button
+// where the file can be formatted. `entry` the managed bundle or npm version
+// the file is of.
+function viewedSource(details, entry, path, content, fileFindings, lineFindings) {
+  const printable = prettyPrintable(details, entry, path, content)
+  const copy = printable ? prettyCopy(details, entry, path, content) : null
+  const pretty = copy?.status === 'ready'
+  return { pretty, toggle: printable ? renderPrettyToggle(copy) : nothing, content: pretty ? copy.text : content,
+    fileFindings: pretty ? [] : fileFindings, lineFindings: pretty ? new Map() : lineFindings }
 }
 
 // Auto-pick bookkeeping for the Code slide. When the pick ran
@@ -866,10 +879,11 @@ function bundleViewerFindings(details, path, content) {
 
 // Title bar shared by the source-viewer modal and the Search tab's
 // docked sidebar — path + the shared bundle-source-close action.
-function renderBundleSourceBar(path, history = null) {
+function renderBundleSourceBar(path, history = null, prettyToggle = nothing) {
   return html`<header class="bundle-source-bar">
       <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
+      ${prettyToggle}
       ${renderSourceWrapToggle()}
       <button
         type="button"
@@ -911,20 +925,22 @@ export function renderBundleSourceModal() {
   // the bodies. Neither tells us whether this file's content was bundled.
   const loading = !error && (!details || details.metadataOnly === true)
   const sources = bundleSourcesAsMap(details)
-  const content = sources.get(path)
   // Find this file's matched findings (bundle Issues filter: live +
   // in-progress + fixed + ignored, minus invalid / deleted) and bucket
   // by line so the gutter can stamp dots.
   // The map is also passed to the side panel: clicking a dot picks
   // the first finding on that line by default.
-  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, sources.get(path))
+  // The bundle it is of, among those listed, or the npm version open.
+  const entry = state.bundles?.find(bundle => bundle.integrity === details?.integrity) ?? (details?.npm ? { npm: details.npm } : null)
+  const viewed = loading || error ? null : viewedSource(details, entry, path, sources.get(path), fileFindings, lineFindings)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
-      ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path))}
+      ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path), viewed?.toggle)}
       <div class="bundle-source-body" aria-busy=${String(loading)}>
         ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
           : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`
-          : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
+          : renderBundleSourceCodeWrap(path, viewed.content, details, viewed.fileFindings, viewed.lineFindings, null, false, viewed.pretty)}
       </div>
     </div>
   </div>`
@@ -1569,17 +1585,10 @@ function renderBundleCodeFileNav(history) {
 // The stepper cycles the side panel through the open file's
 // findings in line order; its (idx, line) pairs ride in a JSON
 // attribute so the events.js delegate steps without re-deriving
-// the per-file findings. A pretty-printed copy, once it has come, shows in
-// the file's place, with its own stats and none of the file's findings,
-// marks or line links, which are on the file's lines.
+// the per-file findings. A pretty-printed copy (viewedSource) has its own stats.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
-  const printable = prettyPrintable(details, entry, path, sourceContent)
-  const copy = printable ? prettyCopy(details, entry, path, sourceContent) : null
-  const pretty = copy?.status === 'ready'
-  const content = pretty ? copy.text : sourceContent
-  const fileFindings = pretty ? [] : sourceFileFindings
-  const lineFindings = pretty ? new Map() : sourceLineFindings
+  const { pretty, toggle, content, fileFindings, lineFindings } = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
   const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
@@ -1612,7 +1621,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         data-tooltip-version=${github.package?.version ?? nothing}
       >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${packageIconFor(github.package.ecosystem)}</span>` : nothing}</a>` : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${printable ? renderPrettyToggle(copy) : nothing}
+      ${toggle}
       ${renderSourceWrapToggle()}
       ${typeof content === 'string'
         ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
@@ -1888,15 +1897,17 @@ function searchMatchLines(content, query, useRegex, caseSensitive) {
 // gutter highlight. Renders only once a result is clicked
 // (state.bundleSourceFile set); the × button clears it via the shared
 // bundle-source-close action.
-function renderBundleSearchSide(details, sources, matchLines) {
+function renderBundleSearchSide(details, sources, matchLines, entry) {
   const path = state.bundleSourceFile
   if (!path) return nothing
   const content = sources.get(path)
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
+  // A pretty-printed copy's lines aren't the file's, nor its matches.
+  const viewed = viewedSource(details, entry, path, content, fileFindings, lineFindings)
   return html`<aside class="bundle-search-side">
-    ${renderBundleSourceBar(path)}
+    ${renderBundleSourceBar(path, null, viewed.toggle)}
     <div class="bundle-source-body">
-      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines)}
+      ${renderBundleSourceCodeWrap(path, viewed.content, details, viewed.fileFindings, viewed.lineFindings, viewed.pretty ? null : matchLines, false, viewed.pretty)}
     </div>
   </aside>`
 }
@@ -1906,7 +1917,7 @@ function renderBundleSearchSide(details, sources, matchLines) {
 // sidebar. Reads its own query state (state.bundleSearchQuery /
 // bundleSearchRegex / bundleSearchCase) so it never fights the Code
 // tab's rail filter.
-function renderBundleSearchView(details) {
+function renderBundleSearchView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
@@ -1951,7 +1962,7 @@ function renderBundleSearchView(details) {
     </div>
     <div class="bundle-search-main">
       ${renderBundleSearchResults(details, sources, query, useRegex, caseSensitive, showContext)}
-      ${renderBundleSearchSide(details, sources, openMatchLines)}
+      ${renderBundleSearchSide(details, sources, openMatchLines, entry)}
     </div>
   </div>`
 }
@@ -2079,7 +2090,7 @@ function renderBundleSlide(entry) {
               ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
-              ['search', () => renderBundleSearchView(details)],
+              ['search', () => renderBundleSearchView(details, entry)],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
                 .source=${npm ? npmCompareSource(entry) : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],

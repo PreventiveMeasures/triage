@@ -222,11 +222,23 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
     const listed = { name, private: found.private, distTags, versions }
     if (!times) return listed
     const time = stringRecord(json['time']) ?? {}
-    return { ...listed, times: Object.fromEntries(versions.filter(version => isPublishTime(time[version])).map(version => [version, time[version]!])) }
+    const published = Object.fromEntries(versions.filter(version => isPublishTime(time[version])).map(version => [version, time[version]!]))
+    for (const [version, at] of Object.entries(published)) publishTimes.set(`${name}@${version}`, at)
+    while (publishTimes.size > PUBLISH_TIMES) publishTimes.delete(publishTimes.keys().next().value!)
+    return { ...listed, times: published }
   }, spare)
 }
 
 const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))
+
+// When each version was published, by `name@version`, as whole documents read
+// with `times` have said: a version keeps its time once published, so it is
+// kept for as long as the server runs, the first noted going first past a
+// bound, and answered only with the version, once its reader's access is.
+const PUBLISH_TIMES = 100_000
+const publishTimes = new Map<string, string>()
+
+export const npmPublishTime = (name: string, version: string): string | null => publishTimes.get(`${name}@${version}`) ?? null
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 

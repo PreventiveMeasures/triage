@@ -11,7 +11,7 @@ import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
 import { encodeBrotli } from './brotli.ts'
 import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument,
-  npmFileRows, npmToken, readLimited, readNpmTar } from './npm-packages.ts'
+  npmFileRows, npmPublishTime, npmToken, readLimited, readNpmTar } from './npm-packages.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
 // A tarball larger than that cannot unpack within it, so it is refused as it
@@ -194,20 +194,22 @@ export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]>
 }
 
 // The version as the viewer reads it, as brotli-encoded JSON: `{ name,
-// version, private, integrity, tarballSize, manifest, files, known }`, its
-// files as npmFileRows gives them, and with them what `known` gives as its
-// files are encoded: what is kept about its package (npm-insights.ts
-// npmKnown), which the viewer need not then ask for. Encoding is where a load
-// holds the most, so it takes its place among the active loads until its body
-// is done, and readers asking meanwhile share that body, the first one's
-// manifest and `known` in it; nothing is kept once its readers are done.
+// version, private, integrity, tarballSize, published, manifest, files,
+// known }`, its files as npmFileRows gives them, and with them, as its files
+// are encoded, when it was published where that is kept (npmPublishTime,
+// else null) and what `known` gives: what is kept about its package
+// (npm-insights.ts npmKnown), which the viewer need not then ask for. Encoding
+// is where a load holds the most, so it takes its place among the active
+// loads until its body is done, and readers asking meanwhile share that body,
+// the first one's manifest and `known` in it; nothing is kept once its readers
+// are done.
 export function loadNpmPackageBody(doc: NpmVersionDocument, known: () => object = () => ({})): NpmLoad<Buffer> {
   return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
     const tarball = await readTarball(doc)
     const files = await readFiles(tarball)
     return encodeBrotli(Buffer.from(JSON.stringify({
       name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: npmFileRows(files), known: known(),
+      published: npmPublishTime(doc.name, doc.version), manifest: doc.manifest, files: npmFileRows(files), known: known(),
     })))
   })
 }

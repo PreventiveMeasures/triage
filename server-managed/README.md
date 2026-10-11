@@ -852,8 +852,9 @@ Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
 `GET /api/bundles/:id/pretty?path=&hash=` returns one of its files
-pretty-printed, as Brotli-encoded `text/plain`, for the Code tab's
-pretty-print toggle; the npm viewer's `GET /api/npm/pretty` is the same for a
+pretty-printed, as Brotli-encoded `text/plain`, for the pretty-print toggle
+beside the wrap toggle of the Code tab, the source popup and the Search tab's
+source; the npm viewer's `GET /api/npm/pretty` is the same for a
 package version's files. The file is named by its path and the hash the
 metadata gives it (`sha512-<base64>` of its UTF-8 text); only JavaScript,
 TypeScript, JSX, CSS and JSON files of at most 4 MiB are formatted, with
@@ -1173,10 +1174,14 @@ as long after each failure in a row up to five minutes, on a repaint scheduled
 for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
-integrity, tarballSize, manifest, files, known }`, the manifest's `publisher` the npm
+integrity, tarballSize, published, manifest, files, known }`, the manifest's `publisher` the npm
 account that published it (never its email), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
-'sha256-<base64>']`. `version` defaults to `latest`. `known` carries what the
+'sha256-<base64>']`. `version` defaults to `latest`. `published` is when the
+version was published (ISO), null until a read of the package's whole
+document has said: a version's time never changes once published, so every
+one such a read gives is kept while the server runs (up to 100,000), and the
+Overview needn't wait for the version list to show it. `known` carries what the
 server already keeps about the package, so the viewer need not ask for it:
 `stats`, `advisories`, `tags` and `socket`, each as its own route below
 answers it, `stats` where the figures of the repository the latest version
@@ -1185,8 +1190,9 @@ version, and `tags` and `socket` for this version. While the version's files
 load, the server asks for each of these itself, as its route would, so that
 what is answered by the time the files are encoded comes with them; nothing
 waits on it, and what isn't answered yet is left out, for the viewer's own
-request to share. The advisories' version list is read for this only where
-registry reads leave room for two more of readers' own. The version list the
+request to share. The package's whole document, read for this for its
+advisories' version list and when each version was published, is read only
+where registry reads leave room for two more of readers' own. The version list the
 viewer shows, never kept, is always asked for apart. A version naming no
 repository or commit has no tags to ask for, and a private one no Socket
 report. `GET

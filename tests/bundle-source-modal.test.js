@@ -491,6 +491,23 @@ test('Code offers a managed bundle\'s minified code pretty-printed, beside the w
   assert.ok(!header(managed, 'src/index.js').includes('data-bundle-source-pretty'), 'readable code is not offered it')
 })
 
+test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, beside the wrap toggle', () => {
+  const minified = `${'var a=1;'.repeat(200)}\n`
+  const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }
+  const managed = { name: 'app.map', integrity: 'sha512-pretty-popup', managedId: 'b2' }
+  const open = (tab, file) => Object.assign(state, { currentView: tab ? 'bundles' : 'findings', bundleDetailsTab: tab ?? 'overview', selectedBundle: managed.integrity,
+    bundles: [managed], bundleSourceFile: file, bundleSearchQuery: '', bundleSourcePretty: false,
+    bundleDetails: { kind: 'sourcemap', integrity: managed.integrity, size: 123, json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources) } } })
+  const bar = markup => markup.match(/<header class="bundle-source-bar">(.*?)<\/header>/su)[1]
+  for (const [where, shown] of [['popup', () => renderBundleSourceModal()], ['search', () => renderBundlesList([managed])]]) {
+    open(where === 'search' ? 'search' : null, 'dist/app.min.js')
+    const offered = bar(renderText(shown()))
+    assert.match(offered, /data-bundle-source-pretty[^>]*aria-pressed=false[^>]*aria-label="Pretty-print".*data-bundle-source-wrap/su, where)
+    open(where === 'search' ? 'search' : null, 'src/index.js')
+    assert.ok(!bar(renderText(shown())).includes('data-bundle-source-pretty'), `${where}: readable code is not offered it`)
+  }
+})
+
 test('Code own files in a managed bundle without a stamp link to its stored repository and directory', () => {
   const bundle = Bundle.parse(new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }]]) }).serialize())
   const stored = { repoId: 7, repoFullName: 'org/app', repoDirectory: 'apps/web' }

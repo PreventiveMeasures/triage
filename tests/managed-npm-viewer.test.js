@@ -174,8 +174,9 @@ test('Code opens on what main names, resolved as require would', () => {
 test('a version shows as a bundle of its files, sized by their bytes, text alone as source', () => {
   const entry = npmPackageEntry(data)
   assert.deepEqual(entry, { integrity: 'sha512-pkg', kind: 'sourcemap', name: '@scope/pkg@1.2.3', size: 99,
-    npm: { name: '@scope/pkg', version: '1.2.3', private: false, manifest: data.manifest } })
+    npm: { name: '@scope/pkg', version: '1.2.3', private: false, published: null, manifest: data.manifest } })
   assert.equal(entry.managedId, undefined, 'never read through the bundle routes')
+  assert.equal(npmPackageEntry({ ...data, published: '2025-01-01T00:00:00.000Z' }).npm.published, '2025-01-01T00:00:00.000Z', 'when it was published, where the server had that')
   const details = npmPackageDetails(entry, data)
   assert.deepEqual([...bundleSourcesAsMap(details).keys()], ['README.md', 'lib/index.js', 'package.json'])
   assert.deepEqual([...bundleFileSizes(details)], [['README.md', 6], ['lib/index.js', 10], ['logo.png', 4], ['package.json', 2]])
