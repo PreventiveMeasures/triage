@@ -16,16 +16,6 @@ export function managedBundleStats(bundle) {
   return parts.join(' · ')
 }
 
-// Two letters for a team in the collapsed sidebar: the initials of its first
-// two words, or the first two letters of a one-word name ("Security fixtures"
-// → "SF", "Frontend" → "Fr").
-export function teamLetters(name) {
-  const words = String(name ?? '').split(/[\s\-_/.]+/u).filter(Boolean)
-  if (words.length > 1) return words.slice(0, 2).map(word => Array.from(word)[0].toUpperCase()).join('')
-  const [first = '', second = ''] = Array.from(words[0] ?? '')
-  return first.toUpperCase() + second.toLowerCase()
-}
-
 // Filter only the loaded catalogue. Keep the original team for click handlers
 // so opening a team still loads all of its reports, not just the search results.
 export function filterManagedTeams(teams, query = '') {

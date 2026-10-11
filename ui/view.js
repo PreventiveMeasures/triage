@@ -339,7 +339,11 @@ async function restoreInitialView() {
       const savedTab = spaceIdx >= 0 ? rest.slice(spaceIdx + 1) : ''
       const tab = BUNDLE_TABS.has(savedTab) ? savedTab : 'overview'
       if ((state.bundles ?? []).some((b) => b.integrity === integrity)) {
-        selectBundle(integrity, tab)
+        // The pointer keeps no workspace: restore it when one workspace
+        // holds the bundle, as opening it from that row would, so its row
+        // and the collapsed sidebar mark it current.
+        const owners = listWorkspaces().filter((w) => w.bundles.includes(integrity))
+        selectBundle(integrity, tab, { workspaceId: owners.length === 1 ? owners[0].id : null })
         render()
         openBundle(integrity)
         // The first sidebar paint predates selection. Reveal the restored
