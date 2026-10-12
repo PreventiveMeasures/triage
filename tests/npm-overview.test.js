@@ -783,11 +783,11 @@ test('Compare flags the hosts the open version\'s code names that the one compar
     'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\nget("https://docs.new.dev/errors")\n', 'lib/new.js': 'get("https://cdn.jsdelivr.net/y")\nbot("https://api.telegram.org/bot")\n',
     'README.md': 'See https://docs.new.dev\n', 'lib/geo.js': 'get("https://ipinfo.io/json?x")\n' })
   const flagged = await badges(base, other)
-  assert.match(flagged, /<li><span class="npm-extension is-warn npm-compare-hosts"[^]*?<span>New hosts<\/span><span class="npm-extension-count">3<\/span><\/span><\/li>/u,
+  assert.match(flagged, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New hosts<\/span><span class="npm-extension-count">3<\/span><\/span><\/li>/u,
     'in orange, how many')
   const hostRows = /compare-tip-head">New hosts<\/div>\s*<div class="compare-tip-rows is-files">([^]*?)<\/div>/u.exec(flagged)[1]
   assert.deepEqual([...hostRows.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, name, at]) => `${name}: ${at}`),
-    ['api.telegram.org: lib/new.js (line 2)', 'webhook.site: lib/api.js (line 2)', 'docs.new.dev: lib/old.js (line 2)'],
+    ['api.telegram.org: lib/new.js, line 2', 'webhook.site: lib/api.js, line 2', 'docs.new.dev: lib/old.js, line 2'],
     'each with where it is first named; not one the version compared with\'s code named, in another file too, nor one in a comment, nor its readme\'s')
   assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-exfiltration[^]*?<span>Exfiltration<\/span><span class="npm-extension-count">webhook\.site, Telegram<\/span><\/span><\/li>/u,
     'in red, the services named; not ipinfo, which lib/geo.js named already')

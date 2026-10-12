@@ -74,20 +74,22 @@ export function npmRunsCode(path, text) {
   const found = new Map()
   read(text, 0, (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset]))
   if (found.size === 0) return null
-  // Each offset's line, one more than the line breaks before it.
-  const breaks = [...text.matchAll(/\n/gu)].map(({ index }) => index)
-  return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(offset => below(breaks, offset) + 1))].toSorted((a, b) => a - b)]))
+  const line = lineOf(text)
+  return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(line))].toSorted((a, b) => a - b)]))
 }
 
-// npmRunsCode of a bundle's file, by bundle and path, read once for the npm
-// Overview's Files list and Compare.
-const readFiles = new WeakMap()
-export function npmFileRunsCode(details, path, text) {
-  let files = readFiles.get(details)
-  if (!files) readFiles.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, npmRunsCode(path, text))
-  return files.get(path)
+// `scan` (path, text) of a bundle's file, by bundle and path, read once for
+// the npm Overview's Files list and Compare.
+export function cachedPerFile(scan) {
+  const byDetails = new WeakMap()
+  return (details, path, text) => {
+    let files = byDetails.get(details)
+    if (!files) byDetails.set(details, files = new Map())
+    if (!files.has(path)) files.set(path, scan(path, text))
+    return files.get(path)
+  }
 }
+export const npmFileRunsCode = cachedPerFile(npmRunsCode)
 
 // Where code (a file's, or a template literal's substitution's, at `base` in
 // the file) runs a kind, as at(kind, offset), in order: its calls, a string
@@ -152,25 +154,29 @@ function closing(text, from) {
   return text.length
 }
 
-// How many of a sorted list's numbers are below a value.
-function below(sorted, value) {
-  let high = sorted.length, low = 0
-  while (low < high) {
-    const middle = (low + high) >> 1
-    if (sorted[middle] < value) low = middle + 1
-    else high = middle
+// Each offset in a text as its line: one more than the line breaks before it.
+export function lineOf(text) {
+  let breaks = null
+  return offset => {
+    breaks ??= [...text.matchAll(/\n/gu)].map(({ index }) => index)
+    let high = breaks.length, low = 0
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (breaks[middle] < offset) low = middle + 1
+      else high = middle
+    }
+    return low + 1
   }
-  return low
 }
 
-const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
+export const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
   : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')} more` : ''}`
 
-// The kinds `found` holds (npmRunsCode's) that `was` didn't, each with its
-// lines: those new to a file, as its tags say (npmRunsCodeTags), `was` null
-// for one the version compared with didn't hold, or held none in. Null for
-// none.
-export function npmRunsCodeAdded(found, was) {
+// What `found` holds (npmRunsCode's kinds, file-hosts.js's services) that
+// `was` didn't, each with its lines: what is new to a file, as its tags say,
+// `was` null for one the version compared with didn't hold, or held none in.
+// Null for none.
+export function npmFoundAdded(found, was) {
   if (!found) return null
   const added = new Map([...found].filter(([kind]) => !was?.has(kind)))
   return added.size > 0 ? added : null

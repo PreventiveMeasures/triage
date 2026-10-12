@@ -12,7 +12,7 @@
 // labels is not one that sends nothing.
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT, NPM_PROSE } from './file-readability.js'
-import { npmIsScript } from './file-runs-code.js'
+import { cachedPerFile, lineOf, linesNote, npmIsScript } from './file-runs-code.js'
 
 // A URL's host: a name whose last label is letters (an internationalized
 // one's too, as written or as punycode), or an IPv4 address, after its
@@ -27,21 +27,6 @@ const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)
 // tests (RFC 2606, RFC 6761) and local networks, and W3C's, whose URLs name
 // XML namespaces.
 const LOCAL = /^(?:localhost|.+\.(?:localhost|local|test|invalid|example|internal)|(?:.+\.)?example\.(?:com|net|org)|127(?:\.\d+){3}|0\.0\.0\.0|(?:.+\.)?w3\.org)$/u
-
-// Where each offset is, as its line: one more than the line breaks before it.
-function lineOf(text) {
-  let breaks = null
-  return offset => {
-    breaks ??= [...text.matchAll(/\n/gu)].map(({ index }) => index)
-    let high = breaks.length, low = 0
-    while (low < high) {
-      const middle = (low + high) >> 1
-      if (breaks[middle] < offset) low = middle + 1
-      else high = middle
-    }
-    return low + 1
-  }
-}
 
 // What a regular expression escapes in a URL, its slashes and dots
 // (`/https:\/\/api\.example\.com/`), as a string may its slashes
@@ -106,31 +91,8 @@ export function npmExfiltration(path, text) {
   return found.size > 0 ? found : null
 }
 
-// npmHosts and npmExfiltration of a bundle's file, by bundle and path, each
-// read once for the Files list and Compare.
-function cached(read) {
-  const byDetails = new WeakMap()
-  return (details, path, text) => {
-    let files = byDetails.get(details)
-    if (!files) byDetails.set(details, files = new Map())
-    if (!files.has(path)) files.set(path, read(path, text))
-    return files.get(path)
-  }
-}
-export const npmFileHosts = cached(npmHosts)
-export const npmFileExfiltration = cached(npmExfiltration)
-
-const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
-  : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')} more` : ''}`
-
-// The services `found` names that `was` didn't, each with its lines: those new
-// to a file, `was` null for one the version compared with didn't hold. Null
-// for none.
-export function npmExfiltrationAdded(found, was) {
-  if (!found) return null
-  const added = new Map([...found].filter(([service]) => !was?.has(service)))
-  return added.size > 0 ? added : null
-}
+export const npmFileHosts = cachedPerFile(npmHosts)
+export const npmFileExfiltration = cachedPerFile(npmExfiltration)
 
 // The services any of `founds` names, by name, in their order: `webhook.site, Telegram`.
 export const npmExfiltrationNames = founds => [...EXFILTRATION].filter(([service]) => founds.some(found => found.has(service))).map(([, { name }]) => name).join(', ')

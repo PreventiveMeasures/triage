@@ -22,8 +22,8 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmRunsCodeAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
-import { npmExfiltrationAdded, npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
+import { npmFileRunsCode, npmFoundAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -656,14 +656,14 @@ function fileBadges(base, other, files) {
   const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
   const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
   const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
-  const runs = (details, path) => npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path))
-  const runsCode = [...files.onlyOther, ...changed]
-    .map(row => ({ path: row.path, added: npmRunsCodeAdded(runs(other, row.path), added.has(row) ? null : runs(base, row.basePath ?? row.path)) }))
-    .filter(row => row.added)
-  const exfiltration = (details, path) => npmFileExfiltration(details, path, bundleFilesAsMap(details).get(path))
-  const exfiltrating = [...files.onlyOther, ...changed]
-    .map(row => ({ path: row.path, added: npmExfiltrationAdded(exfiltration(other, row.path), added.has(row) ? null : exfiltration(base, row.basePath ?? row.path)) }))
-    .filter(row => row.added)
+  // The files that hold, as `read` reads them (npmFileRunsCode,
+  // npmFileExfiltration), what they didn't before, each with that.
+  const gained = read => {
+    const of = (details, path) => read(details, path, bundleFilesAsMap(details).get(path))
+    return [...files.onlyOther, ...changed].map(row => ({ path: row.path, added: npmFoundAdded(of(other, row.path), added.has(row) ? null : of(base, row.basePath ?? row.path)) }))
+      .filter(row => row.added)
+  }
+  const exfiltrating = gained(npmFileExfiltration), runsCode = gained(npmFileRunsCode)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
       'What the code runs beyond itself, new to the file: a string run as code (eval, Function) or other programs (child_process)',
@@ -702,32 +702,27 @@ function hostsBadge(base, other, files) {
   const found = new Map(), known = hostsOf(base)
   for (const { path } of [...files.onlyOther, ...files.changed]) {
     for (const [name, line] of npmFileHosts(other, path, bundleFilesAsMap(other).get(path)) ?? []) {
-      if (!known.has(name) && !found.has(name)) found.set(name, `${path} (line ${line})`)
+      if (!known.has(name) && !found.has(name)) found.set(name, { path: name, at: `${path}, line ${line}` })
     }
   }
-  if (found.size === 0) return nothing
-  const label = found.size === 1 ? 'New host' : 'New hosts'
-  const shown = [...found].slice(0, TIP_FILES)
-  const more = found.size > shown.length ? `and ${(found.size - shown.length).toLocaleString('en')} more` : null
-  return html`<li><span class="npm-extension is-warn npm-compare-hosts"
-    data-tooltip=${`${label}: ${[...shown.map(([name, at]) => `${name}, ${at}`), ...more ? [more] : []].join('; ')}`}
-    .tooltipContent=${html`<div class="compare-tip">
-      <div class="compare-tip-head">${label}</div>
-      <div class="compare-tip-rows is-files">${shown.map(([name, at]) => html`<span class="compare-tip-path">${name}</span><span class="compare-tip-said">${at}</span>`)}</div>
-      ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-      <div class="compare-tip-note">Hosts the open version's code names in a URL, its comments aside, that the version compared with's named in none of its</div>
-    </div>`}>
-    <span>${label}</span><span class="npm-extension-count">${found.size === 1 ? [...found.keys()][0] : found.size.toLocaleString('en')}</span></span></li>`
+  const rows = [...found.values()]
+  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at,
+    'Hosts the open version\'s code names in a URL, its comments aside, that the version compared with\'s named in none of its', rows.length === 1 ? rows[0].path : null)
 }
 
-// A chip on `rows`, files the open version adds or changes, counting them
-// where there are several, or saying `value` of them all, the files in its
-// tooltip alone, each with what `said` of it.
-function fileBadge(kind, label, rows, said, note, value = null) {
+// A chip on `rows`, files the open version adds or changes, in red.
+function fileBadge(kind, ...rest) {
+  return listBadge(`npm-compare-file ${kind}`, ...rest)
+}
+
+// A chip on `rows`, each with a `path`, counting them where there are
+// several, or saying `value` of them all, the rows in its tooltip alone, each
+// with what `said` of it.
+function listBadge(classes, label, rows, said, note, value = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
-  return html`<li><span class=${`npm-extension npm-compare-file ${kind}`}
+  return html`<li><span class=${`npm-extension ${classes}`}
     data-tooltip=${`${label}: ${[...shown.map(row => `${row.path} (${said(row)})`), ...more ? [more] : []].join(', ')}`}
     .tooltipContent=${html`<div class="compare-tip">
       <div class="compare-tip-head">${label}</div>

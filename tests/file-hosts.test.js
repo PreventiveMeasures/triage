@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmExfiltration, npmExfiltrationAdded, npmExfiltrationNames, npmExfiltrationSaid, npmHosts } from '../ui/view/file-hosts.js'
+import { npmExfiltration, npmExfiltrationNames, npmExfiltrationSaid, npmHosts } from '../ui/view/file-hosts.js'
+import { npmFoundAdded } from '../ui/view/file-runs-code.js'
 
 const hosts = (path, text) => {
   const found = npmHosts(path, text)
@@ -60,9 +61,9 @@ test('a file names the hosts malicious packages send what they take to, wherever
 test('the services new to a file, named in their order, each with its lines', () => {
   const was = npmExfiltration('a.js', 'post("https://webhook.site/x")\n')
   const now = npmExfiltration('a.js', 'bot("https://api.telegram.org/bot")\npost("https://webhook.site/x")\n')
-  assert.deepEqual(Object.fromEntries(npmExfiltrationAdded(now, was)), { telegram: [1] })
-  assert.equal(npmExfiltrationAdded(was, now), null, 'none it named already')
-  assert.deepEqual(Object.fromEntries(npmExfiltrationAdded(now, null)), { 'webhook-site': [2], telegram: [1] }, 'all of a file the version compared with didn\'t hold')
+  assert.deepEqual(Object.fromEntries(npmFoundAdded(now, was)), { telegram: [1] })
+  assert.equal(npmFoundAdded(was, now), null, 'none it named already')
+  assert.deepEqual(Object.fromEntries(npmFoundAdded(now, null)), { 'webhook-site': [2], telegram: [1] }, 'all of a file the version compared with didn\'t hold')
   assert.equal(npmExfiltrationNames([now, was]), 'webhook.site, Telegram')
   assert.equal(npmExfiltrationSaid(now, was), 'webhook.site (line 2), Telegram (line 1, new)')
 })
