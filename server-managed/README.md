@@ -1163,7 +1163,12 @@ control. A version shows in the bundle view with four tabs:
   GitHub repository with its stars, forks, open issues and open pull requests
   (GitHub counts them together; the pull requests are counted apart from its
   list of them, and where that fails they show together), publish commit with
-  the tags that point to it, homepage (left out where it only leads to its
+  the tags that point to it, provenance for a public package (npm's SLSA
+  statement, v1 or the v0.2 it first wrote: what built it, as GitHub Actions on
+  GitHub's runners or the publisher's own; from which repository at which
+  commit, flagged where that isn't the repository the package names; and
+  how: its workflow, at that commit, its run and its Sigstore transparency
+  log entry; None where npm keeps none), homepage (left out where it only leads to its
   GitHub repository, or its directory or readme there, as npm's default
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
@@ -1254,7 +1259,9 @@ control. A version shows in the bundle view with four tabs:
   calls for a look: a publisher that changed, where npm names the account
   that published each version and they differ (`~alice → ~bob`, as when a
   package changes hands, or is taken over), linking to the new one's
-  profile; the advisories affecting either version, counted from
+  profile; provenance lost, where the one compared with has npm provenance
+  and the open one hasn't, as a version published by hand with a token taken
+  from its maintainers wouldn't; the advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where
   none does, its tooltip a row for each version's, their severities in
@@ -1339,7 +1346,8 @@ for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, published, manifest, files, known }`, the manifest's `publisher` the npm
-account that published it (never its email), and each file row `[path,
+account that published it (never its email), its `provenance` true where npm
+keeps a provenance statement for it, and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `published` is when the
 version was published (ISO), null until a read of the package's whole
@@ -1347,7 +1355,7 @@ document has said: a version's time never changes once published, so every
 one such a read gives is kept while the server runs (up to 100,000), and the
 Overview needn't wait for the version list to show it. `known` carries what the
 server already keeps about the package, so the viewer need not ask for it:
-`stats`, `advisories`, `tags` and `socket`, each as its own route below
+`stats`, `advisories`, `tags`, `socket` and `provenance`, each as its own route below
 answers it, `stats` where the figures of the repository the latest version
 names are kept too, `advisories` where kept for a version list that has this
 version, and `tags` and `socket` for this version. While the version's files
@@ -1404,6 +1412,16 @@ time) and `alerts` most severe first, each
 `{ type, severity, category, file, note }`, `file` its path in the package;
 null where Socket has none. Socket is asked only about a version npm answers
 for without a token: a private package's name never leaves for it. `GET
+/api/npm/provenance?name=&version=` returns `{ name, version, provenance }`:
+npm's provenance for the version, `{ repository, commit, workflow, ref,
+builder, run, logIndex }` (its source repository and the run as https URLs,
+each part null where the statement doesn't say), read from the SLSA
+statement npm's registry keeps beside it (v1, or v0.2, whose run is made
+GitHub's URL), only where the statement names this version's tarball by its
+name, version and sha512 digest; its signature isn't checked here, as npm
+checks it when the version is published. null where npm keeps none, and for
+a private package; asked only where the version's manifest says npm keeps
+one, without a token, kept for an hour, and a failure answered as one. `GET
 /api/npm/pretty?name=&version=&path=&hash=` returns one of the version's files
 pretty-printed, formatted and checked as a bundle's are (`GET
 /api/bundles/:id/pretty`), its hash the `sha512-<base64>` of the file's bytes,

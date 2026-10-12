@@ -122,6 +122,10 @@ export function fetchNpmSocket(name, version, { signal } = {}) {
   return requestNpm('socket', { name, version }, signal)
 }
 
+export function fetchNpmProvenance(name, version, { signal } = {}) {
+  return requestNpm('provenance', { name, version }, signal)
+}
+
 const PRETTY_ERRORS = {
   404: 'This file is no longer available.',
   409: 'This file has changed since it was opened.',

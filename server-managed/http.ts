@@ -58,6 +58,7 @@
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404
+//   GET  /api/npm/provenance?name=&version= → npm's provenance for a public version | 400/401/404/502
 //   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/504
@@ -128,6 +129,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
+import { npmProvenance } from './npm-provenance.ts'
 import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
 import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
@@ -178,9 +180,10 @@ const NPM_STATS_PATH = '/api/npm/stats'
 const NPM_ADVISORIES_PATH = '/api/npm/advisories'
 const NPM_TAGS_PATH = '/api/npm/tags'
 const NPM_SOCKET_PATH = '/api/npm/socket'
+const NPM_PROVENANCE_PATH = '/api/npm/provenance'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
 const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
-const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PRETTY_PATH,
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
   NPM_RENAME_DIFF_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
@@ -2425,14 +2428,14 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,pretty,rename-diff}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH || path === NPM_PRETTY_PATH
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH || path === NPM_PROVENANCE_PATH || path === NPM_PRETTY_PATH
     || path === NPM_RENAME_DIFF_PATH
   const otherSpec = params.get('otherVersion') ?? ''
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))) {
@@ -2525,6 +2528,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, socket })
       return
     }
+    // npm's provenance, asked only where its version says npm keeps one, and
+    // npm answers for the version without a token; a failure is answered as
+    // one, for the viewer to ask again.
+    if (path === NPM_PROVENANCE_PATH) {
+      const provenance = doc.private || doc.manifest['provenance'] !== true ? null : await npmProvenance(name, doc.version, doc.dist.integrity)
+      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, provenance })
+      return
+    }
     // One of its files pretty-printed (pretty-print.ts), from a copy kept
     // for a public version.
     if (file) {
@@ -2570,6 +2581,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
         .then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
       if (repo !== null && sha !== null) quiet(npmCommitTags(repo, sha, doc.version, githubToken))
       if (!doc.private) quiet(npmSocketReport(name, doc.version))
+      if (!doc.private && doc.manifest['provenance'] === true) quiet(npmProvenance(name, doc.version, doc.dist.integrity))
     }
     const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, repo, sha))
     res.once('close', load.release)

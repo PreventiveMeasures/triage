@@ -3353,6 +3353,22 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   &:hover { color: var(--text); }
 }
 .bundles-detail-meta :is(.npm-commit-missing, .npm-publisher) { color: var(--muted); }
+/* Its provenance: what built it from where, then how, smaller, each part
+   apart from the next by a dot. */
+.npm-provenance { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.npm-provenance-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .4rem;
+
+  &.is-how { font-size: .72rem; }
+}
+.npm-provenance-sep { color: var(--muted); }
+/* A version built from another repository than the one its package names. */
+.npm-provenance-elsewhere {
+  padding: 0 .35rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--high) 18%, var(--bg)); border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
+  font-size: .7rem;
+}
 .bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
 .npm-github-archived {
   padding: 0 .35rem;
@@ -3643,6 +3659,11 @@ a.npm-compare-publisher {
   & .npm-extension-count { color: color-mix(in srgb, var(--high) 60%, var(--text)); }
   &:hover { border-color: var(--high); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+/* Provenance the open version lost: a stronger warning than a publisher's. */
+.npm-extension.npm-compare-provenance {
+  color: var(--text);
+  background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {

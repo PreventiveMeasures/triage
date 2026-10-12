@@ -169,6 +169,8 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
     if (record && Object.keys(record).length > 0) pick[key] = record
   }
   if (json['hasInstallScript'] === true) pick['hasInstallScript'] = true
+  // Whether npm keeps a provenance statement for it (npm-provenance.ts).
+  if (plainObject(json['dist']) && plainObject(json['dist']['attestations']) && plainObject(json['dist']['attestations']['provenance'])) pick['provenance'] = true
   // The scripts npm runs installing it from the registry; not `prepare`,
   // which runs only for a local or git install.
   const scripts = stringRecord(json['scripts'])

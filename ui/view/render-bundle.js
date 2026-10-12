@@ -39,7 +39,7 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2647,7 +2647,7 @@ function renderNpmPackageOverview(entry, details) {
     <div class="bundles-overview-exports-row">${npmPackageLinks(entry)}${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
-    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, { overviewClass: 'npm-overview' })
+    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry) }), exportsCol, { overviewClass: 'npm-overview' })
   }
   // Files lists every file, tagged by what its bytes hold; the binary ones,
   // which have no text to show, are listed again in a column of their own.
@@ -2657,7 +2657,7 @@ function renderNpmPackageOverview(entry, details) {
   const { paths, binaries, byPath, content } = npmFilesRead(details)
   // Socket's alerts on the files they name, beside each one's tag.
   const alerts = npmSocketFileAlerts(entry.npm)
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
