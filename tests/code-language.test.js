@@ -25,7 +25,7 @@ test('Stasis formats drive syntax and icons even without or despite a filename e
 
 test('missing and unrecognized formats fall back to filename detection', () => {
   for (const format of [undefined, null, '', 'future-format', 'constructor', '__proto__']) {
-    for (const [path, lang, icon] of [['file.CJS', 'javascript', 'js'], ['file.tsx', 'tsx', 'ts'], ['file.py', 'python', 'python'], ['file.phtml', 'php', 'php'], ['bin/example', null, 'generic']]) {
+    for (const [path, lang, icon] of [['file.CJS', 'javascript', 'js'], ['file.tsx', 'tsx', 'ts'], ['file.py', 'python', 'python'], ['file.phtml', 'php', 'php'], ['README.md', 'markdown', 'markdown'], ['docs/GUIDE.MARKDOWN', 'markdown', 'markdown'], ['bin/example', null, 'generic']]) {
       assert.equal(langForPath(path, format), lang)
       assert.equal(sourceFileType(path, format), icon)
     }
