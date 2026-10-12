@@ -29,11 +29,26 @@ const rustMark = svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 
  */
 const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><path d="M28 10a4 4 0 0 0-4-4h-6v6a6 6 0 0 1-6 6h-2v2h2v6h4v-6h8v6h4V16h2v-4a2 2 0 0 0-2-2"/><path d="M12 4H8v2a6 6 0 0 0-6 6v6a2 2 0 0 0 2 2v2H2.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5H6a2 2 0 0 0 2-2v-8h4a4 4 0 0 0 4-4V8a4 4 0 0 0-4-4M6 14H4v-2h2Z"/></g>`
 
+// LICENSE, LICENCE, UNLICENSE and COPYING, bare or with a -suffix or .suffix:
+// LICENSE-MIT, COPYING.LESSER, LICENSE.md.
+const LICENSE_NAME = /^(?:(?:un)?licen[cs]e|copying)(?:[-.]|$)/iu
+// Extensions no license text is spelt in: images, documents, archives, fonts,
+// media and compiled code.
+const NON_TEXT_EXT = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|tiff?|heic|pdf|docx?|odt|xlsx?|pptx?|zip|gz|tgz|bz2|xz|zst|7z|rar|tar|jar|woff2?|ttf|otf|eot|mp[34]|wav|ogg|webm|mov|wasm|bin|exe|dll|so|dylib|node|class)$/iu
+
+// A license is told by its name, but only a text one: code (license.js), a
+// file of a non-text type (LICENSE.pdf), a Stasis resource whose bytes are not
+// UTF-8 or a directory capture keeps its own icon.
+function isLicense(path, format, lang) {
+  if ((lang !== null && lang !== 'markdown') || format === 'resource:base64' || format === 'directory') return false
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  return LICENSE_NAME.test(name) && !NON_TEXT_EXT.test(name)
+}
+
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
-  // LICENSE, LICENSE-MIT, LICENSE.md, LICENCE.txt; a license.js module stays code.
-  if ((lang === null || lang === 'markdown') && /^licen[cs]e(?:[-.]|$)/iu.test(path.split('/').at(-1))) return 'license'
+  if (isLicense(path, format, lang)) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown'].includes(lang)) return lang
