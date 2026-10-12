@@ -590,20 +590,17 @@ function heldInstallScriptsBadge(npm, details) {
 // tags are: what any of them runs beyond itself (file-runs-code.js), the
 // kinds named; an exfiltration host one names (file-hosts.js), the services
 // named; and an obfuscator's fingerprint (npmObfuscation). Each lists its
-// files in its tooltip, as Compare's chips on files do.
+// files in its tooltip, what each holds and where, and nothing more.
 function heldFileBadges(details) {
   const files = [...bundleFilesAsMap(details)], { byPath } = npmFilesRead(details)
   const holding = read => files.map(([path, text]) => ({ path, found: read(path, text) })).filter(row => row.found)
   const exfiltrating = holding((path, text) => npmFileExfiltration(details, path, text)), runs = holding((path, text) => npmFileRunsCode(details, path, text))
   const obfuscated = holding(path => byPath.get(path)?.obfuscation)
   return [
-    listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found),
-      'What the code does beyond itself: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
-      npmRunsCodeKinds(runs.map(row => row.found))),
-    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.found),
-      'A host malicious packages send what they take to, or fetch what they run from', npmExfiltrationNames(exfiltrating.map(row => row.found))),
-    listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(row.found),
-      'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![])'),
+    listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found), null, npmRunsCodeKinds(runs.map(row => row.found))),
+    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.found), null,
+      npmExfiltrationNames(exfiltrating.map(row => row.found))),
+    listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(row.found), null),
   ]
 }
 
@@ -781,7 +778,7 @@ function fileBadge(kind, ...rest) {
 
 // A chip on `rows`, each with a `path`, counting them where there are
 // several, or saying `value` of them all, the rows in its tooltip alone, each
-// with what `said` of it.
+// with what `said` of it, under them a `note` where it has one.
 function listBadge(classes, label, rows, said, note, value = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
@@ -792,7 +789,7 @@ function listBadge(classes, label, rows, said, note, value = null) {
       <div class="compare-tip-head">${label}</div>
       <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-      <div class="compare-tip-note">${note}</div>
+      ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
     </div>`}>
     <span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
