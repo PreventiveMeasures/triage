@@ -87,7 +87,7 @@ test('the Overview flags a dependency from elsewhere than the registry, and one 
   assert.match(rows[3], /data-npm-dependency=touch[^]*>touch<\/span><span class=npm-dependency-flag is-unimported data-tooltip=Nothing of 1\.4\.2 imports it[^>]*>unimported</u)
   assert.doesNotMatch(text(npmDependenciesColumn(entry)), /is-unimported/u, 'not until its files are read')
   const fact = /<dt>Dependencies<\/dt>([^]*)$/u.exec(text(npmOverviewExtras(entry, null, details)))[1]
-  assert.match(fact, /npm-sized is-medium>4<\/span><span class="npm-extension is-warn npm-dependency-check" data-tooltip=From elsewhere than npm's registry: ethereumjs-abi git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>\s*<span>Non-registry<\/span><span class="npm-extension-count">1<\/span>/u)
+  assert.match(fact, /npm-sized is-medium>4<\/span><span class="npm-extension is-warn npm-dependency-check"\s+data-tooltip=From elsewhere than npm's registry: ethereumjs-abi git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>\s*<span>Non-registry<\/span><span class="npm-extension-count">1<\/span>/u)
   assert.match(fact, /data-tooltip=Imported by nothing of 1\.4\.2: touch \^3\.1\.0>\s*<span>Unimported<\/span><span class="npm-extension-count">1</u)
   assert.doesNotMatch(text(npmOverviewExtras(npmPackageEntry({ ...data, manifest: { dependencies: { zod: '^3.0.0' } } }))), /npm-dependency-check/u)
 })

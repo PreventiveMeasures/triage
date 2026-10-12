@@ -22,7 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { installScripts } from './install-scripts.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
+import { NPM_DEPENDENCY_KINDS, npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
 
 export { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import './bundle-selector.js'
@@ -270,9 +270,8 @@ export function npmCompareSource(entry) {
     choices,
     name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
     load: async id => (await loadNpmVersion(name, id)).details,
-    // In place of Packages, which a single package has no use for, each the
-    // open version adds or changes flagged where it calls for a look.
-    dependencies: (base, other) => npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other),
+    // In place of Packages, which a single package has no use for.
+    dependencies: npmFlaggedDependencyChanges,
     openDependency,
     // A swap or a pick on this side opens `base`, compared with `target`.
     open: (base, target, mode) => {
@@ -432,8 +431,6 @@ export function renderNpmLookup() {
   </section>`
 }
 
-const DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
-
 // A version's dependencies, each `{ name, range, kind, opens }`, in name
 // order: `kind` null for a plain dependency, else 'peer' or 'optional';
 // `opens` the package the viewer opens for it, the one an `npm:` alias
@@ -442,7 +439,7 @@ const DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], 
 // that name isn't what it installs.
 export function npmDependencies(manifest) {
   const rows = []
-  for (const [field, kind] of DEPENDENCY_KINDS) {
+  for (const [field, kind] of NPM_DEPENDENCY_KINDS) {
     for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
       const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
       const opens = alias ?? name
@@ -466,6 +463,12 @@ export function npmDependencyChanges(base, other) {
   for (const [key, { name, kind, range, opens }] of after) if (!before.has(key)) added.push({ key, name, kind, range, opens })
   return { removed, added, changed }
 }
+
+// What two versions' dependencies differ in (npmDependencyChanges), `base`
+// and `other` each one's details, those the open one adds or changes flagged
+// where they call for a look (npm-dependency-checks.js): Compare's in place
+// of Packages, and its chips (npm-overview.js).
+export const npmFlaggedDependencyChanges = (base, other) => npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other)
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
@@ -512,10 +515,10 @@ const DEPENDENCY_CHECKS = [['source', 'Non-registry', () => 'From elsewhere than
 // them is flagged by (npmDependencyFlags), counting them, which in its
 // tooltip.
 function dependencyChecks({ version, manifest }, details) {
-  const flagged = npmDependencies(manifest).flatMap(row => npmDependencyFlags(details, row).map(({ check }) => [check, row]))
-  return DEPENDENCY_CHECKS.map(([check, label, note]) => [label, note(version), flagged.filter(([found]) => found === check).map(([, row]) => row)]).filter(([, , rows]) => rows.length > 0)
-    .map(([label, note, rows]) => html`<span class="npm-extension is-warn npm-dependency-check" data-tooltip=${`${note}: ${rows.map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
-      <span>${label}</span><span class="npm-extension-count">${rows.length}</span></span>`)
+  const flagged = Map.groupBy(npmDependencies(manifest).flatMap(row => npmDependencyFlags(details, row).map(({ check }) => ({ ...row, check }))), ({ check }) => check)
+  return DEPENDENCY_CHECKS.filter(([check]) => flagged.has(check)).map(([check, label, note]) => html`<span class="npm-extension is-warn npm-dependency-check"
+    data-tooltip=${`${note(version)}: ${flagged.get(check).map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
+    <span>${label}</span><span class="npm-extension-count">${flagged.get(check).length}</span></span>`)
 }
 
 // The tags pointing to a version's publish commit, after it as a bundle's

@@ -8,43 +8,45 @@
 import { html } from 'lit'
 import { installScripts } from './install-scripts.js'
 
-// The hosts npm takes a repository on by name (`github:owner/repo`), as
-// hosted-git-info, which reads them for it, has them.
-const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist'], ['sourcehut', 'SourceHut']])
-// Their domains, and whether hosted-git-info takes one over `ssh:`
-// (`ssh://git@github.com/org/repo`), as all over `git@host:path`.
-const HOST_DOMAINS = new Map([['github.com', true], ['gitlab.com', true], ['bitbucket.org', true], ['gist.github.com', true], ['git.sr.ht', false]])
+// The kinds of dependency a manifest names, by its field
+// (npm-package.js npmDependencies).
+export const NPM_DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
 
-// GitHub's `owner/repo` shorthand, at a commit, branch or tag (`#v1.0.0`) or
-// not, as hosted-git-info tells it: one slash, neither first nor last, and
-// no space, `@`, `:` or second slash, before any `#`.
-function githubShorthand(spec) {
-  const head = spec.split('#', 1)[0], slash = head.indexOf('/')
-  return slash > 0 && !head.endsWith('/') && head.indexOf('/', slash + 1) === -1 && !/[\s@:]/u.test(head)
-}
+// The hosts npm takes a repository on by name (`github:owner/repo`), as
+// hosted-git-info, which reads them for it, has them; their domains, on
+// which it takes one as `git@host:path` too, and over `ssh:`
+// (`ssh://git@github.com/org/repo`) but SourceHut's.
+const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist'], ['sourcehut', 'SourceHut']])
+const SSH_HOSTS = new Set(['github.com', 'gitlab.com', 'bitbucket.org', 'gist.github.com'])
+const GIT_HOSTS = new Set([...SSH_HOSTS, 'git.sr.ht'])
+// GitHub's `owner/repo` shorthand, before a commit, branch or tag
+// (`#v1.0.0`) or not, as hosted-git-info tells it: one slash, neither first
+// nor last, and no space, `@` or `:`.
+const GITHUB_SHORTHAND = /^[^/\s@:]+\/[^/\s@:]+$/u
 
 // Where a dependency's spec has npm fetch it from, where that isn't its
-// registry, as npm reads a spec (npm-package-arg's resolve), in its order:
-// not a path (`./x`, `~/x`, `/x`, `c:\x`, `file:`), nor an `npm:` alias of
-// a registry package; a host npm takes a repository on by name (`github:`,
-// `gitlab:`, `bitbucket:`, `gist:`, `sourcehut:`); `git`, a repository's
-// (`git:`, `git+https:`, `git+http:`, `git+ssh:`, `git+rsync:`, `git+ftp:`,
-// `git+file:`, and over `ssh:` or as `git@host:path` on a host it knows, as
-// on another it installs nothing); `URL`, a tarball's (`https:`, `http:`,
-// with its `//` or without); GitHub, for its `owner/repo` shorthand. Null
-// for the registry's ranges and tags, and for what npm doesn't install
-// (`workspace:`, `git+foo:`), or reads as a path (`git@example.com:x/y`).
+// registry, as npm reads a spec (npm-package-arg's resolve): a host npm
+// takes a repository on by name (`github:`, `gitlab:`, `bitbucket:`, `gist:`,
+// `sourcehut:`); `git`, a repository's (`git:`, `git+https:`, `git+http:`,
+// `git+ssh:`, `git+rsync:`, `git+ftp:`, `git+file:`, and over `ssh:` or as
+// `git@host:path` on a host it knows, as on another it installs nothing);
+// `URL`, a tarball's (`https:`, `http:`, with its `//` or without); GitHub,
+// for its `owner/repo` shorthand. Null for the registry's ranges, tags and
+// `npm:` aliases, for a path (`./x`, `~/x`, `/x`, `file:`), and for what npm
+// doesn't install (`workspace:`, `git+foo:`), or reads as a path
+// (`git@example.com:x/y`).
 export function npmDependencySource(spec) {
   const value = String(spec ?? '').trim()
-  if (/^(?:[.]|~\/|\/|[a-z]:|file:|npm:)/iu.test(value)) return null
+  if (/^(?:\.|~?\/)/u.test(value)) return null
   const scheme = /^(git\+)?([a-z]+):/iu.exec(value)
-  if (scheme && !scheme[1] && HOSTS.has(scheme[2].toLowerCase())) return HOSTS.get(scheme[2].toLowerCase())
+  const named = scheme && !scheme[1] && HOSTS.get(scheme[2].toLowerCase())
+  if (named) return named
   if (/^(?:git|git\+(?:https?|ssh|rsync|ftp|file)):/iu.test(value)) return 'git'
   if (/^https?:/iu.test(value)) return 'URL'
   // As hosted-git-info reads them: `ssh:` and the host as spelled, `www.` aside.
   const host = (scheme ? /^ssh:\/\/(?:[^@/]*@)?([^:/#]+)/u : /^[^@\s]+@([^:/\s]+):/u).exec(value)?.[1].replace(/^www\./u, '')
-  if (HOST_DOMAINS.has(host) && (!scheme || HOST_DOMAINS.get(host))) return 'git'
-  return !scheme && githubShorthand(value) ? 'GitHub' : null
+  if ((scheme ? SSH_HOSTS : GIT_HOSTS).has(host)) return 'git'
+  return !scheme && GITHUB_SHORTHAND.test(value.split('#', 1)[0]) ? 'GitHub' : null
 }
 
 // Files no import is read from: prose, by its extension (Markdown, text) or
@@ -58,35 +60,29 @@ const NO_IMPORTS = /(?:\.(?:md|markdown|txt|rst|adoc|asciidoc|textile|map)|(?:^|
 // a quoted command is in binding.gyp (`require(\'nan\')`), or a template's `${`.
 const QUOTED = /["'`]~?([\w@./-]+)(\\?["'`]|\$\{)?/gu
 
-// What a version's code files name as an import would, once a version, in
-// one pass over them, however many names are asked about: `whole` each name
-// quoted alone or before a path in it (`'name'`, `"name/sub"`), and `parts`
-// what a quote or a template's `${` ends, as a package builds a name from a
-// part of it to pick the build for the platform it runs on
-// (`` `@rollup/rollup-${platform}` ``, `"@typescript/" + name`).
-const quotedByVersion = new WeakMap()
-function quotedNames({ json }) {
-  let quoted = quotedByVersion.get(json)
-  if (quoted) return quoted
-  quoted = { whole: new Set(), parts: new Set() }
-  const texts = json.sourcesContent ?? []
-  for (const [i, path] of (json.sources ?? []).entries()) {
+// What of a version names a package as an import would, once a version, in
+// one pass over its code files however many names are asked about: `whole`,
+// each name quoted alone or before a path in it (`'name'`, `"name/sub"`);
+// `parts`, each part of a name up to a `-` or `/` that a quote or a
+// template's `${` ends, as a package builds a name from one to pick the
+// build for the platform it runs on (`` `@rollup/rollup-${platform}` ``,
+// `"@typescript/" + name`); and `commands`, the install scripts npm runs.
+const importsByVersion = new WeakMap()
+function importsOf({ json, npm }) {
+  let found = importsByVersion.get(json)
+  if (found) return found
+  const sources = json.sources ?? [], texts = json.sourcesContent ?? []
+  found = { whole: new Set(), parts: new Set(), commands: installScripts(npm?.manifest?.installScripts, sources.includes('binding.gyp')).map(([, command]) => command) }
+  for (const [i, path] of sources.entries()) {
     if (typeof texts[i] !== 'string' || path === 'package.json' || NO_IMPORTS.test(path)) continue
     for (const [, run, end] of texts[i].matchAll(QUOTED)) {
-      if (end) quoted.parts.add(run)
-      if (end && end !== '${') quoted.whole.add(run)
-      for (let at = run.indexOf('/'); at !== -1; at = run.indexOf('/', at + 1)) quoted.whole.add(run.slice(0, at))
+      if (end && '-/'.includes(run.at(-1))) found.parts.add(run)
+      if (end && end !== '${') found.whole.add(run)
+      for (let at = run.indexOf('/'); at !== -1; at = run.indexOf('/', at + 1)) found.whole.add(run.slice(0, at))
     }
   }
-  quotedByVersion.set(json, quoted)
-  return quoted
-}
-
-// Whether a version's code files name `name` as an import would
-// (quotedNames): whole, or built from a part of it up to a `-` or `/`.
-function quotes(details, name) {
-  const { whole, parts } = quotedNames(details)
-  return whole.has(name) || [...name.slice(1).matchAll(/[-/]/gu)].some(({ index }) => parts.has(name.slice(0, index + 2)))
+  importsByVersion.set(json, found)
+  return found
 }
 
 // Whether a command names `name` as a word (`prebuild-install || node-gyp
@@ -100,50 +96,50 @@ function commandNames(command, name) {
 
 // Whether nothing of a version (`details`, its files and manifest) imports
 // a dependency it names (`{ name, kind }`, npm-package.js npmDependencies):
-// no code file names it as an import would (quotes), nor does an install
-// script npm runs; never where its files aren't read. Not a peer dependency,
-// which the package expects whoever installs it to provide, nor types from
-// DefinitelyTyped (`@types/`), imported by another name, where no one else
-// publishes.
+// no code file names it as an import would, whole or by a part of it, nor
+// does an install script npm runs (importsOf); never where its files aren't
+// read. Not a peer dependency, which the package expects whoever installs it
+// to provide, nor types from DefinitelyTyped (`@types/`), imported by
+// another name, where no one else publishes.
 export function npmDependencyUnimported(details, { name, kind }) {
-  const json = details?.json
-  if (!json || kind === 'peer' || name.startsWith('@types/')) return false
-  const scripts = installScripts(details.npm?.manifest?.installScripts, json.sources?.includes('binding.gyp'))
-  return !scripts.some(([, command]) => commandNames(command, name)) && !quotes(details, name)
+  if (!details?.json || kind === 'peer' || name.startsWith('@types/')) return false
+  const { whole, parts, commands } = importsOf(details)
+  return !whole.has(name) && ![...name.slice(1).matchAll(/[-/]/gu)].some(({ index }) => parts.has(name.slice(0, index + 2)))
+    && !commands.some(command => commandNames(command, name))
 }
 
 // Where a source takes a dependency from, in a sentence.
 const SOURCE_NAMES = new Map([['URL', 'a URL'], ['git', 'a git repository']])
 
 // What calls for a look at a dependency a version (`details`) names
-// (`{ name, kind, range }`), as tags (`{ check, label, tooltip }`):
-// `source` where npm fetches it from elsewhere than its registry
-// (npmDependencySource), its spec in the tooltip, and `unimported` where
-// nothing of the version imports it (npmDependencyUnimported). Against the
-// specs another version named its dependencies by (`was`, by name, whatever
-// their kind), only where it named this one by another spec, or, imported
-// by nothing, not at all.
-export function npmDependencyFlags(details, row, { spec = row.range, was = null } = {}) {
+// (`{ name, kind, range }`, or a changed one's `to`), as tags
+// (`{ check, label, tooltip }`): `source` where npm fetches it from
+// elsewhere than its registry (npmDependencySource), its spec in the
+// tooltip, and `unimported` where nothing of the version imports it
+// (npmDependencyUnimported). Against the specs another version named its
+// dependencies by (`was`, npmDependencySpecs), only where it named this one
+// by another spec, or, imported by nothing, not at all.
+export function npmDependencyFlags(details, row, was = null) {
+  const spec = row.to ?? row.range
   const source = npmDependencySource(spec)
-  const fresh = was !== null && !was.has(row.name), version = details?.npm?.version
   return [
     ...source && was?.get(row.name) !== spec ? [{ check: 'source', label: 'non-registry', tooltip: `From ${SOURCE_NAMES.get(source) ?? source}, not npm's registry: ${spec}` }] : [],
-    ...(was === null || fresh) && npmDependencyUnimported(details, row) ? [{ check: 'unimported', label: 'unimported',
-      tooltip: `${fresh ? `New in ${version}, and nothing of it` : `Nothing of ${version}`} imports it: no code file names it as an import would, nor does an install script` }] : [],
+    ...!was?.has(row.name) && npmDependencyUnimported(details, row) ? [{ check: 'unimported', label: 'unimported',
+      tooltip: `${was ? `New in ${details.npm?.version}, and nothing of it` : `Nothing of ${details.npm?.version}`} imports it: no code file names it as an import would, nor does an install script` }] : [],
   ]
 }
 
 // The specs a manifest names its dependencies by, by name, whatever their
 // kind.
-const specsOf = manifest => new Map(['dependencies', 'peerDependencies', 'optionalDependencies'].flatMap(field => Object.entries(manifest?.[field] ?? {})))
+export const npmDependencySpecs = manifest => new Map(NPM_DEPENDENCY_KINDS.flatMap(([field]) => Object.entries(manifest?.[field] ?? {})))
 
 // Two versions' dependency changes (npm-package.js npmDependencyChanges),
 // each the open version (`other`) adds or changes with its `flags`
 // (npmDependencyFlags) against the one compared with (`base`).
 export function npmFlagDependencyChanges({ removed, added, changed }, base, other) {
-  const was = specsOf(base?.npm?.manifest)
-  const flag = (row, spec) => ({ ...row, flags: npmDependencyFlags(other, row, { spec, was }) })
-  return { removed, added: added.map(row => flag(row, row.range)), changed: changed.map(row => flag(row, row.to)) }
+  const was = npmDependencySpecs(base?.npm?.manifest)
+  const flag = row => ({ ...row, flags: npmDependencyFlags(other, row, was) })
+  return { removed, added: added.map(flag), changed: changed.map(flag) }
 }
 
 // A dependency's flags, as tags in its warning's color, each saying why in

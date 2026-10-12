@@ -9,8 +9,8 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDependencies, npmDependencyChanges, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
-import { npmFlagDependencyChanges } from './npm-dependency-checks.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { npmDependencySpecs } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -543,8 +543,7 @@ function installScriptsBadge(base, other) {
   const was = scripts(base)
   const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
   if (flagged.length === 0) return nothing
-  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>`
-    : html`<span class="compare-tip-scripts">${[...list].map(([script, command]) => html`<span class=${marked.includes(script) ? 'is-flagged' : nothing}>${script}: <code>${command}</code></span>`)}</span>`
+  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>` : tipLines([...list].map(([script, command]) => [script, command, marked.includes(script)]))
   const summary = flagged.map(script => `${script} ${was.has(script) ? 'changed' : 'added'}`).join(', ')
   return html`<li><span class="npm-extension is-warn npm-compare-install"
     data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
@@ -608,15 +607,14 @@ function fileBadge(kind, label, rows, said, note) {
 // names and specs in their tooltips, each version's for those from
 // elsewhere.
 function dependencyBadges(base, other) {
-  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
+  const { added, changed } = npmFlaggedDependencyChanges(base, other)
   const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
   // Those from elsewhere by name, each with its spec now; and before.
   const now = new Map(flagged('source').map(row => [row.name, row.to ?? row.range])), unimported = flagged('unimported')
   const chips = []
   if (now.size > 0) {
-    const was = new Map(npmDependencies(base.npm.manifest).map(({ name, range }) => [name, range]))
-    const said = (specs, marked) => html`<span class="compare-tip-specs">${[...now.keys()].map(name => specs.has(name)
-      ? html`<span class=${marked ? 'is-flagged' : nothing}>${name}: <code>${specs.get(name)}</code></span>` : html`<span class="compare-tip-none">${name}: none</span>`)}</span>`
+    const was = npmDependencySpecs(base.npm.manifest)
+    const said = (specs, marked) => tipLines([...now.keys()].map(name => [name, specs.get(name), marked]))
     chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
       data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
       .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
@@ -624,11 +622,11 @@ function dependencyBadges(base, other) {
   }
   if (unimported.length > 0) {
     const { version } = other.npm
+    const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
     chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
       data-tooltip=${`New in ${version}, imported by nothing of it: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}`}
-      .tooltipContent=${compareTip(unimported.length === 1 ? 'New, and nothing imports it' : 'New, and nothing imports them', [other.npm],
-        [html`<span class="compare-tip-specs">${unimported.map(({ name, range, kind }) => html`<span class="is-flagged">${name}: <code>${range}</code>${kind ? ` (${kind})` : ''}</span>`)}</span>`],
-        `No code file of ${version} names ${unimported.length === 1 ? 'it' : 'them'} as an import would, nor does an install script; npm installs ${unimported.length === 1 ? 'it' : 'them'} all the same, running ${unimported.length === 1 ? 'its' : 'their'} install scripts`)}>
+      .tooltipContent=${compareTip(`New, and nothing imports ${it}`, [other.npm], [tipLines(unimported.map(({ name, range, kind }) => [kind ? `${name} (${kind})` : name, range, true]))],
+        `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
       Unused deps</span></li>`)
   }
   return chips
@@ -663,6 +661,12 @@ function advisoriesBadge(sides, affecting) {
     @click=${() => openCompareAdvisories(sides, affecting)}>
     <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
 }
+
+// A tooltip's lines, `[name, value, flagged]` each, `name: value` one to a
+// line, its value as code, bold where flagged; `name: none`, muted, where it
+// has no value.
+const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([name, value, flagged]) => value == null
+  ? html`<span class="compare-tip-none">${name}: none</span>` : html`<span class=${flagged ? 'is-flagged' : nothing}>${name}: <code>${value}</code></span>`)}</span>`
 
 // A badge's styled tooltip: its `head`, a row for each side's version and
 // what is said of it, and a `note` under them.

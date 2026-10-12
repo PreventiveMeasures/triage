@@ -3247,14 +3247,6 @@ body.report-fullscreen {
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
 }
-/* What calls for a look at a dependency (view/npm-dependency-checks.js): from
-   elsewhere than npm's registry, or imported by nothing; a warning's, as an
-   install script's. */
-.npm-dependency-flag {
-  color: var(--text);
-  background: color-mix(in srgb, var(--high) 22%, var(--bg));
-  border-color: var(--high);
-}
 /* Beside how many dependencies a version has, a chip for each of those. */
 .npm-dependencies-fact { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }
 .bundles-detail-meta .npm-deprecated { color: var(--critical); }
@@ -3611,8 +3603,9 @@ npm-downloads-chart {
 /* Files that can be hard to review by reading them, marked in their tags and
    chips: `warn` for what to look into (binary, control characters,
    unexpected long lines, an obfuscator's fingerprint), `notice` for minified
-   code, source maps and large code files. */
-:is(.npm-extension, .npm-encoding-tag, .npm-flag-tag).is-warn {
+   code, source maps and large code files. What calls for a look at a
+   dependency (view/npm-dependency-checks.js) is a warning's too. */
+:is(.npm-extension, .npm-encoding-tag, .npm-flag-tag).is-warn, .npm-dependency-flag {
   color: var(--text);
   background: color-mix(in srgb, var(--high) 22%, var(--bg));
   border-color: var(--high);
@@ -3767,7 +3760,7 @@ a.npm-compare-publisher {
 .compare-tip-path { overflow-wrap: anywhere; }
 /* A version's install scripts, or dependencies' specs, one a line, those
    added or changed bold. */
-:is(.compare-tip-scripts, .compare-tip-specs) {
+.compare-tip-lines {
   display: flex; flex-direction: column; gap: .15rem;
 
   & code { font-size: .68rem; overflow-wrap: anywhere; }
