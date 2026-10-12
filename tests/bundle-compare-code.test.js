@@ -2304,7 +2304,7 @@ test('review whole diff uses the shared tree and keeps actions outside the stick
   const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
   const code = view(), viewer = new BundleCompareAll()
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) viewer[name] = code[name]
-  viewer.extensions = { fileActions: () => 'REVIEW_ACTIONS', filePageSize: 40, filterContent: false }
+  viewer.extensions = { fileActions: () => 'REVIEW_ACTIONS', filterContent: false }
   viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
   const markup = renderText(viewer.render())
   assert.equal((markup.match(/class="bundle-code-rail"/gu) ?? []).length, 1)
@@ -2324,7 +2324,7 @@ test('review whole diff renders far enough to show a file selected beyond the fi
   const code = view(null, [Object.fromEntries(paths.map(path => [path, '1'])), Object.fromEntries(paths.map(path => [path, '2']))])
   const viewer = new BundleCompareAll()
   for (const name of ['base', 'other', 'files']) viewer[name] = code[name]
-  viewer.extensions = { fileActions: () => '', filePageSize: 40, filterContent: false }
+  viewer.extensions = { fileActions: () => '', filterContent: false }
   viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
   assert.doesNotMatch(renderText(viewer.render()), /aria-label=index\.js/u)
   viewer.path = 'index.js'

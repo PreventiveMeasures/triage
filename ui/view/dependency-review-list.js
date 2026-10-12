@@ -65,8 +65,8 @@ export class DependencyReviewList extends LitElement {
       ${review.comment ? html`<div class="dependency-review-final-note" role="note" aria-label="Final note">${reviewNote(review.comment)}</div>` : nothing}
       ${review.entries.length > 0 ? html`<ul class="dependency-review-entries">${review.entries.map(entry => html`<li>
         <span class="dependency-review-entry-file">${entry.file === null ? nothing : sourceFileIcon(entry.file)}<span>${entry.file ?? 'Review note'}</span></span>
-        <span class="dependency-review-entry-verdict">${entry.status ? verdictLabel(entry.status) : nothing}</span>
-        <div class="dependency-review-entry-note">${reviewNote(entry.comment)}</div></li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
+        ${entry.status ? verdictLabel(entry.status) : html`<span></span>`}
+        <div>${reviewNote(entry.comment)}</div></li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
     </section>`
   }
   _row(review) {

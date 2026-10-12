@@ -5,7 +5,7 @@ const ERRORS = {
   'review-content-changed': 'The package bytes changed. Reload the package before reviewing.',
   'review-conflict': 'This review changed or was published in another tab. Refresh reviews before editing it again.',
   'package-not-found': 'One of these package versions is no longer available to you.',
-  'unknown-review-file': 'This file is not in either package version.',
+  'unknown-review-file': 'This file is not in the comparison.',
   'non-text-review-file': 'Verdicts for non-text files are not supported yet.',
   'bad-review-teams': 'Select at least one team you belong to with dependency review enabled. Refresh if team access changed.',
   'no-reviewed-files': 'Review at least one changed file before publishing.',
@@ -16,47 +16,29 @@ const ERRORS = {
   forbidden: 'Reviewing requires triage access.',
 }
 
-export async function myDependencyReviews(cursor, signal) {
+async function requestReview(path, signal, operation, change, csrfToken) {
   const generation = managedAppState.generation
-  const query = cursor ? `?${new URLSearchParams({ beforeTime: cursor.time, beforeId: cursor.id })}` : ''
-  const response = await managedFetch(`/api/npm/reviews/mine${query}`, { credentials: 'same-origin',
-    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]) })
-  const body = await response.json()
-  if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
-  if (!response.ok) throw new Error(`Could not load your reviews (${response.status}).`)
-  return body
-}
-export async function discardDependencyReview(reviewId, revision, csrfToken, signal) {
-  const generation = managedAppState.generation
-  const response = await managedFetch('/api/npm/reviews/discard', {
-    method: 'POST', credentials: 'same-origin',
-    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]),
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify({ reviewId, revision }),
+  const response = await managedFetch(`/api/npm/reviews${path}`, {
+    credentials: 'same-origin', signal: AbortSignal.any([signal, managedAppState.sessionController.signal]),
+    ...(change ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify(change) } : {}),
   })
   const body = await response.json()
   if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
-  if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not discard review (${response.status}).`)
+  if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not ${operation} (${response.status}).`)
+  return body
+}
+export function myDependencyReviews(cursor, signal) {
+  const query = cursor ? `?${new URLSearchParams({ beforeTime: cursor.time, beforeId: cursor.id })}` : ''
+  return requestReview(`/mine${query}`, signal, 'load your reviews')
+}
+export function discardDependencyReview(reviewId, revision, csrfToken, signal) {
+  return requestReview('/discard', signal, 'discard review', { reviewId, revision }, csrfToken)
 }
 export async function latestDependencyReview(target, signal) {
-  const generation = managedAppState.generation
   const query = new URLSearchParams({ package: target.package, version: target.version, integrity: target.integrity })
-  const response = await managedFetch(`/api/npm/reviews/latest?${query}`, { credentials: 'same-origin',
-    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]) })
-  const body = await response.json()
-  if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
-  if (!response.ok) throw new Error(`Could not load your latest review (${response.status}).`)
-  return body.review
+  return (await requestReview(`/latest?${query}`, signal, 'load your latest review')).review
 }
-export async function dependencyReviews(context, change, csrfToken, signal) {
-  const generation = managedAppState.generation
+export function dependencyReviews(context, change, csrfToken, signal) {
   const params = new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))
-  const response = await managedFetch(`/api/npm/reviews${change ? '' : `?${params}`}`, {
-    method: change ? 'POST' : 'GET', credentials: 'same-origin',
-    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]),
-    ...(change ? { headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify({ ...context, ...change }) } : {}),
-  })
-  const body = await response.json()
-  if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
-  if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not ${change ? 'save' : 'load'} reviews (${response.status}).`)
-  return body
+  return requestReview(change ? '' : `?${params}`, signal, `${change ? 'save' : 'load'} reviews`, change && { ...context, ...change }, csrfToken)
 }

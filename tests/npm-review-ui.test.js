@@ -93,7 +93,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   for (const mode of ['code', 'diff']) {
     page._mode = mode
     page._selectFile('asset.bin')
-    assert.equal(page._dirty, false, 'a previously saved binary verdict is ignored without creating a new edit')
+    assert.equal(page._editorState(page._file).dirty, false, 'a previously saved binary verdict is ignored without creating a new edit')
     const editor = text(renderReviewEditor(page, 'asset.bin', mode === 'diff'))
     assert.equal((editor.match(/\?disabled=true/gu) ?? []).length, 5, 'all verdict controls, including Not checked, are disabled')
     assert.match(editor, /Non-text file.*remains unchecked/u)
@@ -101,11 +101,11 @@ test('non-text files stay visible and unchecked in both review modes, with disab
     requests.length = 0
     for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) await page._setFileStatus('asset.bin', status)
     assert.equal(requests.length, 0)
-    assert.equal(page._status, '')
+    assert.equal(page._editorState(page._file).status, '')
   }
   const comment = '* Still visible\n* External inspection needed'
   answer = { review: { ...saved, revision: 2, entries: saved.entries.map(row => row.file === 'asset.bin' ? { ...row, comment, status: null } : row) } }
-  page._editFile('asset.bin', { _comment: comment })
+  page._editFile('asset.bin', { comment: comment })
   await page._saveFile('asset.bin')
   assert.equal(requests.at(-1)[1].status, null)
   assert.equal(requests.at(-1)[1].comment, comment)
@@ -199,14 +199,14 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
   page._reviews = [{ ...review, entries: [{ ...file, status: 'accept' }] }]
   page._resetEditor('index.js')
   for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) {
-    page._status = status
+    page._editFile(page._file, { status: status })
     assert.match(text(renderReview(page)), new RegExp(`npm-review-primary npm-review-finalize ${status}`, 'u'))
     assert.equal(page._allowedVerdicts[0], status)
   }
-  page._status = 'accept'
-  page._drafts.set('other.js', { status: 'reject' })
+  page._editFile(page._file, { status: 'accept' })
+  page._editFile('other.js', { status: 'reject' })
   assert.equal(page._allowedVerdicts[0], 'reject', 'a verdict on a different file still constrains Finalize')
-  page._drafts.clear()
+  page._editors.delete('other.js')
   let limit = 'request-changes'
   page.source = { choices: [], options: [], reviewVerdictLimit: () => limit }
   await page._beginPublish()
@@ -330,10 +330,10 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.equal(requests.length, 0)
   page._selectedTeams = new Set(['two'])
-  page._comment = 'Unsaved'
+  page._editFile(page._file, { comment: 'Unsaved' })
   await page._publish()
   assert.equal(requests.length, 0)
-  page._comment = ''
+  page._editFile(page._file, { comment: '' })
   page._files = ['index.js', 'second.js', 'package.json']
   page._reviews = [{ ...review, entries: [...review.entries, { ...file, id: 'manifest', file: 'package.json', status: 'accept', comment: '' }] }]
   page._beginPublish()
@@ -443,7 +443,7 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   const page = component()
   page._resetEditor('index.js')
   page._reviews = [{ ...review, revision: 2 }]
-  page._comment = 'An edit against revision one'
+  page._editFile(page._file, { comment: 'An edit against revision one' })
   answer = { review: { ...review, revision: 3 } }
   requests.length = 0
   await page._saveFile(page._file)
@@ -461,7 +461,7 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   assert.equal(requests.length, 0, 'leaving an unchanged note does not save a draft')
   const creating = Promise.withResolvers()
   answer = creating.promise
-  page._comment = 'A new note'
+  page._editFile(page._file, { comment: 'A new note' })
   const saving = page._saveFile(page._file)
   assert.equal(requests[0][1].action, 'continue')
   answer = { review: { ...continued, revision: 2, entries: [{ ...continued.entries[0], comment: 'A new note' }] } }
@@ -562,46 +562,46 @@ test('file navigation preserves unsaved edits and advances their revisions as fi
   const page = component()
   page._files = ['index.js', 'other.js']
   page._resetEditor('index.js')
-  page._comment = 'Keep this unsaved edit'
+  page._editFile(page._file, { comment: 'Keep this unsaved edit' })
   page._selectFile('other.js')
-  assert.equal(page._dirty, false)
+  assert.equal(page._editorState(page._file).dirty, false)
   assert.equal(page._unsaved, true)
-  page._status = 'accept'
+  page._editFile(page._file, { status: 'accept' })
   page._selectFile('index.js')
-  assert.equal(page._comment, 'Keep this unsaved edit')
-  answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: page._comment }] } }
+  assert.equal(page._editorState(page._file).comment, 'Keep this unsaved edit')
+  answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: page._editorState(page._file).comment }] } }
   await page._saveFile(page._file)
   page._selectFile('other.js')
-  assert.equal(page._status, 'accept')
-  assert.equal(page._editRevision, 2, 'our save advances the revision of our other pending changes')
-  page._status = ''
+  assert.equal(page._editorState(page._file).status, 'accept')
+  assert.equal(page._editorState(page._file).revision, 2, 'our save advances the revision of our other pending changes')
+  page._editFile(page._file, { status: '' })
   assert.equal(page._unsaved, false, 'reverting a restored edit does not leave a stale unsaved marker')
 })
 
 test('a failed save preserves the editor and does not move to the next file', async () => {
   const page = component()
   page._files = ['index.js', 'other.js']; page._path = 'index.js'
-  page._resetEditor('index.js'); page._comment = 'Do not lose this'
+  page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Do not lose this' })
   answer = new Error('Review changed in another tab')
   await page._saveFile(page._file)
   assert.equal(page._path, 'index.js')
-  assert.equal(page._comment, 'Do not lose this')
-  assert.equal(page._dirty, true)
+  assert.equal(page._editorState(page._file).comment, 'Do not lose this')
+  assert.equal(page._editorState(page._file).dirty, true)
   assert.equal(page._error, 'Review changed in another tab')
 })
 
 test('viewing a frozen set never loads or overwrites private unsaved buffers', () => {
   const page = component(), published = { ...review, id: 'published', publishedAt: 200, status: 'request-changes' }
   page._reviews = [review, published]; page._files = ['index.js', 'other.js']; page._path = 'index.js'
-  page._resetEditor('index.js'); page._comment = 'Private pending note'
+  page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Private pending note' })
   page._showPublished(published)
   page._selectFile('other.js'); page._selectFile('index.js')
   assert.equal(page._canEdit, false)
-  assert.equal(page._comment, 'A note', 'the frozen file shows its saved content')
+  assert.equal(page._editorState(page._file).comment, 'A note', 'the frozen file shows its saved content')
   assert.equal(page._unsaved, true, 'changing comparison cannot discard a private edit while its frozen file is shown')
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u)
   page._resume()
-  assert.equal(page._comment, 'Private pending note')
+  assert.equal(page._editorState(page._file).comment, 'Private pending note')
   assert.equal(page._canEdit, true)
 })
 
@@ -643,7 +643,7 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
 test('verdict selection autosaves in place and keeps other files pending edits', async () => {
   const page = component()
   page._mode = 'diff'; page._files = ['index.js', 'other.js']; page._path = 'index.js'
-  page._resetEditor('index.js'); page._comment = 'Pending note on the first file'
+  page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Pending note on the first file' })
   answer = { review: { ...review, revision: 2, entries: [...review.entries, { ...file, id: 'other', file: 'other.js', status: 'accept', comment: '' }] } }
   requests.length = 0
   await page._setFileStatus('other.js', 'accept')
@@ -666,17 +666,17 @@ test('autosaves allow editing and file navigation, preserving newer notes after 
   answer = pending.promise
   const saving = page._setFileStatus('index.js', 'accept-with-nits')
   assert.equal(page._blocked, false)
-  page._editFile('index.js', { _comment: 'Typed during the save' })
+  page._editFile('index.js', { comment: 'Typed during the save' })
   page._selectFile('other.js')
   assert.equal(page._path, 'other.js')
   pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
   await saving
   assert.equal(page._path, 'other.js')
   page._selectFile('index.js')
-  assert.equal(page._status, 'accept-with-nits')
-  assert.equal(page._comment, 'Typed during the save')
-  assert.equal(page._editRevision, 2)
-  assert.equal(page._dirty, true)
+  assert.equal(page._editorState(page._file).status, 'accept-with-nits')
+  assert.equal(page._editorState(page._file).comment, 'Typed during the save')
+  assert.equal(page._editorState(page._file).revision, 2)
+  assert.equal(page._editorState(page._file).dirty, true)
 })
 
 test('rapid verdict changes save serially with updated revisions, including reverting to Not checked', async () => {
@@ -691,13 +691,35 @@ test('rapid verdict changes save serially with updated revisions, including reve
   answer = second.promise
   first.resolve({ review: created })
   await accepting
-  assert.equal(page._status, '', 'the earlier save does not revert the latest selection')
+  assert.equal(page._editorState(page._file).status, '', 'the earlier save does not revert the latest selection')
   assert.equal(requests.length, 2)
   assert.deepEqual(requests[1][1], { action: 'save', reviewId: 'review', revision: 1, entryId: 'other', file: 'other.js', comment: '', status: null })
   second.resolve({ review: { ...created, revision: 2, entries: [{ ...created.entries[0], status: null }] } })
   await clearing
   assert.equal(page._unsaved, false)
-  assert.equal(page._status, '')
+  assert.equal(page._editorState(page._file).status, '')
+})
+
+test('cycling back to a queued verdict retains the latest selection through every save', async () => {
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers(), third = Promise.withResolvers()
+  page._resetEditor('index.js'); requests.length = 0
+  answer = first.promise
+  const accepting = page._setFileStatus('index.js', 'accept')
+  const rejecting = page._setFileStatus('index.js', 'reject')
+  const restoring = page._setFileStatus('index.js', 'accept')
+  const accepted = { ...review, revision: 2, entries: [{ ...file, status: 'accept' }] }
+  answer = second.promise
+  first.resolve({ review: accepted }); await accepting
+  assert.equal(page._editorState('index.js').status, 'accept')
+  assert.equal(page._unsaved, true)
+  answer = third.promise
+  second.resolve({ review: { ...accepted, revision: 3, entries: [{ ...file, status: 'reject' }] } }); await rejecting
+  assert.equal(page._editorState('index.js').status, 'accept', 'an intermediate response cannot overwrite the last choice')
+  assert.equal(page._editorState('index.js').dirty, true)
+  assert.equal(requests[2][1].revision, 3)
+  third.resolve({ review: { ...accepted, revision: 4 } }); await restoring
+  assert.equal(page._editorState('index.js').status, 'accept')
+  assert.equal(page._unsaved, false)
 })
 
 test('only saves pending for three seconds block editing, and completion clears the block', async t => {
@@ -716,7 +738,7 @@ test('only saves pending for three seconds block editing, and completion clears 
     assert.match(rendered, new RegExp(`\\?disabled=${blocked}[^>]*>Finalize review`, 'u'))
   }
   page._resetEditor('index.js'); answer = pending.promise
-  page._editFile('index.js', { _comment: 'Save this note too' })
+  page._editFile('index.js', { comment: 'Save this note too' })
   assertSaveUI(false)
   const saving = page._setFileStatus('index.js', 'accept')
   assert.equal(page._unsaved, true, 'data protection still tracks edits during the grace period')
@@ -728,7 +750,7 @@ test('only saves pending for three seconds block editing, and completion clears 
   assert.equal(page._blocked, true)
   assertSaveUI(true)
   await page._setFileStatus('index.js', 'reject')
-  assert.equal(page._status, 'accept', 'edits stop once the slow-save block appears')
+  assert.equal(page._editorState(page._file).status, 'accept', 'edits stop once the slow-save block appears')
   pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept', comment: 'Save this note too' }] } })
   await saving
   assert.equal(page._blocked, false)
@@ -742,7 +764,7 @@ test('version changes during the grace period save newer notes and navigate only
   page._resetEditor('index.js'); answer = first.promise; navigations.length = 0; requests.length = 0
   const saving = page._setFileStatus('index.js', 'accept-with-nits')
   const clearing = page._navigate('(empty)')
-  page._editFile('index.js', { _comment: 'Typed after choosing another base' })
+  page._editFile('index.js', { comment: 'Typed after choosing another base' })
   const selecting = page._navigate('@scope/lib@0.5.0')
   assert.deepEqual(navigations, [], 'navigation waits without disabling the editor')
   assert.equal(page._blocked, false)
@@ -763,13 +785,13 @@ test('version changes during the grace period save newer notes and navigate only
 test('navigation preserves edits when an autosave fails or the review context changes', async () => {
   for (const outcome of ['failure', 'context-change']) {
     const page = component(), pending = Promise.withResolvers()
-    page._resetEditor('index.js'); page._comment = 'Keep this note'; answer = pending.promise; navigations.length = 0
+    page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Keep this note' }); answer = pending.promise; navigations.length = 0
     const navigating = page._navigateTo({ view: 'reviews' })
     if (outcome === 'failure') pending.reject(new Error('Connection lost'))
     else { page._key = 'another review'; page._cancelSaves(); pending.resolve({ review }) }
     await navigating
     assert.deepEqual(navigations, [])
-    assert.equal(page._comment, 'Keep this note')
+    assert.equal(page._editorState(page._file).comment, 'Keep this note')
     if (outcome === 'failure') assert.equal(page._error, 'Connection lost')
   }
 })
@@ -799,7 +821,7 @@ test('a failed save cancels queued requests and retains the latest edits for ret
   answer = pending.promise
   const first = page._setFileStatus('index.js', 'accept')
   const second = page._setFileStatus('other.js', 'reject')
-  page._editFile('other.js', { _comment: 'Keep this note' })
+  page._editFile('other.js', { comment: 'Keep this note' })
   t.mock.timers.tick(3000)
   pending.reject(new Error('Connection lost'))
   await Promise.all([first, second])
@@ -808,7 +830,7 @@ test('a failed save cancels queued requests and retains the latest edits for ret
   assert.equal(page._error, 'Connection lost')
   assert.equal(page._editorState('index.js').status, 'accept')
   assert.equal(page._editorState('other.js').status, 'reject')
-  assert.equal(page._comment, 'Keep this note')
+  assert.equal(page._editorState(page._file).comment, 'Keep this note')
   assert.equal(page._unsaved, true)
   t.mock.timers.tick(3000)
   assert.equal(page._blocked, false)
@@ -833,15 +855,15 @@ test('a response never changes the displayed frozen review or discards pending p
   page._reviews = [review, published]; page._path = 'index.js'; page._resetEditor('index.js')
   answer = pending.promise
   const saving = page._setFileStatus('index.js', 'accept-with-nits')
-  page._editFile('index.js', { _comment: 'Still private' })
+  page._editFile('index.js', { comment: 'Still private' })
   page._showPublished(published)
   pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
   await saving
   assert.equal(page._shownReview.id, 'published')
   assert.equal(page._shownReview.entries[0].status, 'request-changes')
   page._resume()
-  assert.equal(page._comment, 'Still private')
-  assert.equal(page._editRevision, 2)
+  assert.equal(page._editorState(page._file).comment, 'Still private')
+  assert.equal(page._editorState(page._file).revision, 2)
 })
 
 test('finalization requires at least one checked changed file, not just a note', () => {
@@ -889,7 +911,7 @@ test('displayed notes render star lists as bullets while the editor keeps the ty
   assert.doesNotMatch(rendered, /\* Can/u)
   const page = component()
   page._resetEditor('index.js')
-  page._comment = comment
+  page._editFile(page._file, { comment: comment })
   renderReviewEditor(page)
   assert.equal(page._editorState('index.js').comment, comment)
 })
@@ -897,7 +919,7 @@ test('displayed notes render star lists as bullets while the editor keeps the ty
 test('leaving a note saves its file without changing the active editor, and unchanged notes need no save', async () => {
   const page = component()
   page._files = ['index.js', 'other.js']; page._resetEditor('index.js')
-  page._comment = 'Save on blur'
+  page._editFile(page._file, { comment: 'Save on blur' })
   assert.doesNotMatch(text(renderReviewEditor(page)), /Save notes|Save &amp; next|Discard changes|Visible only to you until published/u)
   page._selectFile('other.js')
   answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Save on blur' }] } }
@@ -912,7 +934,7 @@ test('leaving a note saves its file without changing the active editor, and unch
 
 test('Finalize saves a focused note before opening confirmation with the saved revision', async () => {
   const page = component(), pending = Promise.withResolvers()
-  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Save when finalizing'
+  page._files = ['index.js']; page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Save when finalizing' })
   answer = pending.promise; requests.length = 0
   const finalizing = page._beginPublish()
   assert.notEqual(page._panel, 'publish')
@@ -927,7 +949,7 @@ test('Finalize saves a focused note before opening confirmation with the saved r
 
 test('blur followed by Finalize waits for the same save instead of saving the note twice', async () => {
   const page = component(), pending = Promise.withResolvers()
-  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Only save once'
+  page._files = ['index.js']; page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Only save once' })
   answer = pending.promise; requests.length = 0
   const blurred = page._saveFile('index.js'), duplicate = page._saveFile('index.js'), finalizing = page._beginPublish()
   assert.equal(requests.length, 1)
@@ -939,8 +961,8 @@ test('blur followed by Finalize waits for the same save instead of saving the no
 
 test('Finalize saves all pending notes and uses the resulting verdict limit', async () => {
   const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
-  page._files = ['index.js', 'other.js']; page._resetEditor('index.js'); page._comment = 'First note'
-  page._selectFile('other.js'); page._comment = 'Second note'; page._status = 'reject'
+  page._files = ['index.js', 'other.js']; page._resetEditor('index.js'); page._editFile(page._file, { comment: 'First note' })
+  page._selectFile('other.js'); page._editFile(page._file, { comment: 'Second note' }); page._editFile(page._file, { status: 'reject' })
   answer = first.promise; requests.length = 0
   const finalizing = page._beginPublish()
   answer = second.promise
@@ -960,11 +982,11 @@ test('Finalize saves all pending notes and uses the resulting verdict limit', as
 
 test('a failed note save keeps Finalize out of confirmation and can be retried', async () => {
   const page = component()
-  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Keep on failure'
+  page._files = ['index.js']; page._resetEditor('index.js'); page._editFile(page._file, { comment: 'Keep on failure' })
   answer = new Error('Connection lost')
   await page._beginPublish()
   assert.notEqual(page._panel, 'publish')
-  assert.equal(page._comment, 'Keep on failure')
+  assert.equal(page._editorState(page._file).comment, 'Keep on failure')
   assert.equal(page._error, 'Connection lost')
   answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Keep on failure' }] } }
   await page._beginPublish()
@@ -973,7 +995,7 @@ test('a failed note save keeps Finalize out of confirmation and can be retried',
 
 test('a blank new note does not block finalization or create an empty row', async () => {
   const page = component()
-  page._files = ['index.js']; page._resetEditor(null); page._comment = '   '
+  page._files = ['index.js']; page._resetEditor(null); page._editFile(page._file, { comment: '   ' })
   requests.length = 0
   await page._beginPublish()
   assert.equal(requests.length, 0)

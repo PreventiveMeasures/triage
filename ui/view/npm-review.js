@@ -24,7 +24,7 @@ export class NpmReview extends LitElement {
     entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false }, source: { attribute: false },
     _teams: { state: true }, _selectedTeams: { state: true }, _additionalTeams: { state: true },
     _reviews: { state: true }, _loading: { state: true }, _error: { state: true }, _saving: { state: true }, _saveBlocked: { state: true },
-    _file: { state: true }, _comment: { state: true }, _status: { state: true }, _edit: { state: true },
+    _file: { state: true },
     _finalStatus: { state: true }, _finalComment: { state: true },
     _base: { state: true }, _baseError: { state: true }, _panel: { state: true }, _path: { state: true },
     _selectedReview: { state: true }, _unchecked: { state: true }, _notice: { state: true }, _continuation: { state: true },
@@ -33,8 +33,8 @@ export class NpmReview extends LitElement {
   constructor() {
     super()
     this._teams = []; this._reviews = []; this._files = []; this._nonTextFiles = []
-    this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._drafts = new Map()
-    this._file = null; this._path = null; this._comment = ''; this._status = ''; this._edit = null
+    this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._editors = new Map()
+    this._file = null; this._path = null
     this._loading = false; this._saving = false; this._error = null; this._context = null; this._key = null
     this._controller = new AbortController(); this._mode = 'code'
     this._panel = null; this._selectedReview = null; this._unchecked = false
@@ -57,16 +57,16 @@ export class NpmReview extends LitElement {
   get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
   get _canEdit() { return this._writable && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
-  get _dirty() { return this._comment !== (this._edit?.comment ?? '') || this._status !== (this._nonTextFiles.includes(this._file) ? '' : this._edit?.status ?? '') }
+  _isDirty(file, editor) { return editor.comment !== (editor.edit?.comment ?? '') || editor.status !== (this._nonTextFiles.includes(file) ? '' : editor.edit?.status ?? '') }
+  get _dirtyFiles() { return [...this._editors].filter(([file, editor]) => this._isDirty(file, editor)).map(([file]) => file) }
   get _blocked() { return this._saving || this._saveBlocked }
-  get _unsaved() { return this._pendingSaves.length > 0 || this._dirty || [...this._drafts.keys()].some(file => !this._canEdit || file !== this._file) }
+  get _unsaved() { return this._pendingSaves.length > 0 || this._dirtyFiles.length > 0 }
   get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files, this._nonTextFiles) }
   get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry) ?? 'accept' }
   get _allowedVerdicts() {
     const entries = new Map((this._shownReview?.entries ?? []).map(entry => [entry.file, entry]))
     if (this._canEdit) {
-      for (const [file, draft] of this._drafts) entries.set(file, { file, status: draft.status || null })
-      if (this._file !== null) entries.set(this._file, { file: this._file, status: this._status || null })
+      for (const [file, draft] of this._editors) entries.set(file, { file, status: draft.status || null })
     }
     return allowedReviewVerdicts([...entries.values()].filter(entry => !this._nonTextFiles.includes(entry.file)), this._securityLimit)
   }
@@ -124,7 +124,7 @@ export class NpmReview extends LitElement {
     this._nonTextFiles = this._files.filter(path => nonText.has(path))
     this._mode = withinComparisonLimits(files, REVIEW_DISPLAY_LIMITS) ? 'diff' : 'code'
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
-    this._selectedReview = null; this._continuation = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
+    this._selectedReview = null; this._continuation = null; this._editors.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
     this._resetEditor(this._path); this._saving = false
     void this._refresh(true)
     if (state.bundleDetailsTab === 'review' && state.selectedBundle === this.entry.integrity) {
@@ -154,55 +154,48 @@ export class NpmReview extends LitElement {
         const selection = takeReviewSelection(this._context)
         if (selection && reviews.some(review => review.id === selection && review.publishedAt !== null)) this._selectedReview = selection
         this._selectedTeams = new Set(teams.filter(team => initializeTeams ? teams.length === 1 : this._selectedTeams.has(team.id)).map(team => team.id))
-        if (!preserve) this._resetEditor(this._file)
+        if (!preserve) { this._editors.clear(); this._resetEditor(this._file) }
       }
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { dismiss(); if (key === this._key) this._loading = false }
   }
-  _resetEditor(file = null) {
-    this._publishRevision = null
-    const saved = this._canEdit ? this._drafts.get(file) : null
-    this._file = file; this._edit = saved?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
-    this._editRevision = saved?.revision ?? this._activeReview?.revision ?? null
-    this._comment = saved?.comment ?? this._edit?.comment ?? ''; this._status = this._nonTextFiles.includes(file) ? '' : saved?.status ?? this._edit?.status ?? ''
-  }
+  _resetEditor(file = null) { this._publishRevision = null; this._file = file; this._editorState(file) }
   _editorState(file) {
-    if (file === this._file) return { edit: this._edit, status: this._status, comment: this._comment, dirty: this._dirty }
-    const buffer = this._canEdit ? this._drafts.get(file) : null
-    const edit = buffer?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
-    return { edit, status: this._nonTextFiles.includes(file) ? '' : buffer?.status ?? edit?.status ?? '', comment: buffer?.comment ?? edit?.comment ?? '', dirty: !!buffer }
+    let editor = this._canEdit ? this._editors.get(file) : null
+    if (!editor) {
+      const edit = this._shownReview?.entries.find(row => row.file === file) ?? null
+      editor = { edit, revision: this._activeReview?.revision ?? null, comment: edit?.comment ?? '', status: this._nonTextFiles.includes(file) ? '' : edit?.status ?? '' }
+      if (this._canEdit) this._editors.set(file, editor)
+    }
+    return { ...editor, dirty: this._isDirty(file, editor) }
   }
-  _editFile(file, values = {}) {
+  _editFile(file, values) {
     if (!this._canEdit || this._blocked) return
-    if (file !== this._file) { this._rememberEditor(); this._resetEditor(file) }
-    Object.assign(this, values)
+    this._resetEditor(file)
+    Object.assign(this._editors.get(file), values)
+    this.requestUpdate()
   }
-  _setFileStatus(file, status) { if (this._blocked || this._nonTextFiles.includes(file)) return; this._editFile(file, { _status: status }); return this._saveFile(file) }
-  _rememberEditor() {
-    if (!this._canEdit) return
-    if (this._dirty || this._pendingSaves.some(save => save.change.file === this._file)) this._drafts.set(this._file, { edit: this._edit, revision: this._editRevision, comment: this._comment, status: this._status })
-    else this._drafts.delete(this._file)
-  }
+  _setFileStatus(file, status) { if (this._blocked || this._nonTextFiles.includes(file)) return; this._editFile(file, { status }); return this._saveFile(file) }
   _selectFile(path) {
     if (this._blocked || !this._files.includes(path)) return
-    this._rememberEditor(); this._path = path; this._resetEditor(path)
+    this._path = path; this._resetEditor(path)
   }
   _open(file = null) {
     if (this._blocked) return
-    this._rememberEditor(); this._resetEditor(file)
+    this._resetEditor(file)
     if (file === null) this._panel = 'notes'
     else { this._path = file; this._panel = null }
   }
   _openPanel(panel) { if (panel === 'notes') this._open(); else this._panel = panel }
   _closePanel() {
     if (this._blocked) return
-    if (this._panel === 'notes') { this._rememberEditor(); this._resetEditor(this._path) }
+    if (this._panel === 'notes') { this._resetEditor(this._path) }
     this.querySelector('dialog')?.close(); this._panel = null
   }
   _showPublished(review) {
-    this._rememberEditor(); this._selectedReview = review.id; this._panel = null
+    this._selectedReview = review.id; this._panel = null
     // Private buffers survive, but published snapshots never use them.
-    this._file = this._path; this._edit = null; this._comment = ''; this._status = ''
+    this._file = this._path
   }
   _resume() { this._selectedReview = null; this._panel = null; this._resetEditor(this._path) }
   _continue(reviewId, revision) {
@@ -210,7 +203,7 @@ export class NpmReview extends LitElement {
     if (!source || this._activeReview) return null
     this._continuation = { source, review: { ...source, publishedAt: null, revokedAt: null, status: null, teams: [] } }
     this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : [])
-    this._selectedReview = null; this._panel = null; this._drafts.clear(); this._resetEditor(this._path)
+    this._selectedReview = null; this._panel = null; this._editors.clear(); this._resetEditor(this._path)
     this._notice = 'Continue editing. A new review will be saved when you make a change.'
     return this._activeReview
   }
@@ -238,14 +231,12 @@ export class NpmReview extends LitElement {
     return save.promise
   }
   _acceptSave(review, change) {
-    this._rememberEditor()
     this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
     this._continuation = null
     // Rebase only our own edits; a revision changed in another tab still conflicts.
-    for (const [file, buffer] of this._drafts) {
+    for (const [file, buffer] of this._editors) {
       if (buffer.revision !== change.revision) continue
       buffer.revision = review.revision; buffer.edit = review.entries.find(row => row.file === file) ?? null
-      if (buffer.comment === (buffer.edit?.comment ?? '') && buffer.status === (buffer.edit?.status ?? '')) this._drafts.delete(file)
     }
     for (const { change: pending } of this._pendingSaves.slice(1)) {
       if (pending.revision !== change.revision) continue
@@ -274,7 +265,7 @@ export class NpmReview extends LitElement {
         this.requestUpdate()
       } catch (error) {
         if (this._pendingSaves[0] !== save) return
-        this._rememberEditor(); this._cancelSaves()
+        this._cancelSaves()
         if (error.name !== 'AbortError') this._error = error.message
         this.requestUpdate(); return
       }
@@ -296,7 +287,7 @@ export class NpmReview extends LitElement {
       this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
       if (change.action === 'publish') {
         this._selectedReview = review.id; this._panel = null
-        this._comment = ''; this._status = ''; this._edit = null; this._notice = 'Published. Verdicts and notes are now frozen.'
+        this._editors.clear(); this._notice = 'Published. Verdicts and notes are now frozen.'
       }
       this._rememberBase()
       return review
@@ -308,12 +299,11 @@ export class NpmReview extends LitElement {
     const editor = this._editorState(file), pending = this._pendingSaves.some(save => save.change.file === file), review = this._activeReview
     if (!editor.dirty && !pending) return review
     if (!editor.status && !editor.comment.trim() && !editor.edit?.id && !pending) {
-      this._drafts.delete(file)
+      this._editors.delete(file)
       if (file === this._file) this._resetEditor(file)
       return review
     }
-    const revision = file === this._file ? this._editRevision : this._drafts.get(file)?.revision
-    return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: revision ?? review?.revision ?? null,
+    return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: editor.revision,
       entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null || this._nonTextFiles.includes(file) ? null : editor.status || null })
   }
   async _saveAll() {
@@ -323,9 +313,9 @@ export class NpmReview extends LitElement {
         if ((await Promise.all(this._pendingSaves.map(save => save.promise))).some(review => !review)) return false
         continue
       }
-      this._rememberEditor()
-      if (this._drafts.size === 0) return true
-      if (!await this._saveFile(this._drafts.keys().next().value)) return false
+      const files = this._dirtyFiles
+      if (files.length === 0) return true
+      if (!await this._saveFile(files[0])) return false
     }
     return false
   }

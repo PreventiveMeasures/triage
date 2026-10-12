@@ -40,7 +40,15 @@ npm-review textarea {
   border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgb(0 0 0 / .2);
   }
-.npm-review-summary-actions { display: flex; align-items: center; gap: 1.1rem; flex-shrink: 0; }
+.npm-review-summary-actions,
+.npm-review-toolbar,
+.npm-review-toolbar-group,
+.npm-review-filters,
+.npm-review-tree-footer,
+.npm-review-history-heading,
+.npm-review-coverage > div:first-child,
+.npm-review-decision > header { display: flex; align-items: center; }
+.npm-review-summary-actions { gap: 1.1rem; flex-shrink: 0; }
 .npm-review-progress-block { width: 8.6rem; }
 .npm-review-progress-block > span {
   display: flex; justify-content: space-between; gap: .6rem;
@@ -51,15 +59,13 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
 .npm-review-progress { height: 3px; border-radius: 2px; overflow: hidden; background: var(--border); margin-top: .4rem; }
 .npm-review-progress > span { display: block; height: 100%; background: var(--green); }
 .npm-review-toolbar {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
   gap: .6rem 1rem;
   flex-wrap: wrap;
   padding: .4rem 1rem;
   border-bottom: 1px solid var(--border);
   }
-.npm-review-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; }
+.npm-review-toolbar-group { flex-wrap: wrap; gap: .8rem; }
 .npm-review-count, .npm-review-badge {
   border-radius: 3px;
   background: var(--surface-active);
@@ -68,15 +74,13 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   }
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; }
-.npm-review-filters { display: flex; align-items: center; gap: .7rem; padding: 0 .15rem; }
+.npm-review-filters { gap: .7rem; padding: 0 .15rem; }
 npm-review :is(.npm-review-filters, .npm-review-tree-footer) button { padding: 0; border: 0; background: transparent; }
 npm-review .npm-review-filters button { min-height: 1.4rem; color: var(--muted); font-size: .68rem; }
 npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text); }
 .npm-review-note-dot { color: var(--muted); }
 .npm-review-tree-footer {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
   gap: .4rem;
   padding: .35rem .65rem;
   border-top: 1px solid var(--border);
@@ -84,7 +88,9 @@ npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text);
   font-size: .65rem;
   }
 npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
+.npm-review-decision, .npm-review-published, .npm-review-dialog-body { display: flex; flex-direction: column; gap: .55rem; }
 .npm-review-decision {
+  align-items: flex-start;
   flex: none;
   max-height: 50%;
   overflow: auto;
@@ -92,17 +98,7 @@ npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
   border-top: 1px solid var(--border);
   background: var(--surface);
   }
-.npm-review-decision-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: .3rem .7rem;
-  margin-bottom: .5rem;
-  }
-.npm-review-decision-head strong { font-size: .75rem; overflow-wrap: anywhere; }
-.npm-review-verdict-field { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
-.npm-review-verdict-field + textarea { margin-top: .55rem; }
+.npm-review-decision > header { width: 100%; justify-content: space-between; gap: .7rem; }
 .npm-review-verdict-options {
   display: inline-flex;
   max-width: 100%;
@@ -111,17 +107,12 @@ npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
   border-radius: var(--ui-radius, 5px);
   overflow: hidden;
   }
-.npm-review-verdict-choice { position: relative; display: flex; min-width: 0; }
+.npm-review-verdict-choice {
+  position: relative; display: flex; align-items: center; justify-content: center; min-width: 0;
+  padding: .4rem .65rem; text-align: center; font-size: .7rem;
+}
 .npm-review-verdict-choice + .npm-review-verdict-choice { border-left: 1px solid var(--border); }
 .npm-review-verdict-choice input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: default; }
-.npm-review-verdict-choice > span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: .4rem .65rem;
-  text-align: center;
-  font-size: .7rem;
-  }
 :is(.npm-review-verdict-choice, .npm-review-verdict-icon, .npm-review-finalize) {
   &:is(.accept, .accept-with-nits) { --verdict-color: var(--green); }
   &.request-changes { --verdict-color: var(--medium); }
@@ -137,8 +128,6 @@ npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
 .npm-review-verdict-choice:not(:has(:disabled, :checked)):hover { background: var(--surface-active); }
 /* Share one border when the sticky file header reaches the actions. */
 .npm-review-inline-decision { margin-top: -1px; max-height: none; overflow: visible; }
-.npm-review-inline-decision .npm-review-decision-head { display: none; }
-.npm-review-inline-decision textarea { min-height: 2rem; }
 .npm-review-dialog-body .npm-review-verdict-options { margin-top: .5rem; }
 .npm-review-note { margin: .45rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .npm-review-note-list { padding-left: 1.1rem; list-style: disc; white-space: normal; }
@@ -183,23 +172,21 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
   }
 .npm-review-dialog-head h2 { font-size: 1.15rem; }
 .npm-review-dialog-head p { margin: .2rem 0 0; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
-.npm-review-dialog-body { display: flex; flex-direction: column; gap: 1.1rem; padding: 1rem 1.25rem; }
+.npm-review-dialog-body { gap: 1.1rem; padding: 1rem 1.25rem; }
 .npm-review-dialog-body > label { display: block; font-weight: 600; }
-.npm-review-dialog-body textarea { margin-top: .5rem; font-weight: 400; }
+.npm-review-dialog-body label textarea { margin-top: .5rem; font-weight: 400; }
 .npm-review-dialog-body .npm-review-help { display: block; font-weight: 400; margin-top: .4rem; }
 .npm-review-dialog-body .npm-review-decision { max-height: none; padding: 0; border: 0; background: none; overflow: visible; }
 .npm-review-dialog-body .npm-review-error { padding: 0; }
 .npm-review-publish-form { display: flex; flex: 1; flex-direction: column; }
 .npm-review-coverage { padding: .8rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--surface); }
-.npm-review-coverage > div:first-child { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+.npm-review-coverage > div:first-child { justify-content: space-between; align-items: baseline; gap: .5rem; }
 .npm-review-coverage > div:first-child > span { color: var(--muted); font-size: .7rem; }
 .npm-review-coverage p { margin: .5rem 0 0; color: var(--muted); font-size: .72rem; }
 npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; padding: .2rem .45rem; }
 .npm-review-coverage .npm-review-progress { margin-top: .6rem; }
-.npm-review-team-options { border: 0; min-width: 0; }
+.npm-review-team-options { display: grid; gap: .4rem; border: 0; min-width: 0; }
 .npm-review-team-options legend { font-weight: 600; margin-bottom: .4rem; }
-.npm-review-team-options mode-switch { display: block; width: 100%; margin-top: .4rem; }
-.npm-review-team-options .npm-review-error { margin-top: .4rem; }
 .npm-review-team-options mode-switch::part(button) {
   width: 100%; height: auto; min-height: 2.7rem; justify-content: space-between; white-space: normal;
   }
@@ -215,18 +202,14 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   }
 .npm-review-dialog-footer > p { margin: 0 0 .75rem; color: var(--muted); font-size: .7rem; }
 .npm-review-dialog-footer > button { width: 100%; }
-.npm-review-history-heading { display: flex; justify-content: space-between; align-items: center; gap: .6rem; margin-bottom: .65rem; }
+.npm-review-history-heading { justify-content: space-between; gap: .6rem; }
 .npm-review-published {
-  display: flex;
-  flex-direction: column;
   align-items: flex-start;
-  gap: .5rem;
   padding-bottom: 1.25rem;
   border-bottom: 1px solid var(--border);
   }
 .npm-review-published .npm-review-history-heading, .npm-review-published fieldset { width: 100%; }
-.npm-review-published .npm-review-help, .npm-review-published .npm-review-note { margin: 0; }
-.npm-review-published fieldset button { margin-top: .6rem; }
+.npm-review-published :is(.npm-review-help, .npm-review-note), .npm-review-decision > :is(p, ul) { margin: 0; }
 .npm-review-revoke { margin-top: .9rem; }
 .npm-review-revoke button { margin-top: .6rem; }
 .dependency-review-list {
@@ -309,9 +292,7 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
 .dependency-review-entry-file { display: flex; align-items: baseline; gap: .4rem; font: .72rem/1.5 ui-monospace, monospace; min-width: 0; }
 .dependency-review-entry-file > span { overflow-wrap: anywhere; min-width: 0; }
 .dependency-review-entry-file .source-file-icon { width: 13px; height: 13px; align-self: start; margin-top: .13rem; }
-.dependency-review-entry-verdict { justify-self: start; }
-.dependency-review-entry-verdict .npm-review-verdict { font-size: .68rem; white-space: nowrap; }
-.dependency-review-entry-note { min-width: 0; }
+.dependency-review-entries .npm-review-verdict { font-size: .68rem; white-space: nowrap; }
 .dependency-review-row .npm-review-note { margin: 0; color: var(--text); font-size: .72rem; line-height: 1.5; }
 .dependency-review-final-note .npm-review-note { font-size: .78rem; }
 @container review-list (width <= 560px) {
@@ -320,8 +301,8 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
   .dependency-review-row-actions { grid-column: 3; grid-row: 1 / 3; }
   .dependency-review-meta { flex-wrap: wrap; gap: .15rem .5rem; }
   .dependency-review-entries > li { grid-template-columns: minmax(0, 1fr) 8.5rem; gap: .1rem .65rem; }
-  .dependency-review-entry-note { grid-column: 1 / -1; }
-  .dependency-review-entry-note:empty { display: none; }
+  .dependency-review-entries > li > div { grid-column: 1 / -1; }
+  .dependency-review-entries > li > div:empty { display: none; }
 }
 @media (width <= 900px) {
   .npm-review-summary-actions { flex: 1; justify-content: flex-end; }
