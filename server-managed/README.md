@@ -251,14 +251,24 @@ aside, its strings read for the paths, names and commands they hold, a
 module (`vm`, `child_process`, libnpmpublish) told by the string naming it
 where code loads it (`require(…)`, `import`, `from`), and a declaration file
 (.d.ts) read as any TypeScript, as node runs it. A file naming a host
-malicious packages send what they take to is labelled Exfiltration, in its
-head and in the tree, as what it runs is: request catchers (webhook.site,
-Pipedream), out-of-band testing hosts (interactsh's `interact.sh` and
-`oast.*`, Burp Collaborator's), Telegram's bot API, Discord and Slack
-webhooks, Pastebin, ipinfo, and Bun's install script (`bun.sh/install`, now
-`bun.com/install`), which a worm ran its payload with; each with its lines,
-one the version compared with didn't name saying so. Any text but prose and
-a source map is read for them, comments and all.
+malicious packages send what they take to, fetch what they run from or
+look the machine up with is labelled so, in its head and in the tree, as
+what it runs is, under one of three tags, each in its level's color:
+Exfiltration, red, where nothing but catching what is sent has a use for it
+in a package's code (request catchers: webhook.site, Pipedream's
+`pipedream.net` endpoints, RequestBin, Request Catcher, requestrepo,
+Beeceptor; out-of-band testing hosts: interactsh's `interact.sh` and
+`oast.*`, Burp Collaborator's, Canarytokens, DNSLog's `dnslog.cn`, CEYE's
+`ceye.io`); Remote, orange, where it could be fine (Telegram's bot API,
+Discord and Slack webhooks, Pastebin, paste.ee, transfer.sh and file.io in
+a URL, 0x0.st, tunnels: ngrok, localtunnel's `loca.lt`, Cloudflare's
+`trycloudflare.com`, Serveo; Pipedream's own API at `pipedream.com`, and
+Bun's install script, `bun.sh/install`, now `bun.com/install`, which a worm
+ran its payload with); and IP lookup, yellow, where it usually is (ipinfo,
+ipify, ifconfig.me, icanhazip, ip-api, ipapi, `checkip.amazonaws.com`).
+Each lists its services with their lines, one the version compared with
+didn't name saying so, and a tag naming one a level higher, never past red.
+Any text but prose and a source map is read for them, comments and all.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
 `module`, `commonjs` and the rest, run as code, as is a file it records no
@@ -1310,8 +1320,9 @@ control. A version shows in the bundle view with four tabs:
   new): its deprecation, its install scripts (named, their commands in the
   tooltip), dependencies from elsewhere than npm's registry or imported by
   nothing of it, in orange what any of its files runs beyond itself (`Runs
-  code`, the kinds named), an exfiltration host one names (the services
-  named) and an obfuscator's fingerprint, each listing its files and their
+  code`, the kinds named), the hosts its files name, a chip for each tag
+  (Exfiltration in red, Remote in orange, IP lookup in yellow, the services
+  named), and an obfuscator's fingerprint, each listing its files and their
   lines in its tooltip, its age under two weeks, the advisories affecting
   it, tinted by the worst, Socket's scores under their bars, and its tier by
   downloads where it is orange or red. Over the facts, where npm's security team took the
@@ -1325,8 +1336,8 @@ control. A version shows in the bundle view with four tabs:
   its severity's color, in the Files list and in Compare's file heads and
   tree, each version by its own report; and a script with what its code can
   do beyond itself (`eval`, `child_process`, `credentials`, `whole env`,
-  `publish`), and a file with Exfiltration where it names a host malicious
-  packages send what they take to, as Compare labels them, its lines in the
+  `publish`), and a file with Exfiltration, Remote or IP lookup where it
+  names such a host, each in its color, as Compare labels them, its lines in the
   tooltip, one on a single line opening the file's code there when clicked. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
@@ -1388,8 +1399,9 @@ control. A version shows in the bundle view with four tabs:
   loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
   source map, which holds the names of the code it maps), ordered by name or
   size, or, where any file listed is flagged (Socket's alerts on it, what
-  it runs beyond itself, an exfiltration host it names, a warning's or a
-  notice's tag), by its flags: the
+  it runs beyond itself, the hosts it names, critical for Exfiltration, a
+  warning's for Remote and moderate for IP lookup, in Compare a level higher
+  where new to the file, a warning's or a notice's tag), by its flags: the
   most severe first (a critical alert, then a warning's or a high alert,
   then a moderate and a low alert, then a notice), then the most flags, then
   their names, then its path, files with none last; and, where the
@@ -1439,9 +1451,10 @@ control. A version shows in the bundle view with four tabs:
   the open version adds or changes (`Runs code`, the kinds named as the
   file's tags say them: eval, child_process, credentials, whole env,
   publish), its tooltip listing each file with its new kinds and their lines,
-  each way a string runs as code by its own name (`Function (line 2)`); an
-  exfiltration host new to a file the open version adds or changes
-  (`Exfiltration`, the services named: `webhook.site, Telegram`), its tooltip
+  each way a string runs as code by its own name (`Function (line 2)`); a
+  host new to a file the open version adds or changes, a chip for each tag a
+  level higher than the tag's own (`Exfiltration` and `Remote` in red, `IP
+  lookup` in orange, the services named: `webhook.site`), its tooltip
   listing each file with its new services and their lines; a code file of
   256 KiB or more the open version adds (not one renamed), a file it changes
   that had no line over 200 characters and now has one over 2,000 (prose,

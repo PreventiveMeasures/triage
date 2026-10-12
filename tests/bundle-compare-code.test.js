@@ -1141,15 +1141,20 @@ test('a file is labelled with what its code can run beyond itself, in its head a
   assert.deepEqual(tags(rows['plain.js']), [])
 })
 
-test('a file naming an exfiltration host is tagged so in its head and the tree, a service new to it saying so', () => {
-  const base = version('a', { 'lib/send.js': 'post("https://webhook.site/x")\n', 'lib/gone.js': 'bot("https://api.telegram.org/bot")\n' })
-  const other = version('b', { 'lib/send.js': 'post("https://webhook.site/x")\nbot("https://api.telegram.org/bot")\n' })
+test('a file naming exfiltration hosts is tagged so in its head and the tree, a tag in its level\'s color, a service new to it a level higher', () => {
+  const base = version('a', { 'lib/send.js': 'post("https://webhook.site/x")\n', 'lib/gone.js': 'bot("https://api.telegram.org/bot")\nget("https://api.ipify.org")\n' })
+  const other = version('b', { 'lib/send.js': 'post("https://webhook.site/x")\nbot("https://api.telegram.org/bot")\nget("https://api.ipify.org")\n' })
   const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
-  const tags = markup => [...markup.matchAll(/class="npm-exfiltration" data-tooltip=([^>]*)>Exfiltration</gu)].map(m => m[1])
-  assert.deepEqual(tags(head('lib/send.js')), ['Names a host malicious packages send what they take to: webhook.site (line 1), Telegram (line 2, new)'])
-  assert.deepEqual(tags(head('lib/gone.js')), ['Names a host malicious packages send what they take to: Telegram (line 1)'], 'a removed file as it was')
+  const tags = markup => [...markup.matchAll(/class=npm-exfiltration is-(\w+) data-tooltip=([^>]*)>([^<]+)</gu)].map(m => [m[3], m[1], m[2]])
+  const catcher = 'Names a host that catches what is sent to it, as malicious packages send what they take to'
+  const remote = 'Names a service malicious packages send what they take to, or fetch what they run from, though code may well use it'
+  const lookup = 'Looks up the machine\'s public address, as malicious packages do before sending what they take'
+  assert.deepEqual(tags(head('lib/send.js')), [['Exfiltration', 'critical', `${catcher}: webhook.site (line 1)`],
+    ['Remote', 'critical', `${remote}: Telegram (line 2, new)`], ['IP lookup', 'high', `${lookup}: ipify (line 3, new)`]], 'red, orange and yellow, those new a level higher')
+  assert.deepEqual(tags(head('lib/gone.js')), [['Remote', 'high', `${remote}: Telegram (line 1)`], ['IP lookup', 'moderate', `${lookup}: ipify (line 2)`]],
+    'a removed file as it was')
   const row = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](render('lib/send.js')).find(markup => markup.includes('data-tooltip=lib/send.js>'))
-  assert.equal(tags(row).length, 1, 'in the tree too')
+  assert.equal(tags(row).length, 3, 'in the tree too')
 })
 
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {

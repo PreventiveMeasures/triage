@@ -472,11 +472,11 @@ class BundleCompare extends LitElement {
 
   // A file's row; a source's `files` (see `source`) give it its type's icon,
   // read from each side under that side's own path, and a file in the open
-  // one its tag.
-  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined, basePath = path) {
+  // one its tag, with `base` as _fileGroup has it.
+  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined, basePath = path, base = undefined) {
     const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
+      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path, base) : nothing}${fileMetaTags(meta)}${sizeTpl}
     </button></li>`
   }
 
@@ -535,15 +535,18 @@ class BundleCompare extends LitElement {
   // and else is Name's.
   _fileGroup(title, rows, kind, displayOf, lanes) {
     const files = this.source?.files, tagged = kind !== 'removed'
-    const flagsOf = r => [...tagged && files?.flags ? files.flags(this.details, r.path) : [], ...fileMetaFlags(r.meta)]
+    // A file as the version compared with has it, for what its tags say is
+    // new to it: none for one the open version adds.
+    const base = r => kind === 'added' ? null : { details: this._otherDetails, path: r.basePath ?? r.path }
+    const flagsOf = r => [...tagged && files?.flags ? files.flags(this.details, r.path, base(r)) : [], ...fileMetaFlags(r.meta)]
     const flagged = rows.some(r => flagsOf(r).length > 0)
     const sort = this._fileSort[kind] === 'flags' && !flagged ? 'name' : this._fileSort[kind]
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = sort === 'flags' ? byFlags(rows, flagsOf, r => r.path)
       : rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
-    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta, r.basePath ?? r.path)
-      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta, r.basePath ?? r.path)
+    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta, r.basePath ?? r.path, base(r))
+      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta, r.basePath ?? r.path, base(r))
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file', flagged, sort), { lanes })
   }
 

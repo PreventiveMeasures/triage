@@ -3715,8 +3715,22 @@ a.npm-compare-publisher {
    fileBadges): a large code file added, a file become unreadable, one with
    an obfuscator's fingerprint, red as provenance lost is, though their tags
    on the files say little of one alone. */
-.npm-extension:is(.npm-compare-provenance, .npm-compare-file) {
+.npm-extension:is(.npm-compare-provenance, .npm-compare-file, .is-critical) {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
+}
+/* The hosts a version's files name (npm-overview.js hostBadges), in their
+   level's color: red as the files above (`is-critical`), orange as a
+   warning (`is-warn`), and yellow where they are usually fine. */
+.npm-extension.is-critical {
+  color: color-mix(in srgb, var(--critical) 55%, var(--text));
+
+  & .npm-extension-count { color: inherit; }
+}
+.npm-extension.is-moderate {
+  color: var(--text);
+  background: color-mix(in srgb, var(--yellow) 16%, var(--bg)); border-color: var(--yellow);
+
+  & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 }
 /* The open version deprecated, as an unpopular package's downloads tier reads. */
 .npm-extension.npm-compare-deprecated {

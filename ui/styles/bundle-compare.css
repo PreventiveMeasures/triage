@@ -675,8 +675,10 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
   /* Worse than the others' warning: the whole environment read out, and
-     publishing (file-runs-code.js). */
+     publishing (file-runs-code.js), and a host that catches what is sent to
+     it (file-hosts.js); less, an IP lookup. */
   &.is-critical { background: color-mix(in srgb, var(--critical) 22%, var(--bg)); border-color: var(--critical); }
+  &.is-moderate { background: color-mix(in srgb, var(--yellow) 22%, var(--bg)); border-color: var(--yellow); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
 /* An install script's name in the Overview, a little larger: what runs on

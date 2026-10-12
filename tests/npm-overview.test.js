@@ -719,7 +719,7 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
   assert.match(both, /npm-compare-kept-runs[^]*?compare-tip-path">lib\/b\.js<\/span><span class="compare-tip-said">eval \(line 1\)</u, 'a file\'s kept kinds alone in orange, what is new to it in red')
 })
 
-test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and in red an exfiltration host new to a file', async () => {
+test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and an exfiltration host new to a file a level higher than its tag', async () => {
   const version = (ver, files) => held({ integrity: `hosts@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'hosts', version: ver } })
   const badges = async (base, other) => {
@@ -728,19 +728,23 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   const base = version('1.0.0', { 'lib/api.js': 'fetch("https://api.stripe.com/v1")\n', 'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\n', 'README.md': 'See https://docs.new.dev\n',
     'lib/geo.js': 'get("https://ipinfo.io/json")\n' })
   const other = version('1.1.0', { 'lib/api.js': 'fetch("https://api.stripe.com/v1")\npost("https://webhook.site/0c9a")\n// https://commented.example.net\n',
-    'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\nget("https://docs.new.dev/errors")\n', 'lib/new.js': 'get("https://cdn.jsdelivr.net/y")\nbot("https://api.telegram.org/bot")\n',
+    'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\nget("https://docs.new.dev/errors")\n', 'lib/new.js': 'get("https://cdn.jsdelivr.net/y")\nbot("https://api.telegram.org/bot")\nget("https://api.ipify.org")\n',
     'README.md': 'See https://docs.new.dev\n', 'lib/geo.js': 'get("https://ipinfo.io/json?x")\n' })
   const flagged = await badges(base, other)
-  assert.match(flagged, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New hosts<\/span><span class="npm-extension-count">3<\/span><\/span><\/li>/u,
+  assert.match(flagged, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New hosts<\/span><span class="npm-extension-count">4<\/span><\/span><\/li>/u,
     'in orange, how many')
   const hostRows = /compare-tip-head">New hosts<\/div>\s*<div class="compare-tip-rows is-files">([^]*?)<\/div>/u.exec(flagged)[1]
   assert.deepEqual([...hostRows.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, name, at]) => `${name}: ${at}`),
-    ['api.telegram.org: lib/new.js, line 2', 'webhook.site: lib/api.js, line 2', 'docs.new.dev: lib/old.js, line 2'],
+    ['api.telegram.org: lib/new.js, line 2', 'api.ipify.org: lib/new.js, line 3', 'webhook.site: lib/api.js, line 2', 'docs.new.dev: lib/old.js, line 2'],
     'each with where it is first named; not one the version compared with\'s code named, in another file too, nor one in a comment, nor its readme\'s')
-  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-exfiltration[^]*?<span>Exfiltration<\/span><span class="npm-extension-count">webhook\.site, Telegram<\/span><\/span><\/li>/u,
-    'in red, the services named; not ipinfo, which lib/geo.js named already')
-  assert.match(flagged, /compare-tip-path">lib\/new\.js<\/span><span class="compare-tip-said">Telegram \(line 2\)</u)
-  assert.doesNotMatch(await badges(other, base), /npm-compare-hosts|npm-compare-exfiltration/u, 'none the other way: hosts dropped, and a readme\'s no code')
+  assert.match(flagged, /<li><span class=npm-extension is-critical npm-held-file npm-compare-exfiltration[^]*?<span>Exfiltration<\/span><span class="npm-extension-count">webhook\.site<\/span><\/span><\/li>/u,
+    'in red, the services named')
+  assert.match(flagged, /<li><span class=npm-extension is-critical npm-held-file npm-compare-remote[^]*?compare-tip-path">lib\/new\.js<\/span><span class="compare-tip-said">Telegram \(line 2\)<[^]*?<span>Remote<\/span><span class="npm-extension-count">Telegram</u,
+    'one that could be fine, new, in red too')
+  assert.match(flagged, /<li><span class=npm-extension is-warn npm-held-file npm-compare-ip-lookup[^]*?<span>IP lookup<\/span><span class="npm-extension-count">ipify<\/span><\/span><\/li>/u,
+    'a new IP lookup in orange; not ipinfo, which lib/geo.js named already')
+  assert.doesNotMatch(flagged, /ipinfo/u)
+  assert.doesNotMatch(await badges(other, base), /npm-compare-(?:hosts|exfiltration|remote|ip-lookup)/u, 'none the other way: hosts dropped, and a readme\'s no code')
   const files = Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]]))
   const oneVersion = version('1.0.1', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n` })
   const one = await badges(base, oneVersion)
@@ -759,10 +763,17 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   assert.match(twice, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New host<\/span><span class="npm-extension-count">one\.new\.dev<\/span><\/span><\/li>/u)
   assert.match(twice, /compare-tip-path">one\.new\.dev<\/span><span class="compare-tip-said"><span class="compare-tip-lines"><span>lib\/api\.js, line 2<\/span><span>lib\/geo\.js, line 1<\/span><\/span>/u,
     'in the order the files are compared')
-  assert.doesNotMatch(await badges(base, base), /npm-compare-hosts|npm-compare-exfiltration/u)
-  // Each file's tag where it names one, in orange as what it runs is.
-  const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="(npm-[\w-]+)" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, kind, note, tag]) => `${kind}:${tag} ${note}`)
-  assert.deepEqual(tags('lib/api.js'), ['npm-exfiltration:Exfiltration Names a host malicious packages send what they take to: webhook.site (line 2)'])
+  assert.doesNotMatch(await badges(base, base), /npm-compare-(?:hosts|exfiltration|remote|ip-lookup)/u)
+  // Each file's tags where it names one, each in its level's color, and as
+  // the version compared with has the file, a level higher where new to it;
+  // its flags as they show.
+  const tags = (path, was) => [...rendered(npmCompareFiles.tag(other, path, was)).matchAll(/class=npm-exfiltration is-(\w+) data-tooltip=([^>]*)>([^<]+)</gu)]
+    .map(([, level, note, tag]) => `${tag} ${level}: ${note.replace(/^[^:]*: /u, '')}`)
+  assert.deepEqual(tags('lib/api.js'), ['Exfiltration critical: webhook.site (line 2)'])
+  assert.deepEqual(tags('lib/new.js'), ['Remote high: Telegram (line 2)', 'IP lookup moderate: ipify (line 3)'], 'as they are')
+  assert.deepEqual(tags('lib/new.js', null), ['Remote critical: Telegram (line 2, new)', 'IP lookup high: ipify (line 3, new)'], 'all new to a file the version adds')
+  assert.deepEqual(tags('lib/geo.js', { details: base, path: 'lib/geo.js' }), ['IP lookup moderate: ipinfo (line 1)'], 'named already')
+  assert.deepEqual(npmCompareFiles.flags(other, 'lib/new.js', null).map(({ name, severity }) => `${name} ${severity}`), ['Remote critical', 'IP lookup high'])
   assert.deepEqual(tags('lib/old.js'), [])
 })
 
@@ -853,6 +864,7 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   answers.socket['held@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
   const manifest = { deprecated: 'Use other instead', installScripts: { postinstall: 'node setup.js' }, dependencies: { gitdep: 'github:a/b' }, publisher: 'someone' }
   const files = { 'index.js': "module.exports = x => eval(x)\nrequire('child_process')\n", 'lib/send.js': 'post("https://webhook.site/x")\n',
+    'lib/bot.js': 'bot("https://api.telegram.org/bot")\n', 'lib/geo.js': 'get("https://api.ipify.org")\n',
     'dist/o.js': `${obfuscated(25)}\n`, 'setup.js': 'module.exports = 1\n', 'lib/big.js': `${'x'.repeat(300 * 1024)}\n` }
   const details = { integrity: 'held@1.0.0', kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) }, npm: { name: 'held', version: '1.0.0' } }
   const entry = { npm: { name: 'held', version: '1.0.0', manifest } }
@@ -860,14 +872,20 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   npmOverviewBadges(entry); await new Promise(resolve => { setImmediate(resolve) })
   const shown = rendered(npmOverviewBadges(entry))
   const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
-  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Obfuscated', 'Advisories', 'Quality'], 'in Compare\'s order')
+  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
+    'in Compare\'s order')
   assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
   assert.match(shown, /npm-compare-install" data-tooltip=postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
   assert.match(shown, /npm-overview-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)
-  assert.match(shown, /npm-overview-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u)
+  assert.match(shown, /<li><span class=npm-extension is-critical npm-held-file npm-overview-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u,
+    'a host that catches what is sent to it in red')
+  assert.match(shown, /<li><span class=npm-extension is-warn npm-held-file npm-overview-remote[^]*?compare-tip-path">lib\/bot\.js<[^]*?<span class="npm-extension-count">Telegram</u,
+    'one that could be fine in orange')
+  assert.match(shown, /<li><span class=npm-extension is-moderate npm-held-file npm-overview-ip-lookup[^]*?compare-tip-path">lib\/geo\.js<[^]*?<span class="npm-extension-count">ipify</u,
+    'an IP lookup in yellow')
   assert.match(shown, /npm-overview-obfuscated[^]*?compare-tip-path">dist\/o\.js</u)
-  const heldChips = shown.match(/<li><span class=npm-extension is-warn npm-held-file[^]*?<\/li>/gu)
-  assert.equal(heldChips.length, 3)
+  const heldChips = shown.match(/<li><span class=npm-extension is-\w+ npm-held-file[^]*?<\/li>/gu)
+  assert.equal(heldChips.length, 5)
   for (const chip of heldChips) assert.doesNotMatch(chip, /compare-tip-note/u, 'what each file holds and where, nothing more')
   assert.match(shown, /<span class=npm-extension npm-compare-advisories sev-high[^]*?Advisories affecting 1\.0\.0: 1[^]*?<span class="npm-extension-count">1</u, 'the advisories affecting it, the column listing them')
   assert.match(shown, /npm-socket-score[^]*>Quality<[^]*>30</u, 'its score alone')

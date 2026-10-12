@@ -55,16 +55,17 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - `provenance-lost`
   - `install-scripts`
   - `non-registry-deps`, `unused-deps`
-  - `runs-code`, `exfiltration`, `large-code`, `now-unreadable`, `obfuscated`, `kept-runs-code`
+  - `runs-code`, `large-code`, `now-unreadable`, `obfuscated`, `kept-runs-code`
+  - `exfiltration`, `remote`, `ip-lookup`: the services a file names anew under each of the hosts' tags, a level higher than the tag's own (`files/hosts.js`), so red, red and orange
   - `new-hosts`
   - `too-new`
   - `popularity`
 
-  Without one, what the version holds, as the npm Overview flags a version on its own (`npm/held.js`): `held-install-scripts`, `held-runs-code`, `held-exfiltration`, `held-obfuscated`, its dependencies' `non-registry-deps` and `unused-deps`, and `deprecated`, `too-new` and `popularity` as above.
+  Without one, what the version holds, as the npm Overview flags a version on its own (`npm/held.js`): `held-install-scripts`, `held-runs-code`, `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`, its dependencies' `non-registry-deps` and `unused-deps`, and `deprecated`, `too-new` and `popularity` as above.
 - `files`: each file's stamps (`{ name, severity }`, as a list of files tags and orders it), and what was read of it:
   - how it reads (binary, minified, long lines, source maps, control and invisible characters, an obfuscator's fingerprint)
   - what its code runs beyond itself (eval and its kin, child_process, credentials, the whole environment, publishing)
-  - the exfiltration hosts it names
+  - the services it names that malicious packages send what they take to, fetch what they run from or look the machine up with, under three tags: Exfiltration (request catchers and out-of-band testing hosts, `critical`), Remote (what could be fine: bot and webhook APIs, paste sites and file drops, tunnels, Bun's install script, `high`) and IP lookup (`moderate`)
   - the hosts its code calls
 - `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
 
