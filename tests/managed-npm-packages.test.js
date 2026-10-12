@@ -13,6 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmDownloads, npmGithubStats } from '../server-managed/npm-insights.ts'
+import { npmRisk } from '../server-managed/npm-risk.ts'
 import { npmDownloadCounts } from '../server-managed/npm-download-counts.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -181,6 +182,29 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   const refused = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@pub/huge', version: '1.0.0' })}`)
   assert.deepEqual([refused.status, refused.json()], [413, { error: 'package-too-large' }], 'its tarball read as the viewer loads one, refused as it would be')
   assert.ok(!calls.some(call => call.url === huge.doc.dist.tarball))
+})
+
+test('a risk assessment whose reader is gone stops waiting on its tarball, which loads on for others', async t => {
+  const pkg = packageOf('slow-risk', '1.0.0', { 'package.json': '{}' })
+  let answer = () => {}
+  const arrived = new Promise(resolve => {
+    t.mock.method(globalThis, 'fetch', input => {
+      if (String(input) !== pkg.doc.dist.tarball) return Promise.resolve(Response.json({ name: 'slow-risk', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
+      resolve()
+      return new Promise(resolveFetch => { answer = () => resolveFetch(new Response(pkg.tgz)) })
+    })
+  })
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const controller = new AbortController()
+  const assessed = npmRisk({ ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} }, null,
+    { db, teamScoped: false, privileged: false, signal: controller.signal })
+  await arrived
+  controller.abort(new Error('reader gone'))
+  await assert.rejects(assessed, /reader gone/u, 'given up on while its tarball is still on its way')
+  const load = loadNpmTarball({ ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+  answer()
+  assert.equal((await load.result).byteLength, pkg.tgz.byteLength, 'the load went on for whoever else reads it')
+  load.release()
 })
 
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {

@@ -75,11 +75,19 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
 }
 
 // A version's tarball as the viewer's loads read it (npm-loads.ts), its bytes
-// held to the integrity its reader's document names.
-async function tarballOf(doc: NpmVersionDocument | undefined): Promise<Uint8Array> {
+// held to the integrity its reader's document names: given up on, and the
+// load released, once `signal` aborts, the load going on for its other
+// readers, so that a reader gone holds no assessment's place.
+async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSignal): Promise<Uint8Array> {
   if (!doc) throw new NpmPackageError(502, 'upstream-invalid')
+  signal.throwIfAborted()
   const load = loadNpmTarball(doc)
-  try { return await load.result } finally { load.release() }
+  let onAbort = () => {}
+  const aborted = new Promise<never>((_, reject) => { onAbort = () => reject(signal.reason); signal.addEventListener('abort', onAbort, { once: true }) })
+  try { return await Promise.race([load.result, aborted]) } finally {
+    signal.removeEventListener('abort', onAbort)
+    load.release()
+  }
 }
 
 // The version `doc` names assessed against `old`'s, where given, each as the
@@ -96,6 +104,6 @@ export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument |
     return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
       cache: npmRiskCache(stores, !doc.private && !old?.private), signal,
       packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
-      tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined) })
+      tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
   } finally { assessing-- }
 }
