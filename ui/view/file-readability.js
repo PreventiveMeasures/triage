@@ -292,6 +292,16 @@ export function npmReadabilityFlags(readability, marks = null) {
   return shown.map(label => html`<span class=${`npm-flag-tag is-${npmLabelMark(readability, label)}`} data-tooltip=${note(label)}>${READABILITY.get(label).tag}</span>`)
 }
 
+// A file's tags in a list of files (the Files list, Compare's), as its tags
+// (npmReadabilityTag) but for ASCII, as most files are, and Map, which a
+// source map's name says already: UTF-8 and what can't be read as it is.
+// A file's head, wide enough, tags every one, as it does how one changed.
+export function npmListedReadabilityTag(readability) {
+  if (!readability) return nothing
+  const category = readability.category === 'long' ? readability.kind : readability.category
+  return category === 'ascii' || category === 'map' ? npmReadabilityFlags(readability) : npmReadabilityTag(readability)
+}
+
 // A file's tags of how it reads: its controls and long lines, where it has
 // them, then its tag.
 export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing

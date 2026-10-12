@@ -352,9 +352,9 @@ test('the one-list Code lists a file whose only change is a repointed import by 
 test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its controls and long lines beside that', () => {
   const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
   const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
-    'dist/min.js': `${code}\n` },
+    'dist/min.js': `${code}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}\n' },
   { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
-    'src/short.js': `${code}\n`, 'dist/min.js': `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n` }]
+    'src/short.js': `${code}\n`, 'dist/min.js': `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AACA"}\n' }]
   const rendered = path => renderText(view(path, files).render())
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(rendered(path))[1]
   const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
@@ -384,6 +384,10 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   assert.match(minRow, /npm-encoding-tag is-notice[^>]*>Minified</u)
   assert.doesNotMatch(row('ctl'), /npm-encoding-tag/u, 'its controls alone where it reads as UTF-8')
   assert.deepEqual(flags(row('ctl')), ['Controls warn'])
+  // A source map tagged Map in its head, wide enough, not in the tree, where its name says so.
+  assert.deepEqual(tags(head('dist/min.js.map')), ['Map'])
+  const mapRow = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes('data-tooltip=dist/min.js.map>'))
+  assert.doesNotMatch(mapRow, /npm-encoding-tag/u)
 })
 
 test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {

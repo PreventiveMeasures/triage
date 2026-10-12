@@ -218,7 +218,8 @@ head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
 Controls, Minified, ...), after how it read where that differs, with every
 other label it has now, Controls and Long lines, beside it, and the tree
 tags a file more briefly where it can be hard to review by reading it: its
-category, and its controls and unexpected long lines; both
+category (but Map, as a source map's name says, which its head keeps), and
+its controls and unexpected long lines; both
 tag it Large or Obfuscated as the npm Files list does, as it is now (as it
 was, for one removed). A file a
 bundle or package starts from is labelled in blue in its head (a Stasis
@@ -1338,8 +1339,9 @@ control. A version shows in the bundle view with four tabs:
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
   tag naming the control or invisible characters or long lines it holds:
-  each label a file has, Controls and Long lines beside its category (one
-  with unexpected long lines still tagged ASCII or UTF-8), and before them,
+  each label a file has, Controls and Long lines beside its category, but
+  ASCII, as most files are, and Map, as a source map's name says (Compare's
+  file heads tag both, and how a file's changed), and before them,
   Large, quietly, on a JavaScript or TypeScript file of 256 KiB or more
   (not a declaration file), which says little of a file alone, and
   Obfuscated, as a warning, on one with an obfuscator's fingerprint (20

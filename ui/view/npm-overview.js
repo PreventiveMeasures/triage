@@ -19,7 +19,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmObfuscationFound, npmReadabilityLabels, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
@@ -474,7 +474,7 @@ export function npmReadabilityWarning(entry, details) {
 // (npmRunsCode), its flags (npmFileFlagTags), then how it reads.
 export function npmFileTags(details, path) {
   const { byPath, sizes } = npmFilesRead(details)
-  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each

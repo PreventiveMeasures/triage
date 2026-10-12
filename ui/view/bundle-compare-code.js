@@ -826,12 +826,13 @@ export class BundleCompareCode extends LitElement {
   // The tree tags a file as its head does where it can be hard to review by
   // reading it as it reads now (as it read, for one removed), more briefly:
   // its controls and unexpected long lines, those it warns of, and its tag,
-  // ASCII and UTF-8 going untagged there.
+  // ASCII and UTF-8 going untagged there, as does Map, which a source map's
+  // name says already.
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
     if (!shown) return nothing
-    const tagged = READABILITY.get(shown.category === 'long' ? shown.kind : shown.category).mark
+    const tagged = shown.category !== 'map' && READABILITY.get(shown.category === 'long' ? shown.kind : shown.category).mark
     return html`${npmReadabilityFlags(shown, ['warn'])}${tagged ? npmEncodingTag(shown) : nothing}`
   }
 
