@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
+import { templates } from './_lit.js'
 
 // Render the actual card without the page renderer and source-preview DOM.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
@@ -8,11 +9,6 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 const { getPackagesIndex } = await import('../client/bundle-finding-index.js')
 const { state } = await import('../client/state.ts')
 const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js')
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 
 function cardTemplates(t, overrides = {}, findingOverrides = {}) {
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',

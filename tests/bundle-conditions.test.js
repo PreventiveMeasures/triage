@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { BundleConditions, defaultBundleConditions } from '../ui/managed/bundle-conditions.js'
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
+import { templates } from './_lit.js'
 
 test('presets default to Node.js, replace conditions, and expose platforms only for Metro', () => {
   const control = new BundleConditions()

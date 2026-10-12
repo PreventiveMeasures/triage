@@ -6,6 +6,7 @@ import { managedRoutePath } from '../common/managed/routes.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 import { browserAt } from './_managed-browser.js'
+import { templateText as text } from './_lit.js'
 
 const state = {}
 const renders = [], requests = [], versionRequests = []
@@ -76,7 +77,6 @@ test('Dependencies list every kind by name, and an alias opens the package it na
 })
 
 test('the Overview flags a dependency from elsewhere than the registry, and one nothing of the version imports, in its column and beside its count', () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const manifest = { dependencies: { 'ethereumjs-abi': 'git+https://github.com/ethereumjs/ethereumjs-abi.git', 'ethereumjs-util': '^5.1.1', touch: '^3.1.0' },
     peerDependencies: { react: '>=18' } }
   const entry = npmPackageEntry({ ...data, name: 'eth-sig-util', version: '1.4.2', manifest })
@@ -309,7 +309,7 @@ test('a search kept once it opens: newest first, for its user alone, each remova
   globalThis.localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)) }
   t.after(() => { delete globalThis.localStorage })
   const open = (name, spec = null) => openNpmRoute({ view: 'npm', packageName: name, packageSpec: spec }, () => true, () => {})
-  const search = async (text, name, spec = null) => { searchNpm(text); await open(name, spec) }
+  const search = async (input, name, spec = null) => { searchNpm(input); await open(name, spec) }
   await search(' @scope/pkg@1.2.3 ', '@scope/pkg', '1.2.3')
   await search('https://www.npmjs.com/package/lodash', 'lodash')
   assert.deepEqual(npmRecentSearches(), ['lodash', '@scope/pkg@1.2.3'], 'as it opens, newest first')
@@ -351,7 +351,6 @@ test('npm\'s placeholder deprecation reads as its first sentence; any other mess
   assert.equal(npmDeprecation('Use @scope/next instead. Contact Support at https://www.npmjs.com/support for more info.'),
     'Use @scope/next instead. Contact Support at https://www.npmjs.com/support for more info.', 'an author\'s own message is not trimmed')
   assert.equal(npmDeprecation('Package no longer supported.'), 'Package no longer supported.')
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const entry = npmPackageEntry({ ...data, manifest: { ...data.manifest, deprecated: placeholder } })
   assert.match(text(npmOverviewMeta(entry)), /<dt>Deprecated<\/dt><dd class="npm-deprecated">Package no longer supported\.<\/dd>/u, 'as the Overview lists it')
 })
@@ -366,7 +365,6 @@ test('a version\'s publish date reads with how long ago it was: days, then month
 
 test('a version under two weeks old is flagged where its date shows, unless a team lists its scope', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   // 11 days old, then just over 14.
   const times = { '1.2.3': '2026-10-01T00:00:00Z', '1.2.2': '2026-09-28T11:00:00Z', '1.0.0': '2020-01-31T00:00:00Z' }
   versionsAnswer = name => Promise.resolve({ versions: ['1.2.3', '1.2.2', '1.0.0'], distTags: { latest: '1.2.3' }, times, teamScoped: name === '@team/pkg' })
@@ -402,7 +400,6 @@ test('a recent version\'s age reads in minutes, then hours, then days, and the d
 })
 
 test('an author\'s and a publisher\'s npm accounts are green where they publish one of npm\'s most downloaded packages, else yellow', () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const manifest = { author: 'Sindre Sorhus', authorAccount: 'sindresorhus', publisher: 'someone-new', knownAccounts: ['sindresorhus'] }
   const facts = text(npmOverviewMeta(npmPackageEntry({ ...data, manifest })))
   assert.match(facts, /<dt>Author<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-known href=https:\/\/www\.npmjs\.com\/~sindresorhus\s+data-tooltip=Publishes one of npm's most downloaded packages[^>]*><span>Sindre Sorhus</u)
@@ -410,7 +407,6 @@ test('an author\'s and a publisher\'s npm accounts are green where they publish 
 })
 
 test('a CI npm trusts to publish is named in grey where no provenance names it', () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const facts = (manifest, provenanceNamesBuilder) => text(npmOverviewMeta(npmPackageEntry({ ...data, manifest }), { provenanceNamesBuilder }))
   assert.match(facts({ trustedPublisher: 'GitHub Actions' }), /<dt>Publisher<\/dt><dd class="npm-trusted-publisher">GitHub Actions<\/dd>/u)
   assert.match(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, false), /<dt>Publisher<\/dt>/u, 'though npm lists provenance, where none read names it')

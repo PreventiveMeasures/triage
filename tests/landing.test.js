@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import { html, nothing } from 'lit'
+import { templateText as renderText } from './_lit.js'
 
 mock.module('lit', { namedExports: { html, nothing, render: (value, slot) => { slot.value = value } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
@@ -11,11 +12,6 @@ mock.module('../client/index.js', { namedExports: {
 const { updateManagedLanding } = await import('../ui/view/landing-managed.js')
 const { renderLandingWorkspaces } = await import('../ui/view/landing-workspaces.js')
 
-function renderText(value) {
-  if (value?.strings && value?.values) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
-  if (Array.isArray(value)) return value.map(renderText).join('')
-  return value == null || typeof value === 'symbol' ? '' : String(value)
-}
 const managedSlot = {}, workspaceSlot = {}
 const landing = {
   dataset: {}, setAttribute() {}, querySelector: selector => selector === '.managed-landing' ? managedSlot : null,

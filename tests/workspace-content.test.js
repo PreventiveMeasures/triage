@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceFileCount, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
-
-function text(value) {
-  if (value == null || typeof value === 'symbol') return ''
-  if (Array.isArray(value)) return value.map(text).join('')
-  if (value.strings) return value.strings.reduce((s, part, i) => s + part + text(value.values[i]), '')
-  return String(value)
-}
+import { templateText as text } from './_lit.js'
 
 test('workspace bundle count and list share membership, including unavailable bundles', () => {
   const bundles = [{ integrity: 'one', name: 'one.stasis', size: 123, kind: 'stasis' }, { integrity: 'other', name: 'unrelated.map' }]

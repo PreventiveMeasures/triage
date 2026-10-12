@@ -7,6 +7,7 @@ import { managedBundleStats } from '../ui/view/managed-sidebar.js'
 import { managedScanSource } from '../ui/managed/scan-source.js'
 import { ScanPage } from '../ui/scan/page.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
+import { templateText as text } from './_lit.js'
 
 const bundle = { id: 'bundle', integrity: 'hash', filename: 'app.stasis.code.br', kind: 'stasis', repoId: 1,
   byteSize: 2048, summary: { files: 3, codeFiles: 2, lines: 1234, commit: 'a'.repeat(40) } }
@@ -62,7 +63,6 @@ test('managed scan selectors show cached counts before opening bundles and prese
   assert.equal(bundleOptions([{ filename: 'local.map' }])[0].secondary, '', 'local/e2e options still wait for their local inventory')
   const versions = bundleOptions([{ id: '1.1.0', filename: 'pkg@1.1.0', format: 'npm', date: '2026-10-01', dateWarning: 'Too new' }, { id: '1.0.0', filename: 'pkg@1.0.0', format: 'npm', date: '2020-01-31' }])
   assert.deepEqual(versions.map(option => [option.secondary, option.secondaryWarning]), [['2026-10-01', 'Too new'], ['2020-01-31', undefined]], 'a version\'s date flagged where it says why')
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const selector = new (customElements.get('bundle-selector'))()
   assert.match(text(selector._option(versions[0], false, null)), /<span class=secondary is-warning \?data-tooltip-truncated=false data-tooltip=Too new>2026-10-01</u, 'its tooltip shown whether or not it fits')
   assert.match(text(selector._option(versions[1], false, null)), /<span class=secondary \?data-tooltip-truncated=true data-tooltip=2020-01-31>2020-01-31</u)

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges, npmRegistrySpec } from '../ui/view/npm-dependency-checks.js'
+import { templateText as text } from './_lit.js'
 
-const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
 // A version's details: its files, by path, and its manifest.
 const version = (files, manifest = {}, number = '1.1.0') => ({
   json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) }, npm: { name: 'pkg', version: number, manifest },

@@ -3,6 +3,7 @@ import { mock, test } from 'node:test'
 import './_polyfills.js'
 import { state } from '../client/state.ts'
 import { newIssueLabels } from '../common/github-issue-labels.js'
+import { templates } from './_lit.js'
 const { githubIssueUrl } = await import('../ui/view/format.js')
 
 class TestDialog { static styles = []; _finish() { this._settled = true } }
@@ -176,10 +177,6 @@ test('second issue click navigates to the immutable existing reference without p
   await dialog.create()
 })
 
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 function dialogLinks(dialog) {
   return templates(dialog.render()).filter(item => item.strings[0].startsWith('<a href=')).map(item => item.values[0])
 }
