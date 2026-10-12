@@ -514,6 +514,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   color: var(--muted); font-size: .7rem;
 }
 .bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
+/* Past the files drawn so far (bundle-compare-all.js FILE_BATCH), the rest on asking. */
+.bundle-compare-all-more { display: block; margin: .75rem auto; }
 /* A file's head stays over its diff as it scrolls: glass, as the app's other
    chrome over moving content, so the code passing under the translucent
    surface blurs rather than reading through it. */
