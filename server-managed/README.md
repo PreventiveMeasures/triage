@@ -1619,7 +1619,12 @@ archived, pushedAt }` for the repository the latest version's manifest names,
 `openIssues` taking in the open pull requests `openPulls` counts apart (from
 the last page of their list, one a page; null where GitHub didn't say); either
 is null where it can't be had, `github` for a repository GitHub does not
-say is public. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
+say is public. A repository renamed or transferred since, which GitHub
+answers with a 301 to it by its id (`https://api.github.com/repositories/<id>`),
+is followed there once, with the token GitHub took for its old name
+(upstream refuses redirects, and its error has no `Location`, so the old
+name is asked again for it), `repo` then its name now; a redirect anywhere
+else, or a second, is no repository to show. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
 many packages' recent downloads at once by name (`{ start, end, days }`,
 from the first of the month before last to yesterday; null where npm has
 none; one npm couldn't be asked about left out), up to 512 names: npm's
@@ -1648,7 +1653,11 @@ repository publishes that npm does not report yet (`source: 'repository'`):
 the repository its latest version names, asked for only where GitHub says it
 is public, asked afresh rather than from its figures' kept answer, since the list is kept for every reader and
 the reader's token could read a private repository's; its listing is kept
-where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
+where bundle audits keep theirs. A repository renamed or transferred is
+followed as for its figures, its listing asked and kept under its name now,
+and taken as kept under that name where GitHub refuses it; one that leads to
+a repository GitHub doesn't say is public has none asked, leaving npm's, with
+`repository` true. Each advisory is `{ id, source, ghsa?,
 url?, title?, severity?, cvss?, cwe, range?, details?, affected }`, `details`
 its text (Markdown): OSV's record of an npm advisory's GHSA, a repository
 advisory's own description; `affected` indexing

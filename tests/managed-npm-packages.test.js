@@ -12,7 +12,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
-import { npmCommitTags, npmDownloads } from '../server-managed/npm-insights.ts'
+import { npmCommitTags, npmDownloads, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmDownloadCounts } from '../server-managed/npm-download-counts.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -497,10 +497,15 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
       return Promise.resolve(answer === undefined ? Response.json({ message: 'Not Found' }, { status: 404 })
         : Response.json(answer > 0 ? [{}] : [], { headers: answer > 1 ? { link: `<https://api.github.com/repositories/1/pulls?state=open&per_page=1&page=${answer}>; rel="last"` } : {} }))
     }
-    const repo = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)$/u)
+    // A repository by its name, or by its id, where GitHub redirects one
+    // renamed or transferred (`location`).
+    const repo = url.match(/^https:\/\/api\.github\.com\/(?:repos\/([^/]+\/[^/?]+)|repositories\/(\d+))$/u)
     if (repo) {
-      asked.push(['github', repo[1], auth])
-      return Promise.resolve(repos[repo[1]] ? Response.json(repos[repo[1]]) : Response.json({ message: 'Not Found' }, { status: 404 }))
+      const [, name, id] = repo
+      asked.push(['github', name ?? `repositories/${id}`, auth])
+      const answer = name === undefined ? Object.values(repos).find(found => found.id === Number(id)) : repos[name]
+      if (answer?.location) return Promise.resolve(Response.json({ message: 'Moved Permanently', url: answer.location }, { status: 301, headers: { location: answer.location } }))
+      return Promise.resolve(answer ? Response.json(answer) : Response.json({ message: 'Not Found' }, { status: 404 }))
     }
     if (url === `${REGISTRY}/-/npm/v1/security/advisories/bulk`) {
       const body = JSON.parse(init.body)
@@ -1044,6 +1049,80 @@ test('a repository\'s visibility is asked afresh for its advisories, not taken f
   assert.equal(body.repository, true)
   assert.equal(asked.filter(([what, repo]) => what === 'github' && repo === 'org/turned').length, 2, 'GitHub asked again')
   assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'and the now private repository\'s listing never asked for')
+})
+
+test('a repository renamed or transferred is followed once, by its id, to its name now: its figures, and its listing asked under that name', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('moved', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/old/name.git' } })
+  registry(t, [pkg])
+  const asked = insights(t, {
+    repos: {
+      'old/name': { location: 'https://api.github.com/repositories/1' },
+      'new/name': { id: 1, full_name: 'new/name', private: false, visibility: 'public', stargazers_count: 40, forks_count: 2, open_issues_count: 3, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 1 },
+    },
+    repoAdvisories: { 'new/name': [{ ghsa_id: 'GHSA-gggg-hhhh-jjjj', state: 'published', summary: 'Unreviewed', severity: 'high', cwe_ids: [],
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'moved' }, vulnerable_version_range: '< 2.0.0' }] }] },
+  })
+  assert.deepEqual((await h.send('/api/npm/stats?name=moved')).json().github,
+    { repo: 'new/name', stars: 40, forks: 2, openIssues: 3, openPulls: 1, archived: false, pushedAt: '2026-09-01T00:00:00Z' })
+  assert.deepEqual(asked.filter(([what]) => what === 'github' || what === 'pulls'),
+    [['github', 'old/name', null], ['github', 'old/name', null], ['github', 'repositories/1', null], ['pulls', 'new/name', null]],
+    'upstream refusing the redirect, asked again for where it leads, then that')
+  const body = (await h.send('/api/npm/advisories?name=moved')).json()
+  assert.equal(body.repository, true)
+  assert.deepEqual(body.advisories.map(row => [row.source, row.url]), [['repository', 'https://github.com/new/name/security/advisories/GHSA-gggg-hhhh-jjjj']])
+  assert.deepEqual(asked.filter(([what]) => what === 'repository'), [['repository', 'new/name', null]], 'its listing asked under its name now')
+  assert.ok(await h.db.getUpstreamCacheEntry('github/advisories/new/name'), 'and kept so')
+})
+
+test('a redirect to a repository that isn\'t public, anywhere but a repository by its id on GitHub\'s API, or on again, leaves no figures, and npm\'s advisories alone', async t => {
+  const h = await setup(t)
+  const names = { 'moved-private': 'old/private', 'moved-elsewhere': 'old/elsewhere', 'moved-twice': 'old/twice' }
+  const calls = registry(t, Object.entries(names).map(([name, repo]) => packageOf(name, '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: `git+https://github.com/${repo}.git` } })))
+  const reviewed = [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }]
+  const listing = name => [{ ghsa_id: 'GHSA-xxxx-yyyy-zzzz', state: 'published', summary: 'Moved', severity: 'high', cwe_ids: [],
+    vulnerabilities: [{ package: { ecosystem: 'npm', name }, vulnerable_version_range: '< 2.0.0' }] }]
+  const asked = insights(t, {
+    repos: {
+      'old/private': { location: 'https://api.github.com/repositories/1' },
+      'new/private': { id: 1, full_name: 'new/private', private: true, visibility: 'private', stargazers_count: 9 },
+      'old/elsewhere': { location: 'https://example.com/repositories/2' },
+      'old/twice': { location: 'https://api.github.com/repositories/3' },
+      'new/twice': { id: 3, location: 'https://api.github.com/repositories/4' },
+      'newer/twice': { id: 4, full_name: 'newer/twice', private: false, visibility: 'public', stargazers_count: 9 },
+    },
+    advisories: Object.fromEntries(Object.keys(names).map(name => [name, reviewed])),
+    repoAdvisories: { 'new/private': listing('moved-private'), 'newer/twice': listing('moved-twice') },
+  })
+  for (const name of Object.keys(names)) {
+    assert.equal((await h.send(`/api/npm/stats?name=${name}`)).json().github, null, name)
+    const body = (await h.send(`/api/npm/advisories?name=${name}`)).json()
+    assert.deepEqual([body.repository, body.advisories.map(row => row.id)], [true, ['GHSA-aaaa-bbbb-cccc']], `${name}: there is no public repository to ask`)
+  }
+  // Upstream refusing the redirect, the old name asked again for it, then where it leads.
+  const followed = (repo, ...then) => [repo, repo, ...then]
+  assert.deepEqual(asked.filter(([what]) => what === 'github').map(([, repo]) => repo), [
+    ...followed('old/private', 'repositories/1'), ...followed('old/private', 'repositories/1'),
+    ...followed('old/elsewhere'), ...followed('old/elsewhere'),
+    ...followed('old/twice', 'repositories/3'), ...followed('old/twice', 'repositories/3'),
+  ], 'for its figures, then afresh for its advisories, a second redirect never followed')
+  assert.ok(!calls.some(call => call.url.startsWith('https://example.com/')), 'nor one off GitHub\'s API')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'no listing asked for')
+})
+
+test('a redirect is followed with the reader\'s token where GitHub takes it, and without where it refuses it', async t => {
+  registry(t, [])
+  const repos = { 'new/tokened': { id: 5, full_name: 'new/tokened', private: false, visibility: 'public', stargazers_count: 5 } }
+  for (const repo of ['old/tokened', 'old/revoked']) repos[repo] = { location: 'https://api.github.com/repositories/5' }
+  const asked = insights(t, { repos })
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init = {}) => new Headers(init.headers).get('authorization') === 'Bearer revoked'
+    ? Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 })) : fetch(input, init))(globalThis.fetch))
+  assert.equal((await npmGithubStats('old/tokened', () => Promise.resolve('user-token')))?.repo, 'new/tokened')
+  assert.equal((await npmGithubStats('old/revoked', () => Promise.resolve('revoked')))?.repo, 'new/tokened')
+  assert.deepEqual(asked.filter(([what]) => what === 'github'), [
+    ['github', 'old/tokened', 'Bearer user-token'], ['github', 'old/tokened', 'Bearer user-token'], ['github', 'repositories/5', 'Bearer user-token'],
+    ['github', 'old/revoked', null], ['github', 'old/revoked', null], ['github', 'repositories/5', null],
+  ])
 })
 
 test('a version\'s publish commit\'s tags, from a public repository, asked with a token', async t => {
