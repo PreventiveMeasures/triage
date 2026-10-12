@@ -377,6 +377,19 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['abandoned@1.1.0'] = { scores: scores({ maintenance: .3 }), alerts: [] }
   assert.match(await badges(side('abandoned', '1.0.0'), side('abandoned', '1.1.0', deprecated('Unmaintained'))), />Maintenance<[^]*>– → 30</u, 'lower, as it says more')
 
+  // Install scripts the open version adds or changes, node-gyp's for a
+  // binding.gyp among them; not one it drops.
+  const scripted = (name, version, installScripts, sources = []) => ({ npm: { name, version, manifest: { installScripts } }, json: { sources } })
+  const added = await badges(scripted('scripted', '1.0.0', undefined), scripted('scripted', '1.1.0', { postinstall: 'node steal.js' }))
+  assert.match(added, /<li><span class="npm-extension is-warn npm-compare-install"\s+data-tooltip=1\.0\.0: none · 1\.1\.0: postinstall: node steal\.js[^]*compare-tip-head">Install scripts<[^]*compare-tip-none">None<[^]*class=is-flagged>postinstall: <code>node steal\.js<\/code>[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall added<\/span>/u)
+  const changed = await badges(scripted('rescripted', '1.0.0', { install: 'node-gyp rebuild', postinstall: 'node a.js' }), scripted('rescripted', '1.1.0', { install: 'node-gyp rebuild', postinstall: 'node b.js' }))
+  assert.match(changed, />Install script<\/span><span class="npm-extension-count">postinstall changed</u, 'one changed, not one kept')
+  assert.match(changed, /<span class=>install: <code>node-gyp rebuild<\/code>/u, 'each version\'s, the kept one plain')
+  assert.match(await badges(scripted('gyp', '1.0.0', undefined), scripted('gyp', '1.1.0', undefined, ['binding.gyp', 'index.js'])), /npm-extension-count">install added</u, 'node-gyp\'s, for a binding.gyp it adds')
+  assert.match(await badges(scripted('both', '1.0.0', { install: 'a' }), scripted('both', '1.1.0', { preinstall: 'x', install: 'b' })), />Install scripts<\/span><span class="npm-extension-count">preinstall added, install changed</u)
+  assert.doesNotMatch(await badges(scripted('dropped', '1.0.0', { postinstall: 'node a.js' }), scripted('dropped', '1.1.0', undefined)), /npm-compare-install/u, 'not one it drops')
+  assert.doesNotMatch(await badges(scripted('kept', '1.0.0', { postinstall: 'node a.js' }), scripted('kept', '1.1.0', { postinstall: 'node a.js' })), /npm-compare-install/u)
+
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
   const ago = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()

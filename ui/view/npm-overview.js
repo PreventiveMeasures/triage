@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -449,8 +449,9 @@ export const npmCompareFiles = {
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
 // (`other`), each side's details: an open version npm says is deprecated,
-// a publisher that changed, provenance lost, an open version under two
-// weeks old (npmRecentRelease), the advisories that affect either,
+// a publisher that changed, provenance lost, install scripts added or
+// changed, an open version under two weeks old (npmRecentRelease), the
+// advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
@@ -459,8 +460,8 @@ export function npmCompareBadges(base, other) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting),
-    popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), recentBadge(other.npm),
+    advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -513,6 +514,26 @@ function provenanceBadge([from, to]) {
       'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
 }
 
+// The scripts npm runs installing the open version (npm-package.js
+// npmInstallScripts, node-gyp's for a binding.gyp among them) that the one
+// compared with didn't, or ran another command for; one dropped isn't
+// flagged. Each version's, with their commands, in its tooltip, those
+// added or changed in bold.
+function installScriptsBadge(base, other) {
+  const scripts = ({ npm, json }) => new Map(npmInstallScripts(npm.manifest ?? {}, new Set(json?.sources ?? [])))
+  const now = scripts(other)
+  const was = scripts(base)
+  const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
+  if (flagged.length === 0) return nothing
+  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>`
+    : html`<span class="compare-tip-scripts">${[...list].map(([script, command]) => html`<span class=${marked.includes(script) ? 'is-flagged' : nothing}>${script}: <code>${command}</code></span>`)}</span>`
+  const summary = flagged.map(script => `${script} ${was.has(script) ? 'changed' : 'added'}`).join(', ')
+  return html`<li><span class="npm-extension is-warn npm-compare-install"
+    data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
+    .tooltipContent=${compareTip('Install scripts', [base.npm, other.npm], [said(was, []), said(now, flagged)])}>
+    <span>${flagged.length === 1 ? 'Install script' : 'Install scripts'}</span><span class="npm-extension-count">${summary}</span></span></li>`
+}
+
 // The open version, where it is too recent to trust yet: how long ago it
 // was published, the day in its tooltip.
 function recentBadge({ name, version, published }) {
@@ -545,10 +566,10 @@ function advisoriesBadge(sides, affecting) {
 
 // A badge's styled tooltip: its `head`, a row for each side's version and
 // what is said of it, and a `note` under them.
-const compareTip = (head, sides, said, note) => html`<div class="compare-tip">
+const compareTip = (head, sides, said, note = null) => html`<div class="compare-tip">
   <div class="compare-tip-head">${head}</div>
   <div class="compare-tip-rows">${sides.map(({ version }, i) => html`<span class="compare-tip-version">${version}</span><span class="compare-tip-said">${said[i]}</span>`)}</div>
-  <div class="compare-tip-note">${note}</div>
+  ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
 </div>`
 
 // The advisories between the two versions, in a dialog: those the open one

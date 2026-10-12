@@ -3712,6 +3712,13 @@ a.npm-compare-publisher {
 .compare-tip-said { display: flex; align-items: center; gap: .45rem; }
 .compare-tip-count { min-width: 1.4em; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .compare-tip-none { color: var(--muted); }
+/* A version's install scripts, one a line, those added or changed bold. */
+.compare-tip-scripts {
+  display: flex; flex-direction: column; gap: .15rem;
+
+  & code { font-size: .68rem; overflow-wrap: anywhere; }
+  & .is-flagged { font-weight: 600; }
+}
 .compare-tip-severities { display: flex; flex-wrap: wrap; gap: .2rem; }
 .compare-tip-severity {
   padding: 0 .3rem; border-radius: 3px;
