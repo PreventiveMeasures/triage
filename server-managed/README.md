@@ -1164,7 +1164,10 @@ control. A version shows in the bundle view with four tabs:
   file), author (with their npm account, linking its profile, where the
   publisher's or a maintainer's email or name is theirs), the publisher's
   account where it is someone else's, when the version was published and
-  how long ago,
+  how long ago (in the warning color under two weeks old, as a compromised
+  release is mostly found and pulled within days; a version of a scope any
+  visible team lists is its team's own and isn't flagged, nor is any until
+  the version list says whether it is one),
   GitHub repository with its stars, forks, open issues and open pull requests
   (GitHub counts them together; the pull requests are counted apart from its
   list of them, and where that fails they show together), publish commit with
@@ -1259,8 +1262,10 @@ control. A version shows in the bundle view with four tabs:
   alone is colored by extension. Any bundle of a single package is colored
   the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
-  picked from its versions newest first, each with the day it was published,
-  both pickers one width from the start, as wide as the package's name with
+  picked from its versions newest first, each with the day it was published
+  (flagged under two weeks old as on the Overview, how long ago in its
+  tooltip), both pickers one width
+  from the start, as wide as the package's name with
   a version as long as `10.90.90` tagged `latest`, so they don't move as its
   versions arrive (a longer one is cut short, whole in its tooltip).
   At the end of its picker row, once the two are compared, chips flag what
@@ -1269,7 +1274,9 @@ control. A version shows in the bundle view with four tabs:
   package changes hands, or is taken over), linking to the new one's
   profile; provenance lost, where npm lists provenance for the one compared
   with and none for the open one, as a version published by hand with a token taken
-  from its maintainers wouldn't; the advisories affecting either version, counted from
+  from its maintainers wouldn't; an open version under two weeks old, as on
+  the Overview, how long ago (`3 days ago`), the day in its tooltip; the
+  advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where
   none does, its tooltip a row for each version's, their severities in
@@ -1376,8 +1383,10 @@ viewer shows, never kept, is always asked for apart. A version naming no
 repository or commit has no tags to ask for, and a private one no Socket
 report. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions,
-times }`, newest first, `times` when each was published (ISO dates, from the
-registry's whole document rather than its abbreviated one), and `GET /api/npm/download?name=&version=` the tarball.
+times, teamScoped }`, newest first, `times` when each was published (ISO
+dates, from the registry's whole document rather than its abbreviated one),
+`teamScoped` whether any visible team lists its scope, whatever teams the
+reader is in, and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
 downloads API, reaching back to the first of the month that year starts in so

@@ -52,7 +52,7 @@
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
-//   GET  /api/npm/versions?name= → its dist-tags, versions and when each was published | 400/401/404/502
+//   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published, and whether a team lists its scope | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
@@ -132,7 +132,7 @@ import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, np
 import { npmProvenance } from './npm-provenance.ts'
 import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
 import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
-import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
+import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -2481,10 +2481,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     return repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)
   }
   try {
+    // With whether a visible team lists its scope (`teamScoped`): its own
+    // releases, which the viewer doesn't flag as just published.
     if (path === NPM_VERSIONS_PATH) {
-      const versions = await readNpmVersions(name, privileged, controller.signal, { times: true })
+      const scope = npmPackageScope(name)
+      const [versions, teamScoped] = await Promise.all([readNpmVersions(name, privileged, controller.signal, { times: true }),
+        scope !== null && deps.db.hasTeamNpmScope(scope)])
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      if (await recheck(versions.private)) sendJson(res, 200, versions)
+      if (await recheck(versions.private)) sendJson(res, 200, { ...versions, teamScoped })
       return
     }
     // Across every published version, as the version list has them, which

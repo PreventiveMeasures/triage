@@ -29,8 +29,9 @@
 // on hand, as an npm package version offers the package's other versions
 // (npm-package.js npmCompareSource): `{ noun, base, options, choices,
 // pending, error, name(id), load(id), open(base, target, mode),
-// dependencies(base, other), badges(base, other), widest }`, each option `{ id, name, format, detail, date? }`;
-// its ids stand where bundles' integrities do, `base` the open one's.
+// dependencies(base, other), badges(base, other), widest }`, each option `{ id, name, format, detail, date?,
+// dateWarning? }`, its date flagged where it has a `dateWarning`, which its tooltip says
+// (bundle-selector.js bundleOptions); its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
 // its place.
 //
@@ -750,7 +751,8 @@ class BundleCompare extends LitElement {
 
   _sourceOptions(options) {
     return options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
-      detail: option.detail, ...option.date && { date: option.date }, filename: option.name, displayLabel: option.displayLabel, size: '—', summary: null }))
+      detail: option.detail, ...option.date && { date: option.date }, ...option.dateWarning && { dateWarning: option.dateWarning },
+      filename: option.name, displayLabel: option.displayLabel, size: '—', summary: null }))
   }
 
   // Build the picker option list, disambiguating duplicate names with a

@@ -8,7 +8,8 @@ import { sourceMetrics } from '../scan/metrics.js'
 // .map files are sourcemaps; the other supported bundle format is Stasis.
 // An npm package version (npm-package.js npmCompareSource) names its
 // dist-tags as its detail, its number alone as `displayLabel`, how the list
-// names it, and the day it was published (`date`) under it.
+// names it, and the day it was published (`date`) under it, flagged where
+// it has a `dateWarning`, which its tooltip says.
 export function bundleOptions(bundles) {
   return bundles.map(bundle => {
     const format = bundle.format === 'npm' ? 'npm'
@@ -25,7 +26,8 @@ export function bundleOptions(bundles) {
       if (Number.isSafeInteger(bundle.summary.files) && bundle.summary.files >= 0) metadata.push(`${bundle.summary.files.toLocaleString()} files`)
       if (Number.isSafeInteger(bundle.summary.lines) && bundle.summary.lines >= 0) metadata.push(`${bundle.summary.lines.toLocaleString()} LoC`)
     }
-    return { value: bundle.id, label: bundle.filename, displayLabel: bundle.displayLabel, detail, format, secondary: metadata.join(' · ') }
+    return { value: bundle.id, label: bundle.filename, displayLabel: bundle.displayLabel, detail, format, secondary: metadata.join(' · '),
+      ...bundle.dateWarning && { secondaryWarning: bundle.dateWarning } }
   })
 }
 
