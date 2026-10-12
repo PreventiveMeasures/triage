@@ -289,7 +289,8 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   'styled, a row for each version, its severities in their colors')
   assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u, 'the open one under its bar, from the one compared with')
   assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Quality|Maintenance)</u, 'the open one at or over their bars, its quality 90 though 1.0.0\'s was 30')
-  assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads, September 2026>top 100,000</u)
+  assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
+    'last month\'s downloads over the month\'s name')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
   answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }

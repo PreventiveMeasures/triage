@@ -17,7 +17,7 @@ import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
-import { compact, npmDownloadTier, npmLastMonthDownloads, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
+import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 
 export { npmReadabilityTag } from './file-readability.js'
@@ -472,13 +472,16 @@ function socketBadges([from, to], affecting) {
 }
 
 // The package's tier by downloads where it is orange or red (past the top
-// 20,000), its last complete month's downloads in its tooltip.
+// 20,000), its last complete month's downloads in its tooltip, over the
+// month's name.
 function popularityBadge(name) {
   const stats = npmPackageStats(name)
   const tier = stats.status === 'ready' ? npmDownloadTier(stats.downloads) : null
   const level = tier === null ? null : npmTierLevel(tier)
   if (level !== 'is-low' && level !== 'is-unpopular') return nothing
-  return html`<li><span class=${`npm-downloads-tier ${level}`} data-tooltip=${npmLastMonthDownloads(stats.downloads) ?? nothing}>${npmTierName(tier)}</span></li>`
+  const last = npmLastMonth(stats.downloads), total = last?.total.toLocaleString('en')
+  return html`<li><span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
+    .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier)}</span></li>`
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.

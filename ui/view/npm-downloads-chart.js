@@ -94,11 +94,11 @@ const PERIODS = {
 // `1,229 downloads, Oct 2 – Oct 8, 2026`.
 const downloadsIn = (count, when) => `${whole.format(count)} downloads, ${when}`
 
-// The downloads in the last complete month, as the chart's readout has them;
-// null without one.
-export function npmLastMonthDownloads(downloads) {
+// The last complete month's downloads, `{ total, month }`, the month named as
+// the chart's readout names it (`September 2026`); null without one.
+export function npmLastMonth(downloads) {
   const last = npmDownloadMonths(downloads).at(-1)
-  return last ? downloadsIn(last.total, monthName(last.from)) : null
+  return last ? { total: last.total, month: monthName(last.from) } : null
 }
 
 // A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
