@@ -231,18 +231,17 @@ Lines always wrap. Code can hide whitespace changes as
 `diff -b` does: a line re-indented, or with blanks added to a run of them or
 at its end, reads as unchanged, while blanks put between other characters or
 taken from between them still show, as in `/tmp` to `/ tmp` inside a string
-or `return x` to `returnx`, which `diff -w` would hide. None are hidden in a
-file whose indentation is part of its code (Python, Cython, Starlark and the
-build files written in them, YAML, Makefiles, the languages whose blocks are
-their indentation: CoffeeScript, LiveScript, Imba, F#, Scala 3, Haskell,
-PureScript, Elm, Nim, Idris, Agda; Pug, Haml, Slim, Sass, SugarSS, Stylus;
-and Markdown, reStructuredText and AsciiDoc, where indenting a line makes it
-code or nests it; told by name, or by a
-script's `#!` line naming Python or CoffeeScript) or whose tabs part its
-fields (TSV), nor in one where hiding them would hide blanks of more
-than one kind changing between the same two characters, such as spaces
-turned to tabs or a run of tabs and spaces made longer: its changes all
-show, and the toggle is off for it, saying why. The toggle is offered only
+or `return x` to `returnx`, which `diff -w` would hide. It hides them only in
+code whose whitespace means nothing but in its strings: JavaScript and
+TypeScript, JSON, CSS, SCSS and Less, HTML, XML and SVG, C and C++, Java,
+Kotlin, Go, Rust, C#, Swift, PHP and shell, told by extension, or by a
+script's `#!` line naming Node, Deno, Bun or a shell. Any other file may hold
+its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
+Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
+Nor are they hidden in a file where that would hide blanks of more than one
+kind changing between the same two characters, such as spaces turned to tabs
+or a run of tabs and spaces made longer. Such a file's toggle is off while
+whitespace changes are to be hidden, saying why. The toggle is offered only
 where hiding whitespace changes hides one, in the diff shown or in diff -b's.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require

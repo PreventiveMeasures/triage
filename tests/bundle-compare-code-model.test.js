@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, indentationMatters, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -66,19 +66,24 @@ test('what diff -b would hide: whether it hides a change, and one mixing kinds o
   assert.deepEqual(whitespaceHidden('a b\n', 'ab\n'), { hides: false, mixed: false }, 'a blank taken from between two characters shows')
 })
 
-test('files whose indentation is part of their code are told by name', () => {
-  for (const path of ['tools/gen.py', 'stubs/a.PYI', 'ext/a.pyx', 'rules.bzl', '.github/workflows/ci.yml', 'docker-compose.yaml', 'Makefile', 'makefile', 'sub/GNUmakefile', 'Makefile.am',
-    'rules.mk', 'SConstruct', 'src/SConscript', 'Snakefile', 'wscript', 'BUILD.bazel', 'src/a.ls', 'src/a.imba', 'src/Lib.fs', 'src/Main.scala', 'src/Main.purs', 'src/Main.lidr', 'src/Main.lagda', 'src/Main.lagda.tex', 'views/a.pug', 'styles/a.sass', 'styles/a.sss', 'README.md', 'CHANGELOG.markdown', 'docs/a.mdx', 'docs/a.rst', 'docs/a.adoc', 'data/a.tsv']) {
-    assert.equal(indentationMatters(path), true, path)
+test('whitespace is hidden only in files whose whitespace means nothing, told by extension or #! line', () => {
+  for (const path of ['src/a.js', 'src/a.mjs', 'src/a.cjs', 'src/a.jsx', 'src/a.ts', 'types/a.d.ts', 'src/a.tsx', 'package.json', 'tsconfig.jsonc', 'styles/a.css', 'styles/a.SCSS',
+    'styles/a.less', 'index.html', 'icon.svg', 'pom.xml', 'src/a.c', 'src/a.h', 'src/a.cpp', 'src/A.java', 'build.gradle.kts', 'main.go', 'src/lib.rs', 'App.cs', 'App.swift', 'index.php', 'install.sh']) {
+    assert.equal(whitespaceInsensitive(path), true, path)
   }
-  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'LICENSE', 'notes.txt', 'makefile.js', 'build.js', 'scripts/build', 'pyproject.toml', 'binding.gyp', 'docs/paper.tex']) {
-    assert.equal(indentationMatters(path), false, path)
+  for (const path of ['tools/gen.py', '.github/workflows/ci.yml', 'Makefile', 'README.md', 'src/a.coffee', 'views/a.pug', 'styles/a.sass', 'data/a.tsv', 'src/Main.lagda',
+    'src/App.vue', 'LICENSE', 'notes.txt', 'binding.gyp', 'pyproject.toml', 'src/a.jsonl', 'src/a.json.py']) {
+    assert.equal(whitespaceInsensitive(path), false, `${path}: whatever its type might be, its whitespace shows`)
   }
-  // A script told by its #! line.
-  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env python3\nimport sys\n'), true)
-  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env -S pypy3 -u\n'), true)
-  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env node\n// python\n'), false)
-  assert.equal(indentationMatters('bin/tool', null), false, 'nor a side that is not text')
+  // An extensionless script, by its #! line.
+  for (const line of ['#!/usr/bin/env node', '#!/usr/bin/env -S node --no-warnings', '#!/bin/sh', '#!/usr/local/bin/bash -e', '#!/usr/bin/env deno']) {
+    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), true, line)
+  }
+  for (const line of ['#!/usr/bin/env python3', '#!/usr/bin/env shellcheck', '#!/usr/bin/coffee', '// #!/usr/bin/env node']) {
+    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), false, line)
+  }
+  assert.equal(whitespaceInsensitive('bin/tool', 'run()\n'), false, 'nor one with no #! line')
+  assert.equal(whitespaceInsensitive('bin/tool', null), false, 'nor a side that is not text')
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

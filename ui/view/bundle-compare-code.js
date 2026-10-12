@@ -28,7 +28,7 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, indentationMatters, lineDiff, markHighlighted, markSegments, whitespaceHidden } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
@@ -73,10 +73,10 @@ const COUNT_BUDGET_MS = 30
 export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, markRenames: false }
 // What hiding whitespace changes hides, as diff -b; and why a file whose
 // changes it would hide shows them all (_fileState).
-const HIDE_WHITESPACE = 'Hide whitespace changes: a line re-indented, or with blanks added to a run of them or at its end, reads as unchanged; blanks put between other characters or taken from between them still show'
+const HIDE_WHITESPACE = 'Hide whitespace changes, in code whose whitespace means nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with blanks added to a run of them or at its end, reads as unchanged; blanks put between other characters or taken from between them still show'
 const WHITESPACE_KEPT = {
   mixed: 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show',
-  indented: 'Its indentation is part of its code, so all of its whitespace changes show',
+  unlisted: 'Whitespace changes are hidden only in code whose whitespace means nothing, as JavaScript, CSS or JSON: all of this file\'s show',
 }
 // Renamed names are hidden in JavaScript alone, what a minifier renames: in
 // another language a short word (a CSS selector, a tag, prose) is no binding.
@@ -609,23 +609,23 @@ export class BundleCompareCode extends LitElement {
         ? this._model(key, shown, after, hiding ? { changes: { blocks: changes.blocks } } : marked ? { marks: changes.marks } : {}, ignoreWhitespace) : null
       return { key, changes, reading, hiding, shown, model }
     }
-    // Whitespace changes are hidden as diff -b hides them, but never in a file
-    // whose indentation is part of its code (indentationMatters), nor in one
+    // Whitespace changes are hidden as diff -b hides them, only in a file whose
+    // whitespace means nothing, on both sides (whitespaceInsensitive), and not
     // where that would hide blanks of more than one kind changing
-    // (hidesMixedWhitespace): those are diffed with them shown.
-    const indented = indentationMatters(path, contents.after) || indentationMatters(basePath, contents.before)
-    let found = diffed(prefs.ignoreWhitespace && !indented)
-    const mixed = prefs.ignoreWhitespace && !indented && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
+    // (hidesMixedWhitespace): others are diffed with them shown.
+    const unlisted = !whitespaceInsensitive(path, contents.after) || !whitespaceInsensitive(basePath, contents.before)
+    let found = diffed(prefs.ignoreWhitespace && !unlisted)
+    const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
-    // may not (`mixed`, `indented`), said while they are to be hidden. Where it
+    // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it
     // would hide none, or none it may, it is not offered.
-    const off = model && (indented || !prefs.ignoreWhitespace) ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
+    const off = model && (unlisted || !prefs.ignoreWhitespace) ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
     const whitespace = model === null ? null
       : mixed ? 'mixed'
-      : indented ? (prefs.ignoreWhitespace && off.hides ? 'indented' : null)
+      : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, whitespace }

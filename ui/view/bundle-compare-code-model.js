@@ -95,19 +95,16 @@ export function whitespaceHidden(before, after) {
   return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
 }
 
-// Files whose indentation is part of what they say, in which no view hides a
-// whitespace change: Python's and YAML's nesting (Cython's, Starlark's, and
-// the build files written in them), a Makefile's recipes, the languages whose
-// blocks are their indentation (CoffeeScript, LiveScript, Imba, F#, Scala 3,
-// Haskell, PureScript, Elm, Nim, Idris, Agda) and the indented template and
-// style ones, the markup that makes an indented line code or nests it
-// (Markdown, reStructuredText, AsciiDoc); and TSV, whose tabs part its
-// fields. Told by name, or by a script's #! line naming Python or CoffeeScript.
-const INDENTED = /\.(?:py[iwx]?|pxd|pxi|bzl|star|ya?ml|mk|mak|make|coffee|litcoffee|cson|ls|imba|fsx?|fsi|scala|sc|hs|lhs|purs|elm|nim|l?idr|lagda(?:\.tex)?|agda|pug|jade|haml|slim|sass|sss|styl|md|markdown|mdx|rst|adoc|asciidoc|tsv)$/u
-const INDENTED_NAMES = /(?:^|\/)(?:(?:GNU|BSD)?[Mm]akefile(?:\.(?:am|in))?|SConstruct|SConscript|Snakefile|wscript|(?:BUILD|WORKSPACE)(?:\.bazel)?)$/u
-const INDENTED_SCRIPT = /^#![^\n]*\b(?:python|pypy|coffee)/u
-export const indentationMatters = (path, text = '') => INDENTED.test(path.toLowerCase()) || INDENTED_NAMES.test(path)
-  || (typeof text === 'string' && INDENTED_SCRIPT.test(text))
+// Files whose whitespace means nothing but in their strings, the only ones in
+// which a view hides whitespace changes: JavaScript and TypeScript, JSON, CSS
+// and its preprocessors, HTML and XML, and the brace languages (C, C++, Java,
+// Kotlin, Go, Rust, C#, Swift, PHP) and shell. Anything else may hold its
+// meaning in its whitespace -- Python's, YAML's or Markdown's indentation, a
+// Makefile's tabs, a language no one listed -- and shows all of it. Told by
+// extension, or by a script's #! line naming Node, Deno, Bun or a shell.
+const INSENSITIVE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx|json5?|jsonc|css|scss|less|html?|xhtml|xml|svg|c|h|cc|cpp|cxx|hh|hpp|hxx|java|kts?|go|rs|cs|swift|php|sh|bash|zsh)$/u
+const INSENSITIVE_SCRIPT = /^#![ \t]*(?:\S*\/)?(?:env[ \t]+(?:-\S*[ \t]+)*)?(?:node|nodejs|deno|bun|sh|bash|dash|ksh|zsh)(?=[ \t\r\n]|$)/u
+export const whitespaceInsensitive = (path, text = '') => INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPT.test(text))
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change
