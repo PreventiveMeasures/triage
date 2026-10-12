@@ -198,7 +198,7 @@ test('the Files section lists as changed a file whose record alone changed, sayi
   view._openSections = new Set(['files'])
   const markup = renderText(view._renderDiff())
   assert.match(markup, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
-  assert.match(markup, /bundle-compare-changed[^]*a\.js[^]*bundle-compare-code-meta"? data-tooltip=Now executable[^>]*>\+x<[^]*bundle-compare-code-meta"? data-tooltip=Now an entry point of the bundle>new entry</u)
+  assert.match(markup, /bundle-compare-changed[^]*a\.js[^]*bundle-compare-code-meta"?>\+x<[^]*bundle-compare-code-meta"?>new entry</u)
 })
 
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {

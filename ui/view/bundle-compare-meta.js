@@ -21,12 +21,9 @@ function formatSaid(from, to) {
 // the bundle, new or dropped. What it no longer is, struck through.
 export function fileMetaTags(meta = [], compact = false) {
   return meta.map(({ field, from, to }) => {
-    if (field === 'format') {
-      return html`<span class="bundle-compare-code-meta" data-tooltip=${formatSaid(from, to)}>${compact ? 'format' : `${from ?? 'none'} → ${to ?? 'none'}`}</span>`
-    }
-    const [label, now, then] = field === 'executable' ? [to ? '+x' : '−x', 'Now executable: the bundle sets its execute bit', 'No longer executable: the bundle clears its execute bit']
-      : [to ? 'new entry' : 'entry', 'Now an entry point of the bundle', 'No longer an entry point of the bundle']
-    return html`<span class=${`bundle-compare-code-meta${to ? '' : ' is-dropped'}`} data-tooltip=${to ? now : then}>${label}</span>`
+    if (field === 'format') return html`<span class="bundle-compare-code-meta">${compact ? 'format' : `${from ?? 'none'} → ${to ?? 'none'}`}</span>`
+    const label = field === 'executable' ? (to ? '+x' : '−x') : to ? 'new entry' : 'entry'
+    return html`<span class=${`bundle-compare-code-meta${to ? '' : ' is-dropped'}`}>${label}</span>`
   })
 }
 
