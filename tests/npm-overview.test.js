@@ -9,11 +9,15 @@ mock.module('../client/index.js', { exports: {
 mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
+// What the server answers, by package (and version, for Socket); each
+// Socket question asked, by `name@version`.
+const answers = { advisories: {}, stats: {}, socket: {} }
+const socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
-  fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
+  fetchNpmPackage() {}, fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
@@ -261,4 +265,63 @@ test('a file Socket raises an alert on is named in its severity\'s color, its no
   assert.match(malware, /data-tooltip=Socket: Malware, critical · Steals tokens\.>Malware</u)
   assert.match(scripts, /sev-moderate[^]*>Install scripts</u, 'Socket\'s middle severity reads as moderate')
   assert.deepEqual(npmSocketFileTags(), [])
+})
+
+test('Compare\'s badges flag the advisories affecting either version, Socket\'s scores under their bars, and a package few download', async () => {
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
+  answers.advisories.flagged = { versions: ['2.0.0', '1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [1] }, { id: 'b', severity: 'moderate', affected: [0, 1] }] }
+  // 500 a day: 3,500 a week, among the top 100,000.
+  answers.stats.flagged = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) } }
+  answers.socket['flagged@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  answers.socket['flagged@2.0.0'] = { scores: scores({ supplyChain: .85, quality: .9, license: .7 }), alerts: [] }
+  const side = (name, version, extra = {}) => ({ npm: { name, version, ...extra } })
+  const badges = async (...sides) => { npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return text(npmCompareBadges(...sides)) }
+
+  const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
+  assert.match(flagged, /npm-compare-advisories sev-moderate[^]*Advisories affecting 1\.0\.0: 2 \(1 high, 1 moderate\) · 2\.0\.0: 1 \(1 moderate\)[^]*>2 → 1</u)
+  assert.match(flagged, /npm-socket-score is-good[^]*>Quality<[^]*>30 → 90</u, 'under its bar on one side, tinted as the open one stands')
+  assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u)
+  assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Maintenance)</u, 'at or over their bars on both sides')
+  assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads, September 2026>top 100,000</u)
+
+  answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
+  answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }
+  answers.socket['edge@1.1.0'] = { scores: scores({ quality: .69 }), alerts: [] }
+  const edge = await badges(side('edge', '1.0.0'), side('edge', '1.1.0'))
+  assert.match(edge, />Quality<[^]*>70 → 69</u, 'quality under 70')
+  assert.doesNotMatch(edge, />Maintenance</u, 'maintenance at 70')
+
+  // Socket's vulnerability score shows only where it tells of worse than the
+  // advisories found: none at all, or only less severe ones.
+  const vulnerable = (name, vulnerability, advisories) => {
+    answers.advisories[name] = advisories ?? { versions: ['1.1.0', '1.0.0'], advisories: [] }
+    answers.socket[`${name}@1.0.0`] = { scores: scores({ vulnerability }), alerts: [] }
+    return badges(side(name, '1.0.0'), side(name, '1.1.0'))
+  }
+  const affecting = severity => ({ versions: ['1.1.0', '1.0.0'], advisories: [{ id: 'x', severity, affected: [1] }] })
+  assert.match(await vulnerable('unadvised', .84), />Vulnerability<[^]*>84 → –</u, 'where none are found')
+  assert.doesNotMatch(await vulnerable('advised', .84, affecting('high')), />Vulnerability</u, 'a high one found, as 84 tells')
+  assert.match(await vulnerable('understated', .84, affecting('moderate')), />Vulnerability</u, 'only a moderate one found')
+  assert.match(await vulnerable('critical', .25, affecting('high')), />Vulnerability<[^]*>25 → –</u, 'its floor, past a high one found')
+  assert.doesNotMatch(await vulnerable('found', .25, affecting('critical')), />Vulnerability</u, 'a critical one found')
+  answers.advisories.pending = new Promise(() => {})
+  answers.socket['pending@1.0.0'] = { scores: scores({ vulnerability: .25 }), alerts: [] }
+  assert.doesNotMatch(await badges(side('pending', '1.0.0'), side('pending', '1.1.0')), />Vulnerability</u, 'not until the advisories arrive')
+
+  // Supply chain under 85, green from 85.
+  answers.socket['chained@1.0.0'] = { scores: scores({ supplyChain: .84 }), alerts: [] }
+  answers.socket['chained@1.1.0'] = { scores: scores({ supplyChain: .85 }), alerts: [] }
+  assert.match(await badges(side('chained', '1.0.0'), side('chained', '1.1.0')), /npm-socket-score is-good[^]*>Supply chain<[^]*>84 → 85</u)
+  answers.socket['chained@1.2.0'] = { scores: scores({ supplyChain: .84 }), alerts: [] }
+  assert.match(await badges(side('chained', '1.1.0'), side('chained', '1.2.0')), /npm-socket-score is-fair[^]*>Supply chain<[^]*>85 → 84</u)
+
+  // Socket has no report on the open one yet, as on one just published.
+  answers.socket['unscanned@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  const unscanned = await badges(side('unscanned', '1.0.0'), side('unscanned', '1.1.0'))
+  assert.match(unscanned, /href=https:\/\/socket\.dev\/npm\/package\/unscanned\/overview\/1\.0\.0 [^]*>Quality<[^]*>30 → –</u, 'linking to the report it shows')
+
+  answers.socket['@acme/secret@1.0.0'] = { scores: scores({ quality: .1 }), alerts: [] }
+  assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
+  assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 })

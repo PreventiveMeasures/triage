@@ -16,7 +16,7 @@ import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
-import { compact } from './npm-downloads-chart.js'
+import { compact, npmDownloadTier, npmLastMonthDownloads, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 
 export { npmReadabilityTag } from './file-readability.js'
@@ -65,22 +65,33 @@ function npmSocketReport(entry) {
 }
 
 // Its five, as Socket's page shows them: its overall score is only the
-// lowest of them.
-const SOCKET_SCORES = [['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
+// lowest of them, each with the score from which it is green (socketLevel)
+// and the bar under which Compare flags it, out of 100: supply chain under
+// 85, and vulnerability under 85 where it tells of worse than the
+// advisories found (vulnerabilityBeyond), both green from 85; quality under
+// 70 (a sabotaged release such as faker's 6.6.6 scores 38, most widely used
+// packages 70 and up), maintenance under 70 (a deprecated or abandoned
+// package's 50, a finished one's 75 and up), and license under 80 (a
+// copyleft or unusual license's 70, as AGPL's or WTFPL's; most are 100).
+const SOCKET_SCORES = [['supplyChain', 'Supply chain', 85, 85], ['vulnerability', 'Vulnerability', 85, 85], ['quality', 'Quality', 70, 80],
+  ['maintenance', 'Maintenance', 70, 80], ['license', 'License', 80, 80]]
+
+// A score's tint: green from `good`, then 50 and over, and under 50, that
+// one in red; a full score's number green.
+const socketLevel = (score, good) => score === 100 ? 'is-good is-max' : score >= good ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor'
+// A ring filled to a score.
+const socketGauge = score => html`<svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
+  <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>`
 
 // Its Socket scores, out of 100, each a chip as wide as its text, after a
-// ring filled to it, tinted by how it stands: 80 and over, 50 and over, and
-// under 50, that one in red; a full score's number green.
+// ring filled to it, tinted by how it stands (socketLevel).
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
-  return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
+  return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label, , good]) => {
     const score = Math.round(scores[key] * 100)
-    const level = score === 100 ? 'is-good is-max' : score >= 80 ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor'
-    return html`<li><a class=${`npm-extension npm-socket-score ${level}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
-      <svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
-        <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>
-      <span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
+    return html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(score, good)}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
+      ${socketGauge(score)}<span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
   })}</ul>`
 }
 
@@ -339,6 +350,94 @@ export const npmCompareFiles = {
       return html`<li><span class=${`npm-extension is-${mark}`}><span>${name}</span><span class="npm-extension-count">${counts.get(category).toLocaleString('en')}</span></span></li>`
     })
   },
+}
+
+// What calls for a look at Compare's two versions (bundle-compare.js
+// `source.badges`), from the one compared with (`base`) to the open one
+// (`other`), each side's details: the advisories that affect either,
+// Socket's scores either has under its bar (SOCKET_SCORES), and the
+// package's tier by downloads where it is orange or red. Each once it
+// arrives.
+export function npmCompareBadges(base, other) {
+  if (!base?.npm || !other?.npm) return nothing
+  const sides = [base.npm, other.npm]
+  const affecting = advisoriesAffecting(sides)
+  const chips = [advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
+}
+
+// The advisories affecting each side's version, as the Advisories column
+// has them: none where they couldn't be had, and null until they arrive.
+function advisoriesAffecting(sides) {
+  const data = npmPackageAdvisories(sides[1].name)
+  if (data.status === 'loading') return null
+  return sides.map(({ version }) => {
+    const at = data.status === 'ready' ? data.versions.indexOf(version) : -1
+    return at === -1 ? [] : data.advisories.filter(advisory => advisory.affected.includes(at))
+  })
+}
+
+// `2 → 0`, or one number where both sides have it; `–` for a side that has none.
+const fromTo = (was, now) => was === now ? `${now ?? '–'}` : `${was ?? '–'} → ${now ?? '–'}`
+
+const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
+const severityOf = advisory => SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
+// The most severe of `advisories`, undefined for none.
+const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
+
+// The advisories affecting each version, tinted by the worst still affecting
+// the open one, or green where none does; how many of each severity in its
+// tooltip.
+function advisoriesBadge([from, to], affecting) {
+  if (!affecting) return nothing
+  const [was, now] = affecting
+  if (was.length === 0 && now.length === 0) return nothing
+  const tint = now.length === 0 ? 'is-cleared' : `sev-${worstOf(now)}`
+  const told = list => list.length === 0 ? 'none' : `${list.length} (${SEVERITY_ORDER.map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length])
+    .filter(([, count]) => count > 0).map(([severity, count]) => `${count} ${severity}`).join(', ')})`
+  return html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`}
+    data-tooltip=${`Advisories affecting ${from.version}: ${told(was)} · ${to.version}: ${told(now)}`}>
+    <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></span></li>`
+}
+
+// Whether Socket's vulnerability score on a version under `bar` tells of
+// worse than the advisories found affecting it (`ours`): a score is Socket's
+// count of much the same advisories, under 85 for a high one (84 for one
+// alone), and 25, its floor, for a critical one or many high, as on lodash
+// 4.17.11 or axios 1.7.3.
+function vulnerabilityBeyond(score, ours, bar) {
+  if (score === null || score >= bar) return false
+  const worst = worstOf(ours)
+  return worst === undefined || SEVERITY_ORDER.indexOf(score <= 25 ? 'critical' : 'high') < SEVERITY_ORDER.indexOf(worst)
+}
+
+// Socket's scores either version has under its bar, each from the one
+// compared with to the open one, its ring, tint and link the open one's
+// where it has one; none for a private package. Vulnerability only where it
+// tells of worse than the advisories found (vulnerabilityBeyond), once they
+// arrive, as the Advisories badge has the rest.
+function socketBadges([from, to], affecting) {
+  const [was, now] = [from, to].map(npm => npmSocketReport({ npm })?.scores ?? null)
+  if (!was && !now) return []
+  return SOCKET_SCORES.flatMap(([key, label, bar, good]) => {
+    const scores = [was, now].map(side => side ? Math.round(side[key] * 100) : null)
+    if (!scores.some(score => score !== null && score < bar)) return []
+    if (key === 'vulnerability' && !(affecting && scores.some((score, i) => vulnerabilityBeyond(score, affecting[i], bar)))) return []
+    const [before, after] = scores, shown = after ?? before
+    return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(shown, good)}`} href=${npmSocketHref({ npm: after === null ? from : to })} target="_blank" rel="noopener noreferrer"
+      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${before ?? 'none'} for ${from.version}, ${after ?? 'none'} for ${to.version}`}>
+      ${socketGauge(shown)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
+  })
+}
+
+// The package's tier by downloads where it is orange or red (past the top
+// 20,000), its last complete month's downloads in its tooltip.
+function popularityBadge(name) {
+  const stats = npmPackageStats(name)
+  const tier = stats.status === 'ready' ? npmDownloadTier(stats.downloads) : null
+  const level = tier === null ? null : npmTierLevel(tier)
+  if (level !== 'is-low' && level !== 'is-unpopular') return nothing
+  return html`<li><span class=${`npm-downloads-tier ${level}`} data-tooltip=${npmLastMonthDownloads(stats.downloads) ?? nothing}>${npmTierName(tier)}</span></li>`
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.

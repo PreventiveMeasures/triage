@@ -24,8 +24,8 @@ importers:
         specifier: 1.0.0-alpha.1
         version: 1.0.0-alpha.1(oxc-parser@0.152.0)
       '@preventive/upstream':
-        specifier: 1.0.0-alpha.12
-        version: 1.0.0-alpha.12
+        specifier: 1.0.0
+        version: 1.0.0
       oxc-minify:
         specifier: ^0.152.0
         version: 0.152.0
@@ -908,6 +908,15 @@ packages:
 
   '@preventive/terminal@2.0.0-beta.2':
     resolution: {integrity: sha512-8PkPux4GaGS602z5qwJ/G+XidG+pZohz6ZDAYOQi+xzRwEGQx2ODYtLnknDgcKzIyuaTYYvoTLKdoAGdtRyT5A==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.2.tgz}
+
+  '@preventive/upstream@1.0.0':
+    resolution: {integrity: sha512-uO0I2tvvtRRy7EI520zUNJALXLWP+oOJCffYE+lIel3kM+uSGP3Lhb1IPk7E++34f5gMKez9f4SRkRIrGcoEWg==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0.tgz}
+    engines: {node: '>=24.14.0'}
+    peerDependencies:
+      semver: ^7.5.2
+    peerDependenciesMeta:
+      semver:
+        optional: true
 
   '@preventive/upstream@1.0.0-alpha.12':
     resolution: {integrity: sha512-0g2f5PzIxI7czs67G9hM2uvJ7M7uzhVWuHprtxHzr1RmTCR910px1InZPVutH/IaQ0MKNY9znBmxS4BrUFoq8A==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.12.tgz}
@@ -2162,6 +2171,8 @@ snapshots:
       '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'
+
+  '@preventive/upstream@1.0.0': {}
 
   '@preventive/upstream@1.0.0-alpha.12': {}
 

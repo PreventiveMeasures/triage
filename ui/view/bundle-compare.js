@@ -29,7 +29,7 @@
 // on hand, as an npm package version offers the package's other versions
 // (npm-package.js npmCompareSource): `{ noun, base, options, choices,
 // pending, error, name(id), load(id), open(base, target, mode),
-// dependencies(base, other) }`, each option `{ id, name, format, detail, date? }`;
+// dependencies(base, other), badges(base, other) }`, each option `{ id, name, format, detail, date? }`;
 // its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
 // its place.
@@ -40,7 +40,8 @@
 // the second opens what was picked, compared with the same first side, and
 // picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
-// `from` and `to` in place of `range`.
+// `from` and `to` in place of `range`. `badges` is what calls for a look at
+// the two, at the picker row's end.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -705,7 +706,7 @@ class BundleCompare extends LitElement {
     </div>`
   }
 
-  _renderPicker(others, hasTarget, scopeSelector) {
+  _renderPicker(others, hasTarget, scopeSelector, badges) {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
     // A source's versions: each select as wide as the longest it lists, its
@@ -731,7 +732,7 @@ class BundleCompare extends LitElement {
             aria-label=${`Swap the two ${noun}s`}
           ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
       </div>
-      ${scopeSelector}
+      ${scopeSelector}${badges}
     </div>`
   }
 
@@ -784,18 +785,20 @@ class BundleCompare extends LitElement {
     const scopeSelector = scopes.length > 0
       ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>`
       : nothing
-    // Picker is always present (when there's anything to pick) so the
-    // user can switch the compared bundle without leaving the tab; the
-    // swap button rides next to the clear button once a target is live,
-    // and the scope selector sits at the row's right end, so the head is
-    // one row before a pick and two (picker, summary) after.
-    const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector) : scopeSelector
     const noun = this.source?.noun ?? 'bundle'
     const ready = hasTarget
       && this._status === 'ready'
       && this._otherDetails
       && (this._otherDetails.json || this._otherDetails.bundle)
       && !this._otherDetails.error
+    const badges = this._baseReady && ready ? this.source?.badges?.(this._otherDetails, this.details) ?? nothing : nothing
+    // Picker is always present (when there's anything to pick) so the
+    // user can switch the compared bundle without leaving the tab; the
+    // swap button rides next to the clear button once a target is live,
+    // and the scope selector and a source's badges sit at the row's right
+    // end, so the head is one row before a pick and two (picker, summary)
+    // after.
+    const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, badges) : scopeSelector
 
     let body
     if (!this._baseReady) {
