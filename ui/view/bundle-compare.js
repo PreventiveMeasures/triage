@@ -73,6 +73,9 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 const MAX_ROWS = 400
 // Widest version column in Removed / Added; a longer list ellipsizes.
 const MAX_VERSION_CHARS = 24
+// A source's select fits a choice's tags up to this many characters, past
+// which they are cut short.
+const TAGS_FIT = 24
 // The Overview's column order, Packages and Files alike.
 const LANES = ['removed', 'added', 'changed']
 
@@ -712,12 +715,14 @@ class BundleCompare extends LitElement {
   _renderPicker(others, hasTarget, scopeSelector, badges) {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-    // A source's: both selects one width from the start, as wide as its
-    // `widest` (a name and its tag, the tag at its smaller size) or the
-    // placeholder, whatever it lists once that arrives, so they don't move as
-    // it does; a longer name is cut short, whole in its tooltip. The menu
-    // keeps its own width.
-    const chars = this.source ? Math.max(`Choose a ${noun}…`.length, this.source.widest.name.length + this.source.widest.detail.length * .87 + 1) : null
+    // A source's: both selects one width, at least its `widest` (a name and
+    // its tag, the tag at its smaller size) or the placeholder from the
+    // start, so most don't move as its choices arrive, then wide enough for
+    // any of those, each whole with its tags (as many as fit TAGS_FIT). The
+    // menu keeps its own width.
+    const fit = ({ name, detail }) => name.length + Math.min(detail?.length ?? 0, TAGS_FIT) * .87 + 1
+    const chars = this.source
+      ? (this.source.choices ?? []).reduce((most, choice) => Math.max(most, fit(choice)), Math.max(`Choose a ${noun}…`.length, fit(this.source.widest))) : null
     return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare</span>

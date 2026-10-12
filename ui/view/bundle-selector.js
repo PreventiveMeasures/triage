@@ -61,6 +61,11 @@ class BundleSelector extends SearchableSelector {
     :host([versions]) .option > svg, :host([versions]) .option .bundle-icon { display: none; }
     :host([versions]) .option-copy { flex: 0 1 auto; }
     :host([versions]) .option .detail { font-size: .62rem; line-height: 1.6; }
+    /* The version shown stays whole where it can: its tags take what room
+       is left, at the end, cut short where that's too little (whole in
+       their tooltip). */
+    :host([versions]) .trigger .name:has(+ .detail) { flex: 0 1 auto; }
+    :host([versions]) .trigger .detail { flex: 1 1 0%; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
   `]
 
   constructor() {

@@ -1267,10 +1267,10 @@ control. A version shows in the bundle view with four tabs:
 - **Compare**: the bundle Compare, with another version of the same package,
   picked from its versions newest first, each with the day it was published
   (flagged under two weeks old as on the Overview, how long ago in its
-  tooltip), both pickers one width
-  from the start, as wide as the package's name with
-  a version as long as `10.90.90` tagged `latest`, so they don't move as its
-  versions arrive (a longer one is cut short, whole in its tooltip).
+  tooltip), both pickers one width: from the start at least as wide as the
+  package's name with a version as long as `10.90.90` tagged `latest`, so
+  most don't move as its versions arrive, then wide enough for any it lists,
+  each whole with its tags (up to 24 characters of them).
   At the end of its picker row, once the two are compared, chips flag what
   calls for a look: a publisher that changed, where npm names the account
   that published each version and they differ (`~alice → ~bob`, as when a
