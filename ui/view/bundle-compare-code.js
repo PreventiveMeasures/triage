@@ -86,12 +86,15 @@ const SEARCH_MODES = [
 ]
 // Lines a hit opens its fold by past itself, so it isn't at the fold's edge.
 const SEEK_MARGIN = EXPAND_STEP / 2
-// Why a changed file's hits are unsigned, the lines it removed not searched
-// (_searchResults): its diff too large to show unasked, or of its
-// pretty-printed copies, whose lines and changes differ from the file's.
+// Why a file's hits aren't as its diff shows them (_searchResults): a changed
+// file's unsigned, the lines it removed not searched, its diff too large to
+// show unasked or of its pretty-printed copies, whose lines and changes
+// differ from the file's; another's numbered as published, where it shows
+// pretty-printed.
 const UNSIGNED = {
   large: 'A large diff, not shown yet: the lines it removed aren\'t searched.',
-  printed: 'Diffed pretty-printed: its lines as published, unsigned, the lines it removed not searched.',
+  printed: 'Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched.',
+  numbered: 'Shown pretty-printed: its lines numbered as published.',
 }
 // A search hit's sign as its row is classed and read.
 const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', label: 'Removed' }, ' ': { name: 'ctx', label: 'Unchanged' } }
@@ -582,9 +585,10 @@ export class BundleCompareCode extends LitElement {
   // diffed as this view diffs it, its whitespace changes hidden where the
   // view hides them; but one whose diff here is of its pretty-printed copies
   // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
-  // for, lists its new text's lines alone, unsigned, the reason in
-  // `unsigned` by path (UNSIGNED), so the rail claims no sign nor removed
-  // line its diff doesn't show. Diffs are found a little at a time, as the
+  // for, lists its new text's lines alone, unsigned, so the rail claims no
+  // sign nor removed line its diff doesn't show; and an added or removed
+  // file shown pretty-printed lists its lines numbered as published. The
+  // reason is in `unsigned` by path (UNSIGNED). Diffs are found a little at a time, as the
   // tree's line counts are, a render's budget counted from its first: a file
   // past it lists its new text's lines unsigned, and another render signs
   // them.
@@ -596,10 +600,7 @@ export class BundleCompareCode extends LitElement {
     let complete = true
     const unsigned = new Map()
     const blocksOf = (path, before, after) => {
-      if (this._prettyShown(path, this._entries.get(path), { before, after })) {
-        unsigned.set(path, 'printed')
-        return null
-      }
+      if (unsigned.get(path) === 'printed') return null
       const kept = `${prefs.ignoreWhitespace}\0${path}`
       if (this._blocks.has(kept)) return this._blocks.get(kept)
       if (!this._forced.has(path) && isLargeDiff(before, after)) {
@@ -622,7 +623,11 @@ export class BundleCompareCode extends LitElement {
     }
     const files = order.flatMap(path => {
       const entry = this._entries.get(path)
-      return this._searchable(entry) ? [{ path, ...fileContents(this.base, this.other, path, entry) }] : []
+      if (!this._searchable(entry)) return []
+      const contents = fileContents(this.base, this.other, path, entry)
+      const { before, after } = contents
+      if (this._prettyShown(path, entry, contents)) unsigned.set(path, before !== '' && after !== '' && before !== after ? 'printed' : 'numbered')
+      return [{ path, ...contents }]
     })
     const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf), unsigned }
     if (complete) this._found = { key, entries: this._entries, result }
@@ -654,26 +659,31 @@ export class BundleCompareCode extends LitElement {
 
   // The line a hit names in the text a file's diff shows, `{ side, line }`:
   // in a pretty-printed copy, the line holding the same match, counted in
-  // order on its side; where none does (the printer spaced what it matched,
-  // `a+b` as `a + b`), the line its first character falls on, counted in the
-  // characters other than whitespace, which pretty-printing moves but keeps;
-  // null past the copy's end.
+  // order on its side with whitespace taken out of the query and both texts,
+  // which pretty-printing respaces (`a+b` as `a + b`, a string's `"a+b"` as
+  // it was); where the printer changed the match itself, the line its first
+  // character falls on, counted the same way, in the characters it moves but
+  // keeps; null past the copy's end.
   _soughtLine(path, entry, pretty, model) {
     const { side, line, at, query } = this._sought
     if (pretty?.status !== 'ready') return { side, line }
-    const matcher = buildSearchMatcher(query, false, false)
+    const solid = text => text.replaceAll(/\s+/gu, '')
     const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
-    const ordinal = raw.slice(0, line).reduce((sum, text) => sum + matcher.ranges(text).length, 0)
-    let seen = 0
-    for (let i = 0; i < model[side].length; i++) {
-      seen += matcher.ranges(model[side][i]).length
-      if (seen > ordinal) return { side, line: i }
+    const offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text).length, 0) + solid(raw[line]?.slice(0, at) ?? '').length
+    const needle = solid(query).toLowerCase()
+    // Where each match starts in a text's characters other than whitespace,
+    // case folded as the search matches.
+    const starts = lines => {
+      const text = lines.map(solid).join('').toLowerCase()
+      const found = []
+      for (let i = needle ? text.indexOf(needle) : -1; i !== -1; i = text.indexOf(needle, i + needle.length)) found.push(i)
+      return found
     }
-    const solid = text => text.length - (text.match(/\s/gu)?.length ?? 0)
-    let offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text), 0) + solid(raw[line]?.slice(0, at) ?? '')
+    const ordinal = starts(raw).findIndex(start => start >= offset)
+    let target = ordinal === -1 ? offset : starts(model[side])[ordinal] ?? offset
     for (let i = 0; i < model[side].length; i++) {
-      offset -= solid(model[side][i])
-      if (offset < 0) return { side, line: i }
+      target -= solid(model[side][i]).length
+      if (target < 0) return { side, line: i }
     }
     return null
   }

@@ -470,7 +470,42 @@ test('a file whose diff is of its pretty-printed copies lists its lines as publi
   assert.deepEqual(signs(), ['−a0', '+b0'], 'as published while it is diffed so')
   state.bundleSourcePretty = true
   assert.deepEqual(signs(), ['?b0'])
-  assert.match(renderText(element.render()), /Diffed pretty-printed: its lines as published, unsigned, the lines it removed not searched\./u)
+  assert.match(renderText(element.render()), /Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched\./u)
+})
+
+test('an added file shown pretty-printed lists its lines signed, numbered as published, saying so', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{}, { 'dist/added.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  element.base.managedId = 'b11'
+  element.other.managedId = 'b12'
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'fetch('
+  const found = element._searchResults(element._railState().order)
+  assert.deepEqual(found.files.find(file => file.path === 'dist/added.min.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`), ['+b0'])
+  assert.equal(found.unsigned.get('dist/added.min.js'), 'numbered')
+  assert.match(renderText(element.render()), /Shown pretty-printed: its lines numbered as published\./u)
+})
+
+test('a hit opens at the same match pretty-printed where the printer respaced an earlier one but kept a later', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/mixed.min.js', [{ 'dist/mixed.min.js': `var x=a-b;s="a+b";${'q(x);'.repeat(250)}\n` },
+    { 'dist/mixed.min.js': `var x=a+b;s="a+b";${'q(x);'.repeat(250)}\n` }])
+  element.base.managedId = 'b13'
+  element.other.managedId = 'b14'
+  pretty.set('b13:dist/mixed.min.js', 'var x = a - b;\ns = "a+b";\nq(x);\n')
+  pretty.set('b14:dist/mixed.min.js', 'var x = a + b;\ns = "a+b";\nq(x);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'a+b'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/mixed.min.js')
+  assert.deepEqual(hit.ranges[0], [6, 9], 'the expression\'s, the first on the line')
+  element._seek('dist/mixed.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">1<\/span>[^]*var x = /u, 'the expression\'s line, not the string\'s')
 })
 
 test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
