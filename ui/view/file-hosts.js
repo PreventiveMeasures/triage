@@ -15,8 +15,9 @@ import { JS_STRING_OR_COMMENT, NPM_PROSE } from './file-readability.js'
 import { npmIsScript } from './file-runs-code.js'
 
 // A URL's host: a name whose last label is letters, or an IPv4 address, after
-// its scheme and any user, its case aside.
-const URL_HOST = /\b(?:https?|wss?|ftp):\/\/(?:[^\s/@'"`]*@)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)(?![a-z0-9-])/giu
+// its scheme and any user, its case aside; whole, not the start of one built
+// as the code runs (`api.service.com.${tld}`).
+const URL_HOST = /\b(?:https?|wss?|ftp):\/\/(?:[^\s/@'"`]*@)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)(?![a-z0-9-]|\.[\w$-])/giu
 const NAMED = /\.[a-z]{2,}$/u
 const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/u
 // Hosts no code calls out to: this machine, the names kept for examples and
@@ -39,12 +40,18 @@ function lineOf(text) {
   }
 }
 
+// What a regular expression escapes in a URL, its slashes and dots
+// (`/https:\/\/api\.example\.com/`), read as written in a string.
+const ESCAPED = /\\([/.])/gu
+
 // The hosts a script's strings name, each with the line it is first named on,
 // in the order named; null for none, or for a file that is no script.
 export function npmHosts(path, text) {
-  if (!npmIsScript(path, text) || !text.includes('://')) return null
+  if (!npmIsScript(path, text) || !(text.includes('://') || text.includes(':\\/\\/'))) return null
   const hosts = new Map(), line = lineOf(text)
-  for (const { 1: string, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
+  for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
+    // A regular expression's escapes read as a string's, its offsets as near.
+    const string = token?.[0] === '/' ? token.replaceAll(ESCAPED, '$1') : token
     if (!string?.includes('://')) continue
     for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
@@ -56,10 +63,11 @@ export function npmHosts(path, text) {
 
 // A host as it is written, under another or not (`m.webhook.site`), then a
 // path on it where only that path is the service (`/api/webhooks`), on its
-// own: not part of a longer name (`notwebhook.site`, `webhook.sites`), nor a
-// name under another domain (`webhook.site.evil.example`), though a sentence
-// may end after it. Its name first, so a text is searched for that alone.
-const host = (name, path = '') => new RegExp(String.raw`(?<![\w-])${name}${path}(?!${path ? '' : String.raw`\.?`}[\w-])`, 'giu')
+// own: not part of a longer name (`notwebhook.site`, `webhook.sites`), a
+// name under another domain (`webhook.site.evil.example`), nor another path
+// (`/install.sh`, `/api/webhooks.json`), though a sentence may end after it.
+// Its name first, so a text is searched for that alone.
+const host = (name, path = '') => new RegExp(String.raw`(?<![\w-])${name}${path}(?!\.?[\w-])`, 'giu')
 // Services malicious packages send what they take to, or fetch what they run
 // from: request catchers, out-of-band testing hosts (interactsh's, Burp
 // Collaborator's), bot and webhook APIs, a paste site, an IP lookup, and the
