@@ -178,9 +178,12 @@ function kind(code) {
   return FORMAT.test(char) ? 'format character' : IGNORABLE.test(char) && !UNASSIGNED.test(char) ? 'invisible character' : 'unassigned code point'
 }
 
-const EMOJI_BEFORE = /\p{Extended_Pictographic}(?:\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?$/u
-const EMOJI_AFTER = /^\p{Extended_Pictographic}/u
-const PICTOGRAPH_BEFORE = /\p{Extended_Pictographic}$/u
+// A pictograph is an assigned one (Emoji): Extended_Pictographic also takes
+// in code points reserved for emoji to come, unassigned, each boxed itself,
+// and a joiner or selector beside one would go unseen.
+const EMOJI_BEFORE = /(?=\p{Emoji})\p{Extended_Pictographic}(?:\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?$/u
+const EMOJI_AFTER = /^(?=\p{Emoji})\p{Extended_Pictographic}/u
+const PICTOGRAPH_BEFORE = /(?=\p{Emoji})\p{Extended_Pictographic}$/u
 const KEYCAP_BASE = /^[\d#*]$/u
 const isTag = code => code >= 0xe0020 && code <= 0xe007f
 

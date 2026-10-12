@@ -34,6 +34,9 @@ test('what reads as a space or as nothing, though it is another character, shows
   assert.equal(parts(controlParts('x\uFE0F y\u{E0101}')), 'x[VS16|U+FE0F VARIATION SELECTOR-16] y[VS18|U+E0101 VARIATION SELECTOR-18]', 'a variation selector after a letter')
   assert.equal(parts(controlParts('id1\uFE0F')), 'id1[VS16|U+FE0F VARIATION SELECTOR-16]', 'or a digit, no keycap after it')
   assert.equal(parts(controlParts('x\uFE0F\u20E3')), 'x[VS16|U+FE0F VARIATION SELECTOR-16]\u20E3', 'or a keycap mark after what no keycap is')
+  assert.equal(parts(controlParts('\u{1F02C}\uFE0F \u{1F02C}\u200D\u{1F02D}')),
+    '[U+1F02C|U+1F02C unassigned code point][VS16|U+FE0F VARIATION SELECTOR-16] [U+1F02C|U+1F02C unassigned code point][ZWJ|U+200D ZERO WIDTH JOINER][U+1F02D|U+1F02D unassigned code point]',
+    'or a joiner, beside a code point reserved for emoji to come')
   assert.equal(parts(controlParts('\u180B')), '[U+180B|U+180B invisible character]', 'one unnamed, as invisible')
   const drawn = '❤\uFE0F ☺\uFE0E 1\uFE0F\u20E3 #\uFE0F\u20E3'
   assert.deepEqual(controlParts(drawn), [drawn], "an emoji's own presentation selectors and keycaps stay text")
