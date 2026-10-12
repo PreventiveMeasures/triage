@@ -214,11 +214,12 @@ function repaint() {
 
 // A package's versions, newest first, and dist-tags, when each was
 // published (`times`) and its first was (`created`, null where the server
-// didn't say), and whether a team lists its scope (`teamScoped`).
+// didn't say), whether the registry has it only for the server's token
+// (`private`), and whether a team lists its scope (`teamScoped`).
 export function npmVersionList(name) {
   return npmPackageData('versions', name, () => fetchNpmVersions(name),
     data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, created: typeof data.created === 'string' ? data.created : null,
-      teamScoped: data.teamScoped === true }))
+      private: data.private === true, teamScoped: data.teamScoped === true }))
 }
 
 function tagsByVersion(distTags = {}) {

@@ -16,12 +16,13 @@ mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2
 // Socket question asked, by `name@version`.
 const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, counts: {} }
 // Each request for many packages' recent downloads, by its names; each
-// package whose version list was asked for.
-const countsAsked = [], socketAsked = [], versionsAsked = []
+// package whose version list was asked for, and those the server answers
+// none for, as for a reader who can't open it.
+const countsAsked = [], socketAsked = [], versionsAsked = [], versionsFail = new Set()
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
-  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
@@ -584,6 +585,14 @@ test('a new dependency npm counts no downloads of is unpopular; one below the to
   assert.match(uncounted, /<span class="npm-downloads-tier is-unpopular"\s+data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular<\/span>/u)
   assert.match(uncounted, /<span class="npm-dependency-flag is-new" data-tooltip=First published on Mar 30, 2026, 18 hours before 1\.14\.1 was; npm had no package by its name when 1\.14\.0 was published>18 hours old<\/span>$/u,
     'its first version\'s day, one npm took down since')
+  // Not a private one, whose downloads npm's API tells no one, nor one the
+  // reader can't open: neither its tier nor its age.
+  answers.counts['@acme/internal'] = null
+  answers.versions['@acme/internal'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-03-30T05:57:32.867Z' }, created: '2026-03-30T05:57:32.867Z', private: true }
+  assert.equal(await tag({ name: '@acme/internal', opens: '@acme/internal', compared: axios }), '')
+  answers.counts['@acme/unopened'] = null
+  versionsFail.add('@acme/unopened')
+  assert.equal(await tag({ name: '@acme/unopened', opens: '@acme/unopened', compared: axios }), '')
   // Orange too, its age in days; the versions' times from their package's
   // version list where they came without.
   answers.counts['fresh-low'] = days(500)

@@ -1432,7 +1432,9 @@ control. A version shows in the bundle view with four tabs:
   to cover every version its range takes); unpopular where npm counts none
   of its downloads, as it counts none of a package's until the day after it
   was first published (axios 1.14.1, 21 minutes past midnight, named
-  plain-crypto-js, first published the morning before). One below the top
+  plain-crypto-js, first published the morning before), and its version
+  list says it's public: none for a private one, whose downloads npm's API
+  tells no one, nor one the reader can't open. One below the top
   20,000 whose package didn't exist when the version compared with was
   published (its first version, one since unpublished among them, published
   after it) is tagged with how old it was when the open version was

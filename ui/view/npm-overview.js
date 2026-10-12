@@ -795,10 +795,10 @@ function popularityBadge(name) {
 // A new dependency's tier where npm counts none of its package's downloads:
 // none of its days counted yet, as npm counts a package's from the day after
 // it was first published (axios 1.14.1, 21 minutes past midnight, named
-// plain-crypto-js, first published the morning before), or no package by
-// its name. As unpopular as one can be, as its tier by its
-// downloads would be once counted: a package that new had none before its
-// latest two weeks.
+// plain-crypto-js, first published the morning before). As unpopular as
+// one can be, as its tier by its downloads would be once counted: a package
+// that new had none before its latest two weeks. Not a private one, whose
+// downloads npm's API tells no one, however many it has.
 const UNCOUNTED_TAG = html`<span class="npm-downloads-tier is-unpopular"
   data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular</span>`
 
@@ -839,11 +839,14 @@ function newPackageTag({ opens, compared }) {
 // `dependencyTags`): what calls for a look at it (its `flags`,
 // npm-dependency-checks.js), and for a new one its package's tier, whatever
 // it is, by its downloads (npmDownloadsOf) but its latest two weeks'
-// (npmSettledDownloads), unpopular where npm counts none (UNCOUNTED_TAG),
-// and below the top 20,000, how old its package was where it is new since
-// the version compared with (newPackageTag): its version list, the whole
-// document of a package, is asked for only then, as one many install isn't
-// one to doubt for being new. No tier for one changed or removed, which the
+// (npmSettledDownloads), unpopular where npm counts none (UNCOUNTED_TAG)
+// and its version list says it's public, and below the top 20,000, how old
+// its package was where it is new since the version compared with
+// (newPackageTag): its version list, the whole document of a package, is
+// asked for only then, as one many install isn't one to doubt for being
+// new. None for a private one, nor one the reader can't open, which npm's
+// downloads API can't tell from no package. No tier for one changed or
+// removed, which the
 // version compared with already had, nor one that opens no package
 // (npm-package.js npmDependencies), as npm doesn't install it from the
 // registry, whose package of its name has downloads that aren't its own.
@@ -853,8 +856,12 @@ export function npmDependencyTags(row, kind) {
   const data = npmDownloadsOf(row.opens)
   if (data.status !== 'ready') return [flags, nothing]
   const settled = npmSettledDownloads(data.downloads)
-  const tier = settled ? npmDownloadTier(settled) : Infinity
-  return [flags, settled ? tierTag(settled) : UNCOUNTED_TAG, tier !== null && isLow(npmTierLevel(tier)) ? newPackageTag(row) : nothing]
+  if (!settled) {
+    const list = npmVersionList(row.opens)
+    return list.status === 'ready' && !list.private ? [flags, UNCOUNTED_TAG, newPackageTag(row)] : [flags, nothing]
+  }
+  const tier = npmDownloadTier(settled)
+  return [flags, tierTag(settled), tier !== null && isLow(npmTierLevel(tier)) ? newPackageTag(row) : nothing]
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.
