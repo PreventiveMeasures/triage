@@ -138,7 +138,9 @@ function closing(text, from) {
   let depth = 0
   for (let at = from; at < text.length; at++) {
     const char = text[at]
-    if ('"\'`/'.includes(char)) {
+    // Tried where a token can start: a quote, a slash, or a run of blanks, a
+    // comment's leading blanks taken from where they start.
+    if ('"\'`/ \t'.includes(char)) {
       TOKEN.lastIndex = at
       const token = TOKEN.exec(text)
       if (token) {

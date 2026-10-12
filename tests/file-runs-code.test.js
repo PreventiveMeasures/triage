@@ -34,8 +34,9 @@ test('a template literal\'s substitutions are code, read as their own, its text 
   assert.deepEqual(found('a.js', 'const t = `${eval(payload)}`\n'), { eval: [1] })
   assert.deepEqual(found('a.js', 'const t = `a ${x} b ${require(\'child_process\').exec(c)}`\n'), { 'child-process': [1] }, 'a module named in one')
   assert.deepEqual(found('a.js', 'const t = `one\n${\n  "}" + Function(y)\n}`\n'), { function: [3] }, 'to the brace that closes it, its line the file\'s')
-  for (const substitution of ['/* } */ eval(payload)', '/}/.test(x) && eval(payload)', "'}' + eval(payload)", '{ a: 1 }.a + eval(payload)']) {
-    assert.deepEqual(found('a.js', `const t = \`\${${substitution}}\`\n`), { eval: [1] }, `braces in a comment, a regular expression, a string or balanced aside: ${substitution}`)
+  for (const substitution of ['/* } */ eval(payload)', ' /* } */ eval(payload)', 'x // }\n eval(payload)', '/}/.test(x) && eval(payload)', "'}' + eval(payload)", '{ a: 1 }.a + eval(payload)']) {
+    assert.deepEqual(found('a.js', `const t = \`\${${substitution}}\`\n`), { eval: [substitution.split('\n').length] },
+      `braces in a comment, a regular expression, a string or balanced aside: ${substitution}`)
   }
   assert.equal(found('a.js', 'const t = `\\${eval(x)} eval(y) ${f("eval(")} ${/* eval(z) */ w}`\n'), null, 'not an escaped one, nor a string or comment in one')
   assert.deepEqual(found('a.js', 'const t = `\\\\${eval(x)}`\n'), { eval: [1] }, 'after an escaped backslash, live')
