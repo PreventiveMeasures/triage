@@ -440,6 +440,14 @@ test('the search signs a line as the diff shows it with whitespace changes hidde
   assert.deepEqual(signs(), ['−a1', '+b1', '−a3', '+b3'])
   element._setWhitespace(true)
   assert.deepEqual(signs(), [' b1', '−a3', '+b3'], 'as its diff has it, the re-indented line unchanged')
+  // A file only re-indented shows no rows with them hidden, so isn't listed.
+  const only = view(null, [{ 'src/only.js': 'if (a) {\n  fetch(x)\n}\n' }, { 'src/only.js': 'if (a) {\n    fetch(x)\n}\n' }])
+  only._mode = 'code'
+  only._query = 'fetch('
+  only._setWhitespace(false)
+  assert.ok(only._searchResults(only._railState().order).files.some(file => file.path === 'src/only.js'))
+  only._setWhitespace(true)
+  assert.ok(!only._searchResults(only._railState().order).files.some(file => file.path === 'src/only.js'))
 })
 
 test('a hit in a diff too large to show unasked asks for it, and opens at its line', () => {

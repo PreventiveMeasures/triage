@@ -76,3 +76,19 @@ test('a changed block\'s hits list as its diff\'s layout draws them: unified, th
   assert.ok(unified.every(hit => hit.startsWith('−')), 'the first 20 rows unified are removed lines')
   assert.deepEqual(lines(fileHits(before, after, matcher('x'), blocks, { split: true })).slice(0, 4), ['−a1', '+b1', '−a2', '+b2'])
 })
+
+test('split, a block\'s hits list in the rows the view aligns: a new line before an edited pair comes first', () => {
+  const before = 'keep\nx old value\n'
+  const after = 'keep\nx brand new line\nx old value edited\n'
+  const blocks = changeBlocks(before, after)
+  assert.deepEqual(lines(fileHits(before, after, matcher('x'), blocks, { split: true })), ['+b1', '−a1', '+b2'],
+    'the removed line pairs with the edited one, a row below the new one')
+})
+
+test('a changed file its diff finds no change in, as whitespace changes hidden leave a re-indented one, isn\'t listed', () => {
+  const found = searchCompareFiles([
+    { path: 'spaced.js', before: '  fetch()\n', after: '    fetch()\n' },
+    { path: 'edited.js', before: 'fetch(1)\n', after: 'fetch(2)\n' },
+  ], matcher('fetch'), (path, before, after) => (path === 'spaced.js' ? [] : changeBlocks(before, after)))
+  assert.deepEqual(found.files.map(file => file.path), ['edited.js'])
+})
