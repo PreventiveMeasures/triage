@@ -130,7 +130,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
-import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
+import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest } from './pretty-print.ts'
 import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
@@ -1288,9 +1288,9 @@ function prebuildBundle(deps: ManagedHttpDeps, id: string) {
 
 // Brotli-encoded bytes as they are: the browser's HTTP stack decompresses
 // them without a Brotli JS dependency.
-async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: OpenedBlob, contentType: string) {
+async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: OpenedBlob, contentType: string, headers: Record<string, string> = {}) {
   res.writeHead(200, {
-    'content-type': contentType, 'content-encoding': 'br',
+    ...headers, 'content-type': contentType, 'content-encoding': 'br',
     ...(blob.size == null ? {} : { 'content-length': String(blob.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
@@ -1298,10 +1298,14 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
   try { await pipeline(blob.stream, res) } catch { res.destroy() }
 }
 
+// A pretty-printed copy names the file it was formatted from, by the hash it
+// was asked for and its source was found to have, for the viewer to check.
+const prettySource = ({ hash }: PrettyRequest): Record<string, string> => ({ 'x-source-hash': hash })
+
 // GET /api/bundles/:id/{metadata,contents,pretty}: what `open` reads of the
 // bundle, already encoded; it is absent where its cache is.
 async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string,
-  open: ((rec: ManagedBundle) => Promise<OpenedBlob>) | undefined, contentType = 'application/json') {
+  open: ((rec: ManagedBundle) => Promise<OpenedBlob>) | undefined, contentType = 'application/json', headers: Record<string, string> = {}) {
   const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
   if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const rec = access.bundle
@@ -1317,7 +1321,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
     sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
     return
   }
-  await sendEncoded(req, res, cached, contentType)
+  await sendEncoded(req, res, cached, contentType, headers)
 }
 
 // GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
@@ -2547,7 +2551,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const pretty = await deps.prettyCache.npm(doc, file)
       if (!(await recheck(doc.private))) { pretty.stream.destroy(); return }
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
-      await sendEncoded(req, res, pretty, 'text/plain; charset=utf-8')
+      await sendEncoded(req, res, pretty, 'text/plain; charset=utf-8', prettySource(file))
       return
     }
     // One of its JavaScript files diffed with another version's, both
@@ -2855,7 +2859,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (part !== 'pretty') { await handleBundleCache(req, res, deps, session, id, bundleCache && (rec => bundleCache.open(rec, part as BundleCachePart))); return }
       const file = prettyRequest(url.searchParams)
       if (!file) { sendJson(res, 400, { error: 'bad-file' }); return }
-      await handleBundleCache(req, res, deps, session, id, prettyCache && (rec => prettyCache.bundle(rec, file)), 'text/plain; charset=utf-8')
+      await handleBundleCache(req, res, deps, session, id, prettyCache && (rec => prettyCache.bundle(rec, file)), 'text/plain; charset=utf-8', prettySource(file))
       return
     }
     if (path === BUNDLE_CREATE_PATH) {

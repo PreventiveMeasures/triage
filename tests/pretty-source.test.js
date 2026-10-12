@@ -5,15 +5,17 @@ import { beforeEach, mock, test } from 'node:test'
 
 const state = { bundleSourcePretty: false }
 mock.module('../client/index.js', { exports: { state } })
-// Each request is answered by the next of `answers`, a text or an error.
+// Each request is answered by the next of `answers`: a text (or a promise of
+// one) named as the copy of the file asked for, `{ text, source }` naming
+// the file it was formatted from, or an error.
 const answers = [], requests = []
-const answer = () => {
+const answer = hash => {
   const next = answers.shift() ?? new Error('unexpected request')
-  return next instanceof Error ? Promise.reject(next) : Promise.resolve(next)
+  return next instanceof Error ? Promise.reject(next) : Promise.resolve(next).then(text => (typeof text === 'string' ? { text, source: hash } : text))
 }
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer() },
-  fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer() },
+  fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer(args[2]) },
+  fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer(args[3]) },
 } })
 const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints.
@@ -90,6 +92,16 @@ test('an npm file\'s copy is asked for by its version and the hash of its text',
   // Until it is read: a request left pending would take a later test's answer.
   await settledUntil(() => copy().status !== 'loading')
   assert.deepEqual(requests, [['npm', '@scope/lib', '2.0.0', 'lib.min.js', hashOf(minified)]])
+})
+
+test('a copy the server names as another file\'s, or as none, is refused', async () => {
+  togglePrettySource()
+  const details = bundleOf({ 'a.min.js': minified, 'b.min.js': `${minified}\n` })
+  answers.push({ text: 'var b = 2;\n', source: hashOf('another file') }, { text: 'var b = 2;\n', source: null })
+  const copies = () => [prettyCopy(details, managed, 'a.min.js', minified), prettyCopy(details, managed, 'b.min.js', `${minified}\n`)]
+  copies()
+  await settledUntil(() => copies().every(copy => copy.status !== 'loading'))
+  for (const copy of copies()) assert.deepEqual(copy, { status: 'error', message: "The server's copy is of another file than the one open.", retry: true })
 })
 
 test('a failure is shown, and asked again only where asking again may succeed', async () => {

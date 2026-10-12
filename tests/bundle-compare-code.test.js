@@ -16,7 +16,7 @@ const pretty = new Map(), renameDiffs = []
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
+  fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
   fetchPrettyNpmFile() {},
   async fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
@@ -436,6 +436,71 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   assert.match(sections['src/tabs.js'], /aria-disabled=true/u, 'the Diff view marks it in its head')
   assert.match(sections['src/tabs.js'], /class=bundle-compare-diff-table/u)
   assert.doesNotMatch(sections['src/spaces.js'], /aria-disabled|bundle-compare-diff-table/u)
+})
+
+test('Hide whitespace changes is offered only where it hides one, while they show and while they are hidden', async t => {
+  const offered = markup => /aria-label=Hide whitespace changes/u.test(markup)
+  const files = [{ 'src/spaces.js': '  a()\n', 'src/eol.js': 'a()', 'src/old.js': 'x\n' }, { 'src/spaces.js': '    a()\n', 'src/eol.js': 'a()\n', 'src/new.js': 'x\n' }]
+  const shown = path => renderText(view(path, files).render())
+  assert.ok(!offered(shown('src/api.js')), 'not for a change of more than whitespace')
+  assert.ok(!offered(shown('src/features/search.js')), 'nor for an added file')
+  assert.ok(offered(shown('src/spaces.js')), 'for one re-indented')
+  assert.ok(offered(shown('src/eol.js')), 'and for a newline added at the end, which diff -w ignores too')
+  const element = view('src/api.js', files)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  const hidden = path => renderText(view(path, files).render())
+  const changed = hidden('src/api.js')
+  assert.ok(!offered(changed), 'nor while they are hidden, where hiding them hides none')
+  assert.match(changed, /class=bundle-compare-diff-table/u)
+  const spaces = hidden('src/spaces.js')
+  assert.match(spaces, /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'on, to turn off, where it hides one')
+  assert.match(spaces, /Only whitespace changed in this file\.[^]*?Show whitespace changes/u)
+  const pure = hidden('src/new.js')
+  assert.match(pure, /Renamed without changes\./u)
+  assert.ok(!offered(pure))
+  assert.doesNotMatch(pure, /Show whitespace changes/u, 'a pure rename hides no whitespace to show')
+  // The Diff view's bar, for any file it lists.
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const CompareAll = customElements.get('bundle-compare-all')
+  const bar = (extra, query = '') => {
+    const code = view(null, extra)
+    const all = new CompareAll()
+    for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+    all.models = combinedDiffRows(code.base, code.other, code.files).models
+    all.willUpdate(new Map([['base'], ['other'], ['files']]))
+    all._query = query
+    const markup = renderText(all.render())
+    return markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
+  }
+  assert.ok(!offered(bar()), 'none of its files hides one')
+  assert.ok(offered(bar(files)))
+  assert.match(bar(files, 'spaces'), /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'there to turn off where it hides every change listed')
+})
+
+test('with renamed names hidden, Hide whitespace changes is offered where the server\'s diff hides one', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); element._setWhitespace(false) })
+  const element = view('dist/ws.min.js', [{ 'dist/ws.min.js': `(function(){var Y=1;${'q(Y);'.repeat(250)}})();\n` },
+    { 'dist/ws.min.js': `(function(){var X=1;${'q(X);'.repeat(250)}})();\n` }])
+  element.base.managedId = 'b9'
+  element.other.managedId = 'b10'
+  pretty.set('b9:dist/ws.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n  q(Y);\n})();\n')
+  pretty.set('b10:dist/ws.min.js', '(function () {\n  var X = 1;\n    q(X);\n  q(X);\n})();\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  const settled = async () => {
+    for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+    return renderText(element.render())
+  }
+  const shown = await settled()
+  assert.match(shown, /var X = 1;/u, 'renamed names hidden')
+  assert.match(shown, /aria-pressed=false aria-disabled=\s*aria-label=Hide whitespace changes/u)
+  element._setWhitespace(true)
+  const hidden = await settled()
+  assert.equal(renameDiffs.at(-1).ignoreWhitespace, true, 'the server diffs them with whitespace changes hidden')
+  assert.match(hidden, /Only whitespace and renamed names changed in this file\./u)
+  assert.match(hidden, /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'still there to turn off')
 })
 
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {

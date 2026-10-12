@@ -231,7 +231,8 @@ Lines always wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
-for it.
+for it. The toggle is offered only where hiding whitespace changes hides one,
+in the diff shown or in diff -w's.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
@@ -895,7 +896,9 @@ logged, and one of a kind it has no check for 422 `unsupported`. The Brotli byte
 the bundle's cache directory by content hash, encrypted with its data key
 where storage is, and removed with the bundle; later requests stream them as
 they are. Access is checked before and again after formatting, and the
-endpoint supports HEAD.
+endpoint supports HEAD. Each copy names the file it was formatted from, by
+that hash, in `x-source-hash`, and the viewer takes only a copy naming the
+file it asked about.
 
 `GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
 diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the

@@ -138,8 +138,9 @@ const PRETTY_ERRORS = {
 }
 
 // A file pretty-printed by the server, which keeps the copy; the viewer
-// keeps it only while the file is open (pretty-source.js).
-const requestPretty = (url, signal) => request(url, PRETTY_ERRORS, response => response.text(), signal)
+// keeps it only while the file is open (pretty-source.js). `{ text, source }`,
+// `source` the hash of the file the server formatted it from, as it names it.
+const requestPretty = (url, signal) => request(url, PRETTY_ERRORS, async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
 
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
   return requestPretty(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, signal)

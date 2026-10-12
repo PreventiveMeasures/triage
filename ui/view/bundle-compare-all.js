@@ -156,7 +156,7 @@ class BundleCompareAll extends BundleCompareCode {
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), pretty, shown.some(({ file }) => file.generated))}
+          ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace), pretty, shown.some(({ file }) => file.generated), false, false, shown.some(({ file }) => file.whitespace))}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
