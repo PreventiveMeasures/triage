@@ -9,7 +9,7 @@
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
 import { pairLines } from '@preventive/compare'
-import { changeBlocks, textLines } from '../../common/line-diff.js'
+import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }
 
@@ -80,6 +80,11 @@ export function fileLineCounts(before, after) {
   }
   return { additions, deletions }
 }
+
+// Whether hiding whitespace changes hides one between two texts: whether the
+// blocks a diff of them shows with those hidden, or diff -w's where none are
+// given, pair as unchanged lines that differ (blocksHold).
+export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change

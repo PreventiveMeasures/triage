@@ -231,7 +231,8 @@ Lines always wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
-for it.
+for it. The toggle is offered only where hiding whitespace changes hides one,
+in the diff shown or in diff -w's.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;

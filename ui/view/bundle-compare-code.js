@@ -28,7 +28,7 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
@@ -267,6 +267,8 @@ export class BundleCompareCode extends LitElement {
     this._modelCap = MODEL_CACHE
     // Path → the tree's line counts for it (_lineCounts), for these entries.
     this._counted = new Map()
+    // Whether diff -w hides a change in the texts a file shows (_hidesWhitespace).
+    this._spaced = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
@@ -281,6 +283,7 @@ export class BundleCompareCode extends LitElement {
       if (pair !== this._pair) {
         this._pair = pair
         this._models.clear()
+        this._spaced.clear()
         this._expansions.clear()
         this._limits.clear()
         this._forced.clear()
@@ -605,7 +608,21 @@ export class BundleCompareCode extends LitElement {
     const mixedWhitespace = prefs.ignoreWhitespace && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixedWhitespace) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
-    return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, mixedWhitespace }
+    // Hiding whitespace changes is offered where it hides one: the diff shown
+    // does, or diff -w would while they show (_hidesWhitespace); or may not.
+    const whitespace = mixedWhitespace || (!!model && (prefs.ignoreWhitespace ? hidesWhitespace(shown, after, model.blocks)
+      : this._hidesWhitespace(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after)))
+    return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, mixedWhitespace, whitespace }
+  }
+
+  // Whether diff -w would hide a change between the texts a file shows, `key`
+  // naming them, kept as their models are.
+  _hidesWhitespace(key, before, after) {
+    const hides = this._spaced.get(key) ?? hidesWhitespace(before, after)
+    this._spaced.delete(key)
+    this._spaced.set(key, hides)
+    if (this._spaced.size > this._modelCap) this._spaced.delete(this._spaced.keys().next().value)
+    return hides
   }
 
   // Whether a file's names are a minifier's on both sides, each minified, and
@@ -640,7 +657,7 @@ export class BundleCompareCode extends LitElement {
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind }, { before, after, textual, large, model, hiding, changes }) {
+  _fileMessage(path, { kind }, { before, after, textual, large, model, hiding, changes, whitespace }) {
     const size = value => formatBytes(value ?? 0)
     if (!textual) {
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
@@ -661,10 +678,11 @@ export class BundleCompareCode extends LitElement {
       </div>`
     }
     if (model.blocks.length > 0) return null
-    const hidden = [prefs.ignoreWhitespace && 'whitespace', hiding && 'renamed names'].filter(Boolean)
+    const spaced = prefs.ignoreWhitespace && whitespace
+    const hidden = [spaced && 'whitespace', hiding && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
       <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
-      ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
+      ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
   }
@@ -818,7 +836,7 @@ export class BundleCompareCode extends LitElement {
         </button>
         <span class="bundle-code-main-spacer"></span>
         ${this._fileFigures(entry, model)}
-        ${this._toggles(diffable, file.pretty, file.generated, file.mixedWhitespace, file.reading)}
+        ${this._toggles(diffable, file.pretty, file.generated, file.mixedWhitespace, file.reading, file.whitespace)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${this._dependencyChanges(path)}
@@ -829,9 +847,10 @@ export class BundleCompareCode extends LitElement {
 
   // The diff's pretty-print, layout, whitespace and renamed names toggles, as
   // a file has use for them: pretty-printing a minified file (`pretty` from
-  // _pretty), a diff the next two and, in JavaScript minified on both sides
-  // (`renames`, _generated), renamed names. Lines always wrap.
-  _toggles(diffable, pretty = null, renames = false, mixedWhitespace = false, reading = false) {
+  // _pretty), a diff its layout, whitespace where hiding it hides a change
+  // (`whitespace`) and, in JavaScript minified on both sides (`renames`,
+  // _generated), renamed names. Lines always wrap.
+  _toggles(diffable, pretty = null, renames = false, mixedWhitespace = false, reading = false, whitespace = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
           data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
@@ -839,7 +858,7 @@ export class BundleCompareCode extends LitElement {
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>
-        ${this._whitespaceToggle(mixedWhitespace)}
+        ${whitespace ? this._whitespaceToggle(mixedWhitespace) : nothing}
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
           data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for named apart (r_old)"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
