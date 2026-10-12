@@ -738,8 +738,9 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
   const size = `${(payload.length / 1024).toFixed(1)} KiB`
   assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
-  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
-    + '[^]*compare-tip-note">Code files the open version adds, of 256 KiB or more<', 'u'), 'styled, a row for each file')
+  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>\\s*</div>>`, 'u'),
+    'styled, a row for each file, and nothing more')
+  assert.doesNotMatch(flagged.replaceAll(/<li><span class="?npm-extension (?!npm-compare-file|is-warn npm-compare-(?:hosts|kept-runs))[^]*?<\/li>/gu, ''), /compare-tip-note/u, 'no note under the files')
   assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
   assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
   assert.doesNotMatch(flagged, /compare-tip-path">lib\/(?:vendor|big-moved)\.js</u)
