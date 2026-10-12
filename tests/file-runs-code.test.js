@@ -30,12 +30,15 @@ test('a template literal\'s substitutions are code, read as their own, its text 
     assert.deepEqual(found('a.js', `const t = \`\${${substitution}}\`\n`), { eval: [1] }, `braces in a comment, a regular expression, a string or balanced aside: ${substitution}`)
   }
   assert.equal(found('a.js', 'const t = `\\${eval(x)} eval(y) ${f("eval(")} ${/* eval(z) */ w}`\n'), null, 'not an escaped one, nor a string or comment in one')
+  assert.deepEqual(found('a.js', 'const t = `\\\\${eval(x)}`\n'), { eval: [1] }, 'after an escaped backslash, live')
+  assert.deepEqual(found('a.js', 'const t = `a \\\n${eval(x)}`\n'), { eval: [2] }, 'after a line continuation')
 })
 
 test('a name read as another or as a property, or in a string, a regular expression or a comment, is none', () => {
   assert.equal(found('a.js', 'vm.eval(x); evaluate(); myeval(); obj.eval\nx.Function(1); Function.prototype.call\n'), null)
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
   assert.equal(found('a.js', 'const docs = "see child_process"\n// require("child_process")\n'), null, 'a string naming a module only where it is one')
+  assert.equal(found('a.js', "const s = 'a \\\neval(x)'\nconst d = \"b \\\nFunction(y)\"\n"), null, 'a string continued on the next line')
 })
 
 test('what is no script runs nothing: a declaration file, prose, data', () => {

@@ -91,7 +91,10 @@ function read(code, base, at) {
 function substitutions(template) {
   const found = []
   for (let i = template.indexOf('${'); i !== -1; i = template.indexOf('${', i)) {
-    if (/\\(?:\\\\)*$/u.test(template.slice(Math.max(0, i - 16), i))) {
+    // Escaped by an odd run of backslashes before it (`\${`, not `\\${`).
+    let run = 0
+    while (template[i - 1 - run] === '\\') run++
+    if (run % 2 === 1) {
       i += 2
       continue
     }
