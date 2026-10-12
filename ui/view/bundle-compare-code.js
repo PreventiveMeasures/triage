@@ -30,7 +30,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
@@ -801,8 +801,7 @@ export class BundleCompareCode extends LitElement {
   // (file-readability.js npmReadabilityFlags).
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
-    const tagged = read => read.category === 'long' ? read.kind : read.category
-    const tag = !was || !now || tagged(was) === tagged(now) ? npmEncodingTag(now ?? was)
+    const tag = !was || !now || npmTaggedCategory(was) === npmTaggedCategory(now) ? npmEncodingTag(now ?? was)
       : html`<span class="bundle-compare-code-readability">${npmEncodingTag(was)}<span aria-hidden="true">→</span>${npmEncodingTag(now)}</span>`
     return html`${npmReadabilityFlags(now ?? was)}${tag}`
   }
@@ -824,7 +823,7 @@ export class BundleCompareCode extends LitElement {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
     if (!shown) return nothing
-    const tagged = shown.category !== 'map' && READABILITY.get(shown.category === 'long' ? shown.kind : shown.category).mark
+    const tagged = shown.category !== 'map' && READABILITY.get(npmTaggedCategory(shown)).mark
     return html`${npmReadabilityFlags(shown, ['warn'])}${tagged ? npmEncodingTag(shown) : nothing}`
   }
 

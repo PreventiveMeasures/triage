@@ -21,6 +21,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { npmInstallScripts } from './install-scripts.js'
+import { DAY_MS, fullDate } from './npm-downloads-chart.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
 import { NPM_DEPENDENCY_KINDS, npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
 
@@ -243,20 +244,19 @@ function versionChoices(list, version, now = Date.now()) {
 // within days, so one this new hasn't yet had the time to be. Those of a
 // scope a team lists are its own, and aren't flagged; nor is any until the
 // version list says whether it is one.
-const RECENT_MS = 14 * 24 * 60 * 60_000
+const RECENT_MS = 14 * DAY_MS
 export function npmRecentRelease(list, time, now = Date.now()) {
   return list.status === 'ready' && !list.teamScoped && now - Date.parse(time) < RECENT_MS
 }
 
-const publishedDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 const ago = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
 // When a version was published (an ISO date), and how long ago, in days up
 // to two months, then months up to two years, then years.
 export function npmPublished(time, now = Date.now()) {
-  const days = Math.floor((now - Date.parse(time)) / (24 * 60 * 60_000))
+  const days = Math.floor((now - Date.parse(time)) / DAY_MS)
   const age = days < 60 ? ago.format(-days, 'day') : days < 730 ? ago.format(-Math.floor(days / 30.44), 'month') : ago.format(-Math.floor(days / 365.25), 'year')
-  return `${publishedDate.format(Date.parse(time))} · ${age}`
+  return `${fullDate(Date.parse(time))} · ${age}`
 }
 
 const since = new Intl.RelativeTimeFormat('en', { numeric: 'always' })
@@ -266,7 +266,7 @@ export function npmAge(time, now = Date.now()) {
   const minutes = Math.max(0, Math.floor((now - Date.parse(time)) / 60_000))
   return minutes < 60 ? since.format(-minutes, 'minute') : minutes < 24 * 60 ? since.format(-Math.floor(minutes / 60), 'hour') : since.format(-Math.floor(minutes / (24 * 60)), 'day')
 }
-export const npmPublishedDay = time => publishedDate.format(Date.parse(time))
+export const npmPublishedDay = time => fullDate(Date.parse(time))
 export const npmPublishedOn = time => `Published on ${npmPublishedDay(time)}`
 
 // What Compare offers a package version (bundle-compare.js `source`): the

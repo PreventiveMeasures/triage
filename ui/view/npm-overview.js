@@ -20,11 +20,14 @@ import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
-import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
+import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 
-const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
+// Advisories' severities, most severe first, and an advisory's (`unknown`
+// where it gives none of them).
+const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
+const severityOf = advisory => SEVERITY_ORDER.includes(advisory.severity) ? advisory.severity : 'unknown'
 // Groups of the Advisories column, in order, each headed by what it holds.
 const ADVISORY_GROUPS = [
   ['affects', version => `Affects ${version}`],
@@ -339,7 +342,7 @@ function sessionCheck() {
 // An advisory's row, as the Advisories tab draws a bundle's, its text, where
 // it has one, opening in the dialog the tab opens, until the session changes.
 function npmAdvisoryRow(advisory, isCurrent) {
-  return advisoryRow({ ...advisory, title: advisory.title ?? advisory.id, severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown',
+  return advisoryRow({ ...advisory, title: advisory.title ?? advisory.id, severity: severityOf(advisory),
     cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range },
   ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent }))
 }
@@ -561,8 +564,6 @@ function advisoriesAffecting(sides) {
 // `2 → 0`, or one number where both sides have it; `–` for a side that has none.
 const fromTo = (was, now) => was === now ? `${now ?? '–'}` : `${was ?? '–'} → ${now ?? '–'}`
 
-const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
-const severityOf = advisory => SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
 // The most severe of `advisories`, undefined for none.
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
 
@@ -810,15 +811,14 @@ function socketBadges([from, to], affecting) {
 }
 
 // A package's tier by its downloads (`downloads`, its figures' or its
-// downloads alone), where `shown` takes its level, its last complete
-// month's downloads in its tooltip, over the month's name; nothing until
-// they arrive.
+// downloads alone), where `shown` takes it, its last complete month's
+// downloads in its tooltip, over the month's name; nothing until they
+// arrive.
 function tierTag(downloads, shown = () => true) {
   const tier = downloads ? npmDownloadTier(downloads) : null
-  const level = tier === null ? null : npmTierLevel(tier)
-  if (level === null || !shown(level)) return nothing
+  if (tier === null || !shown(tier)) return nothing
   const last = npmLastMonth(downloads), total = last?.total.toLocaleString('en')
-  return html`<span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
+  return html`<span class=${`npm-downloads-tier ${npmTierLevel(tier)}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
     .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier)}</span>`
 }
 
@@ -828,7 +828,6 @@ const ready = data => data.status === 'ready' ? data.downloads : null
 // package a release just pulled in, as a compromised one depending on it
 // would, could owe those to that release alone. Its own package's tier goes
 // by all of them, its Overview charting them.
-const DAY_MS = 24 * 60 * 60_000
 const DEPENDENCY_DAYS_LEFT_OUT = 14
 export function npmSettledDownloads(downloads, now = Date.now()) {
   if (!downloads) return null
@@ -838,7 +837,7 @@ export function npmSettledDownloads(downloads, now = Date.now()) {
 }
 
 // Orange or red: past the top 20,000.
-const isLow = level => level === 'is-low' || level === 'is-unpopular'
+const isLow = tier => tier > 20_000
 
 // The package's tier where it is orange or red.
 function popularityBadge(name) {
@@ -915,7 +914,7 @@ export function npmDependencyTags(row, kind) {
     return list.status === 'ready' && !list.private ? [flags, UNCOUNTED_TAG, newPackageTag(row)] : [flags, nothing]
   }
   const tier = npmDownloadTier(settled)
-  return [flags, tierTag(settled), tier !== null && isLow(npmTierLevel(tier)) ? newPackageTag(row) : nothing]
+  return [flags, tierTag(settled), tier !== null && isLow(tier) ? newPackageTag(row) : nothing]
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.
@@ -955,7 +954,7 @@ export function npmFileExtensions(paths, sizes, lines = new Map()) {
 }
 
 // The files every package has, at its root: its manifest, readme and license
-// files (npm-package.js NPM_LICENSE_FILE).
+// files (npm-entries.js NPM_LICENSE_FILE).
 const PACKAGE_FILE = /^(?:package\.json|readme(?:\.md)?)$/iu
 const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
 

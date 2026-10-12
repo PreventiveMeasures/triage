@@ -208,6 +208,10 @@ export function npmFileReadability(path, text) {
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
 }
 
+// The category a file's tag shows: for one with long lines, how its text is
+// encoded.
+export const npmTaggedCategory = readability => readability.category === 'long' ? readability.kind : readability.category
+
 // What a file is labelled, in its tags and in the Overview's warning and
 // chips, each finding it: its control characters, its invisible ones
 // (characterLabels) and its long lines, where it holds them, beside its category (how its text is encoded, for one whose long
@@ -218,7 +222,7 @@ export function npmFileReadability(path, text) {
 export function npmReadabilityLabels(readability) {
   const flags = [...characterLabels(readability.controls),
     ...readability.longLines > 0 && ['long', 'minified', 'inline-map'].includes(readability.category) ? ['long'] : []]
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   return READABILITY.get(category).mark || flags.length === 0 ? [...flags, category] : flags
 }
 
@@ -295,7 +299,7 @@ function readabilityNote(readability) {
 // invisible characters are.
 export function npmEncodingTag(readability) {
   if (!readability) return nothing
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   const { tag, mark } = READABILITY.get(category)
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
 }
@@ -320,7 +324,7 @@ export function npmReadabilityFlags(readability, marks = null) {
 // A file's head, wide enough, tags every one, as it does how one changed.
 export function npmListedReadabilityTag(readability) {
   if (!readability) return nothing
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   return category === 'ascii' || category === 'map' ? npmReadabilityFlags(readability) : npmReadabilityTag(readability)
 }
 
