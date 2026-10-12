@@ -127,6 +127,9 @@ async function postToken(payload: Record<string, string>, now: number, fetchImpl
 // tokens and refuses a spent one (bad_refresh_token), so requests that find the
 // token expired together share one refresh rather than race on the same token.
 const refreshing = new Map<string, Promise<string | null>>()
+// After GitHub refuses a refresh token, how long to wait before each further
+// read for the pair another instance got with it: a second in all.
+const STORED_PAIR_WAITS_MS = [100, 200, 300, 400]
 
 // Resolve a usable access token for a user: the stored one if still valid, else
 // refreshed (when a refresh token is on file) and re-persisted. Null when there
@@ -164,8 +167,13 @@ async function refreshStoredToken(
   } catch (err) {
     // Another request or instance may have spent the refresh token first: use
     // the pair it stored rather than leave this request to ask anonymously.
-    const stored = await db.getUserTokens(userId).catch(() => null)
-    if (stored != null && stored.accessToken !== staleToken && usableAt(stored, now)) return stored.accessToken
+    // Where GitHub refused the token, that pair may not be stored yet.
+    const waits = err instanceof OAuthError && err.message === 'github-token-denied' ? STORED_PAIR_WAITS_MS : []
+    for (const wait of [0, ...waits]) {
+      if (wait > 0) await new Promise(resolve => { setTimeout(resolve, wait) })
+      const stored = await db.getUserTokens(userId).catch(() => null)
+      if (stored != null && stored.accessToken !== staleToken && usableAt(stored, now)) return stored.accessToken
+    }
     console.warn('managed: token refresh failed:', err)
     return null
   }
