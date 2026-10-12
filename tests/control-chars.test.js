@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlMarkup, controlParts, hasControls, invisibleCharacters } from '../ui/view/control-chars.js'
+import { controlMarkup, controlParts, hasControls } from '../ui/view/control-chars.js'
+import { invisibleCharacters } from '../risk/files/characters.js'
 import { sourceText } from '../ui/view/source-text.js'
 
 // Parts as text, a box as [label|tooltip].

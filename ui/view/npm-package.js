@@ -20,13 +20,16 @@ import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
-import { npmInstallScripts } from './install-scripts.js'
+import { npmInstallScripts } from '../../risk/npm/install-scripts.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, npmTooNew } from '../../risk/npm/release.js'
 import { DAY_MS, fullDate } from './npm-downloads-chart.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { NPM_DEPENDENCY_KINDS, npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
+import { npmAlias, npmDependencies, npmDependencyChanges, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges } from './npm-dependency-checks.js'
 
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
+
+export { npmDependencies, npmDependencyChanges } from '../../risk/npm/dependencies.js'
 
 const NPM_PACKAGE_URL = /^https?:\/\/(?:www\.)?npmjs\.(?:com|org)\/package\/((?:@[^/]+\/)?[^/?#]+)(?:\/v\/([^/?#]+))?\/?(?:[?#].*)?$/u
 
@@ -240,13 +243,12 @@ function versionChoices(list, version, now = Date.now()) {
   })
 }
 
-// Under two weeks old: a compromised release is mostly found and pulled
-// within days, so one this new hasn't yet had the time to be. Those of a
-// scope a team lists are its own, and aren't flagged; nor is any until the
+// Too new to trust yet (risk/npm/release.js npmTooNew), under risk's
+// minimum release age, two weeks. Those of a scope a team lists are its own,
+// trusted however new (a minimum age of 0); nor is any flagged until the
 // version list says whether it is one.
-const RECENT_MS = 14 * DAY_MS
 export function npmRecentRelease(list, time, now = Date.now()) {
-  return list.status === 'ready' && !list.teamScoped && now - Date.parse(time) < RECENT_MS
+  return list.status === 'ready' && npmTooNew(time, { minimumReleaseAge: list.teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, now })
 }
 
 const ago = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
@@ -445,38 +447,6 @@ export function renderNpmLookup() {
       </li>`)}</ul>
     </section>` : nothing}
   </section>`
-}
-
-// A version's dependencies, each `{ name, range, kind, opens }`, in name
-// order: `kind` null for a plain dependency, else 'peer' or 'optional';
-// `opens` the package the viewer opens for it, the one an `npm:` alias
-// names, or null when it names none, or where npm doesn't install it from
-// its registry (npm-dependency-checks.js npmRegistrySpec: a path, a
-// repository, a URL), whose package of that name isn't what it installs.
-export function npmDependencies(manifest) {
-  const rows = []
-  for (const [field, kind] of NPM_DEPENDENCY_KINDS) {
-    for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
-      const opens = npmAlias(range)?.name ?? name
-      rows.push({ name, range, kind, opens: isNpmPackageName(opens) && npmRegistrySpec(range) ? opens : null })
-    }
-  }
-  return rows.toSorted((a, b) => a.name.localeCompare(b.name) || (a.kind ?? '').localeCompare(b.kind ?? ''))
-}
-
-// What two versions' dependencies differ in, by name and kind: those only
-// `base` has, those only `other` has, and those whose range changed.
-export function npmDependencyChanges(base, other) {
-  const index = manifest => new Map(npmDependencies(manifest).map(row => [`${row.kind ?? ''}\0${row.name}`, row]))
-  const after = index(other), before = index(base)
-  const added = [], changed = [], removed = []
-  for (const [key, { name, kind, range, opens }] of before) {
-    const next = after.get(key)
-    if (!next) removed.push({ key, name, kind, range, opens })
-    else if (next.range !== range) changed.push({ key, name, kind, from: range, to: next.range, opens: next.opens })
-  }
-  for (const [key, { name, kind, range, opens }] of after) if (!before.has(key)) added.push({ key, name, kind, range, opens })
-  return { removed, added, changed }
 }
 
 // What two versions' dependencies differ in (npmDependencyChanges), `base`

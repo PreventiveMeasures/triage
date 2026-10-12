@@ -25,7 +25,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
 } })
 const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependenciesColumn, npmDependencyChanges, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 const { npmEntryFile } = await import('../ui/view/npm-entries.js')
-const { npmInstallScripts } = await import('../ui/view/install-scripts.js')
+const { npmInstallScripts } = await import('../risk/npm/install-scripts.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,

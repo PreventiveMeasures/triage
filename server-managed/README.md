@@ -1600,6 +1600,14 @@ earliest time the document lists, which npm's own `created` can postdate, as
 a placeholder's does for a package npm took down),
 `teamScoped` whether any visible team lists its scope, whatever teams the
 reader is in, and `GET /api/npm/download?name=&version=` the tarball.
+`GET /api/npm/risk?name=&version=&otherVersion=` returns what calls for a
+look at a version, as risk tells it (risk/README.md, `assessNpm`), against
+`otherVersion` where given: `{ name, version, oldVersion, published, findings,
+files, dependencies }`. Risk is told on this server alone; a team's own scopes
+are trusted however new (a minimum release age of 0), any other version held
+to two weeks. What it reads is kept by type (npm-risk.ts): a public package's
+assessment in the public npm cache, its versions' documents in the upstream
+cache table, the rest in memory, and nothing of a private one shared.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
 downloads API, reaching back to the first of the month that year starts in so

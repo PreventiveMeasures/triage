@@ -159,6 +159,24 @@ test('anyone with workspace access opens a public version, asked of the registry
   assert.deepEqual(download.bytes, pkg.tgz)
 })
 
+test('a version\'s risk is told on the server, as risk tells it, for whoever can read the version', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = packageOf('@pub/pkg', '1.2.3', { 'lib/index.js': 'require("child_process")\n', 'package.json': '{"name":"@pub/pkg"}' })
+  registry(t, [pkg])
+  const riskPath = params => `/api/npm/risk?${new URLSearchParams({ name: '@pub/pkg', ...params })}`
+  const res = await h.send(riskPath({ version: '1.2.3' }))
+  assert.equal(res.status, 200)
+  const body = res.json()
+  assert.deepEqual([body.name, body.version, body.oldVersion, body.published], ['@pub/pkg', '1.2.3', null, '2025-01-01T00:00:00.000Z'])
+  assert.deepEqual(body.findings.map(({ id }) => id), ['install-scripts', 'unused-deps', 'runs-code'], 'everything of it new: its postinstall, a dependency nothing imports, child_process')
+  assert.deepEqual(body.files['lib/index.js'].stamps, [{ name: 'child_process', severity: 'high' }])
+  assert.deepEqual(body.dependencies.added.map(({ name, flags }) => [name, flags.map(({ check }) => check)]), [['dep', ['unimported']]])
+  assert.equal((await h.send(riskPath({ version: '1.2.3' }), 'nobody')).status, 401)
+  assert.equal((await h.send(riskPath({ version: '1.2.3', otherVersion: 'not a version' }))).status, 400)
+  assert.equal((await h.send(riskPath({ version: '9.9.9' }))).status, 404)
+})
+
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
   const h = await setup(t)
   withToken(t)

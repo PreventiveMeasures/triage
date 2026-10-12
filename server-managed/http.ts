@@ -63,6 +63,7 @@
 //   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
+//   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -76,6 +77,7 @@ import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
+import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { type CatalogCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
 import { contentAccess } from './content-access.ts'
@@ -132,6 +134,8 @@ import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { MAX_DOWNLOAD_COUNTS, npmDownloadCounts } from './npm-download-counts.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
+import { npmRisk } from './npm-risk.ts'
+import { NpmRiskError } from '../risk/index.js'
 import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest } from './pretty-print.ts'
 import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
@@ -186,8 +190,9 @@ const NPM_SOCKET_PATH = '/api/npm/socket'
 const NPM_PROVENANCE_PATH = '/api/npm/provenance'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
 const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
+const NPM_RISK_PATH = '/api/npm/risk'
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
-  NPM_RENAME_DIFF_PATH])
+  NPM_RENAME_DIFF_PATH, NPM_RISK_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -298,6 +303,8 @@ export interface ManagedHttpDeps {
   bundleCache?: BundleCache
   reportSourcesCache?: ReportSourcesCache
   prettyCache?: PrettyCache
+  // The public npm cache, where risk keeps public packages' assessments (npm-risk.ts).
+  npmCacheStorage?: CacheStorage
   uploadStore?: BlobStore
   originGate: OriginGate
   isShuttingDown: () => boolean
@@ -2465,7 +2472,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // All but the package's own (its versions, figures and advisories) are a version's.
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
-  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))) {
+  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
+    || (path === NPM_RISK_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const file = path === NPM_PRETTY_PATH ? prettyRequest(params) : null
@@ -2555,6 +2563,18 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // provenance is answered as one, for the viewer to ask again.
     if (path === NPM_TAGS_PATH) { await reply(doc.private, { name, version: doc.version, tags: await tagsOf().catch(() => []) }); return }
     if (path === NPM_SOCKET_PATH) { await reply(doc.private, { name, version: doc.version, socket: await socketOf().catch(() => null) }); return }
+    // What calls for a look at the version, as risk tells it (npm-risk.ts),
+    // against `otherVersion` where given; trusted however new where a team
+    // lists its scope, its own packages.
+    if (path === NPM_RISK_PATH) {
+      const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const scope = npmPackageScope(name)
+      const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
+      const assessment = await npmRisk(name, doc.version, old?.version ?? null,
+        { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, isPublic: !doc.private && !old?.private, signal: controller.signal })
+      await reply(doc.private, { ...assessment })
+      return
+    }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
     // One of its files pretty-printed (pretty-print.ts), from a copy kept
     // for a public version.
@@ -2616,6 +2636,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     writeResponse(res, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (err) {
     if (err instanceof NpmPackageError || err instanceof PrettyError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
+    if (err instanceof NpmRiskError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.code === 'upstream-unavailable' ? 502 : 404, { error: err.code }); return }
     if (controller.signal.aborted) return
     throw err
   } finally {

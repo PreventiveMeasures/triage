@@ -55,7 +55,7 @@ export function registry(t, packages) {
         // The whole document has when each was published, the abbreviated one not.
         const time = headers.get('accept') === 'application/json'
           ? { time: { created: '2020-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z', ...Object.fromEntries(listed.map((v, i) => [v, `2025-0${i + 1}-01T00:00:00.000Z`])), ...times } } : {}
-        return Promise.resolve(Response.json({ name: doc.name, 'dist-tags': { latest: doc.version, next: '9.9.9' }, versions: Object.fromEntries(listed.map(v => [v, {}])), ...time }))
+        return Promise.resolve(Response.json({ name: doc.name, 'dist-tags': { latest: doc.version, next: '9.9.9' }, versions: Object.fromEntries(listed.map(v => [v, v === doc.version ? doc : {}])), ...time }))
       }
       if (url === doc.dist.tarball) return Promise.resolve(new Response(tgz))
     }

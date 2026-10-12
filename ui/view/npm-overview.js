@@ -9,10 +9,9 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { factFile, npmAge, npmDeprecation, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
-import { npmInstallScripts } from './install-scripts.js'
-import { npmDependencyFlagTags, npmDependencySpecs } from './npm-dependency-checks.js'
+import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -20,10 +19,17 @@ import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
-import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags, npmRunsCodeWithout } from './file-runs-code.js'
-import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
+import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
+import { READABILITY, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
+import { npmStampsOf } from '../../risk/files/stamps.js'
+import { npmSettledDownloads } from '../../risk/npm/downloads.js'
+import { npmAddedDependency } from '../../risk/npm/new-dependency.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE } from '../../risk/npm/release.js'
+import { npmCompareFindings } from '../../risk/npm/compare.js'
+
+export { npmSettledDownloads } from '../../risk/npm/downloads.js'
+import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -493,20 +499,16 @@ export function npmFileTags(details, path, opens = false) {
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
 // it, by their severity, where the list draws them (the Files list's, not
-// Compare's); what it does beyond itself, a warning's or, for the whole
-// environment read out and publishing, critical, and an exfiltration host it
-// names, a warning's; and its flags and how it reads, a warning's (`high`) or
-// a notice, by their marks. Those but Socket's kept, once a version.
-const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
+// Compare's), then its stamps (risk/files/stamps.js npmStampsOf). Those but
+// Socket's kept, once a version.
 const fileFlags = new WeakMap()
 export function npmFileFlags(details, path, alerts = []) {
   let known = fileFlags.get(details)
   if (!known) fileFlags.set(details, known = new Map())
   if (!known.has(path)) {
     const { byPath, sizes } = npmFilesRead(details), text = bundleFilesAsMap(details).get(path)
-    known.set(path, [...npmRunsCodeFlags(npmFileRunsCode(details, path, text)),
-      ...npmFileExfiltration(details, path, text) ? [{ name: 'Exfiltration', severity: 'high' }] : [],
-      ...npmListedFlags(path, byPath.get(path), sizes.get(path)).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))])
+    known.set(path, npmStampsOf({ path, bytes: sizes.get(path), readability: byPath.get(path),
+      runsCode: npmFileRunsCode(details, path, text), exfiltration: npmFileExfiltration(details, path, text) }))
   }
   return [...alerts.map(alert => ({ name: socketAlertName(alert.type), severity: SOCKET_SEVERITIES.get(alert.severity) ?? 'low' })), ...known.get(path)]
 }
@@ -537,23 +539,37 @@ export const npmCompareFiles = {
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
 // (`other`), each side's details, and `files` the comparison's
-// (computeBundleDiff's): an open version npm says is deprecated,
-// a publisher that changed, provenance lost, install scripts added or
-// changed, dependencies it takes from elsewhere than npm's registry anew and
-// new ones nothing of it imports, the files it adds or changes that call
-// for one (fileBadges), an open version under two weeks old
-// (npmRecentRelease), the advisories that affect either,
+// (computeBundleDiff's): what risk finds (risk/npm/compare.js
+// npmCompareFindings: an open version npm says is deprecated, a publisher
+// that changed, provenance lost, install scripts added or changed,
+// dependencies it takes from elsewhere than npm's registry anew and new ones
+// nothing of it imports, the files it adds or changes that call for one, the
+// hosts its code names anew, an open version too new to trust yet, and the
+// package's tier by downloads where it is orange or red), each a chip, then
+// the advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
-// a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
-// package's tier by downloads where it is orange or red. Each once it
-// arrives.
+// a deprecated open version, only under DEPRECATED_MAINTENANCE). Each once
+// it arrives.
 export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files), hostsBadge(base, other, files),
-    recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const found = new Map(npmCompareFindings(base, other, files, compareOptions(other.npm)).map(finding => [finding.id, finding]))
+  const chips = [deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),
+    installScriptsBadge(sides, found.get('install-scripts')), ...dependencyBadges(sides, found), ...fileBadges(found), hostsBadge(found.get('new-hosts')),
+    recentBadge(found.get('too-new')), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name, found.get('popularity'))].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
+}
+
+// What risk is asked with for the open version (`npm`): when it was published,
+// as it came with it or as its version list has it; its minimum age, risk's
+// own, 0 for a team's scope (its own packages) and until the version list
+// says whether it is one (npmRecentRelease); and its package's downloads,
+// for its tier.
+function compareOptions({ name, version, published }) {
+  const list = npmVersionList(name)
+  return { published: published ?? list.times?.[version], downloads: ready(npmPackageStats(name)),
+    minimumReleaseAge: list.status !== 'ready' || list.teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE }
 }
 
 // The advisories affecting each side's version, as the Advisories column
@@ -575,9 +591,9 @@ const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(ad
 
 // The open version, where npm says it is deprecated: its message in the
 // tooltip, as the Overview lists it (npmDeprecation).
-function deprecatedBadge({ manifest }) {
-  if (!manifest?.deprecated) return nothing
-  return html`<li><span class="npm-extension npm-compare-deprecated" data-tooltip=${npmDeprecation(manifest.deprecated)}>Deprecated</span></li>`
+function deprecatedBadge(finding) {
+  if (!finding) return nothing
+  return html`<li><span class="npm-extension npm-compare-deprecated" data-tooltip=${npmDeprecation(finding.message)}>Deprecated</span></li>`
 }
 
 // The npm account that published each version, where npm says for both and
@@ -588,10 +604,9 @@ function deprecatedBadge({ manifest }) {
 // version's is known, orange where neither is, and red where a known one gave
 // way to one that isn't. Its tooltip's note a line each: that the account
 // changed, then what each is (what the one before is on a line of its own).
-function publisherBadge([from, to]) {
-  const now = to.manifest?.publisher, was = from.manifest?.publisher
-  if (!was || !now || was === now) return nothing
-  const [wasKnown, nowKnown] = [[from, was], [to, now]].map(([{ manifest }, account]) => manifest.knownAccounts?.includes(account) === true)
+function publisherBadge([from, to], finding) {
+  if (!finding) return nothing
+  const { was, now, wasKnown, nowKnown } = finding
   const account = (name, known) => html`<span class=${`npm-compare-account ${known ? 'is-known' : 'is-unknown'}`}>~${name}</span>`
   const [tint, mark, which] = nowKnown ? ['is-to-known', ',', 'one that publishes one of npm\'s most downloaded packages']
     : wasKnown ? ['is-from-known', ',', html`one that publishes none of npm's most downloaded packages,<br>after one that does`]
@@ -606,8 +621,8 @@ function publisherBadge([from, to]) {
 // Provenance the one compared with has and the open version hasn't (npm's
 // manifests say; npm-packages.ts npmManifest), as a version published by
 // hand, with a token taken from its maintainers, wouldn't.
-function provenanceBadge([from, to]) {
-  if (!from.manifest?.provenance || to.manifest?.provenance) return nothing
+function provenanceBadge([from, to], finding) {
+  if (!finding) return nothing
   return html`<li><span class="npm-extension npm-compare-provenance"
     data-tooltip=${`npm lists provenance for ${from.version}, none for ${to.version}`}
     .tooltipContent=${compareTip('npm provenance', [from, to], ['Listed by npm', html`<span class="compare-tip-none">None</span>`],
@@ -619,106 +634,56 @@ function provenanceBadge([from, to]) {
 // compared with didn't, or ran another command for; one dropped isn't
 // flagged. Each version's, with their commands, in its tooltip, those
 // added or changed in bold.
-function installScriptsBadge(base, other) {
-  const scripts = ({ npm, json }) => new Map(npmInstallScripts(npm.manifest, json?.sources))
-  const now = scripts(other)
-  const was = scripts(base)
-  const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
-  if (flagged.length === 0) return nothing
+function installScriptsBadge(sides, finding) {
+  if (!finding) return nothing
+  const { was, now, flagged } = finding
   const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>` : tipLines([...list].map(([script, command]) => [script, command, marked.includes(script)]))
   const summary = flagged.map(script => `${script} ${was.has(script) ? 'changed' : 'added'}`).join(', ')
   return html`<li><span class="npm-extension is-warn npm-compare-install"
-    data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
-    .tooltipContent=${compareTip('Install scripts', [base.npm, other.npm], [said(was, []), said(now, flagged)])}>
+    data-tooltip=${sides.map(({ version }, i) => `${version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
+    .tooltipContent=${compareTip('Install scripts', sides, [said(was, []), said(now, flagged)])}>
     <span>${flagged.length === 1 ? 'Install script' : 'Install scripts'}</span><span class="npm-extension-count">${summary}</span></span></li>`
 }
 
 // Files a chip's styled tooltip lists before counting the rest.
 const TIP_FILES = 8
 
-// What the open version does to its files that calls for a look, each as a
-// red chip, though the tags it gives a file (npmFileTags) say little of one
-// alone, or warn of it in orange: code that runs beyond itself, as a string
-// run as code or another program (file-runs-code.js), new to a file it adds
-// or changes, the kinds named; a host malicious packages send what they take
-// to, new to a file it adds or changes (file-hosts.js npmExfiltration), the
-// services named; a code file of 256 KiB or more it adds (npmLargeCode); a
-// file it changes that had no line over 200 characters and now has one over
-// 2,000 (npmBecameUnreadable), which the file's Long lines or Minified tag
-// says of it; and a file it adds or changes with an obfuscator's fingerprint
-// where the one compared with had none (npmObfuscation). Then in orange, as
-// a file's tags are, what any of its files runs beyond itself that the red
-// chip doesn't name, kept from the version compared with. By Compare's
-// `files`, a renamed one by its old path; none until they are compared.
-function fileBadges(base, other, files) {
-  if (!files || !base.json || !other.json) return []
-  const [was, now] = [base, other].map(npmFilesRead)
-  // A file it adds was none before, whatever the one compared with holds at
-  // its path, which can be another file where Compare lays the two out under
-  // other roots (`package/a.js` read as `a.js`).
-  const added = new Set(files.onlyOther)
-  const after = row => now.byPath.get(row.path), before = row => added.has(row) ? null : was.byPath.get(row.basePath ?? row.path)
-  const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
-  const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
-  const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
-  const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
-  // The files that hold, as `read` reads them (npmFileRunsCode,
-  // npmFileExfiltration), what they didn't before, each with that.
-  const gained = read => {
-    const of = (details, path) => read(details, path, bundleFilesAsMap(details).get(path))
-    return [...files.onlyOther, ...changed].map(row => ({ path: row.path, added: npmFoundAdded(of(other, row.path), added.has(row) ? null : of(base, row.basePath ?? row.path)) }))
-      .filter(row => row.added)
-  }
-  const exfiltrating = gained(npmFileExfiltration), runsCode = gained(npmFileRunsCode)
-  // What any of its files holds that the red chip doesn't name.
-  const flagged = new Set(runsCode.flatMap(row => npmRunsCodeFlags(row.added).map(({ name }) => name)))
-  const runs = [...bundleFilesAsMap(other)].map(([path, text]) => ({ path, found: npmRunsCodeWithout(npmFileRunsCode(other, path, text), flagged) }))
-    .filter(row => row.found)
+// What the open version does to its files that calls for a look, as risk
+// finds it (risk/npm/compare.js npmFileFindings), each a red chip, though the
+// tags it gives a file (npmFileTags) say little of one alone, or warn of it in
+// orange: code that runs beyond itself new to a file, the kinds named; a host
+// malicious packages send what they take to new to a file, the services named;
+// a large code file it adds; a file become unreadable, its longest line before
+// and now; and a file newly obfuscated. Then in orange, as a file's tags are,
+// what any of its files runs beyond itself that the red chip doesn't name,
+// kept from the version compared with.
+function fileBadges(found) {
+  const rows = id => found.get(id)?.files ?? []
   return [
-    fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
+    fileBadge('npm-compare-runs', 'Runs code', rows('runs-code'), row => npmRunsCodeSaid(row.added),
       'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
-      npmRunsCodeKinds(runsCode.map(row => row.added))),
-    fileBadge('npm-compare-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.added),
+      npmRunsCodeKinds(rows('runs-code').map(row => row.added))),
+    fileBadge('npm-compare-exfiltration', 'Exfiltration', rows('exfiltration'), row => npmExfiltrationSaid(row.added),
       'A host malicious packages send what they take to, or fetch what they run from, new to the file',
-      npmExfiltrationNames(exfiltrating.map(row => row.added))),
-    fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
+      npmExfiltrationNames(rows('exfiltration').map(row => row.added))),
+    fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes),
       'Code files the open version adds, of 256 KiB or more'),
-    fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
+    fileBadge('npm-compare-unreadable', 'Now unreadable', rows('now-unreadable'), row => `${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`,
       'Its longest line: none over 200 characters before, now one over 2,000'),
-    fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
+    fileBadge('npm-compare-obfuscated', 'Obfuscated', rows('obfuscated'), row => npmObfuscationFound(row.obfuscation),
       'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
-    listBadge('is-warn npm-compare-kept-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found),
+    listBadge('is-warn npm-compare-kept-runs', 'Runs code', rows('kept-runs-code'), row => npmRunsCodeSaid(row.found),
       'What the open version\'s code does beyond itself, in any of its files, none of it new to a file',
-      npmRunsCodeKinds(runs.map(row => row.found))),
+      npmRunsCodeKinds(rows('kept-runs-code').map(row => row.found))),
   ]
 }
 
-// Every host a version's scripts name (file-hosts.js npmHosts), once a version.
-const versionHosts = new WeakMap()
-function hostsOf(details) {
-  let hosts = versionHosts.get(details)
-  if (!hosts) {
-    hosts = new Set()
-    for (const [path, text] of bundleFilesAsMap(details)) for (const host of npmFileHosts(details, path, text)?.keys() ?? []) hosts.add(host)
-    versionHosts.set(details, hosts)
-  }
-  return hosts
-}
-
 // The hosts the open version's code names in its URLs that the one compared
-// with's named in none of its, as a chip in orange, as install scripts are: the
-// host, or how many; each in its tooltip with the file it is first named in,
-// and its line. A file unchanged names what it named, so the files the open
-// version adds or changes (Compare's `files`) hold any it names anew.
-function hostsBadge(base, other, files) {
-  if (!files) return nothing
-  const found = new Map(), known = hostsOf(base)
-  for (const { path } of [...files.onlyOther, ...files.changed]) {
-    for (const [name, line] of npmFileHosts(other, path, bundleFilesAsMap(other).get(path)) ?? []) {
-      if (!known.has(name) && !found.has(name)) found.set(name, { path: name, at: `${path}, line ${line}` })
-    }
-  }
-  const rows = [...found.values()]
+// with's named in none of its (risk/npm/compare.js npmNewHosts), as a chip in
+// orange, as install scripts are: the host, or how many; each in its tooltip
+// with the file it is first named in, and its line.
+function hostsBadge(finding) {
+  const rows = (finding?.hosts ?? []).map(({ host, path, line }) => ({ path: host, at: `${path}, line ${line}` }))
   return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at,
     'Hosts the open version\'s code names in a URL, its comments aside, that the version compared with\'s named in none of its', rows.length === 1 ? rows[0].path : null)
 }
@@ -750,43 +715,36 @@ function listBadge(classes, label, rows, said, note, value = null) {
 // elsewhere than npm's registry, where the one compared with didn't, or by
 // another spec; and, as `Unused deps`, those it adds that nothing of it
 // imports, which npm installs all the same, its install scripts and all, as
-// a dependency added to run them would be (npm-dependency-checks.js
-// npmFlagDependencyChanges, as Compare's package.json flags each). Their
-// names and specs in their tooltips, each version's for those from
-// elsewhere.
-function dependencyBadges(base, other) {
-  const { added, changed } = npmFlaggedDependencyChanges(base, other)
-  const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
-  // Those from elsewhere by name, each with its spec now; and before.
-  const now = new Map(flagged('source').map(row => [row.name, row.to ?? row.range])), unimported = flagged('unimported')
+// a dependency added to run them would be (risk/npm/compare.js
+// npmDependencyFindings, as Compare's package.json flags each). Their names
+// and specs in their tooltips, each version's for those from elsewhere.
+function dependencyBadges(sides, found) {
+  const fetched = found.get('non-registry-deps')?.dependencies ?? [], unimported = found.get('unused-deps')?.dependencies ?? []
   const chips = []
-  if (now.size > 0) {
-    const was = npmDependencySpecs(base.npm.manifest)
-    const said = (specs, marked) => tipLines([...now.keys()].map(name => [name, specs.get(name), marked]))
+  if (fetched.length > 0) {
+    const said = (key, marked) => tipLines(fetched.map(row => [row.name, row[key], marked]))
     chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
-      data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
-      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
+      data-tooltip=${sides.map(({ version }, i) => `${version}: ${fetched.map(row => `${row.name} ${row[i === 0 ? 'was' : 'now'] ?? 'none'}`).join('; ')}`).join(' · ')}
+      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', sides, [said('was', false), said('now', true)])}>
       Non-registry deps</span></li>`)
   }
   if (unimported.length > 0) {
-    const { version } = other.npm
+    const { version } = sides[1]
     const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
     chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
       data-tooltip=${`New in ${version}, imported by nothing of it: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}`}
-      .tooltipContent=${compareTip(`New, and nothing imports ${it}`, [other.npm], [tipLines(unimported.map(({ name, range, kind }) => [kind ? `${name} (${kind})` : name, range, true]))],
+      .tooltipContent=${compareTip(`New, and nothing imports ${it}`, [sides[1]], [tipLines(unimported.map(({ name, range, kind }) => [kind ? `${name} (${kind})` : name, range, true]))],
         `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
       Unused deps</span></li>`)
   }
   return chips
 }
 
-// The open version, where it is too recent to trust yet: how long ago it
-// was published, the day in its tooltip.
-function recentBadge({ name, version, published }) {
-  const list = npmVersionList(name)
-  const time = published ?? list.times?.[version]
-  if (!time || !npmRecentRelease(list, time)) return nothing
-  return html`<li><span class="npm-extension is-warn npm-compare-published" data-tooltip=${npmPublishedOn(time)}>${npmAge(time)}</span></li>`
+// The open version, where it is too new to trust yet (risk/npm/release.js
+// npmTooNew): how long ago it was published, the day in its tooltip.
+function recentBadge(finding) {
+  if (!finding) return nothing
+  return html`<li><span class="npm-extension is-warn npm-compare-published" data-tooltip=${npmPublishedOn(finding.published)}>${npmAge(finding.published)}</span></li>`
 }
 
 // The advisories affecting each version, tinted by the worst still affecting
@@ -884,24 +842,11 @@ function tierTag(downloads, shown = () => true) {
 
 const ready = data => data.status === 'ready' ? data.downloads : null
 
-// A dependency's downloads to the day before its latest two weeks: a
-// package a release just pulled in, as a compromised one depending on it
-// would, could owe those to that release alone. Its own package's tier goes
-// by all of them, its Overview charting them.
-const DEPENDENCY_DAYS_LEFT_OUT = 14
-export function npmSettledDownloads(downloads, now = Date.now()) {
-  if (!downloads) return null
-  const first = Math.floor(Date.parse(downloads.start) / DAY_MS), last = Math.floor(now / DAY_MS) - 1 - DEPENDENCY_DAYS_LEFT_OUT
-  const days = downloads.days.slice(0, Math.max(0, last - first + 1))
-  return { start: downloads.start, end: new Date((first + days.length - 1) * DAY_MS).toISOString().slice(0, 10), days }
-}
-
-// Orange or red: past the top 20,000.
-const isLow = tier => tier > 20_000
-
-// The package's tier where it is orange or red.
-function popularityBadge(name) {
-  const tag = tierTag(ready(npmPackageStats(name)), isLow)
+// The package's tier where it is orange or red, as risk finds it
+// (risk/npm/compare.js), its last complete month's downloads in its tooltip.
+function popularityBadge(name, finding) {
+  if (!finding) return nothing
+  const tag = tierTag(ready(npmPackageStats(name)))
   return tag === nothing ? nothing : html`<li>${tag}</li>`
 }
 
@@ -931,18 +876,14 @@ function npmSpan(ms) {
 }
 
 // A new dependency whose package didn't exist when the version compared
-// with was published (`compared`, npm-package.js npmFlaggedDependencyChanges;
-// its first version published after it, npmVersionList's `created`): how
-// old it was when the open one was, or that it came after that, as a name
-// someone took once a release named it would; in its tooltip, a line each,
-// the day, how long before or after the open version, and what npm had.
-function newPackageTag({ opens, compared }) {
-  const [base, open] = compared ?? []
-  if (!base || !open) return nothing
-  const { created } = npmVersionList(opens)
-  const now = publishedAt(open), was = publishedAt(base)
-  if (!created || !was || !now || Date.parse(created) <= Date.parse(was)) return nothing
-  const gap = Date.parse(now) - Date.parse(created), span = npmSpan(Math.abs(gap))
+// with was published, as risk tells it (risk/npm/new-dependency.js
+// npmAddedDependency's `created` and `gap`): how old it was when the open one
+// was, or that it came after that, as a name someone took once a release
+// named it would; in its tooltip, a line each, the day, how long before or
+// after the open version, and what npm had.
+function newPackageTag({ compared }, { created, gap }) {
+  if (!created) return nothing
+  const [base, open] = compared, span = npmSpan(Math.abs(gap))
   const lines = [`First published on ${npmPublishedDay(created)}`, `${span} ${gap >= 0 ? 'before' : 'after'} ${open.version} was`]
   const note = `npm had no package by its name when ${gap >= 0 ? base.version : 'either version'} was published`
   return html`<span class="npm-dependency-flag is-new" data-tooltip=${[...lines, note].join(' · ')}
@@ -952,16 +893,13 @@ function newPackageTag({ opens, compared }) {
 
 // What tags a dependency Compare lists (bundle-compare.js source's
 // `dependencyTags`): what calls for a look at it (its `flags`,
-// npm-dependency-checks.js), and for a new one its package's tier, whatever
-// it is, by its downloads (npmDownloadsOf) but its latest two weeks'
-// (npmSettledDownloads), unpopular where npm counts none (UNCOUNTED_TAG)
-// and its version list says it's public, and below the top 20,000, how old
-// its package was where it is new since the version compared with
-// (newPackageTag): its version list, the whole document of a package, is
-// asked for only then, as one many install isn't one to doubt for being
-// new. None for a private one, nor one the reader can't open, which npm's
-// downloads API can't tell from no package. No tier for one changed or
-// removed, which the
+// npm-dependency-checks.js), and for a new one what risk tells of its package
+// (risk/npm/new-dependency.js npmAddedDependency) by its downloads
+// (npmDownloadsOf): its tier, whatever it is, unpopular where npm counts none
+// of a public one's (UNCOUNTED_TAG), and how old it was where it is new since
+// the version compared with (newPackageTag). Its version list, the whole
+// document of a package, is asked for only where risk wants it: below the top
+// 20,000, or none counted. No tier for one changed or removed, which the
 // version compared with already had, nor one that opens no package
 // (npm-package.js npmDependencies), as npm doesn't install it from the
 // registry, whose package of its name has downloads that aren't its own.
@@ -970,13 +908,15 @@ export function npmDependencyTags(row, kind) {
   if (kind !== 'added' || !row.opens) return [flags, nothing]
   const data = npmDownloadsOf(row.opens)
   if (data.status !== 'ready') return [flags, nothing]
-  const settled = npmSettledDownloads(data.downloads)
-  if (!settled) {
+  const published = (row.compared ?? []).map(side => side && publishedAt(side))
+  let told = npmAddedDependency({ downloads: data.downloads, published })
+  if (told.wanted) {
     const list = npmVersionList(row.opens)
-    return list.status === 'ready' && !list.private ? [flags, UNCOUNTED_TAG, newPackageTag(row)] : [flags, nothing]
+    if (list.status === 'ready') told = npmAddedDependency({ downloads: data.downloads, listed: list, published })
   }
-  const tier = npmDownloadTier(settled)
-  return [flags, tierTag(settled), tier !== null && isLow(tier) ? newPackageTag(row) : nothing]
+  if (told.tier === null) return [flags, nothing]
+  const settled = npmSettledDownloads(data.downloads)
+  return [flags, settled ? tierTag(settled) : UNCOUNTED_TAG, row.compared ? newPackageTag(row, told) : nothing]
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.
