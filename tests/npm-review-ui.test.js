@@ -105,22 +105,28 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   assert.match(text(page._confirmation(page._activeReview)), /1 of 3 files checked/u)
 })
 
-test('Review uses the current comparison source for badges and file alerts in both diff modes', () => {
-  const called = [], page = component()
+test('Review uses the current comparison source for badges, dependency chips, and file alerts in both diff modes', () => {
+  const called = [], dependencyCalls = [], openDependency = () => {}, page = component()
   page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['export const value = 1\n'] } }
   page._target = '(empty)'
   page._base = EMPTY_REVIEW_BASE
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
   page.source = { choices: [], options: [], widest: { name: '0.0.0', detail: 'latest' },
     badges: (...sides) => { called.push(sides); return 'Shared comparison chips' },
+    dependencies: (...sides) => { dependencyCalls.push(sides); return 'Shared dependency changes' }, openDependency,
     files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
   }
   for (const mode of ['code', 'diff']) {
     page._mode = mode
-    const rendered = text(renderReview(page))
+    const result = renderReview(page)
+    const rendered = text(result)
+    const values = item => Array.isArray(item) ? item.flatMap(values) : item?.strings ? item.values.flatMap(values) : [item]
     assert.match(rendered, /bundle-compare-picker is-versions/u)
     assert.match(rendered, /Shared comparison chips/u)
     assert.match(rendered, /\.baseAlerts=Base alerts \.otherAlerts=Version alerts/u)
+    assert.match(rendered, /\.dependencies=Shared dependency changes/u)
+    assert.ok(values(result).includes(openDependency))
+    assert.deepEqual(dependencyCalls.at(-1), [EMPTY_REVIEW_BASE, page.details])
     assert.deepEqual(called.at(-1), [EMPTY_REVIEW_BASE, page.details])
   }
   page._base = base
