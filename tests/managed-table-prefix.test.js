@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { after, test } from 'node:test'
-import { PGlite } from '@electric-sql/pglite'
+import { startPglite } from './_pglite.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { storageTestKey } from './_managed-storage-db.js'
@@ -19,7 +19,7 @@ const tables = ['managed_user', 'managed_session', 'managed_bundle', 'managed_re
 
 // These tests run sequentially; only the engine is shared, never the schema.
 let sharedPg
-after(async () => { await sharedPg?.close() })
+after(async () => { await (await sharedPg)?.close() })
 
 async function database(t, backend) {
   if (backend === 'sqlite') {
@@ -32,7 +32,7 @@ async function database(t, backend) {
       names: () => raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map(row => row.name),
     }
   }
-  const pg = sharedPg ??= new PGlite()
+  const pg = await (sharedPg ??= startPglite())
   await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   let tail = Promise.resolve()
   const connect = async () => {

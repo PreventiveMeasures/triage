@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
-import { PGlite } from '@electric-sql/pglite'
+import { startPglite } from './_pglite.js'
 import { checkBundleAccessSnapshots, checkBundleLocations, checkBundleVisibility } from './_managed-bundle-location.js'
 import { checkBundleBuildLeases } from './_managed-bundle-build-leases.js'
 import { checkManagementCatalog } from './_managed-catalog.js'
@@ -35,7 +35,7 @@ let sharedPg
 let schemaChanged = true
 let initialTables
 let migratedSchema
-after(async () => { await sharedPg?.close() })
+after(async () => { await (await sharedPg)?.close() })
 
 // Everything a migration defines, column order included, and the versions applied.
 const schemaSql = `SELECT md5(string_agg(x, E'\\n' ORDER BY x)) AS hash FROM (
@@ -59,7 +59,7 @@ async function schemaHash(pg) {
 }
 
 async function database(t, options = {}) {
-  const pg = sharedPg ??= new PGlite()
+  const pg = await (sharedPg ??= startPglite())
   if (schemaChanged && migratedSchema && await schemaHash(pg) === migratedSchema) schemaChanged = false
   if (schemaChanged) await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   else {
