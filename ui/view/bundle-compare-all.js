@@ -75,13 +75,14 @@ class BundleCompareAll extends BundleCompareCode {
     super.willUpdate(changed)
     if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
     // A new comparison starts from its first files, not from the file the
-    // last one was at; one opened with it (`path`) is scrolled to below.
+    // last one was scrolled to.
     if (changed.has('files')) {
       this._fileLimit = FILE_BATCH
       this._current = this._picked = null
     }
-    // A file opened from elsewhere (the Overview, a link) is scrolled to.
-    if (changed.has('path') && this.path && this.path !== this._current) this._goTo = this.path
+    // A file opened from elsewhere (the Overview, a link), or picked before
+    // the comparison changed (another scope), is scrolled to, as Code opens it.
+    if ((changed.has('path') || changed.has('files')) && this.path && this.path !== this._current) this._goTo = this.path
   }
 
   // The rail's file at the top of the list, kept in view in the rail.

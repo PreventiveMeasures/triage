@@ -295,6 +295,9 @@ test('the Diff view draws its files 40 at a time, more on asking or as one past 
   all.path = 'lib/f85.js'
   all.willUpdate(new Map([['path']]))
   assert.deepEqual(drawn(), { files: names, more: null, title: '95 files changed' }, 'the batches up to a file opened past them')
+  all._goTo = null // scrolled to, as updated() does once it's drawn
+  all.willUpdate(new Map([['files']]))
+  assert.deepEqual([drawn().files.length, all._current], [95, 'lib/f85.js'], 'the file last picked reopened in a new comparison, as Code reopens it')
 })
 
 test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
