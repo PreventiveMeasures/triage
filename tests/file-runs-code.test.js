@@ -47,8 +47,10 @@ test('a name read as another or as a property, or in a string, a regular express
   assert.equal(found('a.js', 'vm.eval(x); evaluate(); myeval(); obj.eval\nx.Function(1); Function.prototype.call\n'), null)
   assert.equal(found('a.js', 'vm . eval(payload)\nvm.\neval(p)\nobj . Function("x")\nobj?. Function("y")\nobj./* c */eval(z)\n'), null, 'a property after blanks or a comment too')
   assert.equal(found('a.js', 'const builtin = "child_process"\nconst builtins = [\'fs\', \'child_process\']\n'), null, 'a module named, not loaded')
-  assert.equal(found('a.ts', 'import type { ChildProcess } from \'node:child_process\'\nexport type { ChildProcess as CP } from "child_process"\n'), null,
-    'a type-only import or export, erased')
+  assert.equal(found('a.ts', 'import type { ChildProcess } from \'node:child_process\'\nexport type { ChildProcess as CP } from "child_process"\n'
+    + 'import /* explanation */ type { ChildProcess } from \'node:child_process\'\nexport /* c */ type { CP } from "child_process"\n'), null,
+    'a type-only import or export, erased, comments in it or not')
+  assert.deepEqual(found('a.ts', 'import typeX from \'child_process\'\n'), { 'child-process': [1] }, 'a default named typeX')
   assert.equal(found('a.js', "const s = 'a \\\r\neval(x)'\r\nconst d = \"b \\\r\nFunction(y)\"\r\n"), null, 'a string continued past a CRLF')
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
   assert.equal(found('a.js', 'const docs = "see child_process"\n// require("child_process")\n'), null, 'a string naming a module only where it is one')

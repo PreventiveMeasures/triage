@@ -46,10 +46,11 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 // bundler's `__require(` or `__non_webpack_require__(`, `import(`, `import`
 // and `from`, comments allowed between (`import(/* webpackIgnore: true */ …)`);
 // a name not loaded, as in a list of node's modules, is none, nor one a
-// type-only import or export names (`import type { … } from`), which
-// TypeScript erases (`import type from` imports a default named type).
+// type-only import or export names (`import type { … } from`, comments
+// allowed as in a load), which TypeScript erases (`import type from` imports
+// a default named type).
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*|\bimport)${GAP}\(|\b(?:from|import))${GAP}$`, 'u')
-const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)\s+type\s+(?!from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
+const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
 export const RUNS_CODE = new Map([
   ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}`, 'gu') }],
   ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
