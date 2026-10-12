@@ -433,6 +433,31 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.match(render('index.js'), /<alert malware>[^]*?bundle-compare-code-letter added/u, 'in the tree too')
 })
 
+test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
+  const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
+  const big = '// big\n'.repeat(40_000)
+  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = version('a', { 'lib/gone.js': obfuscated, 'lib/big.js': '// small\n', 'lib/plain.js': 'export const a = 1\n' })
+  const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'lib/plain.js': 'export const a = 2\n' })
+  const element = new CompareCode()
+  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const flags = markup => [...markup.matchAll(/class="npm-flag-tag (is-\w+)"[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
+  assert.deepEqual(flags(head('dist/payload.js')), ['Large is-notice', 'Obfuscated is-warn'])
+  assert.match(head('dist/payload.js'), /Obfuscated<\/span>[^]*class=npm-encoding-tag is-notice[^>]*>Minified</u, 'before how it reads')
+  assert.deepEqual(flags(head('lib/big.js')), ['Large is-notice'], 'as it is now')
+  assert.deepEqual(flags(head('lib/gone.js')), ['Obfuscated is-warn'], 'as it was, removed')
+  assert.deepEqual(flags(head('lib/plain.js')), [])
+  const rows = Object.fromEntries([...render('lib/plain.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
+  assert.deepEqual(flags(rows['dist/payload.js']), ['Large is-notice', 'Obfuscated is-warn'], 'in the tree too')
+  assert.deepEqual(flags(rows['lib/gone.js']), ['Obfuscated is-warn'])
+  assert.deepEqual(flags(rows['lib/plain.js']), [])
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]

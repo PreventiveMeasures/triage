@@ -18,9 +18,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
-
-export { npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscationFound, npmReadabilityTag } from './file-readability.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -343,8 +341,8 @@ const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
 // What the Overview reads of a version's files, once a version: their
-// `paths`, each one's readability (npmFileReadability) and extension by path,
-// how many files each category has, the `binaries`, sorted, its file types
+// `paths`, each one's readability (npmFileReadability), extension and size by
+// path, how many files each category has, the `binaries`, sorted, its file types
 // (npmFileTypes), and its `content`: its text files, their lines of code and
 // all its files' bytes (`unpacked`), the package's own files
 // (isNpmPackageFile) left out, as every package has them.
@@ -364,7 +362,7 @@ export function npmFilesRead(details) {
       content.unpacked += sizes.get(path) ?? 0
     }
     known = {
-      paths: new Set(sources), byPath, counts, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
+      paths: new Set(sources), byPath, counts, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
       types: npmFileTypes(sources, sizes, lines), content,
     }
@@ -422,8 +420,15 @@ export function npmReadabilityWarning(entry, details) {
   return readabilityWarning(npmFilesRead(details).counts, details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
+// A file's tags in the Files list and Compare's: its flags (npmFileFlagTags),
+// then how it reads.
+export function npmFileTags(details, path) {
+  const { byPath, sizes } = npmFilesRead(details)
+  return html`${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
+}
+
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
-// one's type icon and Socket's alerts on it, the tag of one the open version
+// one's type icon and Socket's alerts on it, the tags of one the open version
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
@@ -431,7 +436,7 @@ export const npmCompareFiles = {
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
-  tag: (details, path) => npmReadabilityTag(npmFilesRead(details).byPath.get(path)),
+  tag: npmFileTags,
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)
     const counts = new Map()
@@ -448,20 +453,22 @@ export const npmCompareFiles = {
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: an open version npm says is deprecated,
+// (`other`), each side's details, and `files` the comparison's
+// (computeBundleDiff's): an open version npm says is deprecated,
 // a publisher that changed, provenance lost, install scripts added or
-// changed, an open version under two weeks old (npmRecentRelease), the
+// changed, the files it adds or changes that call for one (fileBadges), an
+// open version under two weeks old (npmRecentRelease), the
 // advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
-export function npmCompareBadges(base, other) {
+export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), recentBadge(other.npm),
-    advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...fileBadges(base, other, files),
+    recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -541,6 +548,53 @@ function installScriptsBadge(base, other) {
     data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
     .tooltipContent=${compareTip('Install scripts', [base.npm, other.npm], [said(was, []), said(now, flagged)])}>
     <span>${flagged.length === 1 ? 'Install script' : 'Install scripts'}</span><span class="npm-extension-count">${summary}</span></span></li>`
+}
+
+// Files a chip's styled tooltip lists before counting the rest.
+const TIP_FILES = 8
+
+// What the open version does to its files that calls for a look, each as a
+// red chip, though the tags it gives a file (npmFileTags) say little of one
+// alone: a code file of 256 KiB or more it adds (npmLargeCode); a file it
+// changes that had no line over 200 characters and now has one over 2,000
+// (npmBecameUnreadable), which the file's Long lines or Minified tag says
+// of it; and a file it adds or changes with an obfuscator's fingerprint
+// where the one compared with had none (npmObfuscation). By Compare's
+// `files`, a renamed one by its old path; none until they are compared.
+function fileBadges(base, other, files) {
+  if (!files || !base.json || !other.json) return []
+  const [was, now] = [base, other].map(npmFilesRead)
+  const after = row => now.byPath.get(row.path), before = row => was.byPath.get(row.basePath ?? row.path)
+  const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
+  const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
+  const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
+  const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
+  return [
+    fileBadge('npm-compare-large', large.length === 1 ? 'Large new code file' : 'Large new code files', large, row => formatBytes(now.sizes.get(row.path)),
+      'Code files the open version adds, of 256 KiB or more'),
+    fileBadge('npm-compare-unreadable', 'Became unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
+      'Its longest line: none over 200 characters before, now one over 2,000'),
+    fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
+      'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
+  ]
+}
+
+// A chip on `rows`, files the open version adds or changes, named by its
+// one file or counting them, each with what `said` of it in its tooltip.
+function fileBadge(kind, label, rows, said, note) {
+  if (rows.length === 0) return nothing
+  const name = path => path.slice(path.lastIndexOf('/') + 1)
+  const shown = rows.slice(0, TIP_FILES)
+  const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
+  return html`<li><span class=${`npm-extension npm-compare-file ${kind}`}
+    data-tooltip=${`${label}: ${[...shown.map(row => `${row.path} (${said(row)})`), ...more ? [more] : []].join(', ')}`}
+    .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">${label}</div>
+      <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
+      ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
+      <div class="compare-tip-note">${note}</div>
+    </div>`}>
+    <span>${label}</span><span class="npm-extension-count">${rows.length === 1 ? name(rows[0].path) : `${rows.length.toLocaleString('en')} files`}</span></span></li>`
 }
 
 // The open version, where it is too recent to trust yet: how long ago it
