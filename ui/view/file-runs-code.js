@@ -44,8 +44,12 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 // code reads, or for a module, its name.
 // What comes before a module's name where code loads it: `require(`, a
 // bundler's `__require(` or `__non_webpack_require__(`, `import(`, `import`
-// and `from`; a name not loaded, as in a list of node's modules, is none.
-const LOADS = /(?:require[\w$]*|\bimport)\s*\(\s*$|\b(?:from|import)\s*$/u
+// and `from`, comments allowed between (`import(/* webpackIgnore: true */ …)`);
+// a name not loaded, as in a list of node's modules, is none, nor one a
+// type-only import or export names (`import type { … } from`), which
+// TypeScript erases (`import type from` imports a default named type).
+const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*|\bimport)${GAP}\(|\b(?:from|import))${GAP}$`, 'u')
+const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)\s+type\s+(?!from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
 export const RUNS_CODE = new Map([
   ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}`, 'gu') }],
   ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
@@ -86,7 +90,11 @@ function read(code, base, at) {
     ends.push(index + match.length)
     if (string?.[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
     if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
-    for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1)) && LOADS.test(code.slice(Math.max(0, index - 64), index))) at(kind, base + index)
+    for (const [kind, { module }] of RUNS_CODE) {
+      if (!module?.test(string.slice(1, -1))) continue
+      const before = code.slice(Math.max(0, index - 300), index)
+      if (LOADS.test(before) && !TYPE_ONLY.test(before)) at(kind, base + index)
+    }
   }
   const inside = (offset) => {
     const span = below(starts, offset + 1) - 1

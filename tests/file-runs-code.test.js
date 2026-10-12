@@ -20,6 +20,8 @@ test('a script is read for eval, Function and child_process, each with the lines
     'a comment in the global object\'s access')
   assert.deepEqual(found('a.js', 'require ( \'child_process\' )\n__require("child_process")\nimport \'node:child_process\'\nexport { spawn } from "child_process"\n'),
     { 'child-process': [1, 2, 3, 4] }, 'loaded however a module is')
+  assert.deepEqual(found('a.ts', 'require/* bundled */(\'child_process\')\nawait import(/* webpackIgnore: true */ \'child_process\')\nimport type from \'child_process\'\nimport type { A } from \'a\'\nimport { spawn } from \'child_process\'\n'),
+    { 'child-process': [1, 2, 3, 5] }, 'comments in how it is loaded; a default named type, and a load after a type-only one')
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
     { 'child-process': [1, 2, 3] }, 'a module named by the string that names it, required or imported')
   assert.deepEqual(found('a.ts', 'eval(x)\nimport cp from "child_process"\n'), { eval: [1], 'child-process': [2] }, 'in RUNS_CODE\'s order')
@@ -38,12 +40,16 @@ test('a template literal\'s substitutions are code, read as their own, its text 
   assert.equal(found('a.js', 'const t = `\\${eval(x)} eval(y) ${f("eval(")} ${/* eval(z) */ w}`\n'), null, 'not an escaped one, nor a string or comment in one')
   assert.deepEqual(found('a.js', 'const t = `\\\\${eval(x)}`\n'), { eval: [1] }, 'after an escaped backslash, live')
   assert.deepEqual(found('a.js', 'const t = `a \\\n${eval(x)}`\n'), { eval: [2] }, 'after a line continuation')
+  assert.deepEqual(found('a.js', 'const t = `a \\\r\n${eval(x)}`\r\n'), { eval: [2] }, 'after a CRLF continuation')
 })
 
 test('a name read as another or as a property, or in a string, a regular expression or a comment, is none', () => {
   assert.equal(found('a.js', 'vm.eval(x); evaluate(); myeval(); obj.eval\nx.Function(1); Function.prototype.call\n'), null)
   assert.equal(found('a.js', 'vm . eval(payload)\nvm.\neval(p)\nobj . Function("x")\nobj?. Function("y")\nobj./* c */eval(z)\n'), null, 'a property after blanks or a comment too')
   assert.equal(found('a.js', 'const builtin = "child_process"\nconst builtins = [\'fs\', \'child_process\']\n'), null, 'a module named, not loaded')
+  assert.equal(found('a.ts', 'import type { ChildProcess } from \'node:child_process\'\nexport type { ChildProcess as CP } from "child_process"\n'), null,
+    'a type-only import or export, erased')
+  assert.equal(found('a.js', "const s = 'a \\\r\neval(x)'\r\nconst d = \"b \\\r\nFunction(y)\"\r\n"), null, 'a string continued past a CRLF')
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
   assert.equal(found('a.js', 'const docs = "see child_process"\n// require("child_process")\n'), null, 'a string naming a module only where it is one')
   assert.equal(found('a.js', "const s = 'a \\\neval(x)'\nconst d = \"b \\\nFunction(y)\"\n"), null, 'a string continued on the next line')

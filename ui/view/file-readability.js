@@ -54,14 +54,15 @@ const MINIFIED_SPACES = .01
 const REGEX = '\uE000'
 const JS = {
   // A hashbang, the file's first line (`#!/usr/bin/env node`), a comment.
-  // A string's or template's escape may be a line continuation (`\` before a line break).
+  // A string's or template's escape may be a line continuation (`\` before a
+  // line break, CRLF's whole).
   // Linear on any text: a regular expression's context looked back on only
   // before a `/`, a comment's leading blanks taken only from where they
   // start, and what is left open read to where it would end, a string or a
   // regular expression its line's end, a template or a comment the text's,
   // rather than tried again from each later quote or slash.
   // A regular expression first where a value starts (after `=>`, `...`, an operator or a keyword, not a property: `x.default/2`, `this.#in/2`), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?=\/)(?<=(?:^|\.\.\.|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.#])(?:await|case|default|delete|do|else|extends|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*(?:\]|(?=\\?$)))+(?:\/[a-z]*|(?=\\?$))|"(?:[^"\\\n]|\\[\s\S])*(?:"|$)|'(?:[^'\\\n]|\\[\s\S])*(?:'|$)|`(?:[^`\\]|\\[\s\S])*(?:`|(?![\s\S])))|(?<![ \t])[ \t]*(?:\/\*[\s\S]*?(?:\*\/|(?![\s\S]))|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
+  stringOrComment: /((?=\/)(?<=(?:^|\.\.\.|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.#])(?:await|case|default|delete|do|else|extends|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*(?:\]|(?=\\?$)))+(?:\/[a-z]*|(?=\\?$))|"(?:[^"\\\n]|\\(?:\r\n|[\s\S]))*(?:"|$)|'(?:[^'\\\n]|\\(?:\r\n|[\s\S]))*(?:'|$)|`(?:[^`\\]|\\(?:\r\n|[\s\S]))*(?:`|(?![\s\S])))|(?<![ \t])[ \t]*(?:\/\*[\s\S]*?(?:\*\/|(?![\s\S]))|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words, as
   // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
   droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
