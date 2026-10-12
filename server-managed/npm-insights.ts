@@ -12,10 +12,11 @@
 // the package is checked on every request before any of it is answered
 // (http.ts handleNpm).
 import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
-import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
+import { type Client, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { kept } from './kept.ts'
+import { publicRepo } from './github-public-repo.ts'
 import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
 import { NpmPackageError, askUpstreamJson, plainObject, readLimited } from './npm-packages.ts'
 
@@ -194,26 +195,6 @@ async function countOpenPulls(repo: string, token: string | null): Promise<numbe
   } catch { return null }
 }
 
-// What GitHub answers for `repo` where it says it is public, with the token
-// it was asked with: `token`, or none where that is revoked. Null where GitHub
-// has no such repository to show, or it is not public; anything else fails,
-// to be asked again next time. Public is `visibility: 'public'`, as
-// github-app.ts requires: an internal repository answers `private: false`.
-async function publicRepo(repo: string, token: string | null): Promise<{ json: Record<string, unknown> & { full_name: string }; auth: string | null } | null> {
-  const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo }) as Promise<unknown>
-  let auth = token, json: unknown
-  try { json = await ask(token) }
-  catch (error) {
-    if (!(error instanceof HttpError) || ![401, 404].includes(error.status)) throw error
-    if (error.status === 404 || token === null) return null
-    auth = null
-    try { json = await ask(null) }
-    catch (retry) { if (retry instanceof HttpError && retry.status === 404) return null; throw retry }
-  }
-  if (!plainObject(json) || json['private'] !== false || json['visibility'] !== 'public' || typeof json['full_name'] !== 'string') return null
-  return { json: json as Record<string, unknown> & { full_name: string }, auth }
-}
-
 async function askGithub(repo: string, token: string | null): Promise<NpmGithubStats | null> {
   const found = await publicRepo(repo, token)
   if (found === null) return null
@@ -320,7 +301,8 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   if (asked.length === 0) return { versions, advisories: [], repository: true }
   // Its repository's own advisories are asked for only where GitHub says, now
   // and not from an answer kept, that it is public, and that repository is the
-  // one asked: the list is kept for every reader of the package, and the
+  // one asked, by the name GitHub gives it now where it was renamed or
+  // transferred: the list is kept for every reader of the package, and the
   // reader's token could read a private repository's, or a listing of one
   // kept for another reader.
   let github: string | null = null, named: string | null = null, repository = true
