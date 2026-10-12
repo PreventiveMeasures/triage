@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
-import { it } from 'node:test'
+import { describe, it, test } from 'node:test'
+import '../ui/view/graph/dependency-matrix.js'
+import { buildGraph } from '../ui/view/graph/data.js'
 import { buildDependencyMatrix, stronglyConnected } from '../ui/view/graph/matrix-model.js'
 import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell } from '../ui/view/graph/matrix-paint.js'
 import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
 import { makeLargeGraph } from '../examples/large-graph-sample.js'
+import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
+import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { graph2 } from '../ui/view/graph/state.js'
 
 function fixture() {
   return {
@@ -337,4 +342,229 @@ it('labels a vendored package by name, but keeps it apart from an npm package of
   assert.equal(byPkg.get('log').label, 'log')
   assert.equal(byPkg.get('vendor/log').size, 2, 'the two `log`s are separate rows')
   assert.equal(byPkg.get('log').size, 1)
+})
+
+describe('matrix Cycles filter', () => {
+  const executor = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
+  const manifest = 'node_modules/react-native-shimmer/package.json'
+  const native = 'node_modules/react-native/index.js'
+  const shimmer = 'node_modules/react-native-shimmer/index.js'
+  const from = 'p:react-native', to = 'p:react-native-shimmer'
+  const controls = { select() {}, expand() {}, expanded: new Set(), focus() {}, clear() {} }
+
+  function cyclesFilterFixture({ mixed = true, shortened = false, target = manifest } = {}) {
+    const paths = new Map([executor, target, native, shimmer].map(path => [path, shortened ? path.slice('node_modules/'.length) : path]))
+    const tree = Object.fromEntries([
+      [executor, [target]], [target, []], [native, mixed ? [shimmer] : [executor]], [shimmer, [native, target]],
+    ].map(([file, imports]) => [paths.get(file), { imports: imports.map(imported => paths.get(imported)) }]))
+    if (!mixed) {
+      tree[paths.get(executor)].imports.push(paths.get(native))
+      tree[paths.get(target)].imports.push(paths.get(shimmer))
+    }
+    const original = new Map([...paths].map(([orig, path]) => [path, orig]))
+    const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: path => bundlePkgOf(original.get(path)) })
+    for (const node of graph.nodes) node.origFile = original.get(node.file)
+    return graph
+  }
+
+  function text(value) {
+    if (Array.isArray(value)) return value.map(text).join('')
+    if (value?.strings) return value.strings.map((part, i) => part + text(value.values[i])).join('')
+    return ['string', 'number'].includes(typeof value) ? String(value) : ''
+  }
+
+  test('Cycles filters the actual grid imports, counts, and inspector examples within an aggregated cyclic cell', () => {
+    for (const shortened of [false, true]) {
+      const graph = cyclesFilterFixture({ shortened })
+      const full = buildDependencyMatrix(graph)
+      const filtered = buildDependencyMatrix(graph, { cyclesOnly: true })
+      assert.equal(full.cells.get(from).get(to).count, 2)
+      assert.equal(full.cells.get(from).get(to).cyclic, true)
+      assert.equal(filtered.cells.get(from).get(to).count, 1)
+      assert.deepEqual(filtered.cells.get(from).get(to).examples, [[
+        shortened ? native.slice('node_modules/'.length) : native,
+        shortened ? shimmer.slice('node_modules/'.length) : shimmer,
+      ]])
+      assert.equal(filtered.importCount, 2)
+      assert.equal(filtered.byId.get(from).outgoing, 1)
+      assert.equal(filtered.byId.get(to).incoming, 1)
+      assert.ok(filtered.visibleCells.every(cell => cell.cyclic))
+      const panel = text(renderMatrixPanel(filtered, graph, { from, to }, controls))
+      assert.ok(panel.includes(native))
+      assert.ok(panel.includes(shimmer))
+      assert.ok(!panel.includes('generate-artifacts-executor.js'))
+      assert.ok(!panel.includes('package.json'))
+    }
+  })
+
+  test('Cycles hides manifest reads and other noncyclic edges between two separate cyclic groups', () => {
+    const graph = cyclesFilterFixture({ mixed: false })
+    const full = buildDependencyMatrix(graph, { expanded: new Set(graph.packages) })
+    assert.equal(full.cycleCount, 2)
+    assert.equal(full.cells.get(`f:${executor}`).get(`f:${manifest}`).cyclic, false)
+    const filtered = buildDependencyMatrix(graph, { expanded: new Set(graph.packages), cyclesOnly: true })
+    assert.equal(filtered.rows.length, 4)
+    assert.equal(filtered.visibleCells.length, 4)
+    assert.equal(filtered.cells.get(`f:${executor}`).has(`f:${manifest}`), false)
+    assert.equal(filtered.cells.get(`f:${shimmer}`).has(`f:${native}`), false)
+    assert.deepEqual(new Set(buildDependencyMatrix(graph, {
+      expanded: new Set(graph.packages), cyclesOnly: true, neighborhood: `f:${executor}`,
+    }).rows.map(row => row.file)), new Set([native, executor]))
+    const panel = text(renderMatrixPanel(filtered, graph, { from: `f:${executor}`, to: `f:${manifest}` }, controls))
+    assert.match(panel, /No direct imports in this direction/u)
+    assert.doesNotMatch(panel, /Imported by/u)
+  })
+
+  test('the unfiltered inspector distinguishes excluded manifest reads from genuine cycle imports', () => {
+    for (const shortened of [false, true]) {
+      const graph = cyclesFilterFixture({ shortened })
+      const panel = text(renderMatrixPanel(buildDependencyMatrix(graph), graph, { from, to }, controls))
+      assert.ok(panel.includes(executor))
+      assert.ok(panel.includes(manifest))
+      assert.match(panel, /1 of 2 file imports participate in a cycle/u)
+      assert.match(panel, /Excluded from cycles/u)
+    }
+  })
+
+  test('config reads are marked excluded in the inspector and hidden by Cycles even within a cyclic package pair', () => {
+    const target = 'node_modules/react-native-shimmer/react-native.config.js'
+    for (const shortened of [false, true]) {
+      const graph = cyclesFilterFixture({ shortened, target })
+      const full = buildDependencyMatrix(graph)
+      const panel = text(renderMatrixPanel(full, graph, { from, to }, controls))
+      assert.ok(panel.includes(target))
+      assert.match(panel, /1 of 2 file imports participate in a cycle/u)
+      assert.match(panel, /Excluded from cycles/u)
+      const filtered = buildDependencyMatrix(graph, { cyclesOnly: true })
+      assert.equal(filtered.cells.get(from).get(to).count, 1)
+      assert.equal(filtered.importCount, 2)
+      assert.doesNotMatch(text(renderMatrixPanel(filtered, graph, { from, to }, controls)), /react-native\.config\.js|generate-artifacts-executor\.js/u)
+    }
+  })
+
+  test('excluded imports cannot fill the example limit and hide the imports that actually form the cycle', () => {
+    const manifests = Array.from({ length: 81 }, (_, i) => `node_modules/react-native-shimmer/fixtures/${i}/package.json`)
+    const tree = Object.fromEntries([
+      [executor, { imports: manifests }], ...manifests.map(file => [file, {}]),
+      [native, { imports: [shimmer] }], [shimmer, { imports: [native] }],
+    ])
+    const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: bundlePkgOf })
+    const model = buildDependencyMatrix(graph, { cyclesOnly: true })
+    assert.equal(model.cells.get(from).get(to).count, 1)
+    assert.deepEqual(model.cells.get(from).get(to).examples, [[native, shimmer]])
+    const panel = text(renderMatrixPanel(model, graph, { from, to }, controls))
+    assert.ok(panel.includes(shimmer))
+    assert.ok(!panel.includes('package.json'))
+    assert.doesNotMatch(panel, /Showing .* imports/u)
+  })
+
+  test('enabling Cycles clears a selected manifest-only cell and removes its hover import count', () => {
+    const graph = cyclesFilterFixture({ mixed: false })
+    const Matrix = customElements.get('dependency-matrix'), matrix = new Matrix()
+    matrix.graph = graph
+    matrix.willUpdate(new Map([['graph', undefined]]))
+    matrix.selection = { from, to }
+    matrix.cyclesOnly = true
+    matrix.dirty = true
+    matrix.willUpdate(new Map())
+    assert.equal(matrix.selection, null)
+
+    matrix.expanded = new Set(graph.packages)
+    matrix.dirty = true
+    matrix.willUpdate(new Map())
+    matrix.hover = { row: matrix.model.index.get(`f:${executor}`), col: matrix.model.index.get(`f:${manifest}`) }
+    assert.doesNotMatch(text(matrix.render()), /class="matrix-hover"/u)
+  })
+})
+
+describe('matrix viewport', () => {
+  function viewportFixture(count = 60) {
+    const files = Array.from({ length: count }, (_, i) => `pkg-${String(i).padStart(2, '0')}/index.js`)
+    const tree = Object.fromEntries(files.map((file, i) => [file, { size: 10, imports: [files[(i + 1) % count]] }]))
+    return buildGraph(tree, files, new Map(), null, null, null, null, { pkgOf: file => file.split('/')[0] })
+  }
+
+  function updateGraph(matrix, graph) {
+    const previous = matrix.graph
+    matrix.graph = graph
+    matrix.willUpdate(new Map([['graph', previous]]))
+  }
+
+  function zoomedMatrix(t) {
+    const previousQuery = graph2.pathFilter
+    graph2.pathFilter = ''
+    t.after(() => { graph2.pathFilter = previousQuery })
+    const Matrix = customElements.get('dependency-matrix'), matrix = new Matrix()
+    matrix.width = 900; matrix.height = 650
+    updateGraph(matrix, viewportFixture())
+    assert.equal(matrix.needsFit, true, 'the first model must fit when the canvas is measured')
+    matrix.fit()
+    matrix.zoom(2)
+    matrix.view.x = 140; matrix.view.y = 180
+    matrix.clamp()
+    return matrix
+  }
+
+  test('fresh graph objects from popup renders preserve grid pan, zoom, and selection while refreshing data', t => {
+    const matrix = zoomedMatrix(t)
+    matrix.expanded.add('pkg-20')
+    matrix.order = 'name'
+    matrix.cyclesOnly = true
+    matrix.dirty = true
+    matrix.willUpdate(new Map())
+    matrix.fit(); matrix.zoom(2)
+    matrix.view.x = 140; matrix.view.y = 180; matrix.clamp()
+    matrix.select('f:pkg-20/index.js', 'p:pkg-21', false)
+    const selection = { ...matrix.selection }, view = { ...matrix.view }
+
+    // Opening source, loading its body, syntax highlighting, and closing the
+    // popup each render the page and hand the retained grid a fresh graph.
+    for (let i = 1; i <= 4; i++) {
+      const graph = viewportFixture(), previousModel = matrix.model
+      graph.nodeByFile.get('pkg-20/index.js').size = i * 100
+      graph.nodeByFile.get('pkg-20/index.js').totalIssues = i
+      updateGraph(matrix, graph)
+      assert.equal(matrix.needsFit, false, 'a data refresh must not schedule a viewport reset')
+      assert.deepEqual(matrix.view, view)
+      assert.deepEqual(matrix.selection, selection)
+      assert.notEqual(matrix.model, previousModel, 'fresh graph data still reaches the grid and inspector')
+      assert.equal(matrix.model.byId.get(selection.from).size, i * 100)
+      assert.equal(matrix.model.byId.get(selection.from).issues, i)
+      assert.equal(matrix.expanded.has('pkg-20'), true)
+      assert.equal(matrix.order, 'name')
+      assert.equal(matrix.cyclesOnly, true)
+    }
+
+    matrix.fit()
+    assert.deepEqual(matrix.view, { cell: (650 - 118 - 12) / 60, x: 0, y: 0 }, 'the explicit Fit control still resets the viewport')
+  })
+
+  test('changing grid rows or their order still schedules a fit', t => {
+    const matrix = zoomedMatrix(t)
+    const before = matrix.model.rows.map(row => row.id)
+    const graph = viewportFixture()
+    graph.importsOf.get('pkg-20/index.js').push('pkg-40/index.js')
+    matrix.order = 'imports'
+    updateGraph(matrix, graph)
+    assert.notDeepEqual(matrix.model.rows.map(row => row.id), before)
+    assert.equal(matrix.needsFit, true, 'a different row order needs a new overview')
+    matrix.fit()
+    updateGraph(matrix, viewportFixture(61))
+    assert.equal(matrix.needsFit, true, 'added rows need a new overview')
+    matrix.fit()
+    matrix.expand('pkg-20')
+    matrix.willUpdate(new Map())
+    assert.equal(matrix.needsFit, true, 'expansion changes row identities even at the same row count')
+    matrix.fit()
+    graph2.pathFilter = 'pkg-20'
+    matrix.willUpdate(new Map())
+    assert.equal(matrix.needsFit, true, 'search changes the visible rows')
+  })
+
+  test('equivalent refreshes do not cancel an initial fit that is waiting for canvas dimensions', () => {
+    const Matrix = customElements.get('dependency-matrix'), matrix = new Matrix()
+    updateGraph(matrix, viewportFixture())
+    updateGraph(matrix, viewportFixture())
+    assert.equal(matrix.needsFit, true)
+  })
 })

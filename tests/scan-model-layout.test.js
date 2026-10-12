@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { describe, test } from 'node:test'
+import { defaultScanModels } from '../ui/scan/default-models.js'
 import { modelColumns, modelRows, modelSections } from '../ui/view/scan-model-layout.js'
 
 test('GPT pairs use one row in either catalogue order, retaining each variant’s effort limits', () => {
@@ -95,4 +96,33 @@ test('column height matches the best ordered partition for varied group lengths'
       }
     }
   }
+})
+
+describe('default scan models', () => {
+  test('unselected and OpenRouter providers expose every default model with Opus 5.5 as the default', () => {
+    const defaults = defaultScanModels()
+    assert.equal(defaults.defaultModel, 'anthropic/claude-opus-5.5')
+    assert.deepEqual(defaultScanModels(null), defaults)
+    assert.deepEqual(defaultScanModels('openrouter'), defaults)
+    assert.ok(defaults.models.some(model => model.id === 'qwen/qwen3.8-max'))
+    assert.ok(defaults.models.some(model => model.id === 'deepseek/deepseek-v4-pro'))
+    assert.ok(defaults.models.some(model => model.id === 'mistralai/mistral-large-4-0'))
+  })
+
+  test('direct-provider defaults contain only their own models and keep GPT Pro pairs', () => {
+    const full = defaultScanModels()
+    for (const provider of ['anthropic', 'openai', 'moonshot']) {
+      const filtered = defaultScanModels(provider)
+      const expected = full.models.filter(model => model.id.startsWith(`${provider === 'moonshot' ? 'moonshotai' : provider}/`))
+      assert.deepEqual(filtered.models, expected)
+      assert.equal(filtered.defaultModel, expected[0].id)
+    }
+    assert.equal(defaultScanModels('openai').defaultModel, 'openai/gpt-6-astra')
+    assert.equal(defaultScanModels('moonshot').defaultModel, 'moonshotai/kimi-k3')
+    assert.deepEqual(modelRows(defaultScanModels('openai').models).map(model => [model.id, model.pro?.id]), [
+      ['openai/gpt-6-astra', 'openai/gpt-6-astra-pro'],
+      ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro'],
+      ['openai/gpt-6-luna', 'openai/gpt-6-luna-pro'],
+    ])
+  })
 })

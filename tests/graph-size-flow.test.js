@@ -1,13 +1,27 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { describe, test } from 'node:test'
 import { buildGraph } from '../ui/view/graph/data.js'
+import { batchedReachability } from '../ui/view/graph/size-flow-reachability.js'
 import { buildSizeFlow, flowRibbon, layoutSizeFlow, sizeFlowLargeThreshold } from '../ui/view/graph/size-flow-model.js'
 import '../ui/view/graph/size-flow.js'
+import { graph2 } from '../ui/view/graph/state.js'
+import { flowNodeTooltip } from '../ui/view/graph/size-flow-chart.js'
+import { filterSizes } from '../ui/view/graph/size-flow-filter.js'
 
 function fixture(tree, entries = ['entry.js']) {
   const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: f => f.includes('/') ? f.split('/')[0] : '__own__' })
   graph.flowEntries = entries.map(file => ({ file }))
   return graph
+}
+
+// The graph shape buildSizeFlow reads, without buildGraph: each file's
+// package is its first path segment.
+function rawGraph(tree, entries = ['entry']) {
+  return {
+    nodes: Object.entries(tree).map(([file, node]) => ({ file, pkg: file.split('/')[0], ...node })),
+    importsOf: new Map(Object.entries(tree).map(([file, node]) => [file, node.imports ?? []])),
+    flowEntries: entries.map(file => ({ file })),
+  }
 }
 
 const diamond = {
@@ -496,4 +510,413 @@ test('Large uses removal impact and own code, adapts to files/packages and prese
   assert.equal(flow.minSize, 0)
   assert.equal(flow.renderControls(), null, 'only reachable nodes count toward the heuristic')
   assert.equal(flow.layout.nodes.length, 100)
+})
+
+describe('Size flow chart', () => {
+  function mounted(t) {
+    const previousQuery = graph2.pathFilter
+    graph2.pathFilter = ''
+    t.after(() => { graph2.pathFilter = previousQuery })
+    const tree = {
+      'entry.js': { size: 10, imports: ['a.js', 'b.js'] },
+      'a.js': { size: 20, imports: ['shared.js'] },
+      'b.js': { size: 30, imports: ['shared.js'] },
+      'shared.js': { size: 1000, imports: [] },
+    }
+    const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: () => 'app' })
+    graph.flowEntries = [{ file: 'entry.js' }]
+    const Flow = customElements.get('size-flow'), host = new Flow()
+    host.graph = graph; host.willUpdate(new Map([['graph', null]]))
+    return { host, chart: host.chart }
+  }
+
+  test('tooltips show a single version or group installed copies by version with their own sizes', () => {
+    const node = { label: 'dep', removable: 5120, size: 8192, own: 5120, filterSize: 5120 }
+    assert.match(flowNodeTooltip({ ...node, version: '1.2.3' }, 0), /\nVersion: 1\.2\.3$/u, 'file nodes retain their recorded package version')
+    const instances = [{ version: '1.2.3', size: 1024, missing: 0 }, { version: '1.2.3', size: 2048, missing: 0 },
+      { version: '2.0.0', size: 2048, missing: 0 }, { version: undefined, size: 0, missing: 1 }]
+    assert.match(flowNodeTooltip({ ...node, instances: instances.slice(0, 1) }, 0), /\nVersion: 1\.2\.3$/u)
+    const tooltip = flowNodeTooltip({ ...node, instances }, 0)
+    assert.match(tooltip, /Versions · own source size\n1\.2\.3 · 3\.0 KiB · 2 copies\n2\.0\.0 · 2\.0 KiB · 1 copy\nUnknown version · 0 B\+ · 1 copy/u)
+    assert.equal(tooltip.split('1.2.3').length - 1, 1, 'repeated versions are grouped only in the tooltip')
+  })
+
+  test('filter changes refresh dimming and cached search results', t => {
+    const { host, chart } = mounted(t)
+    const matching = t.mock.method(host, 'matchesNode')
+    graph2.pathFilter = 'shared'
+    const results = chart.searchMatches()
+    assert.deepEqual(results.map(n => n.id), ['f:shared.js'])
+    assert.equal(chart.searchMatches(), results)
+    assert.equal(matching.mock.callCount(), host.model.byId.size, 'evaluate each node once, not once per incident ribbon')
+    for (const e of host.model.edges) assert.equal(chart.edgeAlpha(e), e.to === 'f:shared.js' ? .22 : .04)
+    graph2.pathFilter = ''
+    assert.equal(chart.searchMatches().length, 4)
+    for (const e of host.model.edges) assert.equal(chart.edgeAlpha(e), .22)
+  })
+  test('hiding Issues ignores saved severity and mark filters while keeping path and Large filters', t => {
+    const { chart, host } = mounted(t)
+    const colors = graph2.selectedColors, severities = graph2.selectedSeverities
+    t.after(() => { graph2.selectedColors = colors; graph2.selectedSeverities = severities })
+    graph2.selectedColors = new Set(['red'])
+    graph2.selectedSeverities = new Set(['high'])
+    Object.assign(host.model.files.get('a.js'), { severitySet: new Set(['high']), colorSet: new Set(['red']) })
+    assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:a.js'])
+    host.graph.issuesHidden = true
+    assert.equal(chart.searchMatches().length, 4)
+    graph2.pathFilter = 'shared'
+    assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:shared.js'], 'path filtering remains active with Issues off')
+    graph2.pathFilter = ''
+    host.largeThreshold = 2000
+    assert.equal(chart.searchMatches().length, 0, 'Large filtering remains active with Issues off')
+    host.largeThreshold = 0
+    host.graph.issuesHidden = false
+    assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:a.js'], 'turning Issues on restores the saved filters')
+    assert.equal(chart.matchingNodes().has('f:shared.js'), false)
+  })
+  test('node descriptions and search order use removal impact rather than reachable size', t => {
+    const { chart, host } = mounted(t)
+    assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:entry.js', 'f:shared.js', 'f:b.js', 'f:a.js'])
+    assert.ok(flowNodeTooltip(host.layout.byId.get('f:a.js'), host.minSize).startsWith('a.js\n20 B unique · 1020 B reachable · 20 B own'))
+  })
+
+  test('small retained connectors explain why they remain under Large', t => {
+    const { host } = mounted(t)
+    const tooltip = id => flowNodeTooltip(host.layout.byId.get(id), host.minSize)
+    host.largeThreshold = 500; host.willUpdate(new Map())
+    assert.match(tooltip('f:a.js'), /Kept by Large to preserve an entry-point path/u)
+    assert.doesNotMatch(tooltip('f:shared.js'), /Kept by Large/u)
+    host.toggleLarge(); host.willUpdate(new Map())
+    assert.doesNotMatch(tooltip('f:a.js'), /Kept by Large/u)
+  })
+})
+
+describe('Size flow Large filter', () => {
+  function assertConnected(layout) {
+    const outgoing = new Map(layout.nodes.map(n => [n.id, []]))
+    for (const edge of layout.edges) outgoing.get(edge.from).push(edge.to)
+    const seen = new Set(layout.roots)
+    const queue = [...seen]
+    for (const id of queue) for (const to of outgoing.get(id)) if (!seen.has(to)) { seen.add(to); queue.push(to) }
+    assert.equal(seen.size, layout.nodes.length, 'every retained node has a path from a retained entry point')
+  }
+
+  function assertConnectedFiles(tree, entries, layout) {
+    const files = new Set(layout.nodes.flatMap(n => n.files))
+    const seen = new Set(entries.filter(file => files.has(file)))
+    const queue = [...seen]
+    for (const file of queue) { for (const to of tree[file].imports) {
+      if (files.has(to) && !seen.has(to)) { seen.add(to); queue.push(to) }
+    } }
+    assert.deepEqual(seen, files, 'package grouping cannot invent a path to an otherwise orphaned member')
+  }
+
+  test('Large removes redundant small wrappers but preserves the last path to a large dependency', () => {
+    const tree = {
+      entry: { size: 1, imports: ['first/index', 'second/index', 'leaf/index'] },
+      'first/index': { size: 13 * 1024, imports: ['shared/index'] },
+      'second/index': { size: 13 * 1024, imports: ['shared/index'] },
+      'leaf/index': { size: 13 * 1024 },
+      'shared/index': { size: 200 * 1024 },
+    }
+    for (const packages of [false, true]) {
+      const model = buildSizeFlow(rawGraph(tree), { packages })
+      const prefix = packages ? 'p:' : 'f:'
+      const first = `${prefix}${packages ? 'first' : 'first/index'}`
+      const second = `${prefix}${packages ? 'second' : 'second/index'}`
+      const before = [...model.byId.values()].map(n => [n.removable, n.own, n.size])
+      const layout = layoutSizeFlow(model, { minSize: 100 * 1024 })
+      assert.equal(layout.byId.has(first), true)
+      assert.equal(layout.byId.has(second), false)
+      assert.equal(layout.nodes.length, 3)
+      assert.equal(model.byId.get(first).removable, 13 * 1024, 'the connector keeps its original bundle removal metric')
+      assertConnected(layout)
+      assert.deepEqual([...model.byId.values()].map(n => [n.removable, n.own, n.size]), before)
+      assert.equal(layoutSizeFlow(model).nodes.length, 5, 'turning the filter off restores all nodes')
+    }
+    tree.entry.imports.reverse()
+    const reversed = layoutSizeFlow(buildSizeFlow(rawGraph(tree)), { minSize: 100 * 1024 })
+    assert.equal(reversed.byId.has('f:second/index'), true, 'bundle traversal order breaks equal-path ties deterministically')
+    assert.equal(reversed.byId.has('f:first/index'), false)
+    assertConnected(reversed)
+  })
+
+  test('Large prefers direct entry paths and does not preserve redundant cyclic wrappers', () => {
+    const tree = {
+      entry: { size: 1, imports: ['a', 'shared'] },
+      a: { size: 1, imports: ['b', 'shared'] },
+      b: { size: 1, imports: ['a', 'shared'] },
+      shared: { size: 5000 },
+    }
+    const layout = layoutSizeFlow(buildSizeFlow(rawGraph(tree)), { minSize: 4096 })
+    assert.deepEqual(layout.nodes.map(n => n.id), ['f:entry', 'f:shared'])
+    assertConnected(layout)
+    const multiple = layoutSizeFlow(buildSizeFlow(rawGraph(tree, ['entry', 'shared'])), { minSize: 4096 })
+    assert.deepEqual(multiple.nodes.map(n => n.id), ['f:shared'], 'an independent entry needs no wrapper path')
+    assertConnected(multiple)
+  })
+
+  test('package connectors preserve real file paths even when grouping creates parent cycles', () => {
+    const tree = {
+      entry: { size: 1, imports: ['a/first', 'b/first', 'alternative/index'] },
+      'a/first': { size: 1, imports: ['b/second'] },
+      'b/first': { size: 1, imports: ['a/second'] },
+      'a/second': { size: 1 },
+      'b/second': { size: 1, imports: ['large/index'] },
+      'alternative/index': { size: 1, imports: ['hop/index'] },
+      'hop/index': { size: 1, imports: ['large/index'] },
+      'large/index': { size: 5000 },
+    }
+    const layout = layoutSizeFlow(buildSizeFlow(rawGraph(tree), { packages: true }), { minSize: 4096 })
+    assert.deepEqual(new Set(layout.nodes.map(n => n.id)), new Set(['p:entry', 'p:a', 'p:b', 'p:large']))
+    assertConnected(layout)
+  })
+
+  test('automatic Large cutoff counts required connectors as well as significant nodes', () => {
+    const tree = { entry: { size: 1, imports: [] } }
+    for (let i = 0; i < 60; i++) {
+      tree.entry.imports.push(`wrapper-${i}`, `alternative-${i}`)
+      tree[`wrapper-${i}`] = { size: 1, imports: [`large-${i}`] }
+      tree[`alternative-${i}`] = { size: 1, imports: [`large-${i}`] }
+      tree[`large-${i}`] = { size: 5000 }
+    }
+    const model = buildSizeFlow(rawGraph(tree))
+    assert.equal(sizeFlowLargeThreshold(model), 4096, '1 KiB still leaves 121 nodes once their paths are counted')
+    const layout = layoutSizeFlow(model, { minSize: 4096 })
+    assert.equal(layout.nodes.length, 121, 'the next step would lose the important dependencies')
+    assertConnected(layout)
+  })
+
+  test('following imports does not expose an orphan through a filtered-out intermediary', () => {
+    const tree = {
+      entry: { size: 1, imports: ['a', 'shared'] },
+      a: { size: 5000, imports: ['small'] },
+      small: { size: 1, imports: ['shared'] },
+      shared: { size: 5000 },
+    }
+    const model = buildSizeFlow(rawGraph(tree))
+    const layout = layoutSizeFlow(model, { minSize: 4096, focus: 'f:a' })
+    assert.deepEqual(layout.nodes.map(n => n.id), ['f:a'])
+    assertConnected(layout)
+  })
+
+  test('each size metric can retain a node and its small connectors independently', () => {
+    const rows = new Map([
+      ['root', { own: 0, removable: 0 }],
+      ['own', { own: 4096, removable: 0 }],
+      ['removal', { own: 0, removable: 10240 }],
+      ['below', { own: 4095, removable: 4095 }],
+    ])
+    filterSizes(rows, new Map([['own', 'root'], ['removal', 'root'], ['below', 'root']]), id => id)
+    assert.equal(rows.get('own').filterSize, 4096)
+    assert.equal(rows.get('removal').filterSize, 10240)
+    assert.equal(rows.get('below').filterSize, 4095)
+    assert.equal(rows.get('root').filterSize, 10240)
+  })
+
+  test('filtered random file and package graphs retain significant nodes without orphaned files', () => {
+    let seed = 71
+    const random = max => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max }
+    for (let iteration = 0; iteration < 16; iteration++) {
+      const names = Array.from({ length: 70 }, (_, i) => `p${i % 30}/${i}`)
+      const tree = Object.fromEntries(names.map(file => [file, {
+        size: random(10000), imports: Array.from({ length: random(5) }, () => names[random(names.length)]),
+      }]))
+      const entries = names.slice(0, 3)
+      for (const packages of [false, true]) {
+        const model = buildSizeFlow(rawGraph(tree, entries), { packages })
+        for (const minSize of [1024, 4096, 10240, 102400]) {
+          const layout = layoutSizeFlow(model, { minSize })
+          for (const node of model.byId.values()) assert.ok(Math.max(node.own, node.removable) < minSize || layout.byId.has(node.id))
+          assertConnected(layout)
+          assertConnectedFiles(tree, entries, layout)
+        }
+      }
+    }
+  })
+})
+
+describe('Size flow reachability', () => {
+  function reachable(next, starts, weights, unknown) {
+    const seen = new Set(), stack = [...starts]
+    let missing = 0, size = 0
+    while (stack.length > 0) {
+      const id = stack.pop()
+      if (seen.has(id)) continue
+      seen.add(id); size += weights[id]; missing += unknown[id]
+      stack.push(...next[id])
+    }
+    return { size, missing }
+  }
+
+  test('batched reachability matches independent traversal across word boundaries and arbitrary component order', () => {
+    let seed = 123
+    const random = max => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max }
+    for (const count of [0, 1, 31, 32, 33, 63, 64, 65, 127, 257]) {
+      const order = Array.from({ length: count }, (_, i) => i)
+      for (let i = count - 1; i > 0; i--) { const j = random(i + 1); [order[i], order[j]] = [order[j], order[i]] }
+      const next = order.map(() => new Set())
+      for (let i = 0; i < count - 1; i++) {
+        next[order[i]].add(order[i + 1])
+        for (let j = 0; j < 4; j++) next[order[i]].add(order[i + 1 + random(count - i - 1)])
+      }
+      const weights = order.map(() => random(10000))
+      const unknown = order.map(() => random(3))
+      for (const remaining of [order, order.filter((_, i) => i % 3 === 0)]) {
+        for (const [id, total] of batchedReachability(next, order, weights, unknown, remaining)) {
+          assert.deepEqual(total, reachable(next, [id], weights, unknown), `${count} components, node ${id}`)
+        }
+      }
+    }
+  })
+
+  test('large overlapping closures retain exact file, package, edge and bundle totals', () => {
+    const count = 800
+    const next = Array.from({ length: count }, (_, i) => [i + 1, i + 2, i + 53].filter(id => id < count))
+    // Condensed cycles and an unreachable component must also be counted once.
+    next[45].push(39)
+    const weights = next.map((_, i) => i % 13 ? i + 1 : 0)
+    const unknown = next.map((_, i) => Number(i % 13 === 0))
+    const names = next.map((_, i) => `pkg${Math.floor(i / 20)}/${i}`)
+    const graph = {
+      nodes: names.map((file, i) => ({ file, pkg: file.split('/')[0], size: unknown[i] ? null : weights[i] })),
+      importsOf: new Map(names.map((file, i) => [file, next[i].map(id => names[id])])),
+      flowEntries: [{ file: names[0] }, { file: names[10] }],
+    }
+    graph.nodes.push({ file: 'unreachable', pkg: 'unreachable', size: 1e9 })
+    graph.importsOf.set('unreachable', [])
+    const index = new Map(names.map((file, i) => [file, i]))
+    for (const packages of [false, true]) {
+      const model = buildSizeFlow(graph, { packages })
+      for (const node of model.byId.values()) {
+        assert.deepEqual({ size: node.size, missing: node.missing }, reachable(next, node.files.map(file => index.get(file)), weights, unknown))
+      }
+      for (const edge of model.edges) {
+        assert.deepEqual({ size: edge.size, missing: edge.missing }, reachable(next, [...edge.targets].map(file => index.get(file)), weights, unknown))
+      }
+      assert.deepEqual(model.total, reachable(next, [0, 10], weights, unknown))
+    }
+  })
+})
+
+describe('Size flow removal impact', () => {
+  const rawDiamond = {
+    entry: { size: 10, imports: ['a/index', 'b/index'] },
+    'a/index': { size: 20, imports: ['shared/index'] },
+    'b/index': { size: 30, imports: ['shared/index'] },
+    'shared/index': { size: 1000 },
+    unreachable: { size: 9000 },
+  }
+
+  test('bar widths and labels measure deletion impact, without summing incident flows', () => {
+    const model = buildSizeFlow(rawGraph(rawDiamond))
+    const layout = layoutSizeFlow(model)
+    assert.deepEqual(Object.fromEntries([...model.byId].map(([id, n]) => [id, n.removable])), {
+      'f:entry': 1060, 'f:a/index': 20, 'f:b/index': 30, 'f:shared/index': 1000,
+    })
+    const a = layout.byId.get('f:a/index'), shared = layout.byId.get('f:shared/index')
+    assert.ok(Math.abs(shared.width / a.width - 50) < 1e-10)
+    const ribbons = layout.edges.filter(e => e.to === shared.id)
+    assert.equal(ribbons[0].x2, ribbons[1].x2, 'ribbons may overlap instead of inflating the shared bar')
+    assert.equal(ribbons[0].width2, shared.width)
+    const fromA = ribbons.find(e => e.from === a.id)
+    assert.equal(fromA.width1, a.width, 'a ribbon tapers to fit the smaller removal-impact bar')
+    assert.equal(fromA.size, 1000, 'inspection still reports the complete reachable size through this import')
+    assert.ok(!/NaN|Infinity/u.test(flowRibbon(fromA)))
+    const focused = layoutSizeFlow(model, { focus: a.id })
+    assert.equal(focused.byId.get(a.id).removable, 20, 'focusing does not discard alternate paths in the bundle')
+  })
+
+  test('all surviving entry points keep their dependencies after deleting another entry', () => {
+    const model = buildSizeFlow(rawGraph(rawDiamond, ['entry', 'a/index']))
+    assert.equal(model.byId.get('f:entry').removable, 40)
+    assert.equal(model.byId.get('f:a/index').removable, 20)
+    assert.equal(model.byId.get('f:shared/index').removable, 1000)
+  })
+
+  test('deletion can break a cycle without deleting every member of the original component', () => {
+    const model = buildSizeFlow(rawGraph({
+      entry: { size: 10, imports: ['a'] },
+      a: { size: 20, imports: ['b'] },
+      b: { size: 30, imports: ['a', 'b', 'large'] },
+      large: { size: 1000 },
+    }))
+    assert.equal(model.byId.get('f:a').removable, 1050)
+    assert.equal(model.byId.get('f:b').removable, 1030)
+    assert.equal(model.byId.get('f:large').removable, 1000)
+  })
+
+  test('package deletion removes its files together and preserves alternate file-level paths', () => {
+    const tree = {
+      entry: { size: 10, imports: ['pkg/a', 'pkg/b'] },
+      'pkg/a': { size: 20, imports: ['shared/index'] },
+      'pkg/b': { size: 30, imports: ['shared/index'] },
+      'shared/index': { size: 1000 },
+    }
+    const files = buildSizeFlow(rawGraph(tree)), packages = buildSizeFlow(rawGraph(tree), { packages: true })
+    assert.equal(files.byId.get('f:pkg/a').removable, 20)
+    assert.equal(files.byId.get('f:pkg/b').removable, 30)
+    assert.equal(packages.byId.get('p:pkg').removable, 1050, 'package impact is more than the sum of individual file impacts')
+    tree.entry.imports.push('other/index')
+    tree['other/index'] = { size: 5, imports: ['shared/index'] }
+    assert.equal(buildSizeFlow(rawGraph(tree), { packages: true }).byId.get('p:pkg').removable, 50)
+  })
+
+  test('package aggregation does not invent paths through unrelated files in a package', () => {
+    const model = buildSizeFlow(rawGraph({
+      entry: { size: 1, imports: ['pkg/a', 'other/b'] },
+      'pkg/a': { size: 2, imports: ['other/a'] },
+      'other/a': { size: 4, imports: ['pkg/b'] },
+      'other/b': { size: 8 },
+      'pkg/b': { size: 16, imports: ['large/index'] },
+      'large/index': { size: 32 },
+    }), { packages: true })
+    assert.equal(model.byId.get('p:pkg').removable, 54, 'other/b cannot keep other/a and its imports alive')
+    assert.equal(model.byId.get('p:other').removable, 60)
+  })
+
+  test('removal tracks missing source sizes and virtual roots separately', () => {
+    const graph = rawGraph({
+      missing: { size: null, imports: ['known'] },
+      known: { size: 100 },
+    }, [])
+    graph.flowEntries = [{ file: 'entry', pkg: 'app', virtual: true, imports: ['missing'] }]
+    const model = buildSizeFlow(graph)
+    assert.equal(model.byId.get('f:entry').removable, 100)
+    assert.equal(model.byId.get('f:entry').removableMissing, 1)
+    assert.equal(model.byId.get('f:missing').removableMissing, 1)
+    assert.equal(model.byId.get('f:known').removableMissing, 0)
+  })
+
+  test('batched deletion matches independent graph traversal across cycles, entries and package boundaries', () => {
+    let seed = 7
+    const random = max => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max }
+    for (let iteration = 0; iteration < 16; iteration++) {
+      const names = Array.from({ length: 75 }, (_, i) => `pkg${i % 35}/${i}`)
+      const tree = Object.fromEntries(names.map(file => [file, {
+        size: random(7) === 0 ? null : random(1000),
+        imports: Array.from({ length: random(5) }, () => names[random(names.length)]),
+      }]))
+      const entries = iteration % 2 ? names : names.slice(0, 3)
+      const remaining = blocked => {
+        const pending = entries.filter(file => !blocked.has(file)), seen = new Set()
+        for (const file of pending) {
+          if (seen.has(file)) continue
+          seen.add(file)
+          for (const to of tree[file].imports) if (!blocked.has(to) && !seen.has(to)) pending.push(to)
+        }
+        return seen
+      }
+      const baseline = remaining(new Set())
+      for (const packages of [false, true]) {
+        const model = buildSizeFlow(rawGraph(tree, entries), { packages })
+        for (const row of model.byId.values()) {
+          const survivors = remaining(new Set(row.files))
+          const removed = [...baseline].filter(file => !survivors.has(file))
+          assert.equal(row.removable, removed.reduce((sum, file) => sum + (tree[file].size ?? 0), 0), `${iteration}: ${row.id}`)
+          assert.equal(row.removableMissing, removed.filter(file => tree[file].size == null).length)
+        }
+      }
+    }
+  })
 })
