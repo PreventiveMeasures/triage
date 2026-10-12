@@ -584,6 +584,57 @@ test('the search diffs a file anew where another scope pairs it with another old
   assert.equal(element._soughtRow, null, 'no row of old2 sought for old1\'s line')
 })
 
+// A comparison's files as one of its scopes lists them (bundleCompareFiles):
+// `base` and `other` the files the scope's reason names on each side.
+const scopeFiles = (base, other) => computeBundleDiff(new Map(Object.entries(base)), new Map(Object.entries(other)), () => '__own__').files
+
+test('a file\'s diff is drawn anew where another scope pairs it with another old file, or with none', () => {
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
+  const now = `${lines}\nfetch(3)\n`, old1 = `${lines}\nfetch(1)\n`, old2 = `fetch(2)\n${lines}\nfetch(3)\n`
+  const element = view(null, [{ 'lib/old1.js': old1, 'lib/old2.js': old2, 'lib/x.js': old1 }, { 'lib/new.js': now, 'lib/x.js': now }])
+  const shows = (markup, n) => new RegExp(`fetch\\((<mark[^>]*>)?${n}`, 'u').test(markup)
+  const scope = (files, path) => {
+    element.files = files
+    element.willUpdate(new Map([['files']]))
+    element.path = path
+    return renderText(element.render())
+  }
+  // Renamed from old1 in one scope, and from old2 in another, which old1 isn't in.
+  assert.ok(shows(scope(scopeFiles({ 'lib/old1.js': old1 }, { 'lib/new.js': now }), 'lib/new.js'), 1))
+  const repaired = scope(scopeFiles({ 'lib/old2.js': old2 }, { 'lib/new.js': now }), 'lib/new.js')
+  assert.ok(shows(repaired, 2), 'old2\'s line removed')
+  assert.ok(!shows(repaired, 1), 'not old1\'s')
+  // Changed in one scope, and added in another, which its old side isn't in.
+  assert.ok(shows(scope(scopeFiles({ 'lib/x.js': old1 }, { 'lib/x.js': now }), 'lib/x.js'), 1))
+  const added = scope(scopeFiles({}, { 'lib/x.js': now }), 'lib/x.js')
+  assert.equal(element._entries.get('lib/x.js').kind, 'added')
+  assert.ok(!shows(added, 1), 'no line removed from a file added')
+})
+
+test('the Diff view draws a file anew where another scope pairs it with another old file, its whitespace changes hidden', async t => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
+  const now = `${lines}\nfetch(3)\n`, old1 = `${lines}\nfetch(1)\n`, old2 = `${lines}\nfetch(2)\n`
+  const code = view(null, [{ 'lib/old1.js': old1, 'lib/old2.js': old2 }, { 'lib/new.js': now }])
+  const all = new (customElements.get('bundle-compare-all'))()
+  t.after(() => { all._setWhitespace(false) })
+  for (const name of ['base', 'other', 'baseName', 'otherName']) all[name] = code[name]
+  all._setWhitespace(true)
+  const shows = (markup, n) => new RegExp(`fetch\\((<mark[^>]*>)?${n}`, 'u').test(markup)
+  // As Compare gives it a scope's files, and the diffs it found counting
+  // their rows, which with whitespace changes hidden aren't those drawn.
+  const scope = (files, first = false) => {
+    all.files = files
+    all.models = combinedDiffRows(code.base, code.other, files).models
+    all.willUpdate(new Map([...first ? [['base'], ['other']] : [], ['files'], ['models']]))
+    return renderText(all.render())
+  }
+  assert.ok(shows(scope(scopeFiles({ 'lib/old1.js': old1 }, { 'lib/new.js': now }), true), 1))
+  const repaired = scope(scopeFiles({ 'lib/old2.js': old2 }, { 'lib/new.js': now }))
+  assert.ok(shows(repaired, 2), 'old2\'s line removed')
+  assert.ok(!shows(repaired, 1), 'not old1\'s')
+})
+
 test('a query of blanks alone lists no file shown pretty-printed, whose blanks the printer respaces, and does one shown as published', t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view(null, [{}, { 'dist/blank.min.js': `var X = 1;${'q(X);'.repeat(250)}\n` }])
@@ -1573,3 +1624,4 @@ test('a file whose names the server could not give the new side\'s says why, its
   assert.match(shown, /Renamed names are shown: the file reads names by their spelling \(eval or with\)\./u)
   assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
 })
+
