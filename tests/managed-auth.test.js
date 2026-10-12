@@ -11,6 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { setImmediate } from 'node:timers/promises'
 import { brotliDecompressSync } from 'node:zlib'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
@@ -666,6 +667,67 @@ test('ensureUserAccessToken: valid passthrough, refresh when expired, null when 
   // Expired with NO refresh token → null (caller prompts re-login).
   await db.setUserTokens(me.id, { accessToken: 'old2', refreshToken: null, expiresAt: now - 1 })
   assert.equal(await ensureUserAccessToken(config, db, me.id, now), null)
+  await db.close()
+})
+
+test('ensureUserAccessToken: concurrent calls with an expired token share one refresh', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const me = (await readSession(config, db, cookiePair(sess.setCookie), now)).user
+  await db.setUserTokens(me.id, { accessToken: 'old', refreshToken: 'r1', expiresAt: now - 1 })
+
+  // GitHub rotates refresh tokens: a spent one is refused with bad_refresh_token.
+  const spent = new Set()
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  const refreshFetch = async (_url, opts) => {
+    const used = JSON.parse(opts.body).refresh_token
+    if (spent.has(used)) return jsonResponse({ error: 'bad_refresh_token' })
+    spent.add(used)
+    await held
+    return jsonResponse({ access_token: 'new', refresh_token: 'r2', expires_in: 28800 })
+  }
+  // Hold GitHub's answer until every call has found the token expired.
+  const calls = [1, 2, 3].map(() => ensureUserAccessToken(config, db, me.id, now, refreshFetch))
+  await setImmediate()
+  release()
+  assert.deepEqual(await Promise.all(calls), ['new', 'new', 'new'])
+  assert.deepEqual([...spent], ['r1'])
+  const stored = await db.getUserTokens(me.id)
+  assert.deepEqual([stored.accessToken, stored.refreshToken], ['new', 'r2'])
+  await db.close()
+})
+
+test('ensureUserAccessToken: a failed refresh returns a newer pair another instance stored, else null', async (t) => {
+  const warning = t.mock.method(console, 'warn', () => {})
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  const me = (await readSession(config, db, cookiePair(sess.setCookie), now)).user
+
+  // Another instance spent r1 first and stored what GitHub gave it.
+  await db.setUserTokens(me.id, { accessToken: 'old', refreshToken: 'r1', expiresAt: now - 1 })
+  const otherInstanceFirst = async () => {
+    await db.setUserTokens(me.id, { accessToken: 'theirs', refreshToken: 'r2', expiresAt: now + 28800 * 1000 })
+    return jsonResponse({ error: 'bad_refresh_token' })
+  }
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now, otherInstanceFirst), 'theirs')
+  assert.equal((await db.getUserTokens(me.id)).refreshToken, 'r2')
+  assert.equal(warning.mock.callCount(), 0)
+
+  // Nothing newer stored → null.
+  await db.setUserTokens(me.id, { accessToken: 'old', refreshToken: 'r1', expiresAt: now - 1 })
+  const refused = () => jsonResponse({ error: 'bad_refresh_token' })
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now, refused), null)
+
+  // A different token stored, but expired too → still null.
+  const staleOther = async () => {
+    await db.setUserTokens(me.id, { accessToken: 'theirs-old', refreshToken: 'r9', expiresAt: now + 30_000 })
+    return jsonResponse({ error: 'bad_refresh_token' })
+  }
+  assert.equal(await ensureUserAccessToken(config, db, me.id, now, staleOther), null)
+  assert.equal(warning.mock.callCount(), 2)
   await db.close()
 })
 

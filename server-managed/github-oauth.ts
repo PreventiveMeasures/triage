@@ -123,6 +123,11 @@ async function postToken(payload: Record<string, string>, now: number, fetchImpl
   }
 }
 
+// The refreshes in flight in this process, by user. GitHub rotates refresh
+// tokens and refuses a spent one (bad_refresh_token), so requests that find the
+// token expired together share one refresh rather than race on the same token.
+const refreshing = new Map<string, Promise<string | null>>()
+
 // Resolve a usable access token for a user: the stored one if still valid, else
 // refreshed (when a refresh token is on file) and re-persisted. Null when there
 // is no token or it's expired and unrefreshable — the caller prompts re-login.
@@ -134,13 +139,33 @@ export async function ensureUserAccessToken(
   if (isViewing()) return null
   const tokens = await db.getUserTokens(userId)
   if (tokens == null) return null
-  if (tokens.expiresAt == null || tokens.expiresAt > now + 60_000) return tokens.accessToken
+  if (usableAt(tokens, now)) return tokens.accessToken
   if (tokens.refreshToken == null) return null
+  let pending = refreshing.get(userId)
+  if (pending == null) {
+    pending = refreshStoredToken(config, db, userId, tokens.accessToken, tokens.refreshToken, now, fetchImpl)
+      .finally(() => refreshing.delete(userId))
+    refreshing.set(userId, pending)
+  }
+  return pending
+}
+
+function usableAt(tokens: UserTokens, now: number): boolean {
+  return tokens.expiresAt == null || tokens.expiresAt > now + 60_000
+}
+
+async function refreshStoredToken(
+  config: ManagedConfig, db: ManagedDb, userId: string, staleToken: string, refreshToken: string, now: number, fetchImpl: typeof fetch,
+): Promise<string | null> {
   try {
-    const fresh = await refreshUserToken(config, tokens.refreshToken, now, fetchImpl)
+    const fresh = await refreshUserToken(config, refreshToken, now, fetchImpl)
     await db.setUserTokens(userId, fresh)
     return fresh.accessToken
   } catch (err) {
+    // Another request or instance may have spent the refresh token first: use
+    // the pair it stored rather than leave this request to ask anonymously.
+    const stored = await db.getUserTokens(userId).catch(() => null)
+    if (stored != null && stored.accessToken !== staleToken && usableAt(stored, now)) return stored.accessToken
     console.warn('managed: token refresh failed:', err)
     return null
   }
