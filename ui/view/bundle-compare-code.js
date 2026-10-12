@@ -845,8 +845,8 @@ export class BundleCompareCode extends LitElement {
     const { after, before, textual, model } = file
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
-    // its two sides are one text.
-    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed)
+    // its two sides are one text. One whose record changed too says how.
+    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path

@@ -778,6 +778,31 @@ test('a renamed file whose contents are the same but whose import was repointed 
   assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
 })
 
+test('a renamed file whose contents are the same, its import repointed and its record changed, says how its record changed, in Code and in the one list', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\n"
+  const side = (integrity, parent, target, format) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { [parent]: source } }]]),
+    imports: new Map([['node, import', new Map([[parent, new Map([['lodash/pick', target]])]])]]), formats: new Map([[parent, format]]),
+  }) })
+  const base = side('base', 'src/server.js', 'node_modules/lodash/pick.cjs', 'resource'), other = side('other', 'lib/server.js', 'node_modules/lodash/pick.js', 'module')
+  const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  const shared = { base, other, files, baseName: 'a', otherName: 'b',
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other), new Map(files.changed.map(row => [row.basePath, row.path]))).changed }
+  const said = /Renamed, its contents the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u
+  const element = Object.assign(new CompareCode(), shared, { path: 'lib/server.js' })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  assert.match(markup, said)
+  assert.match(markup, /Repointed import/u, 'its import listed too')
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), shared)
+  all.models = combinedDiffRows(base, other, files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const list = renderText(all.render())
+  assert.match(list, said, 'in the one list')
+  assert.match(list, /Repointed import/u)
+})
+
 test('the Diff view lists every changed file\'s diff in one list, in its rail\'s order, and counts the rows it would show', async () => {
   const { COMBINED_DIFF_MAX, combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const CompareAll = customElements.get('bundle-compare-all')
