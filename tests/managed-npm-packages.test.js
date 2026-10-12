@@ -13,6 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmDownloads, npmGithubStats } from '../server-managed/npm-insights.ts'
+import { npmRisk, npmRiskCache } from '../server-managed/npm-risk.ts'
 import { npmDownloadCounts } from '../server-managed/npm-download-counts.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -159,6 +160,53 @@ test('anyone with workspace access opens a public version, asked of the registry
   assert.deepEqual(download.bytes, pkg.tgz)
 })
 
+test('a version\'s risk is told on the server, as risk tells it, for whoever can read the version', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = packageOf('@pub/pkg', '1.2.3', { 'lib/index.js': 'require("child_process")\n', 'package.json': '{"name":"@pub/pkg"}' })
+  registry(t, [pkg])
+  const riskPath = params => `/api/npm/risk?${new URLSearchParams({ name: '@pub/pkg', ...params })}`
+  const res = await h.send(riskPath({ version: '1.2.3' }))
+  assert.equal(res.status, 200)
+  const body = res.json()
+  assert.deepEqual([body.name, body.version, body.oldVersion, body.published], ['@pub/pkg', '1.2.3', null, '2025-01-01T00:00:00.000Z'])
+  assert.deepEqual(body.findings.map(({ id }) => id), ['held-install-scripts', 'held-runs-code', 'unused-deps'], 'what it holds: its postinstall, child_process, and a dependency nothing imports')
+  assert.deepEqual(body.files['lib/index.js'].stamps, [{ name: 'child_process', severity: 'high' }])
+  assert.deepEqual(body.dependencies.added.map(({ name, flags }) => [name, flags.map(({ check }) => check)]), [['dep', ['unimported']]])
+  assert.equal((await h.send(riskPath({ version: '1.2.3' }), 'nobody')).status, 401)
+  assert.equal((await h.send(riskPath({ version: '1.2.3', otherVersion: 'not a version' }))).status, 400)
+  assert.equal((await h.send(riskPath({ version: '9.9.9' }))).status, 404)
+  const huge = packageOf('@pub/huge', '1.0.0', { 'package.json': '{}' })
+  huge.doc.dist.unpackedSize = 65 * 1024 * 1024
+  const calls = registry(t, [huge])
+  const refused = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@pub/huge', version: '1.0.0' })}`)
+  assert.deepEqual([refused.status, refused.json()], [413, { error: 'package-too-large' }], 'its tarball read as the viewer loads one, refused as it would be')
+  assert.ok(!calls.some(call => call.url === huge.doc.dist.tarball))
+})
+
+test('a risk assessment whose reader is gone stops waiting on its tarball, which loads on for others', async t => {
+  const pkg = packageOf('slow-risk', '1.0.0', { 'package.json': '{}' })
+  let answer = () => {}
+  const arrived = new Promise(resolve => {
+    t.mock.method(globalThis, 'fetch', input => {
+      if (String(input) !== pkg.doc.dist.tarball) return Promise.resolve(Response.json({ name: 'slow-risk', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
+      resolve()
+      return new Promise(resolveFetch => { answer = () => resolveFetch(new Response(pkg.tgz)) })
+    })
+  })
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const controller = new AbortController()
+  const assessed = npmRisk({ ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} }, null,
+    { db, teamScoped: false, privileged: false, signal: controller.signal })
+  await arrived
+  controller.abort(new Error('reader gone'))
+  await assert.rejects(assessed, /reader gone/u, 'given up on while its tarball is still on its way')
+  const load = loadNpmTarball({ ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+  answer()
+  assert.equal((await load.result).byteLength, pkg.tgz.byteLength, 'the load went on for whoever else reads it')
+  load.release()
+})
+
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
   const h = await setup(t)
   withToken(t)
@@ -242,6 +290,32 @@ test('access is checked again once the registry answers', async t => {
   const res = await h.send(packagePath('@acme/secret', '2.0.0'), 'manage')
   assert.equal(res.status, 404)
   assert.deepEqual(res.json(), { error: 'package-not-found' })
+})
+
+test('risk\'s records kept in memory are held to a length, the first kept going first', async () => {
+  const cache = npmRiskCache({ db: { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() } }, false)
+  const MiB = 1024 * 1024, part = 'p'.repeat(7 * MiB)
+  await cache.write('risk/npm/assessments', 'too-large', 'x'.repeat(9 * MiB))
+  assert.equal(await cache.read('risk/npm/assessments', 'too-large'), null, 'past an eighth of what memory holds: not kept')
+  for (let i = 0; i < 10; i++) await cache.write('risk/npm/assessments', `part-${i}`, part)
+  assert.deepEqual(await Promise.all([0, 1, 9].map(async i => (await cache.read('risk/npm/assessments', `part-${i}`))?.length ?? null)), [null, 7 * MiB, 7 * MiB],
+    'ten of 7 MiB: the first gone for the 64 MiB memory holds')
+})
+
+test('risk against a private version is checked again for it once told', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const open = { ...packageOf('@acme/mixed', '2.0.0', { 'index.js': 'open' }), versions: ['1.0.0', '2.0.0'] }
+  const secret = { ...packageOf('@acme/mixed', '1.0.0', { 'index.js': 'secret' }), private: true }
+  registry(t, [open, secret])
+  const fetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    // Demoted while the private version's tarball downloads.
+    if (String(url) === secret.doc.dist.tarball) await h.db.setUserRole(h.users.manage.userId, 'view')
+    return fetch(url, init)
+  })
+  const res = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@acme/mixed', version: '2.0.0', otherVersion: '1.0.0' })}`, 'manage')
+  assert.deepEqual([res.status, res.json()], [404, { error: 'package-not-found' }])
 })
 
 test('oversized, malformed and unreachable packages are refused without their files', async t => {

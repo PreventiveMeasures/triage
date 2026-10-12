@@ -33,7 +33,7 @@ import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySo
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
-import { packageJsonInstallScripts } from './install-scripts.js'
+import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'

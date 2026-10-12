@@ -1,5 +1,6 @@
-// The scripts npm runs as it installs a package (the npm viewer's Overview,
-// and Compare's tags on a package.json, bundle-compare-code.js).
+// The scripts npm runs as it installs a package: what release.js flags added
+// or changed, and the npm viewer lists (its Overview, and Compare's tags on a
+// package.json).
 
 // The scripts npm runs installing a package from the registry, in the order
 // it runs them; not `prepare`, which runs only for a local or git install.

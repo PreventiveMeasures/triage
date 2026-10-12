@@ -273,6 +273,15 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
   }, spare)
 }
 
+// A package's whole document as npm has it for this reader, for risk
+// (npm-risk.ts), within the bounds and budget every document read here is
+// held to; null where npm has none for this reader, or the name is none npm
+// takes.
+export function readNpmPackument(name: string, privileged: boolean, signal: AbortSignal): Promise<Record<string, unknown> | null> {
+  if (!isNpmPackageName(name)) return Promise.resolve(null)
+  return withDocumentBudget(PACKUMENT_BYTES, async () => (await readDocument(name, registryUrl(name), privileged, { accept: 'application/json', limit: PACKUMENT_BYTES, signal }))?.json ?? null)
+}
+
 const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))
 
 // When each version was published, by `name@version`, as whole documents read

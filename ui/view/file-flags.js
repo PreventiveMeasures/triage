@@ -4,8 +4,11 @@
 // offer where any file in them has one.
 
 // How severe a flag is, the most first: an alert's severity, a warning's
-// (`high`, as its tag's color is), and a notice, under a low alert.
-export const FLAG_SEVERITIES = ['critical', 'high', 'moderate', 'low', 'notice']
+// (`high`, as its tag's color is), and a notice, under a low alert, as risk
+// ranks its stamps (risk/files/stamps.js).
+import { SEVERITIES as FLAG_SEVERITIES } from '../../risk/files/stamps.js'
+
+export { FLAG_SEVERITIES }
 const rank = ({ severity }) => FLAG_SEVERITIES.indexOf(severity)
 const byNames = (a, b) => a.reduce((found, flag, i) => found || flag.name.localeCompare(b[i].name), 0)
 

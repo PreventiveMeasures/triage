@@ -150,6 +150,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
     [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
   ]) assert.deepEqual(found('a.js', text), runs)
-  // A minute, when each hit copied those before it.
-  assert.equal(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval').length, 1e5, 'as many hits as lines')
+  // A minute, when each hit copied those before it; its first lines alone
+  // kept (NPM_MAX_FOUND).
+  assert.deepEqual(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval'), Array.from({ length: 100 }, (_, i) => i + 1), 'its first hits\' lines')
 })
