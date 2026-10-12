@@ -584,6 +584,32 @@ test('the search diffs a file anew where another scope pairs it with another old
   assert.equal(element._soughtRow, null, 'no row of old2 sought for old1\'s line')
 })
 
+test('a query of blanks alone lists no file shown pretty-printed, whose blanks the printer respaces, and does one shown as published', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{}, { 'dist/blank.min.js': `var X = 1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b29'
+  element.other.managedId = 'b30'
+  element._mode = 'code'
+  element._query = ' '
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/blank.min.js')
+  assert.equal(listed(), true)
+  state.bundleSourcePretty = true
+  assert.equal(listed(), false)
+  element._query = 'X = 1'
+  assert.equal(listed(), true, 'a query with more than blanks still is')
+})
+
+test('a file\'s diff drawn keeps its blocks for the search, which doesn\'t diff it again', () => {
+  const element = view('src/api.js')
+  element._mode = 'code'
+  element._query = 'export'
+  element.render()
+  const { model } = element._fileState('src/api.js', element._entries.get('src/api.js'))
+  assert.equal(element._blocks.get('false\0src/api.js'), model.blocks, 'the diff\'s own blocks, not another finding of them')
+  assert.deepEqual(element._searchResults(element._railState().order).files.find(file => file.path === 'src/api.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`),
+    ['−a0', '+b0', ' b1'])
+})
+
 test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const published = `var X=1;${'x(1);y(22);'.repeat(40_000)}\n`

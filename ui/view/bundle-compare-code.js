@@ -653,6 +653,9 @@ export class BundleCompareCode extends LitElement {
       const contents = fileContents(this.base, this.other, path, entry)
       const { before, after } = contents
       if (this._prettyShown(path, entry, contents)) {
+        // Blanks alone are what the printer respaces: a match of them
+        // as published has no place in the copy to be found at.
+        if (!/\S/u.test(this._query)) return []
         const changed = before !== '' && after !== '' && before !== after
         // Its diff here drawn without rows, as these settings draw it: no change to seek.
         if (changed && this._rowless.get(path) === drawn) return []
@@ -938,6 +941,9 @@ export class BundleCompareCode extends LitElement {
     if (mixed) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
+    // The texts as published diffed as the search diffs them (_searchResults):
+    // their blocks kept for it, not found again, however large.
+    else if (model) this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
     // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it
