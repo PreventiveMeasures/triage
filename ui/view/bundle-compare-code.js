@@ -102,6 +102,8 @@ const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', labe
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
 export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, markRenames: false }
+// The settings whether a diff of printed copies has rows depends on (_noteRowless).
+const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.markRenames}`
 // What hiding whitespace changes hides, as diff -b; and why a file whose
 // changes it would hide shows them all (_fileState).
 const HIDE_WHITESPACE = 'Hide whitespace changes, in code whose whitespace means nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with blanks added to a run of them or at its end, reads as unchanged; blanks put between other characters or taken from between them still show'
@@ -314,6 +316,11 @@ export class BundleCompareCode extends LitElement {
     // setting and path; and its last results (_searchResults).
     this._blocks = new Map()
     this._found = null
+    // Path → the settings a diff of its printed copies was last drawn under
+    // without rows, which the search can't diff itself (_noteRowless); and
+    // a count of its changes, for the results to be found again.
+    this._rowless = new Map()
+    this._rowlessCount = 0
     // A search hit picked, `{ path, side, line, at, query, key }`, until its
     // file's diff draws (`key` the model last sought in), and while what it
     // draws is still coming (`_soughtSettling`); then that row, `{ path,
@@ -347,6 +354,7 @@ export class BundleCompareCode extends LitElement {
         this._limits.clear()
         this._forced.clear()
         this._blocks.clear()
+        this._rowless.clear()
       }
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
@@ -528,10 +536,12 @@ export class BundleCompareCode extends LitElement {
     if (current && current !== this._current) this._reveal(current, rail.prefix)
     this._current = current
     this._order = rail.order
+    // The file before the rail, so its search knows how its diff drew (_noteRowless).
+    const main = current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
     return html`<div class="bundle-code-view bundle-compare-code">
       ${this._renderRail(rail, current)}
       <div class="bundle-code-main">
-        ${current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`}
+        ${main}
       </div>
     </div>`
   }
@@ -591,15 +601,17 @@ export class BundleCompareCode extends LitElement {
   // view hides them; but one whose diff here is of its pretty-printed copies
   // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
   // for, lists its new text's lines alone, unsigned, so the rail claims no
-  // sign nor removed line its diff doesn't show, and none at all where its
-  // printed copies, both kept, are the same (_printedSame); and an added or
-  // removed file shown pretty-printed lists its lines numbered as published. The
+  // sign nor removed line its diff doesn't show, and none at all where that
+  // diff, drawn under the settings it is searched under, has no rows
+  // (_noteRowless); and an added or removed file shown pretty-printed lists
+  // its lines numbered as published. The
   // reason is in `unsigned` by path (UNSIGNED). Diffs are found a little at a time, as the
   // tree's line counts are, a render's budget counted from its first: a file
   // past it lists its new text's lines unsigned, and another render signs
   // them.
   _searchResults(order) {
-    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${order.join('\0')}`
+    const drawn = rowlessSettings()
+    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
@@ -634,8 +646,8 @@ export class BundleCompareCode extends LitElement {
       const { before, after } = contents
       if (this._prettyShown(path, entry, contents)) {
         const changed = before !== '' && after !== '' && before !== after
-        // Its printed copies the same: its diff here draws no change to seek.
-        if (changed && this._printedSame(path, entry)) return []
+        // Its diff here drawn without rows, as these settings draw it: no change to seek.
+        if (changed && this._rowless.get(path) === drawn) return []
         unsigned.set(path, changed ? 'printed' : 'numbered')
       }
       return [{ path, ...contents }]
@@ -663,11 +675,16 @@ export class BundleCompareCode extends LitElement {
       .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
   }
 
-  // Whether a file's printed copies, both kept (keptPrettyCopy: asked for
-  // where the file was shown, never here), are the same.
-  _printedSame(path, { basePath = path }) {
-    const [before, after] = [[this.base, basePath], [this.other, path]].map(([details, file]) => keptPrettyCopy(details, file))
-    return before?.status === 'ready' && after?.status === 'ready' && before.hash === after.hash
+  // A diff of a file's printed copies drawn (_fileState), noted where it has
+  // no rows (`rowless`), the copies the same or their changes all hidden (as
+  // whitespace or renamed names), with the settings it was drawn under, for
+  // the search to leave the file out while they hold (_searchResults).
+  _noteRowless(path, rowless) {
+    const drawn = rowless ? rowlessSettings() : undefined
+    if (this._rowless.get(path) === drawn) return
+    if (drawn === undefined) this._rowless.delete(path)
+    else this._rowless.set(path, drawn)
+    this._rowlessCount++
   }
 
   // A search hit picked: its file opened, its line brought into view where
@@ -896,6 +913,7 @@ export class BundleCompareCode extends LitElement {
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
+    if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
     // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it

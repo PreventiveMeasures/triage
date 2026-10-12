@@ -377,6 +377,9 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
   assert.match(bar, /aria-label="Mark renamed lines"/u)
+  all._mode = 'code'
+  all._query = 'q(X)'
+  assert.match(renderText(all.render()), /bundle-code-search-empty">No matches\./u, 'its lines aren\'t listed: its diff draws no row to open')
 })
 
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
@@ -589,6 +592,29 @@ test('a file whose printed copies are the same isn\'t listed once they are kept:
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.match(renderText(element.render()), /The contents are the same\./u)
   assert.equal(listed(), false)
+})
+
+test('a file whose only changes are renamed names, hidden, isn\'t listed once drawn so, and is again as they show', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view(null, [{ 'dist/renamed.min.js': `(function(){var Y=1;${'q(Y);'.repeat(250)}})();\n` },
+    { 'dist/renamed.min.js': `(function(){var X=1;${'q(X);'.repeat(250)}})();\n` }])
+  element.base.managedId = 'b25'
+  element.other.managedId = 'b26'
+  pretty.set('b25:dist/renamed.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n})();\n')
+  pretty.set('b26:dist/renamed.min.js', '(function () {\n  var X = 1;\n  q(X);\n})();\n')
+  state.bundleSourcePretty = true
+  element._setRenames(true)
+  element._mode = 'code'
+  element._query = 'q(X)'
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/renamed.min.js')
+  assert.ok(listed(), 'listed, unsigned, until its diff is drawn')
+  element.path = 'dist/renamed.min.js'
+  for (let i = 0; i < 200 && /is-loading|Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /Only renamed names changed in this file\./u)
+  assert.equal(listed(), false)
+  element._setRenames(false)
+  assert.match(renderText(element.render()), /aria-label="Diff"/u)
+  assert.equal(listed(), true)
 })
 
 test('a hit in a file whose printed copy is still coming is sought again in the copy once it comes', async t => {
