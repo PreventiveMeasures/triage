@@ -412,3 +412,10 @@ test('a CI npm trusts to publish is named in grey where no provenance names it',
   assert.match(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, false), /<dt>Publisher<\/dt>/u, 'though npm lists provenance, where none read names it')
   assert.doesNotMatch(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, true), /<dt>Publisher<\/dt>/u, 'its provenance names it')
 })
+
+test('an entry point the server found binary wears no license icon, whatever its name', () => {
+  const entry = npmPackageEntry({ ...data, manifest: { main: 'LICENSE', types: 'index.d.ts' } })
+  const icons = files => [...text(npmOverviewExtras(entry, null, npmPackageDetails(entry, { ...data, files }))).matchAll(/data-file-type="?([\w-]+)/gu)].map(m => m[1])
+  assert.deepEqual(icons([['LICENSE', 4, null, 'sha512-x'], ['index.d.ts', 1, 'x']]), ['generic', 'ts'])
+  assert.deepEqual(icons([['LICENSE', 3, 'MIT'], ['index.d.ts', 1, 'x']]), ['license', 'ts'], 'the same name as text')
+})

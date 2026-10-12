@@ -24,7 +24,7 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
-import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
+import { fileIconFormat, sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
@@ -358,14 +358,13 @@ export class BundleCompareCode extends LitElement {
     return paths ? dirsOf(paths, paths.values()) : bundleDirs(this.base)
   }
 
-  // The format a file's icon reads: Stasis's own, or `binary` for an npm
-  // package's file either side holds as not text, each under its own path, as
-  // the Overview's file list reads it (npm-overview.js `npmCompareFiles`).
+  // The format a file's icon reads (fileIconFormat): the shown side's, else
+  // `binary` where either side holds it as not text, each side read under its
+  // own path, as the Overview's file list reads it (npm-overview.js `npmCompareFiles`).
   _format(path) {
     const entry = this._entries.get(path)
-    const base = [this.base, entry?.basePath ?? path], other = [this.other, path]
-    const [details, at] = entry?.kind === 'removed' ? base : other
-    return stasisFormat(details, at) ?? ([base, other].some(([side, p]) => side?.npmBinaries?.has(p)) ? 'binary' : undefined)
+    const base = fileIconFormat(this.base, entry?.basePath ?? path), other = fileIconFormat(this.other, path)
+    return (entry?.kind === 'removed' ? base : other) ?? (base === 'binary' || other === 'binary' ? 'binary' : undefined)
   }
 
   // The tree over the files the kind filter keeps. The display prefix comes

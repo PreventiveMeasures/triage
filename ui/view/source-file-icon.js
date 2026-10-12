@@ -48,6 +48,14 @@ function isLicense(path, format, lang) {
   return LICENSE_NAME.test(path.slice(path.lastIndexOf('/') + 1))
 }
 
+// The format a file's icon reads from its bundle's details: the one Stasis
+// records, or `binary` for an npm package's file the server found not to be
+// text (npm-package.js `npmBinaries`). Every caller holding details asks
+// here, so none can forget a file that is not text.
+export function fileIconFormat(details, path) {
+  return (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined) ?? (details?.npmBinaries?.has(path) ? 'binary' : undefined)
+}
+
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
