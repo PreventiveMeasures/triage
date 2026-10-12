@@ -441,6 +441,11 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   assert.deepEqual(await show('dep-a', 'dep-b'), [['dep-a', 'dep-b']])
   assert.deepEqual(await show('dep-b', 'dep-c'), [['dep-c']], 'only the one not had')
   assert.deepEqual(await show('dep-a', 'dep-b', 'dep-c'), [], 'none, all had')
+  // As many as fit a request line: a long list in more than one request.
+  const many = Array.from({ length: 300 }, (_, i) => `a-dependency-with-a-rather-long-name-${String(i).padStart(3, '0')}`)
+  const split = await show(...many)
+  assert.ok(split.length > 1 && split.every(names => names.map(encodeURIComponent).join(',').length <= 8000), `${split.length} requests`)
+  assert.deepEqual(split.flat(), many, 'each once, in order')
   // One whose own figures the session has (as its Overview read them) isn't asked for again.
   answers.stats['dep-figured'] = { downloads: answers.counts['new-top'] }
   npmCompareBadges({ npm: { name: 'dep-figured', version: '1.0.0' } }, { npm: { name: 'dep-figured', version: '1.1.0' } })

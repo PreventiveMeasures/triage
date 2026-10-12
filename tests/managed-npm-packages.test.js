@@ -834,6 +834,27 @@ test('many packages\' recent downloads at once: unscoped ones in bulk, a scoped 
   assert.deepEqual(await npmDownloadCounts(['bulk-down'], now), { 'bulk-down': null }, 'asked again')
 })
 
+test('many packages\' recent downloads: those npm hasn\'t answered for by when their reader leaves are left out, and not waited for', async t => {
+  const now = Date.parse('2026-10-12T06:00:00Z'), range = '2026-08-01:2026-10-11'
+  const asked = []
+  t.mock.method(globalThis, 'fetch', (input, init) => {
+    const url = String(input).replace('https://api.npmjs.org/downloads/range/', '')
+    asked.push(url)
+    // A scoped one stalls until it's given up on; the others answer.
+    if (url.startsWith(`${range}/@stall`)) {
+      return init.signal.aborted ? Promise.reject(init.signal.reason) : new Promise((resolve, reject) => { init.signal.addEventListener('abort', () => reject(init.signal.reason)) })
+    }
+    return Promise.resolve(Response.json({ 'leave-a': null, 'leave-b': null }))
+  })
+  const left = new AbortController()
+  const counts = npmDownloadCounts(['leave-a', 'leave-b', ...Array.from({ length: 9 }, (_, i) => `@stall/p${i}`)], now, left.signal)
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.deepEqual(asked.filter(url => url.includes('@stall')).length, 4, 'four scoped ones at a time')
+  left.abort()
+  assert.deepEqual(await counts, { 'leave-a': null, 'leave-b': null }, 'the stalled ones left out')
+  assert.equal(asked.filter(url => url.includes('@stall')).length, 9, 'the rest given up on at once')
+})
+
 test('the viewer asks for many packages\' recent downloads in one request, as a reader, about valid names alone', async t => {
   const h = await setup(t)
   t.mock.method(globalThis, 'fetch', input => Promise.resolve(String(input).includes('/route-a,route-b')

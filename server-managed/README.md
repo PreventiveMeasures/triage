@@ -1444,12 +1444,15 @@ many packages' recent downloads at once by name (`{ start, end, days }`,
 from the first of the month before last to yesterday; null where npm has
 none; one npm couldn't be asked about left out), up to 512 names: npm's
 range API is asked for up to 128 unscoped ones in one request and a scoped
-one alone, four at a time, without credentials, as it answers anyone. The
+one alone, four at a time, without credentials, as it answers anyone; what
+it hasn't answered within a minute, or by when the reader leaves, is given
+up on and left out. The
 viewer tags a dependency by them but its latest two weeks', so each is kept
 for two weeks, by package, a newer answer adding only days it leaves out;
 a package's year, where kept for its Overview, answers for it. The viewer
 keeps each package's for the session as well, its figures or its downloads
-alone, and asks only for those it hasn't any of.
+alone, and asks only for those it hasn't any of, as many in one request as
+fit 8,000 characters of names, its commas as they are.
 `GET /api/npm/tags?name=&version=` returns `{ name, version,
 tags }`: the tags of its GitHub repository that point to its publish commit
 (`gitHead`), among those whose names hold the version (`v1.2.3`,

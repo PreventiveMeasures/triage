@@ -36,19 +36,22 @@ function npmPackageStats(name) {
   return npmPackageData('stats', name, () => fetchNpmStats(name), data => ({ downloads: data.downloads ?? null, github: data.github ?? null }))
 }
 
-// Packages' downloads, each its last year as its figures have them, for
-// this session: those asked for in one pass (as a Compare's new
-// dependencies are) in one request, up to as many as the server takes in
-// one.
+// Packages' recent downloads, enough for their tiers, for this session:
+// those asked for in one pass (as a Compare's new dependencies are) in one
+// request, up to as many as the server takes in one, and as many as fit
+// its request line, which servers bound (Node's headers, 16 KiB, with it).
 const DOWNLOAD_COUNTS_AT_ONCE = 512
+const DOWNLOAD_COUNTS_CHARS = 8000
 let countsAsked = null
 function askDownloadCounts(name) {
-  if (!countsAsked || countsAsked.names.size >= DOWNLOAD_COUNTS_AT_ONCE) {
+  const chars = encodeURIComponent(name).length + 1
+  if (!countsAsked || countsAsked.names.size >= DOWNLOAD_COUNTS_AT_ONCE || countsAsked.chars + chars > DOWNLOAD_COUNTS_CHARS) {
     const names = new Set()
-    const asked = { names, answer: Promise.resolve().then(() => { if (countsAsked === asked) countsAsked = null; return fetchNpmDownloadCounts([...names]) }) }
+    const asked = { names, chars: 0, answer: Promise.resolve().then(() => { if (countsAsked === asked) countsAsked = null; return fetchNpmDownloadCounts([...names]) }) }
     countsAsked = asked
   }
   countsAsked.names.add(name)
+  countsAsked.chars += chars
   return countsAsked.answer.then(({ downloads = {} }) => {
     if (!Object.hasOwn(downloads, name)) throw new Error('Not answered')
     return { downloads: downloads[name] }
