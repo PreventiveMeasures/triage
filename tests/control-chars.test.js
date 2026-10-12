@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlMarkup, controlParts, hasControls } from '../ui/view/control-chars.js'
+import { controlMarkup, controlParts, hasControls, invisibleCharacters } from '../ui/view/control-chars.js'
 import { sourceText } from '../ui/view/source-text.js'
 
 // Parts as text, a box as [label|tooltip].
@@ -57,6 +57,37 @@ test('tabs, newlines, CRLF line ends and the joiners and tags of an emoji stay t
   assert.deepEqual(controlParts(emoji), [emoji])
   assert.equal(parts(controlParts('a\u200Db')), 'a[ZWJ|U+200D ZERO WIDTH JOINER]b', 'a joiner between letters shows')
   assert.equal(parts(controlParts('🏴\u{E0067}\u{E0062}')), '🏴[g|U+E0067 TAG g][b|U+E0062 TAG b]', 'tags no cancel tag ends name no flag')
+})
+
+test('tags after a black flag show, as the text they hide, but those of a subdivision flag Unicode recommends', () => {
+  assert.equal(parts(controlParts('🏴\u{E0053}\u{E0045}\u{E007F}')), '🏴[S|U+E0053 TAG S][E|U+E0045 TAG E][CANCEL|U+E007F CANCEL TAG]')
+  const flags = ['gbeng', 'gbsct', 'gbwls'].map(code => `🏴${[...code].map(c => String.fromCodePoint(0xE0000 + c.codePointAt(0))).join('')}\u{E007F}`)
+  assert.deepEqual(flags.map(flag => controlParts(flag).length), [1, 1, 1], 'England, Scotland, Wales')
+})
+
+test('the invisible characters text is hidden in are counted where they show, but those that hide nothing', () => {
+  assert.deepEqual(invisibleCharacters('|\u{E0151}\u{E0151}\u{E0156} \u3164 x\u{E0068}'), new Map([[0xE0151, 2], [0xE0156, 1], [0x3164, 1], [0xE0068, 1]]),
+    'a payload in selectors, a filler naming a variable, a tag')
+  assert.deepEqual(invisibleCharacters('a\u{E0141}b\u{E0142} ☀\uFE00 中\u{E01EF} 🏻\uFE0F'),
+    new Map([[0xE0141, 1], [0xE0142, 1], [0xFE00, 1], [0xE01EF, 1], [0xFE0F, 1]]), 'after a letter, or after what Unicode registers no such variant of')
+  assert.deepEqual(invisibleCharacters('가\u3164 = \u3164\u3164'), new Map([[0x3164, 3]]), 'a filler after a syllable, or beside another')
+  assert.deepEqual(invisibleCharacters('🛠\uFE0F\uFE0F\uFE0F a\u{E0141}-\u{E0142}b'), new Map([[0xFE0F, 1], [0xE0141, 1], [0xE0142, 1]]),
+    'a selector past an emoji\'s doubled one, selectors around a hyphen that are no block')
+  assert.deepEqual(invisibleCharacters('x\uFE00-\uFE05 🛠\uFE0E\uFE0F'), new Map([[0xFE00, 1], [0xFE05, 1], [0xFE0F, 1]]),
+    'a range that is no whole block, an emoji\'s selector followed by the other')
+  assert.deepEqual(invisibleCharacters('🏴\u{E0053}\u{E007F}'), new Map([[0xE0053, 1], [0xE007F, 1]]), 'a flag Unicode doesn\'t recommend')
+  assert.equal(invisibleCharacters('❤\uFE0F ☺\uFE0E 📄\uFE0F 1\uFE0F\u20E3 🛠\uFE0F\uFE0F 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'), null,
+    'an emoji\'s own selectors, doubled as copying leaves them, a keycap, a flag')
+  assert.equal(invisibleCharacters('caps: "\u2229\uFE00", [Install](#\uFE0F-install)'), null, 'variants Unicode registers: an HTML entity\'s, a heading anchor\'s')
+  assert.equal(invisibleCharacters('ㅣ\u3164ㅥ \u115F\u1161 \u1100\u1160 \uFFA1\uFFA0'), null, 'fillers composing Hangul, or among jamo')
+  // acorn\'s table of the characters a name may hold past its first.
+  assert.equal(invisibleCharacters('\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F\u17B4-\u17D3\u180B-\u180D a\u034Fb'), null,
+    'a block of selectors in such a table, the other marks that show as nothing')
+  assert.equal(invisibleCharacters('\uFEFFa\u200Bb\u00ADc\u00A0d\u001B'), null, 'format characters, spaces, controls')
+  assert.deepEqual(invisibleCharacters('\u3164 = \u3164', 4), new Map([[0x3164, 1]]), 'looked for from where it is told to, as the first character past ASCII')
+  const run = `x${'\uFE0F'.repeat(1000)}`
+  assert.equal(controlParts(run).length, 1001, 'a long run, each a box')
+  assert.deepEqual(invisibleCharacters(run), new Map([[0xFE0F, 1000]]))
 })
 
 test('a lone CR shows; one ending the text ends a line only where a newline follows it', () => {

@@ -21,7 +21,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { NPM_LONG_LINE, npmFileReadability, npmReadabilityTag, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -75,9 +75,17 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.equal(kind('é\u0085'), 'utf8 + controls', 'C1 controls')
   assert.equal(kind('if (admin) {\u202E } \u2066// x\u2069'), 'utf8 + controls', 'bidirectional controls')
   assert.equal(kind('\uFEFFbom and\u200Bzero width'), 'utf8', 'a BOM and zero-width characters are not controls')
+  assert.equal(kind('eval(d(`|\u{E0151}\u{E0156}\u{E0152}`))'), 'utf8 + controls', 'variation selectors that vary nothing hide text')
+  assert.equal(kind('const { timeout,\u3164 } = req.query'), 'utf8 + controls', 'a Hangul filler hides a name')
+  assert.equal(kind('Made with ❤\uFE0F, \u2229\uFE00 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'), 'utf8', 'an emoji\'s, a registered variant\'s and a flag\'s are text')
   assert.equal(kind(null), 'binary')
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
+  assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
+  const note = text => npmReadabilityTag(npmFileReadability('lib/a.js', text)).values[1]
+  assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
+  assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
+  assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
 })
 
 test('a file reads as text, or is not UTF-8, holds controls, is a source map, has one in it, is minified, or has unexpected long lines', () => {

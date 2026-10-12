@@ -4,23 +4,30 @@
 // pretty-printed (pretty-source.js).
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
+import { invisibleCharacters } from './control-chars.js'
 
 // What a text holds beyond printing characters and its line breaks: the C0
 // controls other than tab, line feed and carriage return, DEL, the C1
 // controls, and the bidirectional controls that can make code read other than
-// it runs ("Trojan Source").
+// it runs ("Trojan Source"); and the invisible characters that can hide text
+// in it (control-chars.js invisibleCharacters), as a payload hidden in
+// variation selectors or a variable named by a Hangul filler.
 const CONTROLS = /(?![\t\n\r])\p{Cc}|[\u202A-\u202E\u2066-\u2069]/gu
 const NON_ASCII = /\P{ASCII}/u
 
 // A file's text: `kind` 'ascii' or 'utf8', by whether it holds anything past
 // ASCII, else 'binary' (which the server tells by its bytes, sending no
-// text); `controls` the control characters a text holds, how often by code
-// point, or null for none.
+// text); `controls` the control and invisible characters a text holds, how
+// often by code point, or null for none.
 export function npmTextEncoding(text) {
   if (typeof text !== 'string') return { kind: 'binary', controls: null }
   const controls = new Map()
   for (const [char] of text.matchAll(CONTROLS)) controls.set(char.codePointAt(0), (controls.get(char.codePointAt(0)) ?? 0) + 1)
-  return { kind: NON_ASCII.test(text) ? 'utf8' : 'ascii', controls: controls.size > 0 ? controls : null }
+  // The invisible characters are all past ASCII: looked for in a text that
+  // has any, from its first.
+  const past = text.search(NON_ASCII)
+  if (past !== -1) for (const [code, times] of invisibleCharacters(text, past) ?? []) controls.set(code, times)
+  return { kind: past === -1 ? 'ascii' : 'utf8', controls: controls.size > 0 ? controls : null }
 }
 
 // Lines longer than anyone writes by hand.
@@ -88,9 +95,9 @@ function minifiedAverage(text, { stringOrComment, droppable, needed }) {
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
-// binary (no text), controls (text holding control or bidirectional
-// characters), map (a source map), long (code with some lines longer than
-// anyone writes), inline-map (code with its source map in it, minified or
+// binary (no text), controls (text holding control, bidirectional or
+// invisible characters), map (a source map), long (code with some lines
+// longer than anyone writes), inline-map (code with its source map in it, minified or
 // not), minified (code mostly on long lines, or named .min., or minified
 // into shorter lines: see MINIFIED_AVERAGE), else utf8 or ascii. Prose is
 // readable whatever its lines' lengths, and an inline source map's line
@@ -137,7 +144,7 @@ export function npmFileReadability(path, text) {
 // reading it either way.
 export const READABILITY = new Map([
   ['binary', { name: 'Binary', tag: 'Binary', mark: 'warn' }],
-  ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
+  ['controls', { name: 'Control or invisible characters', tag: 'Controls', mark: 'warn' }],
   ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
@@ -146,10 +153,15 @@ export const READABILITY = new Map([
   ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
 ])
 
+// The controls, and invisible characters, a text holds: named for which it
+// has, the most found first.
+const CONTROL = new RegExp(CONTROLS.source, 'u')
 function controlsNote(controls) {
   const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
   const named = found.slice(0, 6).map(([point, times]) => `U+${point.toString(16).toUpperCase().padStart(4, '0')} ×${times.toLocaleString('en')}`)
-  return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
+  const control = found.filter(([point]) => CONTROL.test(String.fromCodePoint(point))).length
+  const kinds = control === found.length ? 'Control characters' : control === 0 ? 'Invisible characters' : 'Control and invisible characters'
+  return `${kinds}: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
 function readabilityNote({ average, category, controls, longLines, longest, inlineMap }) {

@@ -241,7 +241,9 @@ and format characters (bidirectional and zero-width among them), Unicode's
 other spaces (no-break, en and em, thin, ideographic), the default-ignorable
 characters (Hangul fillers, variation selectors, the grapheme joiner, each a
 different name in code from the one it looks like) and the Braille blank;
-an emoji's own joiners, tags, presentation selectors and keycaps excepted.
+an emoji's own joiners, presentation selectors and keycaps, and a
+subdivision flag's tags where Unicode recommends it (England's, Scotland's,
+Wales's), excepted.
 Lines always wrap. Code can hide whitespace changes as
 `diff -b` does: a line re-indented, or with blanks added to a run of them or
 at its end, reads as unchanged, while blanks put between other characters or
@@ -1182,8 +1184,17 @@ control. A version shows in the bundle view with four tabs:
   Over the summary, where any file can be hard to review by reading it, a
   warning says how many and why, in categories, the first that holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
-  characters (the C0 ones but tab, line feed and carriage return, DEL, the
-  C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
+  or invisible characters (the C0 ones but tab, line feed and carriage
+  return, DEL, the C1 ones, and the bidirectional controls U+202A–U+202E and
+  U+2066–U+2069; and, of those Code shows as boxes, the ones text is hidden
+  in: variation selectors, as a payload a byte a selector, but a variation
+  sequence Unicode registers (an HTML entity's math symbol, a heading
+  anchor's `#`), an emoji's selector doubled as copying text leaves it, or a
+  block of them written out as a range in a table of the characters a name
+  may hold; Hangul fillers, as a name no one sees, but those composing
+  Hangul or among jamo; and tags, but those of a subdivision flag Unicode
+  recommends (England's, Scotland's or Wales's); not a BOM, a zero-width or
+  a no-break space, which text has its uses for),
   unexpected long lines (lines over 1,000 characters among readable ones),
   minified (most of its text on such lines, or named `.min.` with any, or,
   with none, its lines averaging over 110 characters and next to none of its
@@ -1280,7 +1291,7 @@ control. A version shows in the bundle view with four tabs:
   those fixed in it (affecting only older versions) struck through, and
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
-  tag naming the control characters or long lines it holds; and, where the
+  tag naming the control or invisible characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names,
   each file's head linking it on GitHub at the commit the version was
