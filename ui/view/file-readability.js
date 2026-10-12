@@ -32,8 +32,11 @@ export function npmTextEncoding(text) {
 
 // Lines longer than anyone writes by hand.
 export const NPM_LONG_LINE = 1000
-// Prose, which wraps where it is read: its long lines are paragraphs.
-const PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:[-.][^/]*)?)$/iu
+// Prose, which wraps where it is read: its long lines are paragraphs. By its
+// extension (Markdown, text), or its name alone (`LICENSE-MIT`, `CHANGES`; a
+// prose extension after it is one), not code named alike (`lib/history.js`,
+// `dist/notice.min.js`), which can be minified as any.
+export const NPM_PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*)?)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.
@@ -127,7 +130,7 @@ export function npmFileReadability(path, text) {
   const read = { ...encoding, longest, longLines, average: 0, inlineMap }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
-  if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (NPM_PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
     // average more: told without reading its code.

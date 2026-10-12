@@ -1202,7 +1202,8 @@ control. A version shows in the bundle view with four tabs:
   maps (`.map`), and inline source maps (code with a line that is a
   `sourceMappingURL` comment holding its map as a `data:` URL, minified or
   not, its tag giving the map's size). Prose (Markdown, text, licenses and
-  changelogs) is readable whatever its lines' lengths, and an inline map's
+  changelogs, as `LICENSE-MIT`; not code named alike, as `lib/history.js` or
+  `dist/notice.min.js`) is readable whatever its lines' lengths, and an inline map's
   line counts for none, nor for how much of a file is on long lines. Then the manifest's facts: description, license
   (each license in its expression opening its file in the package: the one
   named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
