@@ -84,8 +84,8 @@ function readDownloads(json: unknown): NpmDownloads {
 
 const downloads = kept<NpmDownloads | null>(500)
 // The repository each package's latest version names (owner/name, null where
-// it names none), as its figures were last asked with: what npmKnown finds
-// them by.
+// it names none), as its figures were first asked with within the hour: what
+// npmKnown finds them by.
 const latestRepos = kept<string | null>(500)
 
 export const npmLatestRepo = (name: string, repo: string | null): void => void latestRepos(name, () => Promise.resolve(repo))
@@ -97,7 +97,7 @@ export function npmDownloads(name: string): Promise<NpmDownloads | null> {
 // A package's year kept, asking for nothing; undefined where none is.
 export const keptNpmDownloads = (name: string) => downloads.peek(name)
 
-export const SOCKET_SCORES = ['overall', 'supplyChain', 'vulnerability', 'quality', 'maintenance', 'license'] as const
+const SOCKET_SCORES = ['overall', 'supplyChain', 'vulnerability', 'quality', 'maintenance', 'license'] as const
 const SOCKET_SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, middle: 2, low: 3 }
 const SOCKET_ALERTS = 50
 const SOCKET_NOTE_CHARS = 4000
