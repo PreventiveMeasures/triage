@@ -143,7 +143,7 @@ export const npmLargeCode = (path, bytes) => typeof bytes === 'number' && bytes 
 const SHORT_LINES = 200
 const UNREADABLE_LINE = 2000
 export function npmBecameUnreadable(path, was, now) {
-  if (!was || !now || was.category === 'binary' || now.category === 'binary' || PROSE.test(path) || SOURCE_MAP.test(path)) return false
+  if (!was || !now || was.category === 'binary' || now.category === 'binary' || NPM_PROSE.test(path) || SOURCE_MAP.test(path)) return false
   return was.longest <= SHORT_LINES && now.longest > UNREADABLE_LINE
 }
 
@@ -181,7 +181,7 @@ export function npmFileReadability(path, text) {
   }
   // A source map holds the names and sources of the code it maps, and prose
   // its examples: neither runs.
-  const obfuscation = PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
+  const obfuscation = NPM_PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
   const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
