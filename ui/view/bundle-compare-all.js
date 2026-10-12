@@ -81,8 +81,10 @@ class BundleCompareAll extends BundleCompareCode {
       this._current = this._picked = null
     }
     // A file opened from elsewhere (the Overview, a link), or picked before
-    // the comparison changed (another scope), is scrolled to, as Code opens it.
+    // the comparison changed (another scope), is scrolled to, as Code opens it;
+    // else a new comparison shows from its top, as it was scrolled however far.
     if ((changed.has('path') || changed.has('files')) && this.path && this.path !== this._current) this._goTo = this.path
+    if (changed.has('files') && !this._goTo) this._toTop = true
   }
 
   // The rail's file at the top of the list, kept in view in the rail.
@@ -92,7 +94,11 @@ class BundleCompareAll extends BundleCompareCode {
       this._goTo = null
       this._picked = path
       this._section(path)?.scrollIntoView({ block: 'start' })
+    } else if (this._toTop) {
+      const body = this.querySelector('.bundle-compare-diff')
+      if (body) body.scrollTop = 0
     }
+    this._toTop = false
     if (this._current !== this._shownPath) {
       this._shownPath = this._current
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
