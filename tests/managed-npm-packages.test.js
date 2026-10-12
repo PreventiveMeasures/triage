@@ -292,6 +292,22 @@ test('access is checked again once the registry answers', async t => {
   assert.deepEqual(res.json(), { error: 'package-not-found' })
 })
 
+test('risk against a private version is checked again for it once told', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const open = { ...packageOf('@acme/mixed', '2.0.0', { 'index.js': 'open' }), versions: ['1.0.0', '2.0.0'] }
+  const secret = { ...packageOf('@acme/mixed', '1.0.0', { 'index.js': 'secret' }), private: true }
+  registry(t, [open, secret])
+  const fetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    // Demoted while the private version's tarball downloads.
+    if (String(url) === secret.doc.dist.tarball) await h.db.setUserRole(h.users.manage.userId, 'view')
+    return fetch(url, init)
+  })
+  const res = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@acme/mixed', version: '2.0.0', otherVersion: '1.0.0' })}`, 'manage')
+  assert.deepEqual([res.status, res.json()], [404, { error: 'package-not-found' }])
+})
+
 test('oversized, malformed and unreachable packages are refused without their files', async t => {
   const h = await setup(t)
   const big = packageOf('big', '1.0.0', { 'a.js': 'a' }, {})

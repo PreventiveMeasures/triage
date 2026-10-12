@@ -2576,7 +2576,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, privileged, signal: controller.signal })
-      await reply(doc.private, { ...assessment })
+      // What it tells is read of both versions: private where either is.
+      await reply(doc.private || old?.private === true, { ...assessment })
       return
     }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
