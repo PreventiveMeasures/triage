@@ -14,11 +14,11 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
-const answers = { advisories: {}, stats: {}, socket: {}, provenance: {} }
+const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {} }
 const socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
-  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
@@ -358,6 +358,18 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(lost, /<li><span class="npm-extension npm-compare-provenance"[^]*compare-tip-head">npm provenance<[^]*>Listed by npm<[^]*compare-tip-none">None<[^]*>Provenance lost<\/span><\/li>/u)
   assert.doesNotMatch(await badges(side('gained', '1.0.0', attested(undefined)), side('gained', '1.1.0', attested(true))), /npm-compare-provenance/u, 'not one it gained')
   assert.doesNotMatch(await badges(side('kept-attested', '1.0.0', attested(true)), side('kept-attested', '1.1.0', attested(true))), /npm-compare-provenance/u)
+
+  // An open version under two weeks old: how long ago, the day in its
+  // tooltip; not one of a scope a team lists.
+  const ago = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()
+  const recent = await badges(side('recent', '1.0.0', { published: ago(30) }), side('recent', '1.1.0', { published: ago(3) }))
+  assert.match(recent, /<li><span class="npm-extension is-warn npm-compare-published" data-tooltip=Published on [A-Z][a-z]{2} \d{1,2}, \d{4}>3 days ago<\/span><\/li>/u)
+  assert.doesNotMatch(await badges(side('recent', '1.1.0', { published: ago(3) }), side('recent', '1.0.0', { published: ago(30) })), /npm-compare-published/u, 'only the open one')
+  assert.doesNotMatch(await badges(side('settled', '1.0.0', { published: ago(30) }), side('settled', '1.1.0', { published: ago(15) })), /npm-compare-published/u)
+  answers.versions.listed = { versions: ['1.1.0', '1.0.0'], times: { '1.1.0': ago(5), '1.0.0': ago(30) } }
+  assert.match(await badges(side('listed', '1.0.0'), side('listed', '1.1.0')), />5 days ago</u, 'its time from the version list, where it came without')
+  answers.versions['@team/fresh'] = { versions: [], teamScoped: true }
+  assert.doesNotMatch(await badges(side('@team/fresh', '1.0.0', { published: ago(30) }), side('@team/fresh', '1.1.0', { published: ago(3) })), /npm-compare-published/u, 'a team\'s own')
 
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)

@@ -9,7 +9,7 @@ import { sourceMetrics } from '../scan/metrics.js'
 // An npm package version (npm-package.js npmCompareSource) names its
 // dist-tags as its detail, its number alone as `displayLabel`, how the list
 // names it, and the day it was published (`date`) under it, flagged where
-// it has a `dateWarning`, a template saying why.
+// it has a `dateWarning`, which its tooltip says.
 export function bundleOptions(bundles) {
   return bundles.map(bundle => {
     const format = bundle.format === 'npm' ? 'npm'

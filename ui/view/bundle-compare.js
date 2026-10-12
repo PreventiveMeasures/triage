@@ -30,7 +30,7 @@
 // (npm-package.js npmCompareSource): `{ noun, base, options, choices,
 // pending, error, name(id), load(id), open(base, target, mode),
 // dependencies(base, other), badges(base, other), widest }`, each option `{ id, name, format, detail, date?,
-// dateWarning? }`, its date flagged where it has a `dateWarning`, a template saying why
+// dateWarning? }`, its date flagged where it has a `dateWarning`, which its tooltip says
 // (bundle-selector.js bundleOptions); its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
 // its place.

@@ -24,6 +24,7 @@ import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bund
 import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
+import { npmPackageScope } from '../common/managed/npm-packages.js'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -410,9 +411,12 @@ async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
   const name = url.searchParams.get('name') ?? '', spec = url.searchParams.get('version') ?? 'latest'
   const signal = AbortSignal.timeout(60_000)
   try {
+    // With whether a team lists its scope, as the real server answers.
     if (url.pathname === '/api/npm/versions') {
       const versions = await readNpmVersions(name, false, signal, { times: true })
-      sendJson(res, versions ? 200 : 404, versions ?? { error: 'package-not-found' }); return
+      const scope = npmPackageScope(name)
+      const teamScoped = scope !== null && [...teamNpmScopes.values()].some(scopes => scopes.includes(scope))
+      sendJson(res, versions ? 200 : 404, versions ? { ...versions, teamScoped } : { error: 'package-not-found' }); return
     }
     const doc = await readNpmVersion(name, spec, false, signal)
     if (!doc) { sendJson(res, 404, { error: 'package-not-found' }); return }

@@ -64,6 +64,6 @@ test('managed scan selectors show cached counts before opening bundles and prese
   assert.deepEqual(versions.map(option => [option.secondary, option.secondaryWarning]), [['2026-10-01', 'Too new'], ['2020-01-31', undefined]], 'a version\'s date flagged where it says why')
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const selector = new (customElements.get('bundle-selector'))()
-  assert.match(text(selector._option(versions[0], false, null)), /<span class=secondary is-warning \?data-tooltip-truncated=false data-tooltip=2026-10-01 \.tooltipContent=Too new>2026-10-01</u, 'saying why whether or not it fits')
-  assert.match(text(selector._option(versions[1], false, null)), /<span class=secondary \?data-tooltip-truncated=true data-tooltip=2020-01-31 \.tooltipContent=>2020-01-31</u)
+  assert.match(text(selector._option(versions[0], false, null)), /<span class=secondary is-warning \?data-tooltip-truncated=false data-tooltip=Too new>2026-10-01</u, 'its tooltip shown whether or not it fits')
+  assert.match(text(selector._option(versions[1], false, null)), /<span class=secondary \?data-tooltip-truncated=true data-tooltip=2020-01-31>2020-01-31</u)
 })

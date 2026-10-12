@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmPackageData } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -422,7 +422,8 @@ export const npmCompareFiles = {
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
 // (`other`), each side's details: a publisher that changed, provenance
-// lost, the advisories that affect either,
+// lost, an open version under two weeks old (npmRecentRelease), the
+// advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
@@ -430,7 +431,8 @@ export function npmCompareBadges(base, other) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [publisherBadge(sides), provenanceBadge(sides), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [publisherBadge(sides), provenanceBadge(sides), recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting),
+    popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -474,6 +476,15 @@ function provenanceBadge([from, to]) {
     data-tooltip=${`npm lists provenance for ${from.version}, none for ${to.version}`}
     .tooltipContent=${compareTip('npm provenance', [from, to], ['Listed by npm', html`<span class="compare-tip-none">None</span>`],
       'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
+}
+
+// The open version, where it is too recent to trust yet: how long ago it
+// was published, the day in its tooltip.
+function recentBadge({ name, version, published }) {
+  const list = npmVersionList(name)
+  const time = published ?? list.times?.[version]
+  if (!time || !npmRecentRelease(list, time)) return nothing
+  return html`<li><span class="npm-extension is-warn npm-compare-published" data-tooltip=${npmPublishedOn(time)}>${npmAge(time)}</span></li>`
 }
 
 // The advisories affecting each version, tinted by the worst still affecting

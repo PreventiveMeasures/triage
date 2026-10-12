@@ -146,12 +146,12 @@ export class SearchableSelector extends LitElement {
   optionTooltip(option) { return option.label }
 
   // An option's `secondary` line under its name is flagged where it has a
-  // `secondaryWarning`, a template saying why on hover (tooltip.js).
+  // `secondaryWarning`, which its tooltip says.
   _option(option, grouped, tabValue) {
     const label = option.displayLabel ?? (grouped ? option.name : option.label)
     const tooltip = this.optionTooltip(option)
     return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name" ?data-tooltip-truncated=${label === tooltip} data-tooltip=${tooltip}>${label}</span>${option.secondary ? html`<span class=${option.secondaryWarning ? 'secondary is-warning' : 'secondary'} ?data-tooltip-truncated=${!option.secondaryWarning} data-tooltip=${option.secondary} .tooltipContent=${option.secondaryWarning ?? null}>${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name" ?data-tooltip-truncated=${label === tooltip} data-tooltip=${tooltip}>${label}</span>${option.secondary ? html`<span class=${option.secondaryWarning ? 'secondary is-warning' : 'secondary'} ?data-tooltip-truncated=${!option.secondaryWarning} data-tooltip=${option.secondaryWarning ?? option.secondary}>${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
     </button>`
   }
 

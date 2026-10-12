@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmPackageRoute, npmPublished, npmRangeVersion, NPM_RECENT_TIP, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -338,14 +338,15 @@ test('a version under two weeks old is flagged where its date shows, unless a te
   const entry = npmPackageEntry({ ...data, published: times['1.2.3'] })
   assert.doesNotMatch(text(npmOverviewMeta(entry)), /npm-recent/u, 'nothing flagged until the list says whether a team lists its scope')
   await setImmediate()
-  assert.match(text(npmOverviewMeta(entry)), /<dt>Published<\/dt><dd><span class="npm-recent" data-tooltip=Under two weeks old: compromised releases are mostly found and pulled within days .tooltipContent=<div><strong>Under two weeks old<\/strong><\/div><div class="compare-tip-note">[^<]*<\/div>>Oct 1, 2026 · 11 days ago<\/span>/u)
+  assert.match(text(npmOverviewMeta(entry)), /<dt>Published<\/dt><dd><span class="npm-recent">Oct 1, 2026 · 11 days ago<\/span>/u, 'no tooltip, as it says it all')
   const source = npmCompareSource(entry)
-  assert.deepEqual(source.choices.map(choice => [choice.id, choice.dateWarning ?? null]), [['1.2.3', NPM_RECENT_TIP], ['1.2.2', null], ['1.0.0', null]], 'the pickers flag its date')
+  assert.deepEqual(source.choices.map(choice => [choice.id, choice.dateWarning ?? null]), [['1.2.3', '11 days ago'], ['1.2.2', null], ['1.0.0', null]],
+    'the pickers flag its date, how long ago in its tooltip')
   const select = new (customElements.get('npm-version-select'))()
   Object.assign(select, { name: '@scope/pkg', version: '1.0.0', list: npmVersionList('@scope/pkg') })
   const options = select.render().values.find(value => Array.isArray(value))
-  assert.deepEqual(options.map(option => [option.value, option.secondary, Boolean(option.secondaryWarning)]),
-    [['1.2.3', '2026-10-01', true], ['1.2.2', '2026-09-28', false], ['1.0.0', '2020-01-31', false]], 'as the header\'s does')
+  assert.deepEqual(options.map(option => [option.value, option.secondary, option.secondaryWarning ?? null]),
+    [['1.2.3', '2026-10-01', '11 days ago'], ['1.2.2', '2026-09-28', null], ['1.0.0', '2020-01-31', null]], 'as the header\'s does')
 
   const team = npmPackageEntry({ ...data, name: '@team/pkg', published: times['1.2.3'] })
   npmVersionList('@team/pkg')
@@ -353,4 +354,14 @@ test('a version under two weeks old is flagged where its date shows, unless a te
   assert.doesNotMatch(text(npmOverviewMeta(team)), /npm-recent/u, 'a team\'s own release')
   assert.ok(npmCompareSource(team).choices.every(choice => !choice.dateWarning))
   assert.equal(npmRecentRelease({ status: 'error' }, times['1.2.3']), false, 'nor where the list can\'t be had')
+})
+
+test('a recent version\'s age reads in minutes, then hours, then days, and the day it was published in full', () => {
+  const now = Date.parse('2026-10-12T12:00:00Z')
+  assert.equal(npmAge('2026-10-12T11:59:40Z', now), '0 minutes ago')
+  assert.equal(npmAge('2026-10-12T11:15:00Z', now), '45 minutes ago')
+  assert.equal(npmAge('2026-10-12T07:00:00Z', now), '5 hours ago')
+  assert.equal(npmAge('2026-10-11T11:00:00Z', now), '1 day ago')
+  assert.equal(npmAge('2026-10-01T00:00:00Z', now), '11 days ago')
+  assert.equal(npmPublishedOn('2026-10-01T00:00:00Z'), 'Published on Oct 1, 2026')
 })

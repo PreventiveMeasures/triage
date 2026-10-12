@@ -1164,10 +1164,10 @@ control. A version shows in the bundle view with four tabs:
   file), author (with their npm account, linking its profile, where the
   publisher's or a maintainer's email or name is theirs), the publisher's
   account where it is someone else's, when the version was published and
-  how long ago (flagged under two weeks old, as the version pickers flag its
-  date, saying why on hover: a compromised release is mostly found and pulled
-  within days; a version of a scope any visible team lists is exempt, as its
-  team's own, once the version list says whether it is one),
+  how long ago (in the warning color under two weeks old, as a compromised
+  release is mostly found and pulled within days; a version of a scope any
+  visible team lists is its team's own and isn't flagged, nor is any until
+  the version list says whether it is one),
   GitHub repository with its stars, forks, open issues and open pull requests
   (GitHub counts them together; the pull requests are counted apart from its
   list of them, and where that fails they show together), publish commit with
@@ -1263,7 +1263,8 @@ control. A version shows in the bundle view with four tabs:
   the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
   picked from its versions newest first, each with the day it was published
-  (flagged under two weeks old, as on the Overview), both pickers one width
+  (flagged under two weeks old as on the Overview, how long ago in its
+  tooltip), both pickers one width
   from the start, as wide as the package's name with
   a version as long as `10.90.90` tagged `latest`, so they don't move as its
   versions arrive (a longer one is cut short, whole in its tooltip).
@@ -1273,7 +1274,9 @@ control. A version shows in the bundle view with four tabs:
   package changes hands, or is taken over), linking to the new one's
   profile; provenance lost, where npm lists provenance for the one compared
   with and none for the open one, as a version published by hand with a token taken
-  from its maintainers wouldn't; the advisories affecting either version, counted from
+  from its maintainers wouldn't; an open version under two weeks old, as on
+  the Overview, how long ago (`3 days ago`), the day in its tooltip; the
+  advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where
   none does, its tooltip a row for each version's, their severities in
