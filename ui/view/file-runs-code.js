@@ -1,10 +1,11 @@
 // What a file's code can run beyond itself, for a reviewer: a string run as
-// code (eval, new Function, Function) and other programs (child_process), as
-// the npm Overview's Files list and Compare label a file. A quick read, not a
-// parse: a script's code with its strings, regular expressions and comments
-// set aside as file-readability.js tells them, a module named by the string
-// that names it; a declaration file (.d.ts) runs nothing, and a call written
-// not to read as one (`window['ev' + 'al']`) goes unseen.
+// code (eval, and Function with new or without) and other programs
+// (child_process), as the npm Overview's Files list and Compare label a file.
+// A quick read, not a parse: a script's code with its strings, regular
+// expressions and comments set aside as file-readability.js tells them, a
+// module named by the string that names it; a declaration file (.d.ts) runs
+// nothing, and a call written not to read as one (`window['ev' + 'al']`)
+// goes unseen.
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT } from './file-readability.js'
 
@@ -25,8 +26,7 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 // code reads, or for a module, its name.
 export const RUNS_CODE = new Map([
   ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${BEFORE}eval${AFTER}`, 'gu') }],
-  ['new-function', { tag: 'new Function', note: 'Makes a function of a string (new Function)', code: new RegExp(String.raw`(?<![\p{ID_Continue}$.#])new\s+Function\s*\(`, 'gu') }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(String.raw`(?<!\bnew\s+)${BEFORE}Function\s*\(`, 'gu') }],
+  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${BEFORE}Function\\s*\\(`, 'gu') }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)', module: /^(?:node:)?child_process$/u }],
 ])
 

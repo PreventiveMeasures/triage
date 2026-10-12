@@ -484,7 +484,7 @@ test('a file is labelled with what its code can run beyond itself, in its head a
   const render = path => { element.path = path; return renderText(element.render()) }
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
   const tags = markup => [...markup.matchAll(/class="npm-runs-code" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, tooltip, tag]) => [tag, tooltip])
-  assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code (eval): line 1'], ['new Function', 'Makes a function of a string (new Function): line 2, new']],
+  assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code (eval): line 1'], ['Function', 'Makes a function of a string (Function): line 2, new']],
     'as it is now, what it held before not new')
   assert.deepEqual(tags(head('run.js')), [['child_process', 'Runs other programs (child_process): line 1, new']], 'all of an added file\'s new')
   assert.deepEqual(tags(head('old.js')), [['child_process', 'Runs other programs (child_process): line 1']], 'a removed file as it was')
