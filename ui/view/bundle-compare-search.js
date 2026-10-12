@@ -95,26 +95,32 @@ function changedHits(a, b, matcher, blocks, split) {
 
 // `files` the comparison's, `{ path, before, after }` in the order to list
 // them, a side without the file '' and one that isn't text skipped;
-// `blocksOf(path, before, after)` a changed file's change blocks, or null
-// where they aren't known (yet), asked for only where either text matches,
-// a file they find no change in left out, as its diff draws no rows; `split`
-// the diff's layout, which orders a change block's lines.
+// `matcher` a substring's (buildSearchMatcher's, not a regular expression's),
+// whose matches lie within a line; `blocksOf(path, before, after)` a changed
+// file's change blocks, or null where they aren't known (yet), asked for
+// only where either text matches, a file they find no change in left out,
+// as its diff draws no rows; `split` the diff's layout, which orders a
+// change block's lines.
 // Returns `{ files, hits, truncated }`: the files with a hit, `{ path, hits }`,
 // each listing up to SEARCH_MAX_FILE_HITS lines, collected no further;
 // `hits` the lines listed; `truncated` where files were left out.
 export function searchCompareFiles(files, matcher, blocksOf, { split = false } = {}) {
   const found = []
   let hits = 0
+  // Whether a text matches anywhere, read whole: a substring found in a
+  // line is in the whole text, and one found there lies within a line.
+  const matches = text => text !== '' && matcher.ranges(text).length > 0
   for (const { path, before, after } of files) {
     if (typeof before !== 'string' || typeof after !== 'string') continue
+    // A file matching on neither side is neither split into lines nor diffed.
+    if (!matches(before) && (before === after || !matches(after))) continue
     let lines
     if (before === after || before === '' || after === '') {
       lines = fileHits(before, after, matcher, null)
     } else {
-      // Diffed only where either text matches at all; listed only where its
-      // diff shows a change (none where it hides what changed, as whitespace).
+      // Listed only where its diff shows a change (none where it hides what
+      // changed, as whitespace).
       const a = textLines(before), b = textLines(after)
-      if (matching(b, matcher, 1).length === 0 && matching(a, matcher, 1).length === 0) continue
       const blocks = blocksOf(path, before, after)
       if (blocks?.length === 0) continue
       lines = changedHits(a, b, matcher, blocks, split)

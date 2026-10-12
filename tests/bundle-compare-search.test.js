@@ -42,6 +42,19 @@ test('the search lists files in the order given, skips ones that aren\'t text, a
   assert.deepEqual(asked, ['b.js', 'old.js'], 'a.js matches on neither side, so it is not diffed')
 })
 
+test('a file matching on neither side is read whole, each text once, and neither split into lines nor diffed', () => {
+  const read = []
+  const counting = { ranges(text) { read.push(text); return [...text.matchAll(/fetch/gu)].map(({ index }) => [index, index + 5]) } }
+  const many = `${Array.from({ length: 1000 }, (_, i) => `line ${i}`).join('\n')}\n`
+  const found = searchCompareFiles([
+    { path: 'changed.js', before: many, after: `${many}more\n` },
+    { path: 'added.js', before: '', after: many },
+    { path: 'same.js', before: many, after: many },
+  ], counting, () => assert.fail('not diffed'))
+  assert.deepEqual(found.files, [])
+  assert.deepEqual(read.map(text => text.split('\n').length), [1001, 1002, 1001, 1001], 'changed.js\'s two texts, added.js\'s one and same.js\'s one, each whole')
+})
+
 test('the search lists up to its caps of lines a file and of files', () => {
   const many = Array.from({ length: SEARCH_MAX_FILE_HITS + 5 }, () => 'fetch').join('\n')
   const files = Array.from({ length: SEARCH_MAX_FILES + 1 }, (_, i) => ({ path: `f${i}.js`, before: '', after: many }))
