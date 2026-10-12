@@ -1395,10 +1395,14 @@ control. A version shows in the bundle view with four tabs:
   changes (`postinstall added`, node-gyp's `install` for a `binding.gyp` it
   adds among them, not one it drops), each version's with their commands in
   its tooltip; in red, though their tags on the files say little of one
-  alone, a code file of 256 KiB or more the open version adds (not one
-  renamed), a file it changes that had no line over 200 characters and now
-  has one over 2,000 (prose, source maps and an inline
-  map's line aside, as its Long lines or Minified tag says of it), and a file
+  alone or warn of it in orange, code that runs beyond itself new to a file
+  the open version adds or changes (`Runs code`, the kinds named: eval,
+  Function, child_process, as the file's tags say them), its tooltip listing
+  each file with its new kinds and their lines; a code file of 256 KiB or
+  more the open version adds (not one renamed), a file it changes that had
+  no line over 200 characters and now has one over 2,000 (prose, source maps
+  and an inline map's line aside, as its Long lines or Minified tag says of
+  it), and a file
   it adds or changes with an obfuscator's fingerprint where the version
   compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
   each counting them where there are several, its tooltip alone listing

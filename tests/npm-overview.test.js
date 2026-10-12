@@ -736,6 +736,33 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.match(counted, /data-tooltip=Now unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
 })
 
+test('Compare flags in red code that runs beyond itself new to a file the open version adds or changes, naming the kinds', async () => {
+  const version = (ver, files) => ({ integrity: `runs@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'runs', version: ver } })
+  const badges = async (base, other) => {
+    const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+    npmCompareBadges(base, other, files); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other, files))
+  }
+  const code = Array.from({ length: 30 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const base = version('1.0.0', { 'lib/a.js': 'module.exports = 1\n', 'lib/b.js': 'module.exports = x => eval(x)\n', 'lib/old.js': `${code}\n`, 'lib/same.js': 'eval(y)\n' })
+  const other = version('1.1.0', { 'lib/a.js': "module.exports = x => require('child_process').exec(x)\n", 'lib/b.js': 'module.exports = x => eval(x) + eval(x)\n',
+    'lib/new.js': "module.exports = new Function('return 1')\n", 'lib/moved.js': `${code}\nmodule.exports = s => eval(s)\n`, 'lib/same.js': 'eval(y)\n' })
+  const flagged = await badges(base, other)
+  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval, Function, child_process<\/span><\/span><\/li>/u,
+    'red, every kind new to a file named, in their order')
+  const rows = [...flagged.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`)
+  assert.deepEqual(rows.filter(row => /\((?:line|lines) /u.test(row)), ['lib/new.js: Function (line 1)', 'lib/a.js: child_process (line 1)', 'lib/moved.js: eval (line 31)'],
+    'an added file\'s, a changed one\'s, a renamed one\'s new to it; not eval kept in lib/b.js, nor lib/same.js unchanged')
+  assert.doesNotMatch(await badges(other, base), /npm-compare-runs/u, 'none the other way: run code dropped')
+  assert.doesNotMatch(await badges(base, version('1.0.1', { ...Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]])), 'lib/b.js': 'module.exports = x => eval(x) // more\n' })),
+    /npm-compare-runs/u, 'nor for eval a file already held')
+  // Laid out under other roots (`package/` read as none), a file added at a
+  // path the one compared with held another file at is new all the same.
+  const rooted = version('2.0.0', { 'package/lib/a.js': 'eval(x)\nconst a = 1\n', 'package/index.js': 'module.exports = 1\n' })
+  const unrooted = version('2.1.0', { 'lib/a.js': 'eval(x)\nconst a = 1\n', 'index.js': 'module.exports = 1\n', 'package/lib/a.js': 'eval(y)\n' })
+  assert.match(await badges(rooted, unrooted), /npm-compare-runs[^]*?compare-tip-path">package\/lib\/a\.js<[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u)
+})
+
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const entry = (name, manifest, extra = {}) => ({ npm: { name, version: '1.0.0', manifest, ...extra } })

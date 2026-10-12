@@ -20,7 +20,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmRunsCodeNames, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmRunsCodeAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -627,21 +627,35 @@ const TIP_FILES = 8
 
 // What the open version does to its files that calls for a look, each as a
 // red chip, though the tags it gives a file (npmFileTags) say little of one
-// alone: a code file of 256 KiB or more it adds (npmLargeCode); a file it
-// changes that had no line over 200 characters and now has one over 2,000
-// (npmBecameUnreadable), which the file's Long lines or Minified tag says
-// of it; and a file it adds or changes with an obfuscator's fingerprint
-// where the one compared with had none (npmObfuscation). By Compare's
-// `files`, a renamed one by its old path; none until they are compared.
+// alone, or warn of it in orange: code that runs beyond itself, as a string
+// run as code or another program (file-runs-code.js), new to a file it adds
+// or changes, the kinds named; a code file of 256 KiB or more it adds
+// (npmLargeCode); a file it changes that had no line over 200 characters and
+// now has one over 2,000 (npmBecameUnreadable), which the file's Long lines
+// or Minified tag says of it; and a file it adds or changes with an
+// obfuscator's fingerprint where the one compared with had none
+// (npmObfuscation). By Compare's `files`, a renamed one by its old path; none
+// until they are compared.
 function fileBadges(base, other, files) {
   if (!files || !base.json || !other.json) return []
   const [was, now] = [base, other].map(npmFilesRead)
-  const after = row => now.byPath.get(row.path), before = row => was.byPath.get(row.basePath ?? row.path)
+  // A file it adds was none before, whatever the one compared with holds at
+  // its path, which can be another file where Compare lays the two out under
+  // other roots (`package/a.js` read as `a.js`).
+  const added = new Set(files.onlyOther)
+  const after = row => now.byPath.get(row.path), before = row => added.has(row) ? null : was.byPath.get(row.basePath ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
   const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
   const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
   const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
+  const runs = (details, path) => npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path))
+  const runsCode = [...files.onlyOther, ...changed]
+    .map(row => ({ path: row.path, added: npmRunsCodeAdded(runs(other, row.path), added.has(row) ? null : runs(base, row.basePath ?? row.path)) }))
+    .filter(row => row.added)
   return [
+    fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
+      'What the code runs beyond itself, new to the file: a string run as code (eval, Function) or other programs (child_process)',
+      npmRunsCodeKinds(runsCode.map(row => row.added))),
     fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
       'Code files the open version adds, of 256 KiB or more'),
     fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
@@ -652,9 +666,9 @@ function fileBadges(base, other, files) {
 }
 
 // A chip on `rows`, files the open version adds or changes, counting them
-// where there are several, the files in its tooltip alone, each with what
-// `said` of it.
-function fileBadge(kind, label, rows, said, note) {
+// where there are several, or saying `value` of them all, the files in its
+// tooltip alone, each with what `said` of it.
+function fileBadge(kind, label, rows, said, note, value = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
@@ -666,7 +680,7 @@ function fileBadge(kind, label, rows, said, note) {
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
       <div class="compare-tip-note">${note}</div>
     </div>`}>
-    <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
+    <span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
 
 // As `Non-registry deps`, the dependencies the open version takes from

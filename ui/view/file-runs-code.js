@@ -164,6 +164,23 @@ function below(sorted, value) {
 const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
   : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')} more` : ''}`
 
+// The kinds `found` holds (npmRunsCode's) that `was` didn't, each with its
+// lines: those new to a file, as its tags say (npmRunsCodeTags), `was` null
+// for one the version compared with didn't hold, or held none in. Null for
+// none.
+export function npmRunsCodeAdded(found, was) {
+  if (!found) return null
+  const added = new Map([...found].filter(([kind]) => !was?.has(kind)))
+  return added.size > 0 ? added : null
+}
+
+// The kinds any of `founds` holds, as their tags name them, in their order:
+// `eval, child_process`.
+export const npmRunsCodeKinds = founds => [...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag).join(', ')
+
+// The kinds a file holds, each named with its lines: `eval (line 3)`.
+export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUNS_CODE.get(kind).tag} (${linesNote(lines)})`).join(', ')
+
 // A file's tags, one a kind it holds (npmRunsCode), its lines in its tooltip;
 // with `was`, the kinds the file held as the version compared with has it
 // (null for none), one it didn't hold saying so.
