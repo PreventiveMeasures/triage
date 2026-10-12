@@ -24,6 +24,12 @@ export function allowedReviewVerdicts(entries) {
 
 const markdownText = text => text.replaceAll(/[\\`*_{}[\]<>]/gu, '\\$&').replaceAll(/\r\n?/gu, '\n').replaceAll('\n', '\n  ')
 
+function auditNotes(comment, file = null) {
+  const prefix = file === null ? '' : `In ${markdownText(file)}: `
+  return comment.replaceAll(/\r\n?/gu, '\n').split(/(?:^|\n)[\t ]*\*[\t ]+/u)
+    .map(note => note.trim()).filter(Boolean).map(note => `* ${prefix}${markdownText(note)}`)
+}
+
 export function auditMarkdown(review) {
   if (review.publishedAt === null || review.revokedAt !== null || review.coverage !== 'full'
     || !['accept', 'accept-with-nits'].includes(review.status)) return null
@@ -31,8 +37,6 @@ export function auditMarkdown(review) {
   const dependency = review.basePackage === null ? target
     : review.basePackage === review.package ? `${review.package} ${review.baseVersion} -> ${review.version} ${review.integrity}`
     : `${review.basePackage} ${review.baseVersion} -> ${target}`
-  const notes = review.entries.filter(entry => entry.comment.trim()).map(entry =>
-    `* In ${markdownText(entry.file ?? 'the whole diff')}, ${markdownText(entry.comment)}`)
-  if (review.comment.trim()) notes.push(`* In the whole diff, ${markdownText(review.comment)}`)
+  const notes = [...review.entries.flatMap(entry => auditNotes(entry.comment, entry.file)), ...auditNotes(review.comment)]
   return `Audited:\n\`\`\`\n${dependency}\n\`\`\`${notes.length > 0 ? `\n\nNotes:\n${notes.join('\n')}` : ''}`
 }

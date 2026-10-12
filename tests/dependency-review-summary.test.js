@@ -32,6 +32,23 @@ test('only non-revoked full published accepting reviews have an audit export, in
     assert.equal(auditMarkdown({ ...review, ...patch }), null)
   }
   assert.equal(auditMarkdown({ ...review, status: 'accept-with-nits', entries: [{ file: 'src/a.js', comment: 'Keep compatibility.' }], comment: 'Ready to update.' }),
-    'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n* In src/a.js, Keep compatibility.\n* In the whole diff, Ready to update.')
-  assert.match(auditMarkdown({ ...review, entries: [{ file: 'a[1].js', comment: 'Line one\n* another line' }] }), /a\\\[1\\\]\.js, Line one\n  \\\* another line/u)
+    'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n* In src/a.js: Keep compatibility.\n* Ready to update.')
+})
+test('audit notes split star lists, repeat the file prefix, and omit prefixes for whole-diff and final notes', () => {
+  const output = auditMarkdown({ ...review, entries: [
+    { file: 'crc.js', comment: '* Can we make it faster?\n* Keep the current behavior.' },
+    { file: null, comment: '* More notes.\n* Another general note.' },
+  ], comment: '* Ready to update.\n* Follow up next week.' })
+  assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
+    + '* In crc.js: Can we make it faster?\n* In crc.js: Keep the current behavior.\n'
+    + '* More notes.\n* Another general note.\n* Ready to update.\n* Follow up next week.')
+})
+test('audit notes preserve multiline text and escaping while splitting indented CRLF lists', () => {
+  const output = auditMarkdown({ ...review, entries: [
+    { file: 'a[1].js', comment: 'Context with a * b.\r\n  * First note\r\ncontinued.\r\n\t* Second `note`.\r\n*   ' },
+    { file: null, comment: '   ' },
+  ] })
+  assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
+    + '* In a\\[1\\].js: Context with a \\* b.\n* In a\\[1\\].js: First note\n  continued.\n* In a\\[1\\].js: Second \\`note\\`.')
+  assert.equal(auditMarkdown({ ...review, entries: [{ file: 'crc.js', comment: '*  \n*  ' }] }), auditMarkdown(review))
 })
