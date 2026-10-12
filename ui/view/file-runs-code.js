@@ -40,24 +40,8 @@ export const RUNS_CODE = new Map([
 // order; null for none, or for a file that is no script.
 export function npmRunsCode(path, text) {
   if (typeof text !== 'string' || DECLARATION.test(path) || !(SCRIPT.test(path) || NODE_HASHBANG.test(text)) || !SAYS_ANY.test(text)) return null
-  // Where each of its strings, regular expressions and comments starts and
-  // ends, in order, and where a string names a module; then its code's
-  // calls, those in none of them. Spans alone, not a copy of the text with
-  // them blanked, which takes four times as long on a large one.
   const found = new Map()
-  const at = (kind, offset) => found.set(kind, [...found.get(kind) ?? [], offset])
-  const ends = [], starts = []
-  for (const { 0: match, 1: string, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
-    starts.push(index)
-    ends.push(index + match.length)
-    if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
-    for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1))) at(kind, index)
-  }
-  const inside = (offset) => {
-    const span = below(starts, offset + 1) - 1
-    return span >= 0 && offset < ends[span]
-  }
-  for (const [kind, { code: reads }] of RUNS_CODE) if (reads) for (const { index } of text.matchAll(reads)) if (!inside(index)) at(kind, index)
+  read(text, 0, (kind, offset) => found.set(kind, [...found.get(kind) ?? [], offset]))
   if (found.size === 0) return null
   // Each offset's line, its line breaks counted up to the last.
   const lines = new Map()
@@ -70,6 +54,55 @@ export function npmRunsCode(path, text) {
     lines.set(offset, line)
   }
   return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(offset => lines.get(offset)))].toSorted((a, b) => a - b)]))
+}
+
+// Where code (a file's, or a template literal's substitution's, at `base` in
+// the file) runs a kind, as at(kind, offset): where each of its strings,
+// regular expressions and comments starts and ends, in order, and where a
+// string names a module; then its calls, those in none of them, and those in
+// a template literal's substitutions (`${eval(x)}`), code again, read as its
+// own. Spans alone, not a copy of the text with them blanked, which takes
+// four times as long on a large one.
+function read(code, base, at) {
+  const ends = [], starts = []
+  for (const { 0: match, 1: string, index } of code.matchAll(JS_STRING_OR_COMMENT)) {
+    starts.push(index)
+    ends.push(index + match.length)
+    if (string?.[0] === '`') for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
+    if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
+    for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1))) at(kind, base + index)
+  }
+  const inside = (offset) => {
+    const span = below(starts, offset + 1) - 1
+    return span >= 0 && offset < ends[span]
+  }
+  for (const [kind, { code: reads }] of RUNS_CODE) if (reads) for (const { index } of code.matchAll(reads)) if (!inside(index)) at(kind, base + index)
+}
+
+// Where each of a template literal's substitutions' code starts and ends, in
+// it, for those that say any of RUNS_CODE: from its `${` to the `}` that
+// closes it, braces in its strings aside.
+function substitutions(template) {
+  const found = []
+  for (let i = template.indexOf('${'); i !== -1; i = template.indexOf('${', i)) {
+    if (/\\(?:\\\\)*$/u.test(template.slice(Math.max(0, i - 16), i))) {
+      i += 2
+      continue
+    }
+    let depth = 0, end = i + 2, quote = null
+    for (; end < template.length; end++) {
+      const char = template[end]
+      if (quote) {
+        if (char === '\\') end++
+        else if (char === quote) quote = null
+      } else if (char === '"' || char === "'") quote = char
+      else if (char === '{') depth++
+      else if (char === '}' && depth-- === 0) break
+    }
+    if (SAYS_ANY.test(template.slice(i + 2, end))) found.push([i + 2, end])
+    i = end
+  }
+  return found
 }
 
 // How many of a sorted list's numbers are below a value.

@@ -19,6 +19,13 @@ test('a script is read for eval, Function and child_process, each with the lines
     'a script node runs by its hashbang, with no extension')
 })
 
+test('a template literal\'s substitutions are code, read as their own, its text not', () => {
+  assert.deepEqual(found('a.js', 'const t = `${eval(payload)}`\n'), { eval: [1] })
+  assert.deepEqual(found('a.js', 'const t = `a ${x} b ${require(\'child_process\').exec(c)}`\n'), { 'child-process': [1] }, 'a module named in one')
+  assert.deepEqual(found('a.js', 'const t = `one\n${\n  "}" + Function(y)\n}`\n'), { function: [3] }, 'to the brace that closes it, its line the file\'s')
+  assert.equal(found('a.js', 'const t = `\\${eval(x)} eval(y) ${f("eval(")} ${/* eval(z) */ w}`\n'), null, 'not an escaped one, nor a string or comment in one')
+})
+
 test('a name read as another or as a property, or in a string, a regular expression or a comment, is none', () => {
   assert.equal(found('a.js', 'vm.eval(x); evaluate(); myeval(); obj.eval\nx.Function(1); Function.prototype.call\n'), null)
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
