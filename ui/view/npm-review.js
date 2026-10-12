@@ -6,39 +6,37 @@ import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'
 import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
 import { prepareComparison } from './bundle-comparison.js'
-import { comparisonFileList } from './bundle-compare-files.js'
+import { comparisonFileList, withinComparisonLimits } from './bundle-compare-files.js'
 import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
-import { comparisonPresentation } from './bundle-compare-view.js'
-import { reviewFileStates, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
-import { renderReview, renderReviewConfirmation, renderReviewEditor, renderReviewPublished } from './npm-review-view.js'
+import { selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
+import { renderReview } from './npm-review-view.js'
 import './bundle-selector.js'
 import './mode-switch.js'
 
-export const REVIEW_DISPLAY_LIMITS = { maxRows: Infinity, maxLines: 50_000, maxBytes: 2 * 1024 * 1024 }
+export const REVIEW_DISPLAY_LIMITS = { maxLines: 50_000, maxBytes: 2 * 1024 * 1024 }
 export const EMPTY_REVIEW_BASE = { integrity: '(empty)', kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, fileSizes: new Map() }
 export const reviewContext = (entry, base) => ({ ecosystem: 'npm', package: entry.npm.name, version: entry.npm.version, integrity: entry.integrity,
   basePackage: base?.npm?.name ?? null, baseVersion: base?.npm?.version ?? null, baseIntegrity: base?.npm ? base.integrity : null })
 const dependency = (name, spec) => `${name}@${spec ?? 'latest'}`
 
 export class NpmReview extends LitElement {
-  static displayLimits = REVIEW_DISPLAY_LIMITS
   static properties = {
     entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false }, source: { attribute: false },
     _teams: { state: true }, _selectedTeams: { state: true }, _additionalTeams: { state: true },
     _reviews: { state: true }, _loading: { state: true }, _error: { state: true }, _saving: { state: true }, _saveBlocked: { state: true },
     _file: { state: true }, _comment: { state: true }, _status: { state: true }, _edit: { state: true },
-    _publishStep: { state: true }, _finalStatus: { state: true }, _finalComment: { state: true },
+    _finalStatus: { state: true }, _finalComment: { state: true },
     _base: { state: true }, _baseError: { state: true }, _panel: { state: true }, _path: { state: true },
     _selectedReview: { state: true }, _unchecked: { state: true }, _notice: { state: true }, _continuation: { state: true },
   }
   createRenderRoot() { return this }
   constructor() {
     super()
-    this._teams = []; this._reviews = []; this._files = []; this._treeFiles = []; this._nonTextFiles = []
+    this._teams = []; this._reviews = []; this._files = []; this._nonTextFiles = []
     this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._drafts = new Map()
     this._file = null; this._path = null; this._comment = ''; this._status = ''; this._edit = null
     this._loading = false; this._saving = false; this._error = null; this._context = null; this._key = null
-    this._controller = new AbortController(); this._mode = 'code'; this._publishStep = false
+    this._controller = new AbortController(); this._mode = 'code'
     this._panel = null; this._selectedReview = null; this._unchecked = false
     this._pendingSaves = []; this._saveBlocked = false
   }
@@ -62,15 +60,6 @@ export class NpmReview extends LitElement {
   get _dirty() { return this._comment !== (this._edit?.comment ?? '') || this._status !== (this._nonTextFiles.includes(this._file) ? '' : this._edit?.status ?? '') }
   get _blocked() { return this._saving || this._saveBlocked }
   get _unsaved() { return this._pendingSaves.length > 0 || this._dirty || [...this._drafts.keys()].some(file => !this._canEdit || file !== this._file) }
-  get _fileStates() {
-    const entries = this._shownReview?.entries
-    if (!this._statesCache || this._statesCache.entries !== entries || this._statesCache.nonTextFiles !== this._nonTextFiles) {
-      const states = reviewFileStates(entries)
-      for (const file of this._nonTextFiles) if (states.has(file)) states.set(file, { ...states.get(file), status: null })
-      this._statesCache = { entries, nonTextFiles: this._nonTextFiles, states }
-    }
-    return this._statesCache.states
-  }
   get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files, this._nonTextFiles) }
   get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry) ?? 'accept' }
   get _allowedVerdicts() {
@@ -85,6 +74,11 @@ export class NpmReview extends LitElement {
   get _unchangedContinuation() {
     const source = this._continuation?.source
     return Boolean(source && this._finalStatus === source.status && this._finalComment === source.comment)
+  }
+  get _canPublish() {
+    return this._canEdit && this._panel === 'publish' && this._activeReview?.revision === this._publishRevision
+      && this._summary.checkedFiles > 0 && !this._needsPackageJson && !this._unchangedContinuation
+      && this._selectedTeams.size > 0 && !this._unsaved && this._allowedVerdicts.includes(this._finalStatus)
   }
   _location(target, mode = this._mode) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
@@ -124,12 +118,11 @@ export class NpmReview extends LitElement {
     if (key === this._key) return
     this._controller.abort(); this._cancelSaves(); this._controller = new AbortController(); this._context = context
     this._diff = prepareComparison(base, this.details)
-    this._treeFiles = comparisonFileList(base, this.details, this._diff)
-    this._files = orderedComparisonFiles(buildBundleSourceTree(this._treeFiles.map(file => file.path)))
-    const byPath = new Map(this._treeFiles.map(file => [file.path, file]))
-    this._treeFiles = this._files.map(path => byPath.get(path))
-    this._nonTextFiles = this._treeFiles.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path)
-    this._mode = comparisonPresentation(base, this.details, this._diff, REVIEW_DISPLAY_LIMITS).mode
+    const files = comparisonFileList(base, this.details, this._diff)
+    this._files = orderedComparisonFiles(buildBundleSourceTree(files.map(file => file.path)))
+    const nonText = new Set(files.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path))
+    this._nonTextFiles = this._files.filter(path => nonText.has(path))
+    this._mode = withinComparisonLimits(files, REVIEW_DISPLAY_LIMITS) ? 'diff' : 'code'
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
     this._selectedReview = null; this._continuation = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
     this._resetEditor(this._path); this._saving = false
@@ -167,7 +160,7 @@ export class NpmReview extends LitElement {
     finally { dismiss(); if (key === this._key) this._loading = false }
   }
   _resetEditor(file = null) {
-    this._publishStep = false
+    this._publishRevision = null
     const saved = this._canEdit ? this._drafts.get(file) : null
     this._file = file; this._edit = saved?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
     this._editRevision = saved?.revision ?? this._activeReview?.revision ?? null
@@ -204,7 +197,7 @@ export class NpmReview extends LitElement {
   _closePanel() {
     if (this._blocked) return
     if (this._panel === 'notes') { this._rememberEditor(); this._resetEditor(this._path) }
-    this.querySelector('dialog')?.close(); this._panel = null; this._publishStep = false
+    this.querySelector('dialog')?.close(); this._panel = null
   }
   _showPublished(review) {
     this._rememberEditor(); this._selectedReview = review.id; this._panel = null
@@ -302,7 +295,7 @@ export class NpmReview extends LitElement {
       if (key !== this._key) return null
       this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
       if (change.action === 'publish') {
-        this._selectedReview = review.id; this._panel = null; this._publishStep = false
+        this._selectedReview = review.id; this._panel = null
         this._comment = ''; this._status = ''; this._edit = null; this._notice = 'Published. Verdicts and notes are now frozen.'
       }
       this._rememberBase()
@@ -310,7 +303,6 @@ export class NpmReview extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message; return null }
     finally { if (key === this._key) this._saving = false }
   }
-  _save() { return this._saveFile(this._file) }
   _saveFile(file) {
     if (!this._canEdit || this._saving || this._loading) return null
     const editor = this._editorState(file), pending = this._pendingSaves.some(save => save.change.file === file), review = this._activeReview
@@ -348,18 +340,14 @@ export class NpmReview extends LitElement {
       if (!review) return
       const allowed = this._allowedVerdicts, continued = this._continuation?.source.status
       this._finalStatus = allowed.includes(continued) ? continued : allowed[0]; this._finalComment = review.comment ?? ''
-      this._publishRevision = review.revision; this._publishStep = true; this._panel = 'publish'
+      this._publishRevision = review.revision; this._panel = 'publish'
     } finally { this._finalizing = false }
   }
   _publish() {
-    const review = this._activeReview
-    if (!review || !this._summary.checkedFiles || this._needsPackageJson || this._unchangedContinuation || !this._publishStep || this._selectedTeams.size === 0 || this._unsaved || !this._allowedVerdicts.includes(this._finalStatus)) return
-    return this._change({ action: 'publish', reviewId: review.id, revision: this._publishRevision, teamIds: [...this._selectedTeams],
+    if (!this._canPublish) return
+    return this._change({ action: 'publish', reviewId: this._activeReview.id, revision: this._publishRevision, teamIds: [...this._selectedTeams],
       finalStatus: this._finalStatus, finalComment: this._finalComment })
   }
-  _editor() { return renderReviewEditor(this) }
-  _confirmation(review) { return renderReviewConfirmation(this, review) }
-  _published(review) { return renderReviewPublished(this, review) }
   render() {
     if (!this.entry?.npm || !this.details) return nothing
     const request = this.request?.bundle === this.entry.integrity ? this.request : {}

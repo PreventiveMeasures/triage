@@ -43,7 +43,7 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { EMPTY_REVIEW_BASE, NpmReview, REVIEW_DISPLAY_LIMITS, reviewContext } = await import('../ui/view/npm-review.js')
-const { renderReview, renderReviewEditor, reviewExtensions } = await import('../ui/view/npm-review-view.js')
+const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewPublished, reviewExtensions } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
@@ -111,7 +111,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   assert.equal(requests.at(-1)[1].comment, comment)
   assert.equal(page._unsaved, false)
   assert.equal(page._summary.coverage, 'partial')
-  assert.match(text(page._confirmation(page._activeReview)), /1 of 3 files checked/u)
+  assert.match(text(renderReviewConfirmation(page, page._activeReview)), /1 of 3 files checked/u)
 })
 
 test('Review uses the current comparison source for badges, dependency chips, and file alerts in both diff modes', () => {
@@ -126,10 +126,8 @@ test('Review uses the current comparison source for badges, dependency chips, an
     files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
   }
   for (const mode of ['code', 'diff']) {
-    const original = page.constructor
-    page.constructor = { displayLimits: { ...REVIEW_DISPLAY_LIMITS, maxBytes: mode === 'code' ? 0 : Infinity } }
+    page._mode = mode
     const result = renderReview(page)
-    page.constructor = original
     assert.match(text(result), mode === 'code' ? /<bundle-compare-code /u : /<bundle-compare-all /u)
     const rendered = text(result)
     const values = item => Array.isArray(item) ? item.flatMap(values) : item?.strings ? item.values.flatMap(values) : [item]
@@ -214,7 +212,7 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
   await page._beginPublish()
   assert.equal(page._finalStatus, 'request-changes')
   assert.deepEqual(page._allowedVerdicts, ['request-changes', 'reject'])
-  assert.match(text(page._confirmation(page._activeReview)), /Critical vulnerabilities detected/u)
+  assert.match(text(renderReviewConfirmation(page, page._activeReview)), /Critical vulnerabilities detected/u)
   page._selectedTeams = new Set(['one'])
   requests.length = 0
   page._finalStatus = 'accept'
@@ -223,7 +221,7 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
   limit = 'reject'
   page._finalStatus = 'request-changes'
   assert.match(text(renderReview(page)), /npm-review-primary npm-review-finalize reject/u)
-  assert.match(text(page._confirmation(page._activeReview)), /Malware detected/u)
+  assert.match(text(renderReviewConfirmation(page, page._activeReview)), /Malware detected/u)
   await page._publish()
   assert.equal(requests.length, 0, 'a finding arriving during confirmation prevents a now-disallowed verdict')
   await page._beginPublish()
@@ -340,10 +338,10 @@ test('only a sole eligible team is selected initially; Publish requires at least
   page._reviews = [{ ...review, entries: [...review.entries, { ...file, id: 'manifest', file: 'package.json', status: 'accept', comment: '' }] }]
   page._beginPublish()
   assert.equal(page._finalStatus, 'request-changes')
-  assert.match(text(page._confirmation(review)), /Partial review/u)
-  assert.doesNotMatch(text(page._confirmation(review)), /Only teams|Select at least one team/u, 'nothing said under the teams while one is selected')
+  assert.match(text(renderReviewConfirmation(page, review)), /Partial review/u)
+  assert.doesNotMatch(text(renderReviewConfirmation(page, review)), /Only teams|Select at least one team/u, 'nothing said under the teams while one is selected')
   page._selectedTeams = new Set()
-  assert.match(text(page._confirmation(review)), /Select at least one team to publish\./u)
+  assert.match(text(renderReviewConfirmation(page, review)), /Select at least one team to publish\./u)
   page._selectedTeams = new Set(['two'])
   page._finalStatus = 'accept'
   await page._publish()
@@ -355,12 +353,12 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.deepEqual(requests[0][1], { action: 'publish', reviewId: 'review', revision: 1, teamIds: ['two'], finalStatus: 'request-changes', finalComment: 'Check the second file too.' })
   assert.equal(page._canEdit, false)
-  assert.match(text(page._published(published)), /Continue in a new review/u)
-  assert.doesNotMatch(text(page._editor(base)), /<textarea/u, 'no editor for a published set')
-  assert.match(text(page._published(published, null)), /Publish to more teams/u)
-  assert.match(text(page._published(published, null)), /Revoke/u)
-  assert.doesNotMatch(text(page._published({ ...published, revokedAt: 300 }, null)), /Publish to more teams/u)
-  assert.match(text(page._published({ ...published, revokedAt: 300 }, null)), /Revoked/u)
+  assert.match(text(renderReviewPublished(page, published)), /Continue in a new review/u)
+  assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u, 'no editor for a published set')
+  assert.match(text(renderReviewPublished(page, published)), /Publish to more teams/u)
+  assert.match(text(renderReviewPublished(page, published)), /Revoke/u)
+  assert.doesNotMatch(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Publish to more teams/u)
+  assert.match(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Revoked/u)
 })
 
 test('a review without a base compares every package file against an empty package', async () => {
@@ -385,7 +383,9 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
   page.details = sources(['lib/index.js', 'lib/helper.ts'], ['new entry', 'helper'])
   answer = { reviews: [], teams: [] }
   page._ensureContext({ ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base })
-  assert.deepEqual(page._treeFiles.map(({ path, kind }) => ({ path, kind })), [{ path: 'lib/helper.ts', kind: 'renamed' }, { path: 'lib/index.js', kind: 'changed' }])
+  assert.deepEqual(page._files, ['lib/helper.ts', 'lib/index.js'])
+  assert.equal(page._diff.files.changed.find(row => row.path === 'lib/helper.ts').renamedFrom, 'lib/helper.js')
+  assert.equal(page._diff.files.changed.find(row => row.path === 'lib/index.js').renamedFrom, undefined)
 })
 
 test('Review resumes the latest saved base while explicit links and new reviews keep their selected base', async () => {
@@ -446,7 +446,7 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   page._comment = 'An edit against revision one'
   answer = { review: { ...review, revision: 3 } }
   requests.length = 0
-  await page._save()
+  await page._saveFile(page._file)
   assert.equal(requests[0][1].revision, 1, 'a later refresh cannot silently overwrite a concurrent edit')
   const published = { ...review, publishedAt: 200, revision: 4 }
   page._reviews = [published]
@@ -457,12 +457,12 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   assert.equal(requests.length, 0, 'continuing an unchanged review does not save a draft')
   assert.equal(page._reviews.length, 1)
   page._resetEditor('index.js')
-  await page._save()
+  await page._saveFile(page._file)
   assert.equal(requests.length, 0, 'leaving an unchanged note does not save a draft')
   const creating = Promise.withResolvers()
   answer = creating.promise
   page._comment = 'A new note'
-  const saving = page._save()
+  const saving = page._saveFile(page._file)
   assert.equal(requests[0][1].action, 'continue')
   answer = { review: { ...continued, revision: 2, entries: [{ ...continued.entries[0], comment: 'A new note' }] } }
   creating.resolve({ review: continued })
@@ -570,7 +570,7 @@ test('file navigation preserves unsaved edits and advances their revisions as fi
   page._selectFile('index.js')
   assert.equal(page._comment, 'Keep this unsaved edit')
   answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: page._comment }] } }
-  await page._save()
+  await page._saveFile(page._file)
   page._selectFile('other.js')
   assert.equal(page._status, 'accept')
   assert.equal(page._editRevision, 2, 'our save advances the revision of our other pending changes')
@@ -583,7 +583,7 @@ test('a failed save preserves the editor and does not move to the next file', as
   page._files = ['index.js', 'other.js']; page._path = 'index.js'
   page._resetEditor('index.js'); page._comment = 'Do not lose this'
   answer = new Error('Review changed in another tab')
-  await page._save()
+  await page._saveFile(page._file)
   assert.equal(page._path, 'index.js')
   assert.equal(page._comment, 'Do not lose this')
   assert.equal(page._dirty, true)
@@ -599,7 +599,7 @@ test('viewing a frozen set never loads or overwrites private unsaved buffers', (
   assert.equal(page._canEdit, false)
   assert.equal(page._comment, 'A note', 'the frozen file shows its saved content')
   assert.equal(page._unsaved, true, 'changing comparison cannot discard a private edit while its frozen file is shown')
-  assert.doesNotMatch(text(page._editor()), /<textarea/u)
+  assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u)
   page._resume()
   assert.equal(page._comment, 'Private pending note')
   assert.equal(page._canEdit, true)
@@ -865,8 +865,8 @@ test('partial publication requires a package.json verdict and offers the file fr
   await page._beginPublish()
   assert.equal(page._panel, 'publish')
   assert.equal(page._needsPackageJson, true)
-  assert.match(text(page._confirmation(page._activeReview)), />package.json<\/button> before publishing a partial review/u)
-  assert.match(text(page._confirmation(page._activeReview)), /type="submit"[^>]+\?disabled=true/u)
+  assert.match(text(renderReviewConfirmation(page, page._activeReview)), />package.json<\/button> before publishing a partial review/u)
+  assert.match(text(renderReviewConfirmation(page, page._activeReview)), /type="submit"[^>]+\?disabled=true/u)
   await page._publish()
   assert.equal(requests.length, 0)
   const manifest = { ...file, id: 'manifest', file: 'package.json', status: null, comment: 'Not checked yet.' }
@@ -875,7 +875,7 @@ test('partial publication requires a package.json verdict and offers the file fr
   assert.equal(requests.length, 0, 'notes alone do not check package.json')
   page._reviews = [{ ...review, entries: [file, { ...manifest, status: 'accept' }] }]
   assert.equal(page._needsPackageJson, false)
-  assert.doesNotMatch(text(page._confirmation(page._activeReview)), /before publishing a partial review/u)
+  assert.doesNotMatch(text(renderReviewConfirmation(page, page._activeReview)), /before publishing a partial review/u)
   answer = { review: { ...page._activeReview, publishedAt: 200 } }
   await page._publish()
   assert.equal(requests[0][1].action, 'publish')
@@ -890,7 +890,7 @@ test('displayed notes render star lists as bullets while the editor keeps the ty
   const page = component()
   page._resetEditor('index.js')
   page._comment = comment
-  page._editor()
+  renderReviewEditor(page)
   assert.equal(page._editorState('index.js').comment, comment)
 })
 
@@ -898,7 +898,7 @@ test('leaving a note saves its file without changing the active editor, and unch
   const page = component()
   page._files = ['index.js', 'other.js']; page._resetEditor('index.js')
   page._comment = 'Save on blur'
-  assert.doesNotMatch(text(page._editor()), /Save notes|Save &amp; next|Discard changes|Visible only to you until published/u)
+  assert.doesNotMatch(text(renderReviewEditor(page)), /Save notes|Save &amp; next|Discard changes|Visible only to you until published/u)
   page._selectFile('other.js')
   answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Save on blur' }] } }
   requests.length = 0
@@ -915,7 +915,7 @@ test('Finalize saves a focused note before opening confirmation with the saved r
   page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Save when finalizing'
   answer = pending.promise; requests.length = 0
   const finalizing = page._beginPublish()
-  assert.equal(page._publishStep, false)
+  assert.notEqual(page._panel, 'publish')
   assert.equal(requests[0][1].comment, 'Save when finalizing')
   pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Save when finalizing' }] } })
   await finalizing
@@ -948,7 +948,7 @@ test('Finalize saves all pending notes and uses the resulting verdict limit', as
   await first.promise
   await Promise.resolve()
   await Promise.resolve()
-  assert.equal(page._publishStep, false)
+  assert.notEqual(page._panel, 'publish')
   second.resolve({ review: { ...review, revision: 3, entries: [{ ...file, comment: 'First note' }, { ...file, id: 'other', file: 'other.js', status: 'reject', comment: 'Second note' }] } })
   await finalizing
   assert.equal(requests.length, 2)
@@ -963,7 +963,7 @@ test('a failed note save keeps Finalize out of confirmation and can be retried',
   page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Keep on failure'
   answer = new Error('Connection lost')
   await page._beginPublish()
-  assert.equal(page._publishStep, false)
+  assert.notEqual(page._panel, 'publish')
   assert.equal(page._comment, 'Keep on failure')
   assert.equal(page._error, 'Connection lost')
   answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Keep on failure' }] } }

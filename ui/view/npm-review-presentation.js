@@ -11,9 +11,10 @@ export const reviewDate = time => html`<time datetime=${new Date(time).toISOStri
 export const reviewProgress = (checked, total) => html`<div class="npm-review-progress" role="progressbar" aria-label="Files checked"
   aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${`width:${total ? checked / total * 100 : 0}%`}></span></div>`
 
-export function reviewFileStates(entries = []) {
+export function reviewFileStates(entries = [], nonTextFiles = []) {
+  const nonText = new Set(nonTextFiles)
   return new Map(entries.filter(entry => entry.file !== null).map(entry =>
-    [entry.file, { status: entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
+    [entry.file, { status: nonText.has(entry.file) ? null : entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
 }
 
 export function reviewNote(comment) {

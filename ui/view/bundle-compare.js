@@ -56,8 +56,7 @@ import { rootLabel } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { dirClass, formatDelta } from './bundle-compare-stats.js'
-import { compareSourceOptions } from './bundle-compare-picker.js'
-import { renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-header.js'
+import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { pkgColor } from './graph/utils.js'
 import { pkgLabel } from './bundle-pkg-of.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
@@ -706,20 +705,16 @@ class BundleCompare extends LitElement {
   // What this side may become: the open bundle and those it compares with,
   // or a source's choices.
   _baseOptions() {
-    if (this.source) return this._sourceOptions(this.source.choices ?? [])
+    if (this.source) return compareSourceOptions(this.source.choices ?? [])
     const base = (state.bundles ?? []).find(bundle => bundle.integrity === this.integrity)
     const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
     return this._bundleOptions(base ? [base, ...others] : others)
   }
 
-  _sourceOptions(options) {
-    return compareSourceOptions(options)
-  }
-
   // Build the picker option list, disambiguating duplicate names with a
   // short integrity suffix so two same-named bundles are tellable apart.
   _otherOptions() {
-    if (this.source) return this._sourceOptions(this.source.options)
+    if (this.source) return compareSourceOptions(this.source.options)
     return this._bundleOptions(bundleComparisonCandidates(state.bundles ?? [], this.integrity))
   }
 

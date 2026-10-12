@@ -49,8 +49,7 @@ export function comparisonFileList(base, other, diff) {
 
 // Optional source-size limits, independent of the rendered-row budget. Binary
 // bytes count as well: a large resource must not disappear from this decision.
-export function withinComparisonLimits(files, { maxBytes = Infinity, maxLines = Infinity } = {}) {
-  if (maxBytes === Infinity && maxLines === Infinity) return true
+export function withinComparisonLimits(files, { maxBytes, maxLines }) {
   let bytes = 0, lines = 0
   for (const { before, after } of files) {
     for (const content of [before, after]) {

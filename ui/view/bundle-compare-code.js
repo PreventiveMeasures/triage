@@ -351,7 +351,7 @@ export class BundleCompareCode extends LitElement {
       this._forced.clear()
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
-      this._entries = this._buildEntries()
+      this._entries = comparisonEntries(this.base, this.other, this.files, this.resolutions ?? [])
       this._counted = new Map()
       this._treeLimit = this.extensions?.treePageSize ?? Infinity
       // A path may name another pair of files now (another scope pairs a
@@ -409,12 +409,6 @@ export class BundleCompareCode extends LitElement {
     void row.offsetWidth
     row.classList.add('is-sought')
     row.addEventListener('animationend', () => row.classList.remove('is-sought'), { once: true })
-  }
-
-  // fileEntries, and every file that imports something that now resolves
-  // elsewhere, `repointed` listing those imports.
-  _buildEntries() {
-    return comparisonEntries(this.base, this.other, this.files, this.resolutions ?? [])
   }
 
   // A file shows while any of its kinds of change does: a modified file with

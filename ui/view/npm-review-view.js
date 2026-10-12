@@ -3,10 +3,9 @@ import { live } from 'lit/directives/live.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
-import { renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-header.js'
+import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
-import { compareSourceOptions } from './bundle-compare-picker.js'
-import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { reviewBadge, reviewDate, reviewFileStates, reviewNote, reviewProgress, reviewTitle, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
@@ -103,7 +102,7 @@ export function renderReviewConfirmation(page, review) {
           : 'Select at least one team to publish.'}</p>`}</fieldset>
       ${errorMessage(page)}</div>
     <footer class="npm-review-dialog-footer"><p>Publishing freezes your verdicts and notes.<br>You can continue in a new review to make changes.</p>
-      <button type="submit" class=${finalizeClass(page)} ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._needsPackageJson || page._unchangedContinuation || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
+      <button type="submit" class=${finalizeClass(page)} ?disabled=${busy(page) || !page._canPublish}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
     </footer>
   </form>`
 }
@@ -153,8 +152,9 @@ function panel(page) {
 // Review decorates the shared comparison tree and viewer. It never renders a
 // second tree or reimplements source/chip wiring.
 export function reviewExtensions(page) {
-  const states = page._fileStates
-  if (page._treeProgress?.states !== states || page._treeProgress.files !== page._files) {
+  const entries = page._shownReview?.entries, files = page._files, nonTextFiles = page._nonTextFiles
+  if (page._treeProgress?.entries !== entries || page._treeProgress?.files !== files || page._treeProgress?.nonTextFiles !== nonTextFiles) {
+    const states = reviewFileStates(entries, nonTextFiles)
     const directories = new Map()
     let checked = 0
     for (const path of page._files) {
@@ -167,9 +167,9 @@ export function reviewExtensions(page) {
         directories.set(dir, counts)
       }
     }
-    page._treeProgress = { states, files: page._files, directories, checked }
+    page._treeProgress = { entries, files, nonTextFiles, states, directories, checked }
   }
-  const { directories, checked } = page._treeProgress
+  const { states, directories, checked } = page._treeProgress
   return {
     railLabel: 'Files', treeLabel: 'Review files', collapseLabel: 'Collapse folders',
     searchLabel: 'Find a file', searchPlaceholder: 'Find a file…',
@@ -199,7 +199,7 @@ export function renderReview(page) {
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
     ${renderComparisonViewer({ base: page._base, other: page.details, diff: page._diff, source: page.source, path: page._path,
       baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package', otherName: `${page.entry.npm.name}@${page.entry.npm.version}`,
-      select: path => page._selectFile(path), extensions: reviewExtensions(page), limits: page.constructor.displayLimits,
+      select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode,
     })}
     <span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`
 }
