@@ -210,7 +210,12 @@ test('reviews recheck private access to both packages, including before publicat
   await h.db.setTeamDependencyReview(adminId, 'team', true)
   const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'index.js', status: 'reject', comment: 'Do not upgrade' } })
   assert.equal(saved.status, 200)
+  const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
+  assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].id, saved.body.review.id)
+  assert.equal((await h.send(latest)).body.review.id, saved.body.review.id)
   await h.db.setTeamNpmScopes(adminId, 'team', [])
+  assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews, [])
+  assert.equal((await h.send(latest)).body.review, null)
   assert.equal((await h.send(url(context))).status, 404)
   assert.equal((await h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: saved.body.review.id, revision: 1, teamIds: ['team'] } })).status, 404)
 })
@@ -278,7 +283,7 @@ test('discard requires author, CSRF and current revision, without fetching packa
     assert.equal((await h.send(path, { body: bad })).status, 400)
   }
   assert.equal((await h.send(path, { body: { ...body, revision: 2 } })).status, 409)
-  assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews.length, 1)
+  assert.equal((await h.db.listOwnDependencyReviews(h.sessions.triage.userId, null)).reviews.length, 1)
   assert.equal((await h.send(path, { body })).status, 200)
   assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews, [])
   assert.equal((await h.send(path, { body })).status, 409)
@@ -286,6 +291,7 @@ test('discard requires author, CSRF and current revision, without fetching packa
 
 test('latest review is specific to the author and exact target, across different bases', async t => {
   const h = await fixture(t), sid = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
+  registry(t, [packageOf('lib', '2.0.0', {}), packageOf('other-lib', '1.0.0', {})])
   const context = { ecosystem: 'npm', package: 'lib', version: '2.0.0', integrity: 'sha512-current',
     basePackage: null, baseVersion: null, baseIntegrity: null }
   const create = (patch, time) => h.db.changeDependencyReview({ ...context, ...patch }, sid, { action: 'start', reviewId: null, revision: null }, time)
@@ -302,4 +308,77 @@ test('latest review is specific to the author and exact target, across different
   assert.equal(response.status, 200)
   assert.equal(response.body.review.id, latest.id)
   assert.equal(response.body.review.basePackage, 'other-lib')
+})
+
+
+test('review saves use displayed paths after root moves and retain non-text restrictions', async t => {
+  const h = await fixture(t)
+  const before = packageOf('review-move', '1.0.0', { 'a.js': 'a', 'b.js': 'b', 'old.js': 'old', 'old.bin': Buffer.from([0, 255]) })
+  const after = packageOf('review-move', '2.0.0', { 'src/a.js': 'a', 'src/b.js': 'b', 'package.json': '{}' })
+  registry(t, [before, after])
+  const context = { ecosystem: 'npm', package: after.doc.name, version: after.doc.version, integrity: after.doc.dist.integrity,
+    basePackage: before.doc.name, baseVersion: before.doc.version, baseIntegrity: before.doc.dist.integrity }
+  const save = (file, status, comment = '') => h.send('/api/npm/reviews', { body: { ...context, action: 'save', file, status, comment } })
+  for (const path of ['old.js', 'src/a.js', 'missing.js']) {
+    const response = await save(path, 'accept')
+    assert.equal(response.status, 400)
+    assert.equal(response.body.error, 'unknown-review-file')
+  }
+  const saved = await save('src/old.js', 'accept')
+  assert.equal(saved.status, 200, JSON.stringify(saved.body))
+  const binary = await save('src/old.bin', 'accept')
+  assert.equal(binary.status, 400)
+  assert.equal(binary.body.error, 'non-text-review-file')
+  const note = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: saved.body.review.id,
+    revision: saved.body.review.revision, file: 'src/old.bin', status: null, comment: 'Removed binary' } })
+  assert.equal(note.status, 200)
+  await h.db.createTeam('team', 'Team', Date.now())
+  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: true })
+  await h.send('/api/admin/teams/set-dependency-review', { who: 'admin', body: { teamId: 'team', enabled: true } })
+  const manifest = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: note.body.review.id,
+    revision: note.body.review.revision, file: 'package.json', status: 'accept', comment: '' } })
+  assert.equal(manifest.status, 200)
+  const published = await h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: manifest.body.review.id,
+    revision: manifest.body.review.revision, finalStatus: 'reject', teamIds: ['team'] } })
+  assert.equal(published.status, 200, JSON.stringify(published.body))
+  assert.deepEqual(published.body.review.files, ['package.json', 'src/old.bin', 'src/old.js'])
+  assert.deepEqual(published.body.review.nonTextFiles, ['src/old.bin'])
+  assert.equal(published.body.review.coverage, 'partial')
+})
+
+test('review lists recheck target access and session after registry reads, preserving pagination', async t => {
+  const h = await fixture(t)
+  withToken(t)
+  const pkg = { ...packageOf('@secret/listed', '1.0.0', { 'index.js': 'secret' }), private: true }
+  registry(t, [pkg])
+  await h.db.createTeam('team', 'Team', Date.now())
+  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: true })
+  const sid = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
+  const admin = hashToken(h.sessions.admin.setCookie.split(';')[0].slice(4))
+  await h.db.setTeamNpmScopes(admin, 'team', ['@secret'])
+  const context = { ecosystem: 'npm', package: pkg.doc.name, version: pkg.doc.version, integrity: pkg.doc.dist.integrity,
+    basePackage: null, baseVersion: null, baseIntegrity: null }
+  const review = await h.db.changeDependencyReview(context, sid, { action: 'start', reviewId: null, revision: null }, Date.now())
+  const next = { time: review.time, id: review.id }
+  t.mock.method(h.db, 'listOwnDependencyReviews', () => Promise.resolve({ reviews: [review], next }))
+  assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].id, review.id)
+  // Revocation during even a cached registry lookup must be enforced before returning notes.
+  const listScopes = h.db.listUserNpmScopes.bind(h.db)
+  let reads = 0
+  t.mock.method(h.db, 'listUserNpmScopes', async user => {
+    if (++reads === 2) await h.db.setTeamNpmScopes(admin, 'team', [])
+    return listScopes(user)
+  })
+  const hidden = await h.send('/api/npm/reviews/mine')
+  assert.equal(hidden.status, 200)
+  assert.deepEqual(hidden.body, { reviews: [], next })
+  const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
+  assert.equal((await h.send(latest)).body.review, null)
+  await h.db.setTeamNpmScopes(admin, 'team', ['@secret'])
+  reads = 0
+  t.mock.method(h.db, 'listUserNpmScopes', async user => {
+    if (++reads === 1) await h.db.setUserRole(user, 'none')
+    return listScopes(user)
+  })
+  assert.equal((await h.send('/api/npm/reviews/mine')).status, 401)
 })

@@ -2600,6 +2600,34 @@ function found<T>(value: T | null | undefined): T {
   return value
 }
 
+// Lists must enforce the same target and base access as the review itself,
+// including permission changes while the registry requests are in flight.
+async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[]): Promise<T[] | null> {
+  const controller = new AbortController()
+  const onClose = () => { if (!res.writableEnded) controller.abort() }
+  res.on('close', onClose)
+  try {
+    const reader = await npmReader(deps, cookie)
+    if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    const documents = new Map<string, Promise<NpmVersionDocument | null>>()
+    const read = (name: string, version: string) => {
+      const key = `${name}@${version}`
+      if (!documents.has(key)) documents.set(key, readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal))
+      return documents.get(key)!
+    }
+    const packages = await Promise.all(reviews.map(review => Promise.all([
+      read(review.package, review.version), ...(review.basePackage ? [read(review.basePackage, review.baseVersion!)] : []),
+    ])))
+    const current = await npmReader(deps, cookie)
+    if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
+  } catch (error) {
+    if (controller.signal.aborted) return null
+    if (error instanceof NpmPackageError) { sendJson(res, error.status, { error: error.message }); return null }
+    throw error
+  } finally { res.off('close', onClose) }
+}
+
 // Read the same target-version evidence as the viewer. Missing upstream
 // reports impose no extra verdict restriction; detected findings do.
 async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReader, doc: NpmVersionDocument, signal: AbortSignal) {
@@ -2706,18 +2734,18 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       const loads = [doc, ...base ? [base] : []].map(loadNpmFiles)
       try {
         const files = await Promise.all(loads.map(load => load.result))
-        const reviewedFile = change.action === 'save' ? change.entry.file : null
-        if (change.action === 'save' && !files.some(list => list.some(file => file.path === reviewedFile))) { sendJson(res, 400, { error: 'unknown-review-file' }); return }
         const maps = files.map(list => new Map<string, unknown>(npmFileRows(list).map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
         const after = maps[0]!, before = maps[1] ?? new Map<string, unknown>()
-        if (change.action === 'save' && change.entry.status !== null && !isReviewableFile(before.get(change.entry.file!), after.get(change.entry.file!))) {
-          sendJson(res, 400, { error: 'non-text-review-file' }); return
-        }
+        const diff = computeBundleDiff(before, after, () => '.')
+        const changed: { path: string; basePath?: string }[] = [...diff.files.onlyBase, ...diff.files.onlyOther, ...diff.files.changed]
+        const reviewable = (file: typeof changed[number]) => isReviewableFile(before.get(file.basePath ?? file.path), after.get(file.path))
+        const reviewedPath = change.action === 'save' ? change.entry.file : null
+        const reviewedFile = changed.find(file => file.path === reviewedPath)
+        if (change.action === 'save' && !reviewedFile) { sendJson(res, 400, { error: 'unknown-review-file' }); return }
+        if (change.action === 'save' && change.entry.status !== null && reviewedFile && !reviewable(reviewedFile)) { sendJson(res, 400, { error: 'non-text-review-file' }); return }
         if (change.action === 'publish') {
-          const diff = computeBundleDiff(before, after, () => '.')
-          const changed: { path: string; basePath?: string }[] = [...diff.files.onlyBase, ...diff.files.onlyOther, ...diff.files.changed]
           change.files = changed.map(file => file.path)
-          change.nonTextFiles = changed.filter(file => !isReviewableFile(before.get(file.basePath ?? file.path), after.get(file.path))).map(file => file.path)
+          change.nonTextFiles = changed.filter(file => !reviewable(file)).map(file => file.path)
         }
       } finally { loads.forEach(load => load.release()) }
     }
@@ -3327,7 +3355,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (!isNpmPackageName(name) || !isNpmPackageSpec(version) || !integrity || integrity.length > 1024) {
         sendJson(res, 400, { error: 'bad-review-context' }); return
       }
-      sendJson(res, 200, { review: await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity }) }); return
+      const review = await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity })
+      const visible = await readableNpmReviews(res, deps, cookie, s.user.id, review ? [review] : [])
+      if (visible) sendJson(res, 200, { review: visible[0] ?? null })
+      return
     }
     if (path === '/api/npm/reviews/discard') {
       if (method !== 'POST') { send405(res, 'POST'); return }
@@ -3354,7 +3385,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if ((time !== null || id !== null) && (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100)) {
         sendJson(res, 400, { error: 'bad-review-cursor' }); return
       }
-      sendJson(res, 200, await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)); return
+      const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
+      if (reviews) sendJson(res, 200, { ...page, reviews })
+      return
     }
     if (path === '/api/npm/reviews') {
       await handleNpmReviews(req, res, deps, cookie, url.searchParams); return
