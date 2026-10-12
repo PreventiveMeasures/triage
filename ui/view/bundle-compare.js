@@ -260,7 +260,11 @@ class BundleCompare extends LitElement {
       let space = around(fill)
       const section = fill.closest('.bundle-compare-section')
       for (let el = section; el; el = el.nextElementSibling) {
-        const closed = el === section ? 0 : (el.matches('details') ? el.querySelector(':scope > summary') : el).getBoundingClientRect().height
+        // An open one to its heading's margin, as it sits closed.
+        const heading = el.matches('details[open]') && el.querySelector(':scope > summary')
+        const closed = el === section ? 0 : heading
+          ? heading.getBoundingClientRect().bottom + parseFloat(getComputedStyle(heading).marginBottom) - el.getBoundingClientRect().top
+          : el.getBoundingClientRect().height
         space += closed + parseFloat(getComputedStyle(el).marginBottom)
       }
       body.style.setProperty('--compare-fill-around', `${space}px`)
