@@ -290,6 +290,30 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print: This file couldn't be read as code\./u)
 })
 
+test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {
+  t.after(() => { state.bundleSourcePretty = false; all._setRenames(false) })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [{ 'dist/rn.min.js': `(function(){var Y=1;${'q(Y);'.repeat(250)}})();\n` },
+    { 'dist/rn.min.js': `(function(){var X=1;${'q(X);'.repeat(250)}})();\n` }])
+  code.base.managedId = 'b13'
+  code.other.managedId = 'b14'
+  pretty.set('b13:dist/rn.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n})();\n')
+  pretty.set('b14:dist/rn.min.js', '(function () {\n  var X = 1;\n  q(X);\n})();\n')
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'rn.min'
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  all._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const markup = renderText(all.render())
+  assert.match(markup, /Only renamed names changed in this file\./u, 'its one change hidden')
+  const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
+  assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
+  assert.match(bar, /aria-label="Mark renamed lines"/u)
+})
+
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
   const element = view()
   element._toggleKind('changed')
