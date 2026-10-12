@@ -136,7 +136,7 @@ export function npmFileReadability(path, text) {
 // `warn` for what to look into, `notice` for what can be hard to review by
 // reading it either way.
 export const READABILITY = new Map([
-  ['binary', { name: 'Not UTF-8', tag: 'Not UTF-8', mark: 'warn' }],
+  ['binary', { name: 'Binary', tag: 'Binary', mark: 'warn' }],
   ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
   ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],

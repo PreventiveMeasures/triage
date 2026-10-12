@@ -3592,7 +3592,7 @@ npm-downloads-chart {
 }
 .npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Files that can be hard to review by reading them, marked in their tags and
-   chips: `warn` for what to look into (not UTF-8, control characters,
+   chips: `warn` for what to look into (binary, control characters,
    unexpected long lines), `notice` for minified code and source maps. */
 :is(.npm-extension, .npm-encoding-tag).is-warn {
   color: var(--text);
@@ -3680,6 +3680,12 @@ a.npm-compare-publisher {
 .npm-extension.npm-compare-provenance {
   color: var(--text);
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
+}
+/* The open version deprecated: a chip with no value to color, so red text
+   and all, as an unpopular package's downloads tier reads. */
+.npm-extension.npm-compare-deprecated {
+  color: color-mix(in srgb, var(--critical) 55%, var(--text));
+  background: color-mix(in srgb, var(--critical) 10%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 50%, var(--border));
 }
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {

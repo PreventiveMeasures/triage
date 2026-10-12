@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -76,6 +76,9 @@ function npmSocketReport(entry) {
 // copyleft or unusual license's 70, as AGPL's or WTFPL's; most are 100).
 const SOCKET_SCORES = [['supplyChain', 'Supply chain', 85, 85], ['vulnerability', 'Vulnerability', 85, 85], ['quality', 'Quality', 70, 80],
   ['maintenance', 'Maintenance', 70, 80], ['license', 'License', 80, 80]]
+// Socket's maintenance score for a deprecated version, for that alone: one no
+// lower says no more than Compare's Deprecated chip does.
+const DEPRECATED_MAINTENANCE = 50
 
 // A score's tint: green from `good`, then 50 and over, and under 50, that
 // one in red; a full score's number green.
@@ -445,17 +448,18 @@ export const npmCompareFiles = {
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: a publisher that changed, provenance
-// lost, an open version under two weeks old (npmRecentRelease), the
-// advisories that affect either,
-// Socket's scores either has under its bar (SOCKET_SCORES), and the
+// (`other`), each side's details: an open version npm says is deprecated,
+// a publisher that changed, provenance lost, an open version under two
+// weeks old (npmRecentRelease), the advisories that affect either,
+// Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
+// a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
 export function npmCompareBadges(base, other) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [publisherBadge(sides), provenanceBadge(sides), recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting),
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting),
     popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
@@ -478,6 +482,13 @@ const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
 const severityOf = advisory => SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
 // The most severe of `advisories`, undefined for none.
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
+
+// The open version, where npm says it is deprecated: its message in the
+// tooltip, as the Overview lists it (npmDeprecation).
+function deprecatedBadge({ manifest }) {
+  if (!manifest?.deprecated) return nothing
+  return html`<li><span class="npm-extension npm-compare-deprecated" data-tooltip=${npmDeprecation(manifest.deprecated)}>Deprecated</span></li>`
+}
 
 // The npm account that published each version, where npm says for both and
 // they differ, as when a package changes hands, or is taken over: linking
@@ -576,6 +587,7 @@ function socketBadges([from, to], affecting) {
     const [before, after] = scores
     if (after === null || after >= bar) return []
     if (key === 'vulnerability' && !(affecting && vulnerabilityBeyond(after, affecting[1], bar))) return []
+    if (key === 'maintenance' && to.manifest?.deprecated && after >= DEPRECATED_MAINTENANCE) return []
     return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(after, good)}`} href=${npmSocketHref({ npm: to })} target="_blank" rel="noopener noreferrer"
       data-tooltip=${`Socket's ${label.toLowerCase()} score: ${before ?? 'none'} for ${from.version}, ${after} for ${to.version}`}
       .tooltipContent=${compareTip(`Socket's ${label.toLowerCase()} score`, [from, to], scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`

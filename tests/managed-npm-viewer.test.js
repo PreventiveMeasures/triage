@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmDeprecation, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -319,6 +319,18 @@ test('install scripts run in npm\'s order, node-gyp\'s where a binding.gyp has n
   assert.deepEqual(npmInstallScripts({ installScripts: { install: 'prebuild-install' } }, gyp), [['install', 'prebuild-install']])
   assert.deepEqual(npmInstallScripts({ installScripts: { preinstall: 'x' } }, gyp), [['preinstall', 'x']], 'a preinstall of its own stops it too')
   assert.deepEqual(npmInstallScripts({}), [])
+})
+
+test('npm\'s placeholder deprecation reads as its first sentence; any other message as written', () => {
+  const placeholder = 'Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.'
+  assert.equal(npmDeprecation(placeholder), 'Package no longer supported.')
+  assert.equal(npmDeprecation(` ${placeholder.replace('. ', '.  ')}\n`), 'Package no longer supported.', 'spacing aside')
+  assert.equal(npmDeprecation('Use @scope/next instead. Contact Support at https://www.npmjs.com/support for more info.'),
+    'Use @scope/next instead. Contact Support at https://www.npmjs.com/support for more info.', 'an author\'s own message is not trimmed')
+  assert.equal(npmDeprecation('Package no longer supported.'), 'Package no longer supported.')
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const entry = npmPackageEntry({ ...data, manifest: { ...data.manifest, deprecated: placeholder } })
+  assert.match(text(npmOverviewMeta(entry)), /<dt>Deprecated<\/dt><dd class="npm-deprecated">Package no longer supported\.<\/dd>/u, 'as the Overview lists it')
 })
 
 test('a version\'s publish date reads with how long ago it was: days, then months, then years', () => {
