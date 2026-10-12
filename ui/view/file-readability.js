@@ -34,9 +34,10 @@ export function npmTextEncoding(text) {
 export const NPM_LONG_LINE = 1000
 // Prose, which wraps where it is read: its long lines are paragraphs. By its
 // extension (Markdown, text), or its name alone (`LICENSE-MIT`, `CHANGES`; a
-// prose extension after it is one), not code named alike (`lib/history.js`,
-// `dist/notice.min.js`), which can be minified as any.
-export const NPM_PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*)?)$/iu
+// dot in it only a version's, `LICENSE-LGPL2.1`; a prose extension after it
+// is one), not code named alike (`lib/history.js`, `dist/notice.min.js`),
+// which can be minified as any.
+export const NPM_PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*(?:\.\d[^/.]*)*)?)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.
