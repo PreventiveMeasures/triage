@@ -613,7 +613,7 @@ export class BundleCompareCode extends LitElement {
     // whose indentation is part of its code (indentationMatters), nor in one
     // where that would hide blanks of more than one kind changing
     // (hidesMixedWhitespace): those are diffed with them shown.
-    const indented = indentationMatters(path) || indentationMatters(basePath)
+    const indented = indentationMatters(path, contents.after) || indentationMatters(basePath, contents.before)
     let found = diffed(prefs.ignoreWhitespace && !indented)
     const mixed = prefs.ignoreWhitespace && !indented && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)

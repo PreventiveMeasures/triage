@@ -232,9 +232,10 @@ Lines always wrap. Code can hide whitespace changes as
 at its end, reads as unchanged, while blanks put between other characters or
 taken from between them still show, as in `/tmp` to `/ tmp` inside a string
 or `return x` to `returnx`, which `diff -w` would hide. None are hidden in a
-file whose indentation is part of its code (Python, YAML, Makefiles,
-CoffeeScript, Pug, Haml, Slim, Sass, Stylus, Nim, Haskell, Elm) or whose tabs
-part its fields (TSV), nor in one where hiding them would hide blanks of more
+file whose indentation is part of its code (Python, Cython, Starlark and the
+build files written in them, YAML, Makefiles, CoffeeScript, Pug, Haml, Slim,
+Sass, Stylus, Nim, Haskell, Elm; told by name, or by a script's `#!` line
+naming Python or CoffeeScript) or whose tabs part its fields (TSV), nor in one where hiding them would hide blanks of more
 than one kind changing between the same two characters, such as spaces
 turned to tabs or a run of tabs and spaces made longer: its changes all
 show, and the toggle is off for it, saying why. The toggle is offered only

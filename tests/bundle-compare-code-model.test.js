@@ -67,12 +67,18 @@ test('what diff -b would hide: whether it hides a change, and one mixing kinds o
 })
 
 test('files whose indentation is part of their code are told by name', () => {
-  for (const path of ['tools/gen.py', 'stubs/a.PYI', '.github/workflows/ci.yml', 'docker-compose.yaml', 'Makefile', 'sub/GNUmakefile', 'rules.mk', 'views/a.pug', 'styles/a.sass', 'data/a.tsv']) {
+  for (const path of ['tools/gen.py', 'stubs/a.PYI', 'ext/a.pyx', 'rules.bzl', '.github/workflows/ci.yml', 'docker-compose.yaml', 'Makefile', 'makefile', 'sub/GNUmakefile', 'Makefile.am',
+    'rules.mk', 'SConstruct', 'src/SConscript', 'Snakefile', 'wscript', 'BUILD.bazel', 'views/a.pug', 'styles/a.sass', 'data/a.tsv']) {
     assert.equal(indentationMatters(path), true, path)
   }
-  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'README.md', 'makefile.js', 'pyproject.toml']) {
+  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'README.md', 'makefile.js', 'build.js', 'scripts/build', 'pyproject.toml', 'binding.gyp']) {
     assert.equal(indentationMatters(path), false, path)
   }
+  // A script told by its #! line.
+  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env python3\nimport sys\n'), true)
+  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env -S pypy3 -u\n'), true)
+  assert.equal(indentationMatters('bin/tool', '#!/usr/bin/env node\n// python\n'), false)
+  assert.equal(indentationMatters('bin/tool', null), false, 'nor a side that is not text')
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

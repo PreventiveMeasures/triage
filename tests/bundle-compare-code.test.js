@@ -561,6 +561,10 @@ test('whitespace changes all show in a file whose indentation is part of its cod
   assert.doesNotMatch(on, /Only whitespace changed/u)
   assert.match(on, /aria-pressed=false aria-disabled=true\s*aria-label=Its indentation is part of its code, so all of its whitespace changes show/u, 'its toggle off, saying why')
   assert.doesNotMatch(renderText(view('tools/same.py', files).render()), /aria-label=(?:Hide whitespace changes|Its indentation)/u, 'nor told where hiding would hide none')
+  const script = [{ 'bin/gen': '#!/usr/bin/env python3\nif a:\n    b()\n' }, { 'bin/gen': '#!/usr/bin/env python3\nif a:\n        b()\n' }]
+  const gen = renderText(view('bin/gen', script).render())
+  assert.match(gen, /aria-label=Its indentation is part of its code/u, 'a Python script told by its #! line alike')
+  assert.match(gen, /class=diff-row del[^]*class=diff-row add/u)
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const code = view(null, files)
   const all = new (customElements.get('bundle-compare-all'))()

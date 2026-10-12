@@ -96,10 +96,15 @@ export function whitespaceHidden(before, after) {
 }
 
 // Files whose indentation is part of what they say, in which no view hides a
-// whitespace change: Python's and YAML's nesting, a Makefile's recipes, the
-// indented template and style languages; and TSV, whose tabs part its fields.
-const INDENTED = /\.(?:py[iw]?|ya?ml|mk|coffee|litcoffee|cson|pug|jade|haml|slim|sass|styl|nim|hs|lhs|elm|tsv)$|(?:^|\/)(?:gnu)?makefile$/u
-export const indentationMatters = path => INDENTED.test(path.toLowerCase())
+// whitespace change: Python's and YAML's nesting (Cython's, Starlark's, and
+// the build files written in them), a Makefile's recipes, the indented
+// template and style languages; and TSV, whose tabs part its fields. Told by
+// name, or by a script's #! line naming Python or CoffeeScript.
+const INDENTED = /\.(?:py[iwx]?|pxd|pxi|bzl|star|ya?ml|mk|mak|make|coffee|litcoffee|cson|pug|jade|haml|slim|sass|styl|nim|hs|lhs|elm|tsv)$/u
+const INDENTED_NAMES = /(?:^|\/)(?:(?:GNU|BSD)?[Mm]akefile(?:\.(?:am|in))?|SConstruct|SConscript|Snakefile|wscript|(?:BUILD|WORKSPACE)(?:\.bazel)?)$/u
+const INDENTED_SCRIPT = /^#![^\n]*\b(?:python|pypy|coffee)/u
+export const indentationMatters = (path, text = '') => INDENTED.test(path.toLowerCase()) || INDENTED_NAMES.test(path)
+  || (typeof text === 'string' && INDENTED_SCRIPT.test(text))
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change
