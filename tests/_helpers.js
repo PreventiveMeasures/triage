@@ -87,11 +87,7 @@ export async function bootServer({ dir = null, env = {} } = {}) {
 // Resolve when the server prints its listening banner on stdout.
 // Surfaces stderr if the server exits before the banner appears so
 // boot failures show the real reason instead of timing out.
-// Exported for callers that spawn the server themselves (e.g. tests
-// that need to inspect raw stdout/stderr for additional assertions,
-// or that drive a custom kill schedule the standard teardown can't
-// express).
-export function awaitListeningPort(proc, timeoutMs = 5_000) {
+function awaitListeningPort(proc, timeoutMs = 5_000) {
   return new Promise((resolve, reject) => {
     let buf = ''
     let stderrBuf = ''

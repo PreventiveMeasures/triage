@@ -381,7 +381,7 @@ export function openWorkspace(workspaceId) {
       //       uploaded blobs we already decoded last time)
       // Both are gated on the tag being in the live `remoteTags`
       // set — stale entries from a peer-side delete don't leak into
-      // `remoteFileNames` / `remoteBundleIntegrities`.
+      // the discovered names / integrities.
       const cached = loadPresenceCache(workspaceId)
       let cacheMutated = false
       // Hydrate `baselines` from the persisted cache BEFORE the
@@ -721,7 +721,7 @@ export function isInRemote(workspaceId, fileName) {
 // (e.g., the user just dropped a file onto a workspace; the
 // workspace blob hasn't been re-read yet). Best-effort — silently
 // no-ops if the workspace isn't open or its keys haven't derived.
-export async function trackFile(workspaceId, fileName) {
+async function trackFile(workspaceId, fileName) {
   const entry = sessions.get(workspaceId)
   if (!entry || entry.fileTags.has(fileName)) return
   if (entry.ready && !entry.keys) await entry.ready
@@ -745,7 +745,7 @@ export function isBundleInRemote(workspaceId, integrity) {
 // Pre-warm the bundle tag cache. Mirrors `trackFile` for bundles —
 // called when a bundle is freshly attached to a workspace, so a
 // follow-up `isBundleInRemote` check has the tag ready.
-export async function trackBundle(workspaceId, integrity) {
+async function trackBundle(workspaceId, integrity) {
   const entry = sessions.get(workspaceId)
   if (!entry || entry.bundleTags.has(integrity)) return
   if (entry.ready && !entry.keys) await entry.ready
@@ -782,24 +782,6 @@ export function onAutoDownloaded(cb) {
 export function onBundleAutoDownloaded(cb) {
   bundleAutoDownloadListeners.add(cb)
   return () => bundleAutoDownloadListeners.delete(cb)
-}
-
-// Enumerate the workspace's remote inventory by fileName. The wire
-// `resourceTag` is HMAC and one-way, so names are only known for
-// tags we've successfully `fetchByTag`-ed. The presence module
-// fires off those fetches in the background on workspace open + on
-// every objstore-put broadcast (see `ensureRemoteNames`); the
-// returned array reflects whatever's been decoded so far.
-//
-// Sync to keep the render path simple: the cloud-chunk count is
-// pinned to `remoteCount` (which uses the full `remoteTags` set,
-// including not-yet-decoded ones), while `remoteFileNames` drives
-// the "downloadable" subset. Forged tags (decrypt-fails) never
-// land in `remoteNameByTag` so they drop off this list silently.
-export function remoteFileNames(workspaceId) {
-  const entry = sessions.get(workspaceId)
-  if (!entry) return []
-  return Array.from(entry.remoteNameByTag.values())
 }
 
 // Announce that the local copy of `fileName` is about to change and be
@@ -850,10 +832,15 @@ export function remoteCount(workspaceId) {
   return entry.remoteTags.size
 }
 
-// Async — completes any pending `fetchByTag` discovery for the
-// workspace's current remote inventory and returns the resulting
-// names. The download dialog calls this on open so the UI doesn't
-// race the background discovery.
+// The workspace's remote inventory by fileName. The wire `resourceTag`
+// is HMAC and one-way, so names are only known for tags we've
+// successfully `fetchByTag`-ed; the presence module fires those off in
+// the background on workspace open and on every objstore-put broadcast
+// (see `ensureRemoteNames`). This completes any pending discovery for
+// the current inventory and returns the resulting names; the download
+// dialog calls it on open so the UI doesn't race the background
+// discovery. Forged tags (decrypt-fails) never land in
+// `remoteNameByTag`, so they drop off this list silently.
 export async function discoverRemoteFileNames(workspaceId) {
   const entry = sessions.get(workspaceId)
   if (!entry) return []
@@ -861,27 +848,6 @@ export async function discoverRemoteFileNames(workspaceId) {
   if (!entry.session) return []
   await ensureRemoteNames(entry)
   return Array.from(entry.remoteNameByTag.values())
-}
-
-// Enumerate peer-uploaded bundle integrities discovered via
-// `fetchByTag`. Like `remoteFileNames`, returns whatever the
-// background discovery worker has classified so far. The workspace
-// badge's "M cloud" bundle count uses this for the actionable
-// (downloadable) subset; the total remote count via `remoteCount`
-// covers ALL tags (reports + bundles + unclassified).
-export function remoteBundleIntegrities(workspaceId) {
-  const entry = sessions.get(workspaceId)
-  if (!entry) return []
-  return Array.from(entry.remoteBundleByTag.values())
-}
-
-// Total number of remote BUNDLES (classified subset of remoteTags).
-// `remoteCount` covers everything; this narrows to the bundle slice
-// for the workspace badge's bundles chunk.
-export function remoteBundleCount(workspaceId) {
-  const entry = sessions.get(workspaceId)
-  if (!entry) return 0
-  return entry.remoteBundleByTag.size
 }
 
 // Awaits discovery of every peer-uploaded bundle then returns the

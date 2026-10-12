@@ -100,7 +100,7 @@ export function npmListedReadabilityTag(readability) {
 
 // A file's tags of how it reads: its control and invisible characters and
 // long lines, where it has them, then its tag.
-export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
+const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
 
 // What a file of a version (`details`) is beyond how it reads, as risk read
 // it (file-risk.js fileRiskOf), before its tag: Large, a code file of

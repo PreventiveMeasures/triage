@@ -254,7 +254,7 @@ function untangleBands(bands, edges, byId) {
 
 // Packages left out of the drawn flow, counted over the whole model so Large
 // and focus never change whether they show (see crowded-packages.js).
-export function sizeFlowHiddenPackages(model) {
+function sizeFlowHiddenPackages(model) {
   const pkg = id => model.byId.get(id).pkg
   return crowdedPackages(model.edges.map(e => [pkg(e.from), pkg(e.to)]), model.packages ? MAX_PACKAGE_EDGES : MAX_FILE_EDGES)
 }

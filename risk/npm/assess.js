@@ -15,7 +15,7 @@ import { npmFilesDiff } from './diff.js'
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-export const RISK_VERSION = 2
+const RISK_VERSION = 2
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or

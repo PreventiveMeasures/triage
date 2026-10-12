@@ -120,7 +120,7 @@ const WHITESPACE_KEPT = {
 const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
 // Renamed names are hidden in JavaScript alone, what a minifier renames: in
 // another language a short word (a CSS selector, a tag, prose) is no binding.
-export const renamable = path => /\.[cm]?js$/iu.test(path)
+const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
 // Whether a text was minified, as read here (file-readability.js
 // npmFileReadabilityRead), its short names then a minifier's, not its

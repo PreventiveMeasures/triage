@@ -141,7 +141,7 @@ async function readRequestBody(req: IncomingMessage): Promise<Buffer | null> {
   return Buffer.concat(chunks)
 }
 
-export async function handleNpmAdvisories(
+async function handleNpmAdvisories(
   deps: NpmProxyDeps,
   req: IncomingMessage,
   res: ServerResponse,

@@ -29,7 +29,7 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // orange what any of its files runs beyond itself that `runs-code` doesn't
 // name, kept from the version compared with (`kept-runs-code`). A renamed
 // file by its old path; one renamed alone, unchanged, holds what it held.
-export function npmFileFindings(base, other, files) {
+function npmFileFindings(base, other, files) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
   // A file it adds was none before, whatever the one compared with holds at
@@ -60,7 +60,7 @@ export function npmFileFindings(base, other, files) {
 // with's named in none of its, each `{ host, path, line }`, the file it is
 // first named in and its line: a file unchanged names what it named, so the
 // files the open version adds or changes hold any it names anew.
-export function npmNewHosts(base, other, files) {
+function npmNewHosts(base, other, files) {
   const found = new Map(), known = npmVersionHosts(base)
   for (const { path } of [...files.onlyOther, ...files.changed]) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {

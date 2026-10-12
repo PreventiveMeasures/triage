@@ -3,7 +3,7 @@ import { LitElement, css, html, nothing } from 'lit'
 const LIST_ICON = html`<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7M3 4h.01M3 8h.01M3 12h.01"/></svg>`
 const ISOLATE_ICON = html`<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M7 5v4M5 7h4"/></svg>`
 
-export class ScanDepthToggle extends LitElement {
+class ScanDepthToggle extends LitElement {
   static properties = { isolate: { type: Boolean }, vertical: { type: Boolean, reflect: true } }
   constructor() { super(); this.isolate = false; this.vertical = false }
   _select(isolate) {

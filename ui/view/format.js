@@ -97,11 +97,6 @@ export function revalidateKind(f) {
 // come OFF is the narrower question `canDropRevalidation` asks below.
 export function hasRevalidateField(f) { return revalidateKindOf(f) !== '' }
 
-// Is this row the pass itself — again raw, because taking the layer
-// off means dropping exactly these rows (group.js), which can't be
-// done through a reader that has already stopped seeing them.
-export function isRevalidationRow(f) { return revalidateKindOf(f) === 'revalidation' }
-
 // May the layer come off for the loaded set — i.e. is the "App"
 // switch offered at all (render.js)?
 //
@@ -279,7 +274,7 @@ export function stampUpstreamFindings(reports) {
 // count. `dependencies` counts only when it IS the configured deps dir
 // — it is too ordinary a folder name to treat as a marker on a project
 // that doesn't use it that way.
-export function hasDependencyMarker(file) {
+function hasDependencyMarker(file) {
   const s = typeof file === 'string' ? file : ''
   return NODE_MODULES_RE.test(s) || VENDOR_RE.test(s) || moduleRe.test(s)
 }
@@ -298,7 +293,7 @@ export function hasDependencyMarker(file) {
 // the file that isn't the one cited.
 const NODE_PKG_ROOT_RE = /^(.*(?:^|\/)node_modules\/(?:@[^/]+\/[^/]+|[^/]+))(?:\/|$)/u
 
-export function nodePackageRoot(file) {
+function nodePackageRoot(file) {
   return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
 }
 
@@ -354,7 +349,7 @@ export function stripCommonPathPrefix(paths) {
 // Uses the active `depsDir` (via the cached `stripRe`) so a
 // `dependencies/` path is only stripped when that's what the
 // project's vendor dir actually is.
-export function stripPackagePrefix(file) {
+function stripPackagePrefix(file) {
   return file.match(stripRe)?.[1] ?? file
 }
 

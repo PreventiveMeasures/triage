@@ -7,7 +7,7 @@ import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
 // tree of changed files. A link names the mode after the bundle or version
 // compared with; an older one's `diff`, a mode since folded into Code,
 // opens Code.
-export const COMPARE_MODES = new Set(['code', 'diff'])
+const COMPARE_MODES = new Set(['code', 'diff'])
 export const compareModeOf = mode => COMPARE_MODES.has(mode) ? 'code' : 'overview'
 // A route's `compareMode` field, where `mode` is one; none for the Overview.
 export const compareModeField = mode => COMPARE_MODES.has(mode) ? { compareMode: 'code' } : {}

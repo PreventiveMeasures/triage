@@ -8,7 +8,7 @@ import { npmAlias, npmDependencySource, npmRegistrySpec } from './specs.js'
 import { npmInstallScripts } from './install-scripts.js'
 
 // The kinds of dependency a manifest names, by its field (npmDependencies).
-export const NPM_DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
+const NPM_DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
 
 // A version's dependencies, each `{ name, range, kind, opens }`, in name
 // order: `kind` null for a plain dependency, else 'peer' or 'optional';

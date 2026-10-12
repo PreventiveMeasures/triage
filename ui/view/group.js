@@ -51,7 +51,7 @@ export { mergeDuplicateFields, mergeReportDuplicateFields } from '../../common/f
 // report (synthetic / single-file loads) fall back to an empty name;
 // ignoring still works, but the persistence path can't separate them
 // by report.
-export function findingReport(f) {
+function findingReport(f) {
   return f?._reportName ?? ''
 }
 

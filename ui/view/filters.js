@@ -527,7 +527,7 @@ function npmPackageOfFinding(f) {
 // it does not change the mode itself. These two filter predicates are kept
 // separate because they answer different questions and are offered in
 // different modes.
-export function appLensActive() {
+function appLensActive() {
   return state.showRevalidation !== false && !state.upstreamOnly
 }
 
@@ -565,7 +565,7 @@ export function isAppStackedGroup(group) {
 
 // isSecurity is propagated from full original rows before App/code/upstream
 // projection. A hidden source or refuted tab still classifies its whole row.
-export function isSecurityGroup(group) { return group.some((f) => f.isSecurity === true) }
+function isSecurityGroup(group) { return group.some((f) => f.isSecurity === true) }
 
 export function hasSecurityContrast(groups) {
   return groups.some(isSecurityGroup) && groups.some((g) => !isSecurityGroup(g))

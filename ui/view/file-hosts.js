@@ -7,9 +7,8 @@ import { fileRiskOf } from './file-risk.js'
 import { linesNote, onlyLine, opensAt } from './file-runs-code.js'
 
 
-// The hosts a version's file names and the exfiltration services it names, as
-// risk read it (file-risk.js fileRiskOf).
-export const npmFileHosts = (details, path) => fileRiskOf(details, path).hosts
+// The exfiltration services a version's file names, as risk read it
+// (file-risk.js fileRiskOf).
 export const npmFileExfiltration = (details, path) => fileRiskOf(details, path).exfiltration
 
 // The services any of `founds` names, by name, in their order: `webhook.site, Telegram`.

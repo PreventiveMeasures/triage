@@ -46,7 +46,7 @@ export function readImportedTriageBucket(entry) {
 // workspace-export.js so MD-imported findings line up with the
 // persisted triage keys. Only drives the conflict dialog UI, so
 // callers may skip it when no conflicts are possible.
-export async function buildImportedFindingLookup(reportEntries) {
+async function buildImportedFindingLookup(reportEntries) {
   const lookup = new Map()
   for (const r of reportEntries ?? []) {
     if (typeof r?.content !== 'string') continue

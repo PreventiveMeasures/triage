@@ -23,7 +23,6 @@ function fixture({ encrypted = false, unlocked = false } = {}) {
     unlockEncryption: () => { calls.push('unlock'); return false },
     listFiles: () => { calls.push('listFiles'); return ['report.md'] },
     getKind: () => undefined,
-    getFileKinds: names => new Map(names.map(name => [name, deps.getKind(name)])),
     hasStoredBundleBytes: () => { calls.push('hasStoredBundleBytes'); return true },
     listBundles: () => { calls.push('listBundles'); return [{ name: 'source.map', integrity: 'sha512-test' }] },
     readFile: () => { calls.push('readFile'); return '# Report\nOriginal contents 🐈\n' },

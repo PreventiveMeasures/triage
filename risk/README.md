@@ -20,7 +20,7 @@ const assessment = await assessNpm('axios', '1.14.1', {
 })
 ```
 
-What of an assessment holds whatever the time is `npmLastingRisk(other, base?)`, of versions held as the viewer holds one, and `npmAssessmentOf` makes an assessment of it with what is told fresh: the managed server's, and a test's of versions it holds.
+What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` (`npm/assess.js`), of versions held as the viewer holds one, and `npmAssessmentOf` makes an assessment of it with what is told fresh: the managed server's, and a test's of versions it holds.
 
 `assessNpm` reads npm's registry and downloads API itself, and keeps what it reads in `cache`, each record under its own type, for the caller to route each type where it belongs:
 
@@ -28,7 +28,7 @@ What of an assessment holds whatever the time is `npmLastingRisk(other, base?)`,
 | --- | --- | --- | --- |
 | `npm/tarballs` | `<name>@<version>` | a version's tarball, its bytes (upstream's `getTarball`, checked against its integrity) | never |
 | `risk/npm/versions` | `<name>@<version>` | what its document says: manifest, publish time, dist | never |
-| `risk/npm/packages` | `<name>` | its deprecated versions, when its first version was published | asked again after an hour |
+| `risk/npm/packages` | `<name>` | its deprecated versions | asked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
 | `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |

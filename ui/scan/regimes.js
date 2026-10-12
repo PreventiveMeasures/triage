@@ -1,7 +1,7 @@
 import { defaultEffort } from '../view/scan-models.js'
 
 export const REGIME_MODES = ['security', 'generic', 'correctness']
-export const regimeKey = regime => JSON.stringify([regime.mode, regime.model, regime.effort, regime.isolate])
+const regimeKey = regime => JSON.stringify([regime.mode, regime.model, regime.effort, regime.isolate])
 
 export function sharedRegimeModel(regimes) {
   const first = regimes[0]

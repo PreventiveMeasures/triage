@@ -37,12 +37,6 @@ const NONCE_LEN = 12
 const KEY_LEN = 32
 const KDF_INFO = 'deepview-passkey.v1.content-key'
 
-export type PasskeyRegistration = {
-  credentialId: string  // base64url
-  prfSalt: string       // base64url, 32 random bytes
-  prfOutput: Uint8Array // 32 bytes, returned ONCE — caller derives a session key immediately
-}
-
 // Probe: does this environment support WebAuthn AT ALL? PRF support
 // is a separate runtime question that only the actual register/get
 // call can answer authoritatively — Safari, for example, advertises

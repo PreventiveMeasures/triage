@@ -51,68 +51,23 @@ export const PRODUCER_LABELS = {
   'default': 'DeepView',
 }
 
-// Does this `source` marker name a producer we draw? Answers with the
-// marker itself (a REPORT_LOGOS / PRODUCER_LABELS key) or null.
+// The branded producer a FINDING carries: its marker (a REPORT_LOGOS /
+// PRODUCER_LABELS key) where it names one we draw, else null. Its own
+// `_source` marker decides it — ingest.js stamps that per finding, from
+// the finding's own marker when it has one and its report's otherwise,
+// so a re-imported export that mixed a product's rows with native runs
+// answers per row.
 //
 // Null covers both "DeepView's own" and "a marker nothing here draws":
 // the surfaces that mark findings with their producer — the finding
-// tabs' branded segment, the kanban card's corner, the workspace
-// header's chips — are the ones where DeepView is the unmarked
-// default, so they want one question answered ("is there a producer to
-// show here?"), not two. `'default'` is excluded explicitly because a
-// report CAN name it as its source, and that spelling of "mine" should
-// read the same as naming nothing.
-function brandOf(marker) {
-  return marker !== 'default' && Object.hasOwn(REPORT_LOGOS, marker) ? marker : null
-}
-
-// The branded producer a FINDING carries. Its own `_source` marker
-// decides it — ingest.js stamps that per finding, from the finding's
-// own marker when it has one and its report's otherwise, so a
-// re-imported export that mixed a product's rows with native runs
-// answers per row.
+// tabs' branded segment, the kanban card's corner — are the ones where
+// DeepView is the unmarked default, so they want one question answered
+// ("is there a producer to show here?"), not two. `'default'` is
+// excluded explicitly because a report CAN name it as its source, and
+// that spelling of "mine" should read the same as naming nothing.
 export function findingBrand(f) {
-  return brandOf(f._source ?? f.source)
-}
-
-// …and the distinct branded producers a LOADED VIEW carries, which is
-// what the workspace header's chip strip names. Takes the report
-// records (`state.reports`), not their findings, because the two
-// halves answer for each other:
-//
-//   - Each report's OWN `source`, so a product whose pass found
-//     nothing is still named. An empty report is a loaded report — the
-//     header's file chip counts it in its "N reports" — and "the Codex
-//     pass ran and came back clean" is a different thing to know than
-//     "no Codex pass here", which is all the strip could say when this
-//     read findings alone.
-//   - Each finding's own marker, because a report does not have to be
-//     of one product: a re-imported export can carry a product's rows
-//     beside native ones, and `findingBrand` is what knows that.
-//
-// Ordered by the report library's own producer table, not by the order
-// the reports were read in: the strip is the same chips whichever
-// report the sidebar loaded first, and it matches the order the
-// analyzer dropdown lists the same producers in. A key the table
-// doesn't name still gets a chip (after the known ones,
-// alphabetically) rather than being dropped — the same call
-// `analyzerLabel` makes for an unrecognized marker.
-export function loadedBrands(reports) {
-  const found = new Set()
-  for (const r of reports) {
-    const declared = brandOf(r.source)
-    if (declared !== null) found.add(declared)
-    for (const f of r.groups.flat()) {
-      const brand = findingBrand(f)
-      if (brand !== null) found.add(brand)
-    }
-  }
-  const order = Object.keys(SOURCE_LABELS)
-  const rank = (k) => {
-    const i = order.indexOf(k)
-    return i === -1 ? order.length : i
-  }
-  return [...found].toSorted((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+  const marker = f._source ?? f.source
+  return marker !== 'default' && Object.hasOwn(REPORT_LOGOS, marker) ? marker : null
 }
 
 // Resolve the bucket key (default / claude-security / codex-security

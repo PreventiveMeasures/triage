@@ -3,7 +3,7 @@
 // installs it at, its first component dropped, none escaping the package; a
 // text where it is UTF-8 with no NUL, else null. Held to the npm viewer's
 // bounds (server-managed/npm-packages.ts readNpmTar).
-export const MAX_PACKAGE_FILES = 20_000
+const MAX_PACKAGE_FILES = 20_000
 export const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 // What its tar stream may unpack to, its headers and padding beside its
 // files, as npm-loads.ts bounds it (MAX_TAR_BYTES).
@@ -51,7 +51,7 @@ const packagePath = raw => {
 }
 
 // The files of a tar archive, by path: their bytes.
-export function npmTarFiles(tar) {
+function npmTarFiles(tar) {
   const files = new Map()
   let longName = null, offset = 0, total = 0
   while (offset + 512 <= tar.length) {

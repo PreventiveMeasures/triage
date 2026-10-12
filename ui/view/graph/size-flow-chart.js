@@ -27,7 +27,7 @@ export function flowNodeTooltip(n, minSize) {
   return `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${versionTooltip(n)}${sizeFlowConnector(n, minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
 }
 
-export function flowEdgeTooltip(e, model) {
+function flowEdgeTooltip(e, model) {
   return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
 }
 
@@ -37,7 +37,7 @@ const flowBorder = zoom => Math.min(.5 / zoom, 13)
 // A bar's left and right inset borders. Row ends keep the full border; on thin
 // bars the sides shared with a neighbor give way first, and at least half of
 // every bar stays visible. Tops and bottoms always keep the full border.
-export function flowBarSides(node, full) {
+function flowBarSides(node, full) {
   const half = node.width / 2
   if (node.rowStart === node.rowEnd) {
     const side = Math.min(full, half / 2)

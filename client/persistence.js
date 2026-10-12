@@ -33,7 +33,7 @@
 // engines). Individual methods are still feature-checked per call —
 // engines shipped `estimate` / `persisted` / `persist` at different
 // times and workers/iframes can expose a subset.
-export function isStorageManagerSupported() {
+function isStorageManagerSupported() {
   return typeof navigator !== 'undefined' && typeof navigator.storage === 'object' && navigator.storage !== null
 }
 

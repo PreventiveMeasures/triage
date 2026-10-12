@@ -1,6 +1,6 @@
 // A quiet overview with direct connections emphasized on hover/selection.
 // Everything stays on canvas: 1,000 packages do not create 1,000 DOM nodes.
-export function dependencyNodeRadius(scale) { return Math.max(2.5, Math.min(6, 4.5 * Math.sqrt(scale))) }
+function dependencyNodeRadius(scale) { return Math.max(2.5, Math.min(6, 4.5 * Math.sqrt(scale))) }
 
 export function drawPackageDependencies(ctx, layout, pg, { theme, viewport, width, height, colorOf, dimmed, selected, hovered, query }) {
   const { k, tx, ty } = viewport

@@ -11,12 +11,12 @@ import { npmRunsCode, npmRunsCodeFlags } from './runs-code.js'
 export const SEVERITIES = ['critical', 'high', 'moderate', 'low', 'notice']
 
 // A label's mark (readability.js READABILITY) as a severity.
-export const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
+const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
 
 // What a file is flagged with in a list of files, as its tags there show it
 // (npmFileFlagTags, npmListedReadabilityTag): `{ name, mark }` each, its
 // tag's text and mark; none for what reads as most files do (UTF-8, ASCII).
-export function npmListedFlags(path, readability, bytes) {
+function npmListedFlags(path, readability, bytes) {
   const category = readability && npmTaggedCategory(readability)
   const listed = category && category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
   return [
@@ -33,7 +33,7 @@ export function npmListedFlags(path, readability, bytes) {
 // environment read out and publishing, critical; an exfiltration host it
 // names (hosts.js), a warning's; and its flags and how it reads
 // (npmListedFlags), a warning's or a notice, by their marks.
-export const npmStampsOf = ({ path, bytes, readability, runsCode, exfiltration }) => [...npmRunsCodeFlags(runsCode),
+const npmStampsOf = ({ path, bytes, readability, runsCode, exfiltration }) => [...npmRunsCodeFlags(runsCode),
   ...exfiltration ? [{ name: 'Exfiltration', severity: 'high' }] : [],
   ...npmListedFlags(path, readability, bytes).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))]
 

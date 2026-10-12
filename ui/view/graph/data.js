@@ -26,7 +26,7 @@ function buildAdj(edges) {
   return adj
 }
 
-export function topIssueOf(counts) {
+function topIssueOf(counts) {
   if (!counts) return null
   for (const sev of SEVERITIES) {
     if ((counts[sev] ?? 0) > 0) return sev

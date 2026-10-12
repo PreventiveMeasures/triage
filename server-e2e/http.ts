@@ -26,7 +26,7 @@ export const WS_UPGRADE_PATH = '/api/sync'
 // here commits + broadcasts WITHOUT taking over the client's SSE event-stream
 // (each in-band POST forces a stream takeover; see sse-server.ts). Sibling of
 // the WS upgrade path so one nginx `/api/*` block routes both.
-export const SAVE_REST_PATH = '/api/sync/save'
+const SAVE_REST_PATH = '/api/sync/save'
 function isUpgradePath(url: string | undefined): boolean {
   if (typeof url !== 'string') return false
   // Strip `?…` so clients can carry build / debug tags. Exact match

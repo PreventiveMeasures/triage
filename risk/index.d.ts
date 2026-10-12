@@ -4,11 +4,6 @@ import type { CacheStore } from '@preventive/upstream/npm.js'
 // How severe a stamp or a finding is, the most first: `critical` red, `high`
 // a warning's orange, `moderate` yellow, `low`, and a `notice`.
 export type Severity = 'critical' | 'high' | 'moderate' | 'low' | 'notice'
-export const SEVERITIES: readonly Severity[]
-
-// Which reading of a version an assessment kept is: one more whenever a
-// heuristic changes what it finds.
-export const RISK_VERSION: number
 
 // How old a version must be to be trusted unless said: two weeks, in ms.
 export const DEFAULT_MINIMUM_RELEASE_AGE: number
@@ -102,14 +97,4 @@ export interface NpmAssessment {
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
 
-// What of an assessment holds whatever the time, of versions held as the
-// viewer holds one, the open one against another, or alone.
-export function npmLastingRisk(other: unknown, base?: unknown): Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>
-
-// An assessment of that and what is told fresh: the open version's own
-// findings, and its dependencies added, as the managed server tells them.
-export function npmAssessmentOf(kept: Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>, own: Finding[], added?: DependencyRisk[]): Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>
-
-export function npmTooNew(published: string, options?: { minimumReleaseAge?: number; now?: number }): boolean
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown
-export function npmCompareFindings(base: unknown, other: unknown, files?: unknown, options?: Record<string, unknown>): Finding[]

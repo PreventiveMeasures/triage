@@ -14,7 +14,7 @@ import { NPM_PROSE, SOURCE_MAP } from './readability.js'
 import { JS_STRING_OR_COMMENT, NPM_MAX_FOUND, lineOf, npmIsScript } from './script.js'
 
 // How many hosts a file is told naming at most, the first it names.
-export const NPM_MAX_HOSTS = 1000
+const NPM_MAX_HOSTS = 1000
 
 // A URL's host: a name whose last label is letters (an internationalized
 // one's too, as written or as punycode), or an IPv4 address, after its
