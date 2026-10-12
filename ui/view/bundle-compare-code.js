@@ -107,12 +107,16 @@ const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', labe
 export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, markRenames: false }
 // The settings whether a diff of printed copies has rows depends on (_noteRowless).
 const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.markRenames}`
-// What hiding whitespace changes hides, as diff -b; and why a file whose
-// changes it would hide shows them all (_fileState).
-const HIDE_WHITESPACE = 'Hide whitespace changes, in code whose whitespace means nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with blanks added to a run of them or at its end, reads as unchanged; blanks put between other characters or taken from between them still show'
+// Hiding whitespace changes is diff -b, only in code whose whitespace means
+// nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with
+// blanks added to a run of them or at its end, reads as unchanged; blanks put
+// between other characters or taken from between them still show. The toggle
+// says it in a few words, and why a file whose changes it would hide shows
+// them all (_fileState).
+const HIDE_WHITESPACE = 'Hide whitespace changes'
 const WHITESPACE_KEPT = {
-  mixed: 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show',
-  unlisted: 'Whitespace changes are hidden only in code whose whitespace means nothing, as JavaScript, CSS or JSON: all of this file\'s show',
+  mixed: 'Mixed whitespace',
+  unlisted: 'Whitespace is significant',
 }
 // The format a stasis bundle records for one of its files, its own spelling
 // of the file's language; undefined for another kind of bundle, or a file it
@@ -1251,7 +1255,9 @@ export class BundleCompareCode extends LitElement {
   // a file has use for them: pretty-printing a minified file (`pretty` from
   // _pretty), a diff its layout, whitespace where hiding it hides a change
   // (`whitespace`) and, in JavaScript minified on both sides (`renames`,
-  // _generated), renamed names. Lines always wrap.
+  // _generated), renamed names. Hiding them gives the old side the new side's
+  // names wherever a minifier renamed a variable alike throughout, an old one
+  // no new one stands for named apart (r_old). Lines always wrap.
   _toggles(diffable, pretty = null, renames = false, reading = false, whitespace = null) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
@@ -1262,7 +1268,7 @@ export class BundleCompareCode extends LitElement {
         </span>
         ${whitespace ? this._whitespaceToggle(whitespace) : nothing}
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
-          data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for named apart (r_old)"
+          data-tooltip="Hide renamed names"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}
@@ -1401,22 +1407,25 @@ export class BundleCompareCode extends LitElement {
 
   // Hiding whitespace changes, as diff -b: off for a file whose changes it may
   // not hide (`whitespace` other than `hideable`, see _fileState), all of
-  // which show.
+  // which show. Named for what it does in every state; where it is off, why
+  // is its tooltip and accessible description.
   _whitespaceToggle(whitespace) {
     const kept = WHITESPACE_KEPT[whitespace]
     return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace && !kept)} aria-disabled=${kept ? 'true' : nothing}
-      aria-label=${kept ?? 'Hide whitespace changes'} data-tooltip=${kept ?? HIDE_WHITESPACE} @click=${() => { if (!kept) this._setWhitespace(!prefs.ignoreWhitespace) }}>
+      aria-label=${HIDE_WHITESPACE} aria-description=${kept ?? nothing} data-tooltip=${kept ?? HIDE_WHITESPACE} @click=${() => { if (!kept) this._setWhitespace(!prefs.ignoreWhitespace) }}>
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
     </button>`
   }
 
-  // Marking renamed lines rather than hiding them, on for a file that reads
-  // names (`reading`, see _fileState) whatever the viewer asks: off there
-  // only as it may be turned off for the others.
+  // Marking renamed lines rather than hiding them: the diff of the files as
+  // they are, the lines that differ in renamed names alone drawn faint and
+  // counted apart. On for a file that reads names (`reading`, see _fileState)
+  // whatever the viewer asks, as code that reads its own names can change what
+  // it does when they are renamed: off there only as it may be turned off for
+  // the others.
   _marksToggle(reading) {
     const kept = reading && !prefs.markRenames
-    const label = kept ? 'Its renamed lines are marked rather than hidden, as it reads names, which a rename changes'
-      : 'Mark renamed lines rather than hide them: the diff of the files as they are, the lines that differ in names renamed alone drawn faint and counted apart, as code that reads its own names can change what it does when they are renamed'
+    const label = kept ? 'Code reads names' : 'Mark renamed lines'
     return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.markRenames || reading)} aria-disabled=${kept ? 'true' : nothing}
       aria-label="Mark renamed lines" data-tooltip=${label} @click=${() => { if (!kept) this._setMarks(!prefs.markRenames) }}>
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3.5 3 3-6 6H3.5v-3zM2 14.5h12"/></svg>
