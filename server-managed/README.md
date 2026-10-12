@@ -232,22 +232,29 @@ a local or git install, and `node-gyp rebuild` beside a binding.gyp) are marked 
 the tree, each with its command, one new or changed saying so, and in its
 head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
-A script is labelled with what its code can run beyond itself, in its head
-and in the tree: `eval` and `Function` (with `new` or without), a string run
-as code, and `child_process`, other programs, each with the lines it is on,
-one the version compared with didn't hold (all of an added file's) saying
-so. A quick read, not a parse: its strings, regular expressions and comments
-set aside, `child_process` told by the string naming the module where code
-loads it (`require(…)`, `import`, `from`), and a declaration file (.d.ts)
-read as any TypeScript, as node runs it. A file naming a host malicious
-packages send what they take to is labelled Exfiltration, in its head and in
-the tree, as what it runs is: request catchers (webhook.site, Pipedream),
-out-of-band testing hosts (interactsh's `interact.sh` and `oast.*`, Burp
-Collaborator's), Telegram's bot API, Discord and Slack webhooks, Pastebin,
-ipinfo, and Bun's install script (`bun.sh/install`, now `bun.com/install`),
-which a worm ran its payload with; each with its lines, one the version
-compared with didn't name saying so. Any text but prose and a source map is
-read for them, comments and all.
+A script is labelled with what its code can do beyond itself, in its head
+and in the tree: run a string as code (`eval`, `Function` with `new` or
+without, `vm`, Module's `_compile` called or hooked), run other programs
+(`child_process`), reach for `credentials` (a path to `.npmrc`, `.ssh` or
+`.aws`, the name `NPM_TOKEN` or `GITHUB_TOKEN`, the environment's values read
+out whole, as `JSON.stringify(process.env)` or `Object.entries(process.env)`
+do, not handed to a program or its names listed) and `publish` to npm (`npm
+publish` run, the registry's `/-/whoami`, libnpmpublish, a PUT request in a
+file naming the registry's host), each with the lines it is on, one the
+version compared with didn't hold (all of an added file's) saying so. A
+quick read, not a parse: its strings, regular expressions and comments set
+aside, its strings read for the paths, names and commands they hold, a
+module (`vm`, `child_process`, libnpmpublish) told by the string naming it
+where code loads it (`require(…)`, `import`, `from`), and a declaration file
+(.d.ts) read as any TypeScript, as node runs it. A file naming a host
+malicious packages send what they take to is labelled Exfiltration, in its
+head and in the tree, as what it runs is: request catchers (webhook.site,
+Pipedream), out-of-band testing hosts (interactsh's `interact.sh` and
+`oast.*`, Burp Collaborator's), Telegram's bot API, Discord and Slack
+webhooks, Pastebin, ipinfo, and Bun's install script (`bun.sh/install`, now
+`bun.com/install`), which a worm ran its payload with; each with its lines,
+one the version compared with didn't name saying so. Any text but prose and
+a source map is read for them, comments and all.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
 `module`, `commonjs` and the rest, run as code, as is a file it records no
@@ -1301,9 +1308,10 @@ control. A version shows in the bundle view with four tabs:
   files every package has. A file an alert names is labelled with it, in
   its severity's color, in the Files list and in Compare's file heads and
   tree, each version by its own report; and a script with what its code can
-  run beyond itself (`eval`, `Function`, `child_process`), and a file with
-  Exfiltration where it names a host malicious packages send what they take
-  to, as Compare labels them, its lines in the tooltip. Under the facts, its languages, then its readable files
+  do beyond itself (`eval`, `Function`, `vm`, `_compile`, `child_process`,
+  `credentials`, `publish`), and a file with Exfiltration where it names a
+  host malicious packages send what they take to, as Compare labels them,
+  its lines in the tooltip. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
