@@ -359,6 +359,24 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.doesNotMatch(await badges(side('gained', '1.0.0', attested(undefined)), side('gained', '1.1.0', attested(true))), /npm-compare-provenance/u, 'not one it gained')
   assert.doesNotMatch(await badges(side('kept-attested', '1.0.0', attested(true)), side('kept-attested', '1.1.0', attested(true))), /npm-compare-provenance/u)
 
+  // The open version deprecated, its message in the tooltip, npm's
+  // placeholder to its first sentence.
+  const deprecated = message => ({ manifest: { deprecated: message } })
+  const gone = await badges(side('gone', '1.0.0'), side('gone', '1.1.0', deprecated('Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.')))
+  assert.match(gone, /^<ul [^>]*><li><span class="npm-extension npm-compare-deprecated" data-tooltip=Package no longer supported\.>Deprecated<\/span><\/li>/u, 'first')
+  assert.match(await badges(side('moved', '1.0.0'), side('moved', '1.1.0', deprecated('Use @scope/moved instead'))), /data-tooltip=Use @scope\/moved instead>Deprecated</u)
+  assert.doesNotMatch(await badges(side('undeprecated', '1.0.0', deprecated('Broken build')), side('undeprecated', '1.1.0')), /npm-compare-deprecated/u,
+    'not for the one compared with alone')
+  // Socket scores a deprecated version's maintenance 50 for that alone: its
+  // chip shows only lower, where it says more.
+  answers.socket['stale@1.1.0'] = { scores: scores({ maintenance: .5 }), alerts: [] }
+  const stale = await badges(side('stale', '1.0.0'), side('stale', '1.1.0', deprecated('Use fresh instead')))
+  assert.match(stale, /npm-compare-deprecated/u)
+  assert.doesNotMatch(stale, />Maintenance</u, 'no more than Deprecated says')
+  assert.match(await badges(side('stale', '1.0.0'), side('stale', '1.1.0')), />Maintenance<[^]*>– → 50</u, 'shown where it is not deprecated')
+  answers.socket['abandoned@1.1.0'] = { scores: scores({ maintenance: .3 }), alerts: [] }
+  assert.match(await badges(side('abandoned', '1.0.0'), side('abandoned', '1.1.0', deprecated('Unmaintained'))), />Maintenance<[^]*>– → 30</u, 'lower, as it says more')
+
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
   const ago = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()

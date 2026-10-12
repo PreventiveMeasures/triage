@@ -1272,7 +1272,10 @@ control. A version shows in the bundle view with four tabs:
   most don't move as its versions arrive, then wide enough for any it lists,
   each whole with its tags (up to 24 characters of them).
   At the end of its picker row, once the two are compared, chips flag what
-  calls for a look: a publisher that changed, where npm names the account
+  calls for a look: an open version npm says is deprecated, its message in
+  the tooltip (npm's placeholder, `Package no longer supported. Contact
+  Support at https://www.npmjs.com/support for more info.`, to its first
+  sentence, as the Overview lists it); a publisher that changed, where npm names the account
   that published each version and they differ (`~alice → ~bob`, as when a
   package changes hands, or is taken over), linking to the new one's
   profile; provenance lost, where npm lists provenance for the one compared
@@ -1295,7 +1298,8 @@ control. A version shows in the bundle view with four tabs:
   high one, 84 for one alone, and 25, its floor, for a critical one or many
   high), as where none are found, or a moderate one next to its 84; quality under 70 (a sabotaged release such as faker's 6.6.6 scores 38;
   most widely used packages 70 and up), maintenance under 70 (a deprecated or
-  abandoned package's 50; a finished one's 75 and up) and license under 80
+  abandoned package's 50; a finished one's 75 and up; for a deprecated open
+  version only under 50, its Deprecated chip saying as much) and license under 80
   (a copyleft or unusual license's 70, as AGPL's or WTFPL's); and the
   package's tier by downloads where it is orange or red (past the top
   20,000), its last complete month's downloads in its tooltip. Its Dependencies section, in place
