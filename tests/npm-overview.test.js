@@ -92,9 +92,9 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
   const notes = text => Object.fromEntries([...rendered(npmReadabilityFlags(npmFileReadability('lib/a.js', text))).matchAll(/data-tooltip=([^>]*)>(Controls|Invisible)</gu)]
     .map(([, note, tag]) => [tag, note]))
-  assert.deepEqual(notes('a\u001B\u202E\u001B'), { Controls: 'Control characters: U+001B \u00D72, U+202E \u00D71' })
-  assert.deepEqual(notes('x\u3164'), { Invisible: 'Invisible characters: U+3164 \u00D71' })
-  assert.deepEqual(notes('a\u001B \u3164\u3164'), { Controls: 'Control characters: U+001B \u00D71', Invisible: 'Invisible characters: U+3164 \u00D72' },
+  assert.deepEqual(notes('a\u001B\u202E\u001B'), { Controls: 'Control chars: U+001B \u00D72, U+202E \u00D71' })
+  assert.deepEqual(notes('x\u3164'), { Invisible: 'Invisible chars: U+3164 \u00D71' })
+  assert.deepEqual(notes('a\u001B \u3164\u3164'), { Controls: 'Control chars: U+001B \u00D71', Invisible: 'Invisible chars: U+3164 \u00D72' },
     'each kind its own tag, though found in one pass')
 })
 
@@ -165,7 +165,7 @@ test('the Overview finds a file under each label it has, counting it once, each 
   const warning = npmReadabilityWarning(mixed.entry, mixed.details)
   assert.match(rendered(warning), /<strong>4 of 5 files<\/strong>/u, 'each file once')
   assert.match(rendered(warning), /npm-readability-warning is-warn/u)
-  assert.deepEqual(chipsOf(warning), ['Control characters 1 is-warn', 'Invisible characters 1 is-warn', 'Long lines 2 is-warn', 'Minified 1 is-notice', 'Source maps 1 is-notice'],
+  assert.deepEqual(chipsOf(warning), ['Control chars 1 is-warn', 'Invisible chars 1 is-warn', 'Long lines 2 is-warn', 'Minified 1 is-notice', 'Source maps 1 is-notice'],
     'control and invisible characters each a chip of their own; long lines a warning where some are unexpected')
   assert.deepEqual(found(mixed), [['dist/min.js'], ['lib/hidden.js'], ['dist/min.js', 'lib/long.js'], ['dist/min.js'], ['dist/min.js.map']], 'the minified file under each of its labels')
   // Each file's tags in the list: all its labels, but Map, which a source map's name says.

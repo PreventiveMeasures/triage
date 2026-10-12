@@ -232,8 +232,8 @@ export const npmLabelMark = (readability, label) => label === 'long' && readabil
 // reading it either way.
 export const READABILITY = new Map([
   ['binary', { name: 'Binary', tag: 'Binary', mark: 'warn' }],
-  ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
-  ['invisible', { name: 'Invisible characters', tag: 'Invisible', mark: 'warn' }],
+  ['controls', { name: 'Control chars', tag: 'Controls', mark: 'warn' }],
+  ['invisible', { name: 'Invisible chars', tag: 'Invisible', mark: 'warn' }],
   ['long', { name: 'Long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
