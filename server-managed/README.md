@@ -1370,13 +1370,14 @@ control. A version shows in the bundle view with four tabs:
   each counting them where there are several, its tooltip alone listing
   them, each with its size, its longest line before and now, or what its
   fingerprint holds;
-  dependencies the open version takes from elsewhere than npm's
-  registry, as the Overview tags them, where the one compared with didn't, or
-  by another spec (`websocket (GitHub)`), each version's spec in its tooltip;
-  new dependencies nothing of the open version imports, as the Overview tells
+  `Non-registry deps`, dependencies the open version takes from
+  elsewhere than npm's registry, as the Overview tags them, where the one
+  compared with didn't, or by another spec, their names and each version's
+  spec in its tooltip; `Unused deps`, new dependencies
+  nothing of the open version imports, as the Overview tells
   (`plain-crypto-js`, which axios 1.14.1 added to run its postinstall), their
-  ranges in its tooltip, one that was another kind of dependency before not
-  new (the first two of either named, then how many more); an open version under two weeks old, as on
+  names and ranges in its tooltip, one that was another kind of dependency
+  before not new; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they

@@ -10,7 +10,7 @@ import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, factFile, npmAge, npmDependencies, npmDependencyChanges, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
-import { npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
+import { npmFlagDependencyChanges } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -599,16 +599,14 @@ function fileBadge(kind, label, rows, said, note) {
     <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
 
-// A chip's names: the first two, then how many more.
-const someNames = names => names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ')
-
-// The dependencies the open version takes from elsewhere than npm's
-// registry, where the one compared with didn't, or by another spec, each
-// with where from; and those it adds that nothing of it imports, which npm
-// installs all the same, its install scripts and all, as a dependency added
-// to run them would be (npm-dependency-checks.js npmFlagDependencyChanges,
-// as Compare's package.json flags each). Their specs in their tooltips:
-// each version's, for those from elsewhere.
+// As `Non-registry deps`, the dependencies the open version takes from
+// elsewhere than npm's registry, where the one compared with didn't, or by
+// another spec; and, as `Unused deps`, those it adds that nothing of it
+// imports, which npm installs all the same, its install scripts and all, as
+// a dependency added to run them would be (npm-dependency-checks.js
+// npmFlagDependencyChanges, as Compare's package.json flags each). Their
+// names and specs in their tooltips, each version's for those from
+// elsewhere.
 function dependencyBadges(base, other) {
   const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
   const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
@@ -622,8 +620,7 @@ function dependencyBadges(base, other) {
     chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
       data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
       .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
-      <span>${now.size === 1 ? 'Non-registry dependency' : 'Non-registry dependencies'}</span><span class="npm-extension-count">${someNames([...now].map(([name, spec]) =>
-        `${name} (${npmDependencySource(spec)})`))}</span></span></li>`)
+      Non-registry deps</span></li>`)
   }
   if (unimported.length > 0) {
     const { version } = other.npm
@@ -632,7 +629,7 @@ function dependencyBadges(base, other) {
       .tooltipContent=${compareTip(unimported.length === 1 ? 'New, and nothing imports it' : 'New, and nothing imports them', [other.npm],
         [html`<span class="compare-tip-specs">${unimported.map(({ name, range, kind }) => html`<span class="is-flagged">${name}: <code>${range}</code>${kind ? ` (${kind})` : ''}</span>`)}</span>`],
         `No code file of ${version} names ${unimported.length === 1 ? 'it' : 'them'} as an import would, nor does an install script; npm installs ${unimported.length === 1 ? 'it' : 'them'} all the same, running ${unimported.length === 1 ? 'its' : 'their'} install scripts`)}>
-      <span>${unimported.length === 1 ? 'Unimported dependency' : 'Unimported dependencies'}</span><span class="npm-extension-count">${someNames([...new Set(unimported.map(({ name }) => name))])}</span></span></li>`)
+      Unused deps</span></li>`)
   }
   return chips
 }
