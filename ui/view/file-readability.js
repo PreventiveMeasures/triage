@@ -336,7 +336,7 @@ export const npmReadabilityTag = readability => readability ? html`${npmReadabil
 // (npmFileFlagTags, npmListedReadabilityTag): `{ name, mark }` each, its
 // tag's text and mark; none for what reads as most files do (UTF-8, ASCII).
 export function npmListedFlags(path, readability, bytes) {
-  const category = readability && (readability.category === 'long' ? readability.kind : readability.category)
+  const category = readability && npmTaggedCategory(readability)
   const listed = category && category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
   return [
     ...npmLargeCode(path, bytes) ? [{ name: 'Large', mark: 'notice' }] : [],
