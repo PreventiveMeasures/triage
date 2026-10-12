@@ -1438,7 +1438,10 @@ control. A version shows in the bundle view with four tabs:
   compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
   each counting them where there are several, its tooltip alone listing
   them, each with its size, its longest line before and now, or what its
-  fingerprint holds; in orange, as install scripts are, the hosts the open
+  fingerprint holds; in orange, as the files' tags are, what any file of the
+  open version runs beyond itself that the red chip doesn't name, kept from
+  the one compared with (`Runs code`, the kinds named), its tooltip listing
+  each file with its kinds and their lines; in orange, as install scripts are, the hosts the open
   version's code names that the one compared with's named in none of its
   (`New hosts`, the host where it is one, else how many): a URL's in a
   script's strings, regular expressions and template literals, its comments

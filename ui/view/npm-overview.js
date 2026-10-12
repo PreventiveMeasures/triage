@@ -22,7 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags, npmRunsCodeWithout } from './file-runs-code.js'
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
@@ -646,7 +646,9 @@ const TIP_FILES = 8
 // file it changes that had no line over 200 characters and now has one over
 // 2,000 (npmBecameUnreadable), which the file's Long lines or Minified tag
 // says of it; and a file it adds or changes with an obfuscator's fingerprint
-// where the one compared with had none (npmObfuscation). By Compare's
+// where the one compared with had none (npmObfuscation). Then in orange, as
+// a file's tags are, what any of its files runs beyond itself that the red
+// chip doesn't name, kept from the version compared with. By Compare's
 // `files`, a renamed one by its old path; none until they are compared.
 function fileBadges(base, other, files) {
   if (!files || !base.json || !other.json) return []
@@ -668,6 +670,10 @@ function fileBadges(base, other, files) {
       .filter(row => row.added)
   }
   const exfiltrating = gained(npmFileExfiltration), runsCode = gained(npmFileRunsCode)
+  // What any of its files holds that the red chip doesn't name.
+  const flagged = new Set(runsCode.flatMap(row => npmRunsCodeFlags(row.added).map(({ name }) => name)))
+  const runs = [...bundleFilesAsMap(other)].map(([path, text]) => ({ path, found: npmRunsCodeWithout(npmFileRunsCode(other, path, text), flagged) }))
+    .filter(row => row.found)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
       'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
@@ -681,6 +687,9 @@ function fileBadges(base, other, files) {
       'Its longest line: none over 200 characters before, now one over 2,000'),
     fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
       'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
+    listBadge('is-warn npm-compare-kept-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found),
+      'What the open version\'s code does beyond itself, in any of its files, none of it new to a file',
+      npmRunsCodeKinds(runs.map(row => row.found))),
   ]
 }
 
