@@ -634,13 +634,18 @@ const TIP_FILES = 8
 function fileBadges(base, other, files) {
   if (!files || !base.json || !other.json) return []
   const [was, now] = [base, other].map(npmFilesRead)
-  const after = row => now.byPath.get(row.path), before = row => was.byPath.get(row.basePath ?? row.path)
+  // A file it adds was none before, whatever the one compared with holds at
+  // its path, which can be another file where Compare lays the two out under
+  // other roots (`package/a.js` read as `a.js`).
+  const added = new Set(files.onlyOther)
+  const after = row => now.byPath.get(row.path), before = row => added.has(row) ? null : was.byPath.get(row.basePath ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
   const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
   const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
   const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
   const runs = (details, path) => npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path))
-  const runsCode = [...files.onlyOther, ...changed].map(row => ({ path: row.path, added: npmRunsCodeAdded(runs(other, row.path), runs(base, row.basePath ?? row.path)) }))
+  const runsCode = [...files.onlyOther, ...changed]
+    .map(row => ({ path: row.path, added: npmRunsCodeAdded(runs(other, row.path), added.has(row) ? null : runs(base, row.basePath ?? row.path)) }))
     .filter(row => row.added)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),

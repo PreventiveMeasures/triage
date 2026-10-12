@@ -691,6 +691,11 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
   assert.doesNotMatch(await badges(other, base), /npm-compare-runs/u, 'none the other way: run code dropped')
   assert.doesNotMatch(await badges(base, version('1.0.1', { ...Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]])), 'lib/b.js': 'module.exports = x => eval(x) // more\n' })),
     /npm-compare-runs/u, 'nor for eval a file already held')
+  // Laid out under other roots (`package/` read as none), a file added at a
+  // path the one compared with held another file at is new all the same.
+  const rooted = version('2.0.0', { 'package/lib/a.js': 'eval(x)\nconst a = 1\n', 'package/index.js': 'module.exports = 1\n' })
+  const unrooted = version('2.1.0', { 'lib/a.js': 'eval(x)\nconst a = 1\n', 'index.js': 'module.exports = 1\n', 'package/lib/a.js': 'eval(y)\n' })
+  assert.match(await badges(rooted, unrooted), /npm-compare-runs[^]*?compare-tip-path">package\/lib\/a\.js<[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u)
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
