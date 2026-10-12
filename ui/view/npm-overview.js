@@ -585,15 +585,15 @@ function deprecatedBadge({ manifest }) {
 // known to publish one of npm's most downloaded packages (npm-packages.ts
 // npmManifest's `knownAccounts`), else orange; the chip grey where the open
 // version's is known, orange where neither is, and red where a known one gave
-// way to one that isn't. Its tooltip's note in two lines: that the account
-// changed, then what each is.
+// way to one that isn't. Its tooltip's note a line each: that the account
+// changed, then what each is (what the one before is on a line of its own).
 function publisherBadge([from, to]) {
   const now = to.manifest?.publisher, was = from.manifest?.publisher
   if (!was || !now || was === now) return nothing
   const [wasKnown, nowKnown] = [[from, was], [to, now]].map(([{ manifest }, account]) => manifest.knownAccounts?.includes(account) === true)
   const account = (name, known) => html`<span class=${`npm-compare-account ${known ? 'is-known' : 'is-unknown'}`}>~${name}</span>`
   const [tint, mark, which] = nowKnown ? ['is-to-known', ',', 'one that publishes one of npm\'s most downloaded packages']
-    : wasKnown ? ['is-from-known', ',', 'one that publishes none of npm\'s most downloaded packages, after one that does']
+    : wasKnown ? ['is-from-known', ',', html`one that publishes none of npm's most downloaded packages,<br>after one that does`]
     : ['is-to-unknown', ';', 'neither publishes one of npm\'s most downloaded packages']
   const note = html`A different npm account published the open version${mark}<br>${which}`
   return html`<li><a class=${`npm-extension npm-compare-publisher ${tint}`} href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
