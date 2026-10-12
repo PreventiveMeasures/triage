@@ -22,6 +22,17 @@ export async function myDependencyReviews(cursor, signal) {
   if (!response.ok) throw new Error(`Could not load your reviews (${response.status}).`)
   return body
 }
+export async function discardDependencyReview(reviewId, revision, csrfToken, signal) {
+  const generation = managedAppState.generation
+  const response = await managedFetch('/api/npm/reviews/discard', {
+    method: 'POST', credentials: 'same-origin',
+    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]),
+    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify({ reviewId, revision }),
+  })
+  const body = await response.json()
+  if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
+  if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not discard review (${response.status}).`)
+}
 export async function dependencyReviews(context, change, csrfToken, signal) {
   const generation = managedAppState.generation
   const params = new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))

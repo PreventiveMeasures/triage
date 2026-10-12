@@ -51,6 +51,9 @@ test('legacy notes become one editable note when continuing, without rewriting f
   assert.equal(continued.entries[0].comment, 'Both resolved.')
   assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
   assert.deepEqual((await db.listDependencyReviews(reviewContext, session.userId)).find(row => row.id === review.id).entries, frozen.entries)
+  await db.discardDependencyReview(sid, continued.id, continued.revision)
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(continued.id).n, 0)
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
 })
 
 

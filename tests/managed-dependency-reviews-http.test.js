@@ -145,3 +145,26 @@ test('a saved verdict can be cleared without adding a note, leaving publication 
   assert.equal(cleared.body.review.entries[0].status, null)
   assert.equal(cleared.body.review.entries[0].comment, '')
 })
+
+test('discard requires author, CSRF and current revision, without fetching package contents', async t => {
+  const h = await fixture(t)
+  const sid = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
+  const context = { ecosystem: 'npm', package: '@removed/private', version: '1.0.0', integrity: 'sha512-gone',
+    basePackage: null, baseVersion: null, baseIntegrity: null }
+  const review = await h.db.changeDependencyReview(context, sid, { action: 'save', reviewId: null, revision: null,
+    entryId: null, entry: { file: 'index.js', status: 'accept', comment: 'Checked.' } }, Date.now())
+  const body = { reviewId: review.id, revision: review.revision }, path = '/api/npm/reviews/discard'
+  assert.equal((await h.send(path)).status, 405)
+  assert.equal((await h.send(path, { body, who: 'anonymous' })).status, 401)
+  assert.equal((await h.send(path, { body, csrf: false })).status, 403)
+  assert.equal((await h.send(path, { body, who: 'view' })).status, 403)
+  assert.equal((await h.send(path, { body, who: 'admin' })).status, 409)
+  for (const bad of [{}, [], { ...body, reviewId: '' }, { ...body, reviewId: ['id'] }, { ...body, revision: '1' }, { ...body, revision: 0 }]) {
+    assert.equal((await h.send(path, { body: bad })).status, 400)
+  }
+  assert.equal((await h.send(path, { body: { ...body, revision: 2 } })).status, 409)
+  assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews.length, 1)
+  assert.equal((await h.send(path, { body })).status, 200)
+  assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews, [])
+  assert.equal((await h.send(path, { body })).status, 409)
+})

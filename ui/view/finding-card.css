@@ -1358,7 +1358,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   details:not([open]) > :not(summary) { display: block; }
   details::details-content { content-visibility: visible; }
   summary.section-label {
-    cursor: auto;
+    cursor: default;
     &::after { display: none; }
   }
   /* Both marks are offers to open something, and paper can't take

@@ -819,7 +819,7 @@ bundle-code-splitter {
   flex: none;
   position: relative; z-index: 1;
   width: 7px; margin-inline: -3px;
-  cursor: col-resize;
+  cursor: default;
   touch-action: none;
   user-select: none;
 
@@ -832,7 +832,7 @@ bundle-code-splitter {
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 }
 .bundle-code-view:has(> bundle-code-splitter.dragging) {
-  &, & * { cursor: col-resize; user-select: none; }
+  &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
    flexing to fill, Files / Code / Issues mode toggles pinned right.
@@ -1225,7 +1225,7 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-source-pretty-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
 /* Busy while its copy is asked for; red where that failed. */
-.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: progress; }
+.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: default; }
 .bundle-source-pretty-toggle.is-error { color: var(--critical); }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }

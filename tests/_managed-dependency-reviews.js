@@ -99,11 +99,25 @@ export async function checkDependencyReviews(db) {
   assert.deepEqual((await db.listDependencyReviews(reviewContext, users.alice.userId)).find(row => row.id === review.id).teams.map(team => team.id), ['one', 'two'])
   await db.removeTeamMember('one', users.bob.userId)
   assert.deepEqual(await db.listDependencyReviews(reviewContext, users.bob.userId), [], 'removed members lose team review access')
+  for (const who of ['bob', 'admin']) {
+    await assert.rejects(db.discardDependencyReview(users[who].sid, continued.id, continued.revision), /review-conflict/u, 'only the author can discard')
+  }
+  await assert.rejects(db.discardDependencyReview(users.alice.sid, continued.id, continued.revision - 1), /review-conflict/u, 'stale confirmation cannot discard newer edits')
+  await assert.rejects(db.discardDependencyReview(users.alice.sid, review.id, review.revision), /review-conflict/u, 'revoked sets stay frozen')
   await db.setUserRole(users.alice.userId, 'view')
   await assert.rejects(change(save(continued, null, 'accept')), /forbidden/u)
+  await assert.rejects(db.discardDependencyReview(users.alice.sid, continued.id, continued.revision), /forbidden/u)
   const own = await db.listOwnDependencyReviews(users.alice.userId, null)
   assert.deepEqual(new Set(own.reviews.map(item => item.id)), new Set([review.id, continued.id]))
   assert.deepEqual((await db.listOwnDependencyReviews(users.bob.userId, null)).reviews, [], 'My reviews never lists another author’s records')
+  await db.setUserRole(users.alice.userId, 'triage')
+  await db.discardDependencyReview(users.alice.sid, continued.id, continued.revision)
+  assert.deepEqual((await db.listOwnDependencyReviews(users.alice.userId, null)).reviews.map(item => item.id), [review.id])
+  await assert.rejects(change(save(continued, 'index.js', 'accept')), /review-conflict/u, 'an autosave cannot resurrect a discarded review')
+  await assert.rejects(db.discardDependencyReview(users.alice.sid, continued.id, continued.revision), /review-conflict/u)
+  const restarted = await change({ action: 'start', reviewId: null, revision: null })
+  assert.deepEqual(restarted.entries, [])
+  await db.discardDependencyReview(users.alice.sid, restarted.id, restarted.revision)
   await db.setTeamMember('one', users.outsider.userId, { dependencies: false, security: false })
   await checkCoverage(db, users.outsider.sid)
 }
@@ -136,6 +150,7 @@ async function checkCoverage(db, session) {
   review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: fourth.id,
     entry: { file: fourth.file, status: 'accept', comment: 'Checked now.' } })
   review = await change(publish({ status: 'accept-with-nits', comment: 'All files checked.' }))
+  await assert.rejects(db.discardDependencyReview(session, review.id, review.revision), /review-conflict/u, 'published sets cannot be discarded')
   assert.equal(review.coverage, 'full')
   assert.equal(review.checkedFiles, 4)
   assert.equal(review.totalFiles, 4)

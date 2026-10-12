@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 // Keep the real modal completion logic; only stub its document-level imports.
 mock.module('../ui/view/dom.js', { namedExports: { makeStackedModalError: cause => new Error('Modal conflict', { cause }) } })
 mock.module('../ui/view/tooltip.js', { namedExports: { installShadowTooltipListener() {} } })
-for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import', 'local-content-import', 'triage-comparison']) {
+for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'discard-review', 'local-triage-import', 'local-content-import', 'triage-comparison']) {
   await import(`../ui/view/dialogs/${name}-dialog.js`)
 }
 
@@ -26,7 +26,7 @@ function createDialog(name) {
 }
 
 test('delete and detach prompts focus Cancel and settle once for every completion path', () => {
-  for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle']) {
+  for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'discard-review']) {
     for (const action of ['_onConfirm', '_onCancel', '_onClose']) {
       const view = createDialog(name)
       view.dialog.focusInitial()
@@ -124,4 +124,18 @@ test('triage comparison is dismissible and closes when its session is cancelled'
   controller.abort()
   assert.deepEqual(results, [{ confirmed: false }])
   dialog.disconnectedCallback()
+})
+
+test('discard review confirmation cancels when its author session or page changes', () => {
+  for (const beforeOpen of [false, true]) {
+    const { dialog, results } = createDialog('discard-review')
+    const controller = new AbortController()
+    dialog.signal = controller.signal
+    if (beforeOpen) controller.abort()
+    dialog.firstUpdated()
+    if (!beforeOpen) controller.abort()
+    dialog._onConfirm()
+    assert.deepEqual(results, [{ confirmed: false }])
+    dialog.disconnectedCallback()
+  }
 })

@@ -611,7 +611,7 @@ button:focus-visible {
   padding: .2rem .3rem .2rem 1.4rem;
   color: var(--muted);
   font-size: .78rem; font-style: italic;
-  cursor: help;
+  cursor: default;
 
   & .file-icon { flex-shrink: 0; color: var(--muted); font-style: normal; }
   & .file-label {

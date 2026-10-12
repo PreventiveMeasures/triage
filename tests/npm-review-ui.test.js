@@ -7,10 +7,16 @@ import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
 let answer = { reviews: [], teams: [] }
+let discardConfirmation = { confirmed: false }
+const confirmations = []
+mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
+  openDiscardReviewDialog: props => { confirmations.push(props); return Promise.resolve(discardConfirmation) },
+} })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
+  discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
 } })
 mock.module('../ui/view/npm-package.js', { namedExports: {
   loadNpmVersion() {}, npmCompareSource: () => ({ choices: [], options: [] }),
@@ -88,6 +94,54 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   assert.match(text(copy.render()), /Copy audit Markdown/u)
   copy.review = { ...full, revokedAt: 300 }
   assert.equal(text(copy.render()), '')
+})
+
+test('My reviews discards only unpublished reviews after confirmation and keeps rows on failure', async () => {
+  const page = new DependencyReviewList()
+  page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
+  page._key = 'alice'
+  const published = { ...review, id: 'published', publishedAt: 200 }
+  page._reviews = [review, published]
+  assert.match(text(page._row(review)), />Discard</u)
+  assert.doesNotMatch(text(page._row(published)), />Discard</u)
+  requests.length = 0
+  confirmations.length = 0
+  discardConfirmation = { confirmed: false }
+  await page._discard(review)
+  assert.equal(requests.length, 0)
+  assert.equal(page._reviews.length, 2)
+  assert.equal(confirmations[0].reviewTitle, '@scope/lib 1.0.0 -> 2.0.0')
+  discardConfirmation = { confirmed: true }
+  answer = new Error('This review changed or was published in another tab.')
+  await page._discard(review)
+  assert.match(page._error, /changed or was published/u)
+  assert.equal(page._reviews.length, 2)
+  assert.equal(page._discarding, null)
+  answer = { ok: true }
+  await page._discard(review)
+  assert.deepEqual(requests.at(-1).slice(0, 3), ['review', 1, 'csrf'])
+  assert.deepEqual(page._reviews, [published])
+  const count = requests.length, prompts = confirmations.length
+  for (const row of [published, { ...published, revokedAt: 300 }, { ...review, user: 'bob' }]) await page._discard(row)
+  page.session.role = 'view'
+  await page._discard(review)
+  assert.equal(requests.length, count)
+  assert.equal(confirmations.length, prompts)
+})
+
+test('discard confirmation cannot delete a review after leaving My reviews', async () => {
+  const page = new DependencyReviewList()
+  page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
+  page._reviews = [review]
+  let resolve
+  discardConfirmation = new Promise(done => { resolve = done })
+  requests.length = 0
+  const pending = page._discard(review)
+  page.disconnectedCallback()
+  resolve({ confirmed: true })
+  await pending
+  assert.equal(requests.length, 0)
+  assert.deepEqual(page._reviews, [review])
 })
 
 test('only a sole eligible team is selected initially; Publish requires at least one and saved changes', async () => {
@@ -174,7 +228,7 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   assert.equal(page._reviews.find(row => row.id === 'review').publishedAt, 200)
 })
 
-test('file navigation preserves unsaved edits and publication stays blocked until every edit is saved', async () => {
+test('file navigation preserves unsaved edits and advances their revisions as files are saved', async () => {
   const page = component()
   page._files = ['index.js', 'other.js']
   page._resetEditor('index.js')
@@ -182,8 +236,6 @@ test('file navigation preserves unsaved edits and publication stays blocked unti
   page._selectFile('other.js')
   assert.equal(page._dirty, false)
   assert.equal(page._unsaved, true)
-  await page._beginPublish()
-  assert.equal(page._publishStep, false)
   page._status = 'accept'
   page._selectFile('index.js')
   assert.equal(page._comment, 'Keep this unsaved edit')
@@ -201,7 +253,7 @@ test('a failed save preserves the editor and does not move to the next file', as
   page._files = ['index.js', 'other.js']; page._path = 'index.js'
   page._resetEditor('index.js'); page._comment = 'Do not lose this'
   answer = new Error('Review changed in another tab')
-  await page._save(true)
+  await page._save()
   assert.equal(page._path, 'index.js')
   assert.equal(page._comment, 'Do not lose this')
   assert.equal(page._dirty, true)
@@ -279,8 +331,6 @@ test('autosaves allow editing and file navigation, preserving newer notes after 
   page._editFile('index.js', { _comment: 'Typed during the save' })
   page._selectFile('other.js')
   assert.equal(page._path, 'other.js')
-  page._beginPublish()
-  assert.equal(page._publishStep, false)
   pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
   await saving
   assert.equal(page._path, 'other.js')
@@ -400,30 +450,6 @@ test('a response never changes the displayed frozen review or discards pending p
   assert.equal(page._editRevision, 2)
 })
 
-test('Save & next does not override file navigation during a pending save', async () => {
-  const page = component(), pending = Promise.withResolvers()
-  page._files = ['index.js', 'next.js', 'last.js']; page._path = 'index.js'; page._resetEditor('index.js')
-  page._comment = 'Updated note'; answer = pending.promise
-  const saving = page._save(true)
-  page._selectFile('last.js')
-  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Updated note' }] } })
-  await saving
-  assert.equal(page._path, 'last.js')
-})
-
-test('discard during autosave removes only the newer edits, keeping the verdict being saved', async () => {
-  const page = component(), pending = Promise.withResolvers()
-  page._resetEditor('index.js'); answer = pending.promise
-  const saving = page._setFileStatus('index.js', 'accept-with-nits')
-  page._editFile('index.js', { _comment: 'Discard this newer note' })
-  page._discardFile('index.js')
-  assert.equal(page._comment, 'A note')
-  assert.equal(page._status, 'accept-with-nits')
-  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
-  await saving
-  assert.equal(page._unsaved, false)
-})
-
 test('finalization requires at least one checked changed file, not just a note', () => {
   const page = component()
   page._files = ['index.js']
@@ -435,6 +461,93 @@ test('finalization requires at least one checked changed file, not just a note',
   page._reviews = [review]
   page._beginPublish()
   assert.equal(page._panel, 'publish')
+})
+
+test('leaving a note saves its file without changing the active editor, and unchanged notes need no save', async () => {
+  const page = component()
+  page._files = ['index.js', 'other.js']; page._resetEditor('index.js')
+  page._comment = 'Save on blur'
+  assert.doesNotMatch(text(page._editor()), /Save notes|Save &amp; next|Discard changes|Visible only to you until published/u)
+  page._selectFile('other.js')
+  answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Save on blur' }] } }
+  requests.length = 0
+  await page._saveFile('index.js')
+  assert.equal(requests[0][1].comment, 'Save on blur')
+  assert.equal(page._file, 'other.js')
+  assert.equal(page._unsaved, false)
+  await page._saveFile('index.js')
+  assert.equal(requests.length, 1, 'focusing and leaving an unchanged note does not create a save')
+})
+
+test('Finalize saves a focused note before opening confirmation with the saved revision', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Save when finalizing'
+  answer = pending.promise; requests.length = 0
+  const finalizing = page._beginPublish()
+  assert.equal(page._publishStep, false)
+  assert.equal(requests[0][1].comment, 'Save when finalizing')
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Save when finalizing' }] } })
+  await finalizing
+  assert.equal(page._panel, 'publish')
+  assert.equal(page._publishRevision, 2)
+  assert.equal(page._finalStatus, 'request-changes')
+  assert.equal(page._unsaved, false)
+})
+
+test('blur followed by Finalize waits for the same save instead of saving the note twice', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Only save once'
+  answer = pending.promise; requests.length = 0
+  const blurred = page._saveFile('index.js'), duplicate = page._saveFile('index.js'), finalizing = page._beginPublish()
+  assert.equal(requests.length, 1)
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Only save once' }] } })
+  await Promise.all([blurred, duplicate, finalizing])
+  assert.equal(requests.length, 1)
+  assert.equal(page._panel, 'publish')
+})
+
+test('Finalize saves all pending notes and uses the resulting verdict limit', async () => {
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
+  page._files = ['index.js', 'other.js']; page._resetEditor('index.js'); page._comment = 'First note'
+  page._selectFile('other.js'); page._comment = 'Second note'; page._status = 'reject'
+  answer = first.promise; requests.length = 0
+  const finalizing = page._beginPublish()
+  answer = second.promise
+  first.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'First note' }] } })
+  await first.promise
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(page._publishStep, false)
+  second.resolve({ review: { ...review, revision: 3, entries: [{ ...file, comment: 'First note' }, { ...file, id: 'other', file: 'other.js', status: 'reject', comment: 'Second note' }] } })
+  await finalizing
+  assert.equal(requests.length, 2)
+  assert.equal(requests[1][1].revision, 2)
+  assert.equal(page._file, 'other.js', 'saving other notes does not change the active editor')
+  assert.equal(page._publishRevision, 3)
+  assert.equal(page._finalStatus, 'reject')
+})
+
+test('a failed note save keeps Finalize out of confirmation and can be retried', async () => {
+  const page = component()
+  page._files = ['index.js']; page._resetEditor('index.js'); page._comment = 'Keep on failure'
+  answer = new Error('Connection lost')
+  await page._beginPublish()
+  assert.equal(page._publishStep, false)
+  assert.equal(page._comment, 'Keep on failure')
+  assert.equal(page._error, 'Connection lost')
+  answer = { review: { ...review, revision: 2, entries: [{ ...file, comment: 'Keep on failure' }] } }
+  await page._beginPublish()
+  assert.equal(page._panel, 'publish')
+})
+
+test('a blank new note does not block finalization or create an empty row', async () => {
+  const page = component()
+  page._files = ['index.js']; page._resetEditor(null); page._comment = '   '
+  requests.length = 0
+  await page._beginPublish()
+  assert.equal(requests.length, 0)
+  assert.equal(page._panel, 'publish')
+  assert.equal(page._unsaved, false)
 })
 
 test('review file order is directories first at every depth and line counts reflect additions and removals', () => {

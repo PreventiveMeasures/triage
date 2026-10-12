@@ -146,15 +146,7 @@ export class NpmReview extends LitElement {
     if (file !== this._file) { this._rememberEditor(); this._resetEditor(file) }
     Object.assign(this, values)
   }
-  _discardFile(file) {
-    const pending = this._pendingSaves.findLast(save => save.change.file === file)?.change
-    if (pending) this._drafts.set(file, { edit: this._editorState(file).edit, revision: pending.revision, comment: pending.comment, status: pending.status ?? '' })
-    else this._drafts.delete(file)
-    if (file === this._file) this._resetEditor(file)
-    this.requestUpdate()
-  }
-  _setFileStatus(file, status) { if (this._blocked) return; this._editFile(file, { _status: status }); return this._save(false) }
-  _saveFile(file, next = false) { if (this._blocked) return; this._editFile(file); return this._save(next) }
+  _setFileStatus(file, status) { if (this._blocked) return; this._editFile(file, { _status: status }); return this._saveFile(file) }
   _rememberEditor() {
     if (!this._canEdit) return
     if (this._dirty || this._pendingSaves.some(save => save.change.file === this._file)) this._drafts.set(this._file, { edit: this._edit, revision: this._editRevision, comment: this._comment, status: this._status })
@@ -187,14 +179,15 @@ export class NpmReview extends LitElement {
     this._pendingSaves = []; this._saveBlocked = false
   }
   _queueSave(change) {
-    const promise = new Promise(resolve => {
-      const save = { change, resolve, slow: false }
-      save.timer = setTimeout(() => { save.slow = true; this._saveBlocked = true }, 3000)
-      this._pendingSaves.push(save)
-    })
+    const pending = this._pendingSaves.findLast(save => save.change.file === change.file)
+    if (pending && pending.change.comment === change.comment && pending.change.status === change.status) return pending.promise
+    const save = { change, slow: false }
+    save.promise = new Promise(resolve => { save.resolve = resolve })
+    save.timer = setTimeout(() => { save.slow = true; this._saveBlocked = true }, 3000)
+    this._pendingSaves.push(save)
     this.requestUpdate()
     if (this._pendingSaves.length === 1) void this._flushSaves()
-    return promise
+    return save.promise
   }
   _acceptSave(review, change) {
     this._rememberEditor()
@@ -253,26 +246,45 @@ export class NpmReview extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message; return null }
     finally { if (key === this._key) this._saving = false }
   }
-  async _save(next = false) {
-    if (!this._canEdit || this._blocked || this._loading || !this._status && !this._comment.trim() && !this._edit?.id && !this._pendingSaves.some(save => save.change.file === this._file)) return null
-    const file = this._file, review = this._activeReview
-    const saved = await this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: this._editRevision ?? review?.revision ?? null,
-      entryId: this._edit?.id ?? null, file, comment: this._comment, status: file === null ? null : this._status || null })
-    if (saved && next && file !== null && this._file === file && this._path === file && !this._dirty && this._pendingSaves.length === 0) {
-      const states = reviewFileStates(saved.entries)
-      const at = this._files.indexOf(file)
-      const nextPath = this._files.find((path, index) => index > at && !states.get(path)?.status)
-        ?? this._files.find(path => path !== file && !states.get(path)?.status)
-      if (nextPath) this._selectFile(nextPath)
+  _save() { return this._saveFile(this._file) }
+  _saveFile(file) {
+    if (!this._canEdit || this._saving || this._loading) return null
+    const editor = this._editorState(file), pending = this._pendingSaves.some(save => save.change.file === file), review = this._activeReview
+    if (!editor.dirty && !pending) return review
+    if (!editor.status && !editor.comment.trim() && !editor.edit?.id && !pending) {
+      this._drafts.delete(file)
+      if (file === this._file) this._resetEditor(file)
+      return review
     }
-    return saved
+    const revision = file === this._file ? this._editRevision : this._drafts.get(file)?.revision
+    return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: revision ?? review?.revision ?? null,
+      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null ? null : editor.status || null })
   }
-  _beginPublish() {
-    if (!this._canEdit || this._unsaved || !this._summary.checkedFiles) return
-    const review = this._activeReview
-    if (!review) return
-    this._finalStatus = summarizeReview(review.entries, this._files).verdictLimit; this._finalComment = review.comment ?? ''
-    this._publishRevision = review.revision; this._publishStep = true; this._panel = 'publish'
+  async _saveAll() {
+    const key = this._key
+    while (key === this._key && this._canEdit) {
+      if (this._pendingSaves.length > 0) {
+        if ((await Promise.all(this._pendingSaves.map(save => save.promise))).some(review => !review)) return false
+        continue
+      }
+      this._rememberEditor()
+      if (this._drafts.size === 0) return true
+      if (!await this._saveFile(this._drafts.keys().next().value)) return false
+    }
+    return false
+  }
+  async _beginPublish() {
+    if (!this._canEdit || this._saving || this._loading || this._finalizing || !this._summary.checkedFiles) return
+    const key = this._key
+    this._finalizing = true
+    try {
+      if (this._unsaved && !await this._saveAll()) return
+      if (key !== this._key || !this._canEdit || this._unsaved || !this._summary.checkedFiles) return
+      const review = this._activeReview
+      if (!review) return
+      this._finalStatus = summarizeReview(review.entries, this._files).verdictLimit; this._finalComment = review.comment ?? ''
+      this._publishRevision = review.revision; this._publishStep = true; this._panel = 'publish'
+    } finally { this._finalizing = false }
   }
   _publish() {
     const review = this._activeReview

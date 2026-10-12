@@ -2284,15 +2284,51 @@ test('a file whose names the server could not give the new side\'s says why, its
 })
 
 
-test('review change navigation never falls through into the next file', async () => {
+test('review keeps file navigation without removed change navigation or a second file tree', async () => {
   const { NpmReviewCode } = await import('../ui/view/npm-review-code.js')
-  const selected = [], viewer = new NpmReviewCode()
-  viewer._current = 'a.js'; viewer._order = ['a.js', 'b.js']
+  const code = view('src/api.js'), selected = [], viewer = new NpmReviewCode()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName', 'path']) viewer[name] = code[name]
+  viewer.order = ['src/api.js', 'src/legacy.js']
+  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const markup = renderText(viewer.render())
+  assert.doesNotMatch(markup, /Previous change|Next change|Wrap lines|bundle-compare-code-tree/u)
+  assert.match(markup, /aria-label="Previous file"/u)
+  assert.match(markup, /aria-label="Next file"/u)
+  assert.deepEqual(viewer._order, viewer.order)
   viewer.dispatchEvent = event => selected.push(event.detail.path)
-  viewer.querySelector = () => ({ getBoundingClientRect: () => ({ top: 0 }), querySelectorAll: () => [],
-    scrollTop: 0, clientHeight: 100, scrollHeight: 100 })
-  viewer._stepChange(1); viewer._stepChange(-1)
-  assert.deepEqual(selected, [])
-  viewer._select('b.js')
-  assert.deepEqual(selected, ['b.js'], 'explicit file navigation still works')
+  viewer._select('src/legacy.js')
+  assert.deepEqual(selected, ['src/legacy.js'])
+})
+
+test('review whole diff uses the shared renderer with its own tree and actions outside the sticky file content', async () => {
+  const { NpmReviewDiff } = await import('../ui/view/npm-review-diff.js')
+  const code = view(), viewer = new NpmReviewDiff()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) viewer[name] = code[name]
+  viewer.reviewAfter = true
+  viewer.reviewFile = () => 'REVIEW_ACTIONS'
+  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const markup = renderText(viewer.render())
+  assert.doesNotMatch(markup, /bundle-code-rail|bundle-code-splitter|bundle-compare-code-tree/u, 'Review supplies its own tree and splitter')
+  const sections = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)]
+  assert.deepEqual(sections.map(([, path]) => path), viewer._railState().order)
+  for (const [, , body] of sections) {
+    assert.match(body, /<div class="npm-review-file-content"><header class="bundle-code-main-bar bundle-compare-all-file-head">/u)
+    assert.match(body, /<\/div>\s*REVIEW_ACTIONS\s*$/u, 'actions follow the wrapper that bounds the sticky header')
+  }
+  assert.match(markup, /Binary file changed/u)
+})
+
+test('review whole diff renders far enough to show a file selected beyond the first page in tree order', async () => {
+  const { NpmReviewDiff } = await import('../ui/view/npm-review-diff.js')
+  const paths = ['index.js', ...Array.from({ length: 60 }, (_, i) => `a/file-${String(i).padStart(2, '0')}.js`)]
+  const code = view(null, [Object.fromEntries(paths.map(path => [path, '1'])), Object.fromEntries(paths.map(path => [path, '2']))])
+  const viewer = new NpmReviewDiff()
+  for (const name of ['base', 'other', 'files']) viewer[name] = code[name]
+  viewer.reviewFile = () => ''
+  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
+  assert.doesNotMatch(renderText(viewer.render()), /aria-label=index\.js/u)
+  viewer.path = 'index.js'
+  viewer.willUpdate(new Map([['path']]))
+  assert.match(renderText(viewer.render()), /aria-label=index\.js/u, 'the root file follows the directories and must be loaded before scrolling')
+  assert.ok(viewer._fileLimit > 40)
 })

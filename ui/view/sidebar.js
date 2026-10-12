@@ -938,7 +938,7 @@ async function onSidebarClick(e) {
   if (bundleEl) {
     // Missing-bundle rows (imported workspace claims an integrity the
     // recipient doesn't have locally) are advertised as non-interactive
-    // via muted italic styling + `cursor: help`. Without this gate,
+    // via muted italic styling. Without this gate,
     // clicking flipped the view to bundles and set `state.selectedBundle`
     // to the missing integrity — `openBundle` then silently returned
     // (no matching entry in state.bundles), leaving the user on the
@@ -1712,7 +1712,7 @@ function onSidebarDragstart(e) {
     // handler would write the missing integrity into dataTransfer; a
     // subsequent drop on another workspace would attach a bundle
     // nobody has locally, contradicting the row's "non-interactive"
-    // affordance (cursor:help, italic muted styling, click gated).
+    // affordance (italic muted styling, click gated).
     if (bundleEl.classList.contains('bundle-missing')) {
       e.preventDefault()
       return

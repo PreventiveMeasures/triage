@@ -1989,8 +1989,14 @@ for publication. A sole eligible team is selected initially; with multiple teams
 **Publish** requires at least one selected team.
 The account menu and review page link to **My reviews** (`/reviews`), a paginated
 list of the user's unpublished, published, and revoked review sets.
+Authors can discard an unpublished set from My reviews after an explicit
+confirmation. `POST /api/npm/reviews/discard` requires its ID and current revision;
+it atomically deletes the set and its file rows. Published and revoked sets cannot
+be discarded. Discarding does not require fetching the package again.
 
 Selecting a file verdict saves it immediately. Review always wraps source lines.
+Notes save when their field loses focus. Finalize also saves pending notes before
+opening confirmation.
 Each file has one verdict and one text note; later saves update that same row.
 The note editor is shown for Accept with nits, Request changes, and Reject.
 At least one changed file must have a saved verdict before publishing.

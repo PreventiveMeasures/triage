@@ -374,7 +374,7 @@ export class SizeFlowChart {
     hideTooltip(this.host.renderRoot)
     this.hoverId = null; this.focused = null; this.host.hover = null
     if (this.overlay) {
-      delete this.overlay.dataset.tooltip; this.overlay.style.cursor = 'grab'
+      delete this.overlay.dataset.tooltip; this.overlay.style.cursor = 'default'
       this.overlay.setAttribute('aria-label', canvasLabel)
     }
     this.requestDraw()

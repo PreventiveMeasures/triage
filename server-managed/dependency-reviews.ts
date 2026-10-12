@@ -26,6 +26,7 @@ export interface DependencyReviewStore {
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
   listDependencyReviewEnabledTeams(): Promise<string[]>
   setTeamDependencyReview(sessionId: string, teamId: string, enabled: boolean): Promise<boolean>
+  discardDependencyReview(sessionId: string, reviewId: string, revision: number): Promise<void>
   changeDependencyReview(context: ReviewContext, sessionId: string, change: ReviewChange, now: number): Promise<DependencyReview>
 }
 
@@ -161,6 +162,12 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
   const read = (id: string) => db.prepare(`SELECT ${columns} FROM managed_dependency_review WHERE id = ?`).get(id)
   return {
     listOwnDependencyReviews: (user, before) => listOwn(db, user, before),
+    async discardDependencyReview(sessionId, reviewId, revision) {
+      const user = await actor(db, sessionId)
+      const { changes } = await db.prepare(`DELETE FROM managed_dependency_review
+        WHERE id = ? AND user_id = ? AND revision = ? AND published_at IS NULL`).run(reviewId, user.id, revision)
+      if (Number(changes) !== 1) conflict()
+    },
     listDependencyReviewEnabledTeams: async () => (await db.prepare('SELECT id FROM managed_team WHERE dependency_review = 1 ORDER BY id').all() as { id: string }[]).map(row => row.id),
     async setTeamDependencyReview(sessionId, teamId, enabled) {
       await actor(db, sessionId, true)

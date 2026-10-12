@@ -1308,7 +1308,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 .focus-splitter {
   display: flex; align-items: center; justify-content: center;
   width: var(--focus-splitter-width, .75rem);
-  cursor: col-resize;
+  cursor: default;
   /* Pointer drags belong to the resize handler, not to the scroller
      underneath — without this a touch drag pans the page instead. */
   touch-action: none;
@@ -1335,7 +1335,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
    so it spends the gesture over content that would otherwise show a
    text caret and highlight as it swept past. */
 .focus-main:has(> .focus-splitter.dragging) {
-  cursor: col-resize;
+  cursor: default;
   user-select: none;
 }
 

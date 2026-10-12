@@ -57,6 +57,7 @@
 //   POST /api/admin/teams/set-dependency-review → admin toggles dependency review publication for a team | 400/401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
 //   GET/POST /api/npm/reviews → read private/team reviews; save, publish, revoke or continue a set | 400/401/403/404/409
+//   POST /api/npm/reviews/discard → author discards an unpublished review and its file rows | 400/401/403/409
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
@@ -3282,6 +3283,23 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === TEAM_SET_NPM_SCOPES_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
+    }
+    if (path === '/api/npm/reviews/discard') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      const s = await checkMutation(req, res, deps, cookie)
+      if (!s) return
+      let body: Record<string, unknown>
+      try {
+        const raw = await readJsonBody(req, 4096)
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('bad-body')
+        body = raw as Record<string, unknown>
+      } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+      const id = body['reviewId'], revision = body['revision']
+      if (typeof id !== 'string' || !id || id.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1) {
+        sendJson(res, 400, { error: 'bad-review' }); return
+      }
+      await deps.db.discardDependencyReview(s.session.id, id, revision as number)
+      sendJson(res, 200, { ok: true }); return
     }
     if (path === '/api/npm/reviews/mine') {
       if (method !== 'GET') { send405(res, 'GET'); return }
