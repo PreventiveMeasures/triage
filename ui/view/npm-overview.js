@@ -205,13 +205,32 @@ export function npmGithubFigures(entry) {
 
 // What built a version, as its provenance names its builder: GitHub Actions,
 // on a runner GitHub hosts or one of the publisher's own, or GitLab CI.
-function builderName(builder) {
+// npm's provenance for a public version npm lists it for, as the session
+// has it; null for any other.
+const provenanceOf = ({ name, version, private: hidden, manifest }) => hidden || !manifest.provenance ? null
+  : npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
+
+// Whether the version's provenance names what built it, or may yet, being
+// asked for: where it does, no other fact need name the CI that published
+// it (npm-package.js npmOverviewMeta).
+export function npmProvenanceNamesBuilder(npm) {
+  const data = provenanceOf(npm)
+  return data !== null && (data.status === 'loading' || Boolean(data.provenance?.builder))
+}
+
+// What built a version, by its builder's id and its runner's (npm-provenance.ts
+// `runner`): GitHub's names its own runners or the publisher's; GitLab's
+// names the runner in its project (`<project>/-/runners/<id>`), whoever's.
+function builderName(builder, runner) {
   if (!builder) return null
   if (/^https:\/\/github\.com\/actions\/runner(?:\/github-hosted)?$/u.test(builder)) return 'GitHub Actions'
   if (builder.startsWith('https://github.com/actions/runner/')) return 'GitHub Actions, self-hosted runner'
-  // GitLab names the runner in its project, `<project>/-/runners/<id>`.
-  return builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/') ? 'GitLab CI' : new URL(builder).host
+  if (builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/')) return runner === 'self-hosted' ? 'GitLab CI, self-hosted runner' : 'GitLab CI'
+  return new URL(builder).host
 }
+// Built on its provider's own runners, as its certificate says, or, where
+// it doesn't, as GitHub's builder id does.
+const isHosted = (built, runner) => runner ? runner === 'github-hosted' || runner === 'gitlab-hosted' : built === 'GitHub Actions'
 
 // npm's provenance for the version, in the Overview's facts, for a public
 // package (npm-provenance.ts): what built it, from which repository at
@@ -222,39 +241,44 @@ function builderName(builder) {
 // another tarball) is flagged, as nothing vouches for it; nothing for a
 // private package, which can't have any.
 export function npmProvenanceFact(entry) {
-  const { name, version, manifest } = entry.npm
   if (entry.npm.private) return nothing
-  if (!manifest.provenance) return html`<span class="npm-commit-missing">None</span>`
-  const data = npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
+  const data = provenanceOf(entry.npm)
+  if (!data) return html`<span class="npm-commit-missing">None</span>`
   if (data.status === 'loading') return html`<span class="npm-commit-missing">Checking…</span>`
   if (data.status === 'error') return html`<span class="npm-commit-missing">Couldn't be read</span>`
   if (!data.provenance) {
     return html`<span class="npm-provenance-warning" data-tooltip="npm lists provenance for this version, but no statement naming its tarball could be read">Listed, but none for this tarball</span>`
   }
-  const { repository, commit, workflow, ref, builder, run, logIndex } = data.provenance
+  const { manifest } = entry.npm
+  const { repository, commit, workflow, ref, builder, run, logIndex, runner } = data.provenance
   const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
-  const gitlab = builderName(builder) === 'GitLab CI'
+  const built = builderName(builder, runner)
+  const gitlab = built?.startsWith('GitLab CI')
   const shown = github ?? repository.replace(/^https:\/\//u, '')
   // The repository the package names, GitHub's or GitLab's, as its source
   // reads.
   const named = manifest.github?.github ?? (manifest.gitlab ? `gitlab.com/${manifest.gitlab}` : null)
   const elsewhere = named && named.toLowerCase() !== shown.toLowerCase()
-  // What built it, from where, then how: its workflow, by its file's name,
-  // its whole path in its tooltip, its run and its log entry, a line each.
-  const line = (items, classes = '') => html`<span class=${`npm-provenance-line${classes}`}>${items.filter(item => item !== nothing)
-    .map((item, i) => i === 0 ? item : html`<span class="npm-provenance-sep" aria-hidden="true">·</span>${item}`)}</span>`
+  // What built it and from where, then how, beside it where that fits, else
+  // on a line of its own: its workflow, by its file's name (its whole path
+  // in its tooltip, where that says more), its run and its log entry. Built
+  // on GitHub's or GitLab's own runners from the repository it names, it is
+  // green.
   const file = workflow?.split('/').at(-1)
+  const how = [workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow === file ? nothing : workflow)
+    : html`<span class="mono" data-tooltip=${workflow === file ? nothing : workflow}>${file}</span>`) : nothing,
+  run ? link(run, 'Run') : nothing,
+  logIndex === null ? nothing : link(`https://search.sigstore.dev/?logIndex=${logIndex}`, 'Transparency log')].filter(item => item !== nothing)
   return html`<span class="npm-provenance">
-    ${builderName(builder) ? html`<span>${builderName(builder)}</span>` : nothing}
-    <span class="npm-provenance-line"><span class="npm-provenance-sep">from</span>
+    <span class="npm-provenance-line">
+      ${built ? html`<span class=${isHosted(built, runner) && !elsewhere ? 'npm-provenance-builder is-hosted' : 'npm-provenance-builder'}>${built}</span>` : nothing}
+      <span class="npm-provenance-sep">from</span>
       ${commit ? link(github ? `${repository}/commit/${commit}` : gitlab ? `${repository}/-/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`,
         `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
       ${elsewhere ? html`<span class="npm-provenance-warning" data-tooltip=${`The package names ${named}`}>Not the repository it names</span>` : nothing}</span>
-    ${line([workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow)
-      : html`<span class="mono" data-tooltip=${workflow}>${file}</span>`) : nothing,
-    run ? link(run, 'Run', 'The run that built it') : nothing,
-    logIndex === null ? nothing : link(`https://search.sigstore.dev/?logIndex=${logIndex}`, 'Transparency log', `Sigstore's log entry ${logIndex}`)], ' is-how')}
+    ${how.length > 0 ? html`<span class="npm-provenance-line is-how">${how.map((item, i) => i === 0 ? item : html`<span class="npm-provenance-sep" aria-hidden="true">·</span>${item}`)}</span>`
+      : nothing}
   </span>`
 }
 

@@ -365,3 +365,19 @@ test('a recent version\'s age reads in minutes, then hours, then days, and the d
   assert.equal(npmAge('2026-10-01T00:00:00Z', now), '11 days ago')
   assert.equal(npmPublishedOn('2026-10-01T00:00:00Z'), 'Published on Oct 1, 2026')
 })
+
+test('an author\'s and a publisher\'s npm accounts are green where they publish one of npm\'s most downloaded packages, else yellow', () => {
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const manifest = { author: 'Sindre Sorhus', authorAccount: 'sindresorhus', publisher: 'someone-new', knownAccounts: ['sindresorhus'] }
+  const facts = text(npmOverviewMeta(npmPackageEntry({ ...data, manifest })))
+  assert.match(facts, /<dt>Author<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-known href=https:\/\/www\.npmjs\.com\/~sindresorhus\s+data-tooltip=Publishes one of npm's most downloaded packages[^>]*><span>Sindre Sorhus</u)
+  assert.match(facts, /<dt>Publisher<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-unknown [^>]*data-tooltip=Publishes none of npm's most downloaded packages[^>]*><span>~someone-new</u)
+})
+
+test('a CI npm trusts to publish is named in grey where no provenance names it', () => {
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const facts = (manifest, provenanceNamesBuilder) => text(npmOverviewMeta(npmPackageEntry({ ...data, manifest }), { provenanceNamesBuilder }))
+  assert.match(facts({ trustedPublisher: 'GitHub Actions' }), /<dt>Publisher<\/dt><dd class="npm-trusted-publisher">GitHub Actions<\/dd>/u)
+  assert.match(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, false), /<dt>Publisher<\/dt>/u, 'though npm lists provenance, where none read names it')
+  assert.doesNotMatch(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, true), /<dt>Publisher<\/dt>/u, 'its provenance names it')
+})

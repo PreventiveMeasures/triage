@@ -12,6 +12,7 @@
 // read without credentials too, and held to that integrity.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
+import publishers from '@preventive/publishers/npm.js'
 import { getRepo } from '@preventive/upstream/package.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
@@ -128,6 +129,9 @@ const stringRecord = (value: unknown) => plainObject(value)
 
 interface NpmPerson { name: string | null; email: string | null }
 const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
+// The npm accounts known to publish: those with standing on one of npm's
+// most downloaded packages (@preventive/publishers).
+const KNOWN_PUBLISHERS = new Set(publishers.map(name => name.toLowerCase()))
 
 // One of package.json's people: `{ name, email, url }`, or `Name <email>
 // (url)` in one string.
@@ -167,12 +171,19 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
   if (author?.name) pick['author'] = author.name
   const accounts = [json['_npmUser'], ...Array.isArray(json['maintainers']) ? json['maintainers'] : []].map(npmPerson)
     .filter((person): person is NpmPerson & { name: string } => person?.name != null && NPM_ACCOUNT.test(person.name))
-  // The npm account that published it, for its profile.
+  // The npm account that published it, for its profile; or, published by
+  // a CI npm trusts (npm's trusted publishing), the CI, as npm names it
+  // (`GitHub Actions`).
   const publisher = npmPerson(json['_npmUser'])?.name
   if (publisher && NPM_ACCOUNT.test(publisher)) pick['publisher'] = publisher
+  else if (publisher && publisher.length <= 64 && plainObject(json['_npmUser']) && plainObject(json['_npmUser']['trustedPublisher'])) pick['trustedPublisher'] = publisher
   const same = (a: string | null, b: string | null) => a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
   const account = author && accounts.find(person => same(person.email, author.email) || same(person.name, author.name))
   if (account) pick['authorAccount'] = account.name
+  // Which of those accounts are known to publish, for the Overview to tell
+  // them from the rest.
+  const known = [...new Set([publisher, account?.name])].filter(name => name && KNOWN_PUBLISHERS.has(name.toLowerCase()))
+  if (known.length > 0) pick['knownAccounts'] = known
   if (Array.isArray(json['keywords'])) pick['keywords'] = json['keywords'].filter(item => typeof item === 'string').slice(0, 50)
   if (typeof json['bin'] === 'string') pick['bin'] = { [String(json['name'])]: json['bin'] }
   else if (stringRecord(json['bin'])) pick['bin'] = stringRecord(json['bin'])

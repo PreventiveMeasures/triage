@@ -21,11 +21,13 @@ const GITHUB_REPOSITORY = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)$/u
 
 // Where a version was built: its source `repository` (an https URL) and
 // `commit`, the `workflow` file and the `ref` it ran on, the `builder` and
-// the `run` (an https URL), and its transparency log entry (`logIndex`);
-// each null where the statement doesn't say.
+// the `run` (an https URL), its transparency log entry (`logIndex`), and
+// whose runner built it (`runner`: `github-hosted`, `gitlab-hosted` or
+// `self-hosted`, as its signing certificate says); each null where they
+// don't say.
 export interface NpmProvenance {
   repository: string; commit: string | null; workflow: string | null; ref: string | null
-  builder: string | null; run: string | null; logIndex: number | null
+  builder: string | null; run: string | null; logIndex: number | null; runner: string | null
 }
 
 const text = (value: unknown) => typeof value === 'string' && value !== '' && value.length <= 2048 ? value : null
@@ -55,7 +57,7 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
     return {
       repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(workflow, 'path')),
       ref: text(field(workflow, 'ref')) ?? sourceOf(field(source, 'uri')).ref, builder: https(field(predicate, 'runDetails', 'builder', 'id')),
-      run: https(field(predicate, 'runDetails', 'metadata', 'invocationId')), logIndex: null,
+      run: https(field(predicate, 'runDetails', 'metadata', 'invocationId')), logIndex: null, runner: null,
     }
   }
   const config = field(predicate, 'invocation', 'configSource')
@@ -69,8 +71,22 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
   return {
     repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
     builder: https(field(predicate, 'builder', 'id')),
-    run: https(invocation) ?? (run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null), logIndex: null,
+    run: https(invocation) ?? (run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null), logIndex: null, runner: null,
   }
+}
+
+// Fulcio's Runner Environment extension (1.3.6.1.4.1.57264.1.11) in the
+// certificate that signed it: its OID, then its value, a short UTF8String
+// in an OCTET STRING, as the CI's token gave it. A builder's id doesn't
+// tell GitLab's own runners from a project's.
+const RUNNER_ENVIRONMENT = Buffer.from('060a2b0601040183bf30010b', 'hex')
+function runnerOf(bundle: unknown): string | null {
+  const raw = field(bundle, 'verificationMaterial', 'certificate', 'rawBytes') ?? field(bundle, 'verificationMaterial', 'x509CertificateChain', 'certificates', '0', 'rawBytes')
+  if (typeof raw !== 'string') return null
+  const der = Buffer.from(raw, 'base64')
+  const at = der.indexOf(RUNNER_ENVIRONMENT) + RUNNER_ENVIRONMENT.length
+  if (at < RUNNER_ENVIRONMENT.length || der[at] !== 0x04 || der[at + 2] !== 0x0c || der[at + 1] !== der[at + 3]! + 2) return null
+  return text(der.subarray(at + 4, at + 4 + der[at + 3]!).toString('utf8'))
 }
 
 async function askProvenance(name: string, version: string, integrity: string): Promise<NpmProvenance | null> {
@@ -99,7 +115,7 @@ async function askProvenance(name: string, version: string, integrity: string): 
   if (!digest || !subjects.some(subject => field(subject, 'name') === purl && field(subject, 'digest', 'sha512') === Buffer.from(digest, 'base64').toString('hex'))) return null
   const provenance = readStatement(text(field(slsa, 'predicateType'))!, field(statement, 'predicate'))
   const logIndex = Number(field(slsa, 'bundle', 'verificationMaterial', 'tlogEntries', '0', 'logIndex'))
-  return provenance && { ...provenance, logIndex: Number.isSafeInteger(logIndex) && logIndex >= 0 ? logIndex : null }
+  return provenance && { ...provenance, logIndex: Number.isSafeInteger(logIndex) && logIndex >= 0 ? logIndex : null, runner: runnerOf(field(slsa, 'bundle')) }
 }
 
 const provenances = kept<NpmProvenance | null>(1000)

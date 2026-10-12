@@ -3358,12 +3358,16 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 .bundles-detail-meta :is(.npm-commit-missing, .npm-publisher) { color: var(--muted); }
 /* Its provenance: what built it from where, then how, smaller, each part
    apart from the next by a dot. */
-.npm-provenance { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+/* What built it and from where, then how, beside it where that fits whole,
+   else on the next line. */
+.npm-provenance { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1.4rem; min-width: 0; }
 .npm-provenance-line {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .4rem;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .4rem; min-width: 0;
 
   &.is-how { font-size: .72rem; }
 }
+/* Built on its provider's runners, from the repository the package names. */
+.npm-provenance-builder.is-hosted { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
 .npm-provenance-sep { color: var(--muted); }
 /* What its provenance doesn't vouch for: a version built from another
    repository than the one its package names, or one npm lists provenance
@@ -3374,6 +3378,13 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   background: color-mix(in srgb, var(--high) 18%, var(--bg)); border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
   font-size: .7rem;
 }
+/* An npm account known to publish one of npm's most downloaded packages,
+   or not (npm-package.js npmAccount). */
+.bundles-detail-meta .npm-account {
+  &.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
+  &.is-unknown { color: var(--medium); }
+}
+.bundles-detail-meta .npm-trusted-publisher { color: var(--muted); }
 .bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
 .npm-github-archived {
   padding: 0 .35rem;

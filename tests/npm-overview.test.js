@@ -20,7 +20,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
@@ -376,34 +376,40 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 })
 
-test('the Overview\'s provenance: what built the version, from which commit, by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
+test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const entry = (name, manifest, extra = {}) => ({ npm: { name, version: '1.0.0', manifest, ...extra } })
   const fact = async version => { npmProvenanceFact(version); await new Promise(resolve => { setImmediate(resolve) }); return text(npmProvenanceFact(version)) }
   answers.provenance['built@1.0.0'] = { repository: 'https://github.com/org/repo', commit: 'b'.repeat(40), workflow: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0',
     builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42 }
   const built = await fact(entry('built', { provenance: true, github: { github: 'org/repo' } }))
-  assert.match(built, /<span>GitHub Actions<\/span>/u)
+  assert.match(built, /<span class="npm-provenance-line">\s*<span class=npm-provenance-builder is-hosted>GitHub Actions<\/span>\s*<span class="npm-provenance-sep">from<\/span>/u,
+    'green, built on GitHub\'s runners from the repository it names, on one line with where from')
   assert.match(built, new RegExp(`href=https://github\\.com/org/repo/commit/${'b'.repeat(40)} [^>]*><span>org/repo@bbbbbbb<`, 'u'), 'its source at its commit')
   assert.match(built, new RegExp(`href=https://github\\.com/org/repo/blob/${'b'.repeat(40)}/\\.github/workflows/release\\.yml [^>]*data-tooltip=\\.github/workflows/release\\.yml [^>]*><span>release\\.yml<`, 'u'),
     'its workflow, at that commit, by its file\'s name')
-  assert.match(built, /href=https:\/\/github\.com\/org\/repo\/actions\/runs\/7\/attempts\/1 [^>]*><span>Run</u)
-  assert.match(built, /href=https:\/\/search\.sigstore\.dev\/\?logIndex=42 [^>]*><span>Transparency log</u)
+  assert.match(built, /href=https:\/\/github\.com\/org\/repo\/actions\/runs\/7\/attempts\/1 data-tooltip= [^>]*><span>Run</u, 'no tooltip, which would only say what it is')
+  assert.match(built, /href=https:\/\/search\.sigstore\.dev\/\?logIndex=42 data-tooltip= [^>]*><span>Transparency log</u)
   assert.doesNotMatch(built, /npm-provenance-warning/u)
   answers.provenance['moved@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: 'https://github.com/actions/runner/self-hosted' }
   const moved = await fact(entry('moved', { provenance: true, github: { github: 'org/other' } }))
-  assert.match(moved, /GitHub Actions, self-hosted runner/u)
+  assert.match(moved, /<span class=npm-provenance-builder>GitHub Actions, self-hosted runner</u, 'not green: the publisher\'s own runner')
   assert.match(moved, /npm-provenance-warning" data-tooltip=The package names org\/other>Not the repository it names</u, 'built from another repository than it names')
   answers.provenance['lab@1.0.0'] = { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40), workflow: 'publish', ref: null,
     builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: null }
   const lab = await fact(entry('lab', { provenance: true }))
-  assert.match(lab, /<span>GitLab CI<\/span>/u)
+  assert.match(lab, /<span class=npm-provenance-builder>GitLab CI<\/span>/u, 'not green where nothing says whose runner it was')
+  answers.provenance['lab-hosted@1.0.0'] = { ...answers.provenance['lab@1.0.0'], runner: 'gitlab-hosted' }
+  assert.match(await fact(entry('lab-hosted', { provenance: true })), /<span class=npm-provenance-builder is-hosted>GitLab CI<\/span>/u, 'green on GitLab\'s own, as its certificate says')
+  answers.provenance['lab-own@1.0.0'] = { ...answers.provenance['lab@1.0.0'], runner: 'self-hosted' }
+  assert.match(await fact(entry('lab-own', { provenance: true })), /<span class=npm-provenance-builder>GitLab CI, self-hosted runner<\/span>/u)
   assert.match(lab, new RegExp(`href=https://gitlab\\.com/group/project/-/commit/${'d'.repeat(40)} [^>]*><span>gitlab\\.com/group/project@ddddddd<`, 'u'), 'its commit, as GitLab links one')
-  assert.match(lab, /data-tooltip=publish>publish</u, 'its job, by name')
+  assert.match(lab, /<span class="mono" data-tooltip=>publish</u, 'its job, by name, no tooltip saying it again')
   assert.doesNotMatch(await fact(entry('lab', { provenance: true, gitlab: 'Group/Project' })), /npm-provenance-warning/u, 'the GitLab project it names')
   answers.provenance['lab-moved@1.0.0'] = answers.provenance['lab@1.0.0']
-  assert.match(await fact(entry('lab-moved', { provenance: true, gitlab: 'group/other' })), /data-tooltip=The package names gitlab\.com\/group\/other>Not the repository it names</u,
-    'another GitLab project')
+  const labMoved = await fact(entry('lab-moved', { provenance: true, gitlab: 'group/other' }))
+  assert.match(labMoved, /data-tooltip=The package names gitlab\.com\/group\/other>Not the repository it names</u, 'another GitLab project')
+  assert.match(labMoved, /<span class=npm-provenance-builder>GitLab CI</u, 'not green, from another repository')
   answers.provenance['lab-github@1.0.0'] = answers.provenance['lab@1.0.0']
   assert.match(await fact(entry('lab-github', { provenance: true, github: { github: 'org/repo' } })), /data-tooltip=The package names org\/repo>Not the repository it names</u,
     'a GitHub repository, built on GitLab')
@@ -415,4 +421,14 @@ test('the Overview\'s provenance: what built the version, from which commit, by 
   assert.match(await fact(rejected), /npm-provenance-warning[^>]*>Listed, but none for this tarball</u)
   assert.doesNotMatch(await fact(rejected), /Attested/u)
   assert.equal(text(npmProvenanceFact(entry('secret', { provenance: true }, { private: true }))), '', 'nothing for a private package')
+
+  // Whether it names what built the version, for the facts not to name its
+  // trusted publisher again: while it's asked for, and once read with a builder.
+  assert.equal(npmProvenanceNamesBuilder(entry('built', { provenance: true }).npm), true)
+  assert.equal(npmProvenanceNamesBuilder(entry('rejected', { provenance: true }).npm), false, 'not where no statement was read')
+  assert.equal(npmProvenanceNamesBuilder(entry('pending', { provenance: true }).npm), true, 'nor yet while it is asked for')
+  assert.equal(npmProvenanceNamesBuilder(entry('unbuilt', {}).npm), false)
+  answers.provenance['builderless@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: null }
+  assert.equal(await (async () => { npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm); await new Promise(resolve => { setImmediate(resolve) })
+    return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
 })
