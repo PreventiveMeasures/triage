@@ -670,6 +670,23 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   & .add { color: var(--green); }
   & .del { color: var(--critical); }
 }
+/* An added file's head counts no lines removed: its −0 unseen, keeping its room. */
+.bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundle-compare-code-counts > .del { visibility: hidden; }
+/* A file's lines added and removed in the tree, before its letter: `=` for
+   one renamed as it was, and a count with nothing in it there unseen but
+   keeping its room, so the counts line up. */
+.bundle-compare-code-line-counts {
+  flex: none;
+  display: inline-flex;
+  gap: .25rem;
+  font: .65rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+
+  & .add { color: var(--green); }
+  & .del { color: var(--critical); }
+  & .empty { visibility: hidden; }
+  &.unchanged { color: var(--muted); }
+}
 .bundle-compare-code-renamed {
   flex: none;
   font-size: .72rem;

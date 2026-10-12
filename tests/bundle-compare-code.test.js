@@ -479,6 +479,41 @@ test('an importer only one bundle carries is highlighted under that bundle', () 
   assert.equal(element._textSide('src/api.js'), element.other)
 })
 
+// Each file row's line counts, from the tree's markup: what sits between its
+// name and its letter, its spans' classes kept (`class=del empty` is unseen).
+const rowCounts = markup => Object.fromEntries([...markup.matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)].map(([row]) => [
+  /bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1],
+  /class="bundle-compare-code-line-counts[^]*?(?=<span class=(?:"|)bundle-compare-code-letter)/u.exec(row)?.[0].replaceAll(/\s+/gu, ' ').trim() ?? null]))
+
+test('the tree counts each file\'s lines added and removed before its letter, an added file\'s −0 unseen', () => {
+  const renamed = [{ 'src/util.js': 'export const u = 1\nexport const v = 2\n', 'src/same.js': 'x\n' },
+    { 'lib/util.ts': 'export const u: number = 1\nexport const v = 2\n', 'lib/same.js': 'x\n' }]
+  const counts = rowCounts(renderText(view(null, renamed).render()))
+  assert.match(counts['src/api.js'], /class=add>\+1<\/span> <span class=del>−1<\/span>/u, 'modified')
+  assert.match(counts['src/features/search.js'], /class=add>\+1<\/span> <span class=del empty>−0<\/span>/u, 'added: its −0 keeps its room unseen')
+  assert.match(counts['src/legacy.js'], /class=add>\+0<\/span> <span class=del>−1<\/span>/u, 'removed')
+  assert.match(counts['lib/util.ts'], /class=add>\+1<\/span> <span class=del>−1<\/span>/u, 'renamed and modified, against its old contents')
+  assert.match(counts['lib/same.js'], /unchanged" aria-label="No line changes">=/u, 'renamed as it was')
+  assert.equal(counts['assets/logo.png'], null, 'not text')
+  assert.equal(counts['src/server.js'], null, 'its imports repointed alone')
+})
+
+test('a long tree counts its lines a little at a time, so it paints at once and fills in', t => {
+  const all = rowCounts(renderText(view().render()))
+  const element = view()
+  // Every count outlasts the budget.
+  let now = 0
+  t.mock.method(performance, 'now', () => (now += 40))
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const update = t.mock.method(element, 'requestUpdate', () => {})
+  renderText(element.render())
+  assert.equal(element._counted.size, 1, 'the first file is counted, then the budget is spent')
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 1, 'another render is asked for, once')
+  for (let i = 0; i < 20; i++) renderText(element.render())
+  assert.deepEqual(rowCounts(renderText(element.render())), all, 'filled in, as counted at once')
+})
+
 test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
   const renamed = [{ 'src/util.js': 'export const u = 1\nexport const v = 2\n' }, { 'lib/util.ts': 'export const u: number = 1\nexport const v = 2\n' }]
   const markup = renderText(view(null, renamed).render())
