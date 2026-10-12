@@ -103,7 +103,7 @@ export function whitespaceHidden(before, after) {
 // style ones, the markup that makes an indented line code or nests it
 // (Markdown, reStructuredText, AsciiDoc); and TSV, whose tabs part its
 // fields. Told by name, or by a script's #! line naming Python or CoffeeScript.
-const INDENTED = /\.(?:py[iwx]?|pxd|pxi|bzl|star|ya?ml|mk|mak|make|coffee|litcoffee|cson|ls|imba|fsx?|fsi|scala|sc|hs|lhs|purs|elm|nim|idr|agda|pug|jade|haml|slim|sass|sss|styl|md|markdown|mdx|rst|adoc|asciidoc|tsv)$/u
+const INDENTED = /\.(?:py[iwx]?|pxd|pxi|bzl|star|ya?ml|mk|mak|make|coffee|litcoffee|cson|ls|imba|fsx?|fsi|scala|sc|hs|lhs|purs|elm|nim|l?idr|lagda(?:\.tex)?|agda|pug|jade|haml|slim|sass|sss|styl|md|markdown|mdx|rst|adoc|asciidoc|tsv)$/u
 const INDENTED_NAMES = /(?:^|\/)(?:(?:GNU|BSD)?[Mm]akefile(?:\.(?:am|in))?|SConstruct|SConscript|Snakefile|wscript|(?:BUILD|WORKSPACE)(?:\.bazel)?)$/u
 const INDENTED_SCRIPT = /^#![^\n]*\b(?:python|pypy|coffee)/u
 export const indentationMatters = (path, text = '') => INDENTED.test(path.toLowerCase()) || INDENTED_NAMES.test(path)

@@ -68,10 +68,10 @@ test('what diff -b would hide: whether it hides a change, and one mixing kinds o
 
 test('files whose indentation is part of their code are told by name', () => {
   for (const path of ['tools/gen.py', 'stubs/a.PYI', 'ext/a.pyx', 'rules.bzl', '.github/workflows/ci.yml', 'docker-compose.yaml', 'Makefile', 'makefile', 'sub/GNUmakefile', 'Makefile.am',
-    'rules.mk', 'SConstruct', 'src/SConscript', 'Snakefile', 'wscript', 'BUILD.bazel', 'src/a.ls', 'src/a.imba', 'src/Lib.fs', 'src/Main.scala', 'src/Main.purs', 'views/a.pug', 'styles/a.sass', 'styles/a.sss', 'README.md', 'CHANGELOG.markdown', 'docs/a.mdx', 'docs/a.rst', 'docs/a.adoc', 'data/a.tsv']) {
+    'rules.mk', 'SConstruct', 'src/SConscript', 'Snakefile', 'wscript', 'BUILD.bazel', 'src/a.ls', 'src/a.imba', 'src/Lib.fs', 'src/Main.scala', 'src/Main.purs', 'src/Main.lidr', 'src/Main.lagda', 'src/Main.lagda.tex', 'views/a.pug', 'styles/a.sass', 'styles/a.sss', 'README.md', 'CHANGELOG.markdown', 'docs/a.mdx', 'docs/a.rst', 'docs/a.adoc', 'data/a.tsv']) {
     assert.equal(indentationMatters(path), true, path)
   }
-  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'LICENSE', 'notes.txt', 'makefile.js', 'build.js', 'scripts/build', 'pyproject.toml', 'binding.gyp']) {
+  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'LICENSE', 'notes.txt', 'makefile.js', 'build.js', 'scripts/build', 'pyproject.toml', 'binding.gyp', 'docs/paper.tex']) {
     assert.equal(indentationMatters(path), false, path)
   }
   // A script told by its #! line.
