@@ -91,12 +91,12 @@ function byBytesThenKey(key) {
   }
 }
 
-// A file's content as compareTrees reads it to find renames: text as it is (a
-// lone surrogate, which no UTF-8 holds, as U+FFFD); a resource by its spelling
-// or its digest, unlike any text; and one with none, by its place in its list
-// alone, so that only its path pairs it.
+// A file's content as compareTrees reads it to find renames, each kind tagged
+// apart: text as it is (a lone surrogate, which no UTF-8 holds, as U+FFFD); a
+// resource by its spelling or its digest; and one with none, by its place in
+// its list alone, so that only its path pairs it.
 function treeData(content, at) {
-  if (typeof content === 'string') return content.toWellFormed()
+  if (typeof content === 'string') return `\0text\0${content.toWellFormed()}`
   if (content?.format === 'base64') return `\0base64\0${content.data}`
   return content?.format === 'digest' ? `\0digest\0${content.digest}` : `\0none\0${at}`
 }

@@ -429,6 +429,7 @@ describe('renames', () => {
     const file = digest => ({ format: 'digest', digest, size: 10 })
     assert.deepEqual(moved({ 'own/a.bin': file('sha256-a') }, { 'own/b.bin': file('sha256-a') }), [['own/a.bin', 'own/b.bin', false]], 'a binary by its digest')
     assert.deepEqual(moved({ 'own/a.bin': file('sha256-a') }, { 'own/b.bin': file('sha256-b') }), [])
+    assert.deepEqual(moved({ 'own/a.bin': { format: 'base64', data: 'AQ==' } }, { 'own/b.txt': '\0base64\0AQ==' }), [], 'nor text that spells a resource as it is read')
     assert.deepEqual(moved({ 'own/a.js': null }, { 'own/b.js': null }), [], 'one with no content alike no other')
     assert.deepEqual(moved({ 'own/src/a.js': null }, { 'own/lib/a.js': null }), [['own/src/a.js', 'own/lib/a.js', false]], 'but where its path says so')
   })
