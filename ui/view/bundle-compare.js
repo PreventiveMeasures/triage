@@ -52,27 +52,26 @@ import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { layoutPackageDirs, rootLabel, treeLayout } from '@preventive/compare'
+import { rootLabel } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
-import { dirClass, formatDelta, renderCompareStats } from './bundle-compare-stats.js'
-import { comparePickerStyle, compareSourceOptions } from './bundle-compare-picker.js'
+import { dirClass, formatDelta } from './bundle-compare-stats.js'
+import { compareSourceOptions } from './bundle-compare-picker.js'
+import { renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-header.js'
 import { pkgColor } from './graph/utils.js'
-import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
-import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
+import { pkgLabel } from './bundle-pkg-of.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { bundleFileMeta, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { prepareComparison } from './bundle-comparison.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
-import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
+import { bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
 import { fileMetaFlags, fileMetaTags } from './bundle-compare-meta.js'
 import { byFlags } from './file-flags.js'
-import { COMBINED_DIFF_MAX, combinedDiffRows } from './bundle-compare-all.js'
+import { renderComparisonViewer } from './bundle-compare-view.js'
 import { compareModeOf } from '../../common/managed/routes.js'
-import { bundleLineCounts } from '../../common/bundle-metadata.js'
 
 // Cap the repointed-imports table's rendered rows so a pathological
 // compare can't stamp out tens of thousands of DOM nodes. The counts are
@@ -676,63 +675,11 @@ class BundleCompare extends LitElement {
   _diffFor() {
     const key = `${this.integrity}|${this._targetIntegrity}|${this._scope}`
     if (this._diffKey !== key || !this._diff) {
-      // Every file each side mounts, resources included: a diff of
-      // source alone would call two bundles identical when only their
-      // images differ, and total less than the Overview does.
-      // From the bundle picked to the open one.
-      const [from, to] = [this._otherDetails, this.details]
-      const baseSources = bundleCompareFiles(from, this._scope)
-      const otherSources = bundleCompareFiles(to, this._scope)
-      // Classify original paths and preserve recorded Stasis package
-      // boundaries from either side, as the open one lays its files out
-      // where their roots differ. Own source has one identity.
-      const layout = treeLayout(baseSources.keys(), otherSources.keys())
-      const packageDirs = layoutPackageDirs(bundlePackageDirs(from), bundlePackageDirs(to), layout)
-      const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
-      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout, [bundleFileMeta(from), bundleFileMeta(to)])
-      // Each side's lines of code (bundleLineCounts), on its rows and in
-      // the totals; a file that isn't text has none.
-      const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)
-      const linesOf = (lines, paths) => { let total = 0; for (const path of paths) total += lines.get(path) ?? 0; return total }
-      Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, baseSources.keys()), otherLines: linesOf(otherLines, otherSources.keys()) })
-      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.basePath ?? row.path) ?? 0
-      for (const row of this._diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
-      for (const row of this._diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
-      this._diff.resolutions = computeResolutionDiff(
-        bundleCompareResolutions(from, this._scope),
-        bundleCompareResolutions(to, this._scope),
-        new Map(this._diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
-        this._diff.files.basePaths,
-        this._diff.files.root,
-      )
-      // Dependency versions come from the stasis per-module `{ name,
-      // version }` metadata, not the path/byte walk above, so they're
-      // computed alongside and hung off the same memo: the package rows
-      // join them to the sizes, the summary counts them. Empty for
-      // sourcemap / v0 pairs (no version metadata), whose rows carry sizes
-      // alone.
-      // Keyed by install directory, as the sizes are (`bundlePkgOf`).
-      const versionKey = dir => bundlePkgOf('', { packageDir: dir })
-      const baseVersions = bundlePackageVersions(from, this._scope ? baseSources.keys() : null, versionKey)
-      const otherVersions = bundlePackageVersions(to, this._scope ? otherSources.keys() : null, versionKey)
-      this._diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
-      this._diff.packageRows = comparePackages(this._diff.packages, baseVersions, otherVersions)
+      this._diff = prepareComparison(this._otherDetails, this.details, this._scope)
       this._diffKey = key
     }
     return this._diff
   }
-
-  // How many rows the Diff view would list, counted up to COMBINED_DIFF_MAX,
-  // with the line models found on the way, kept with the comparison.
-  _combinedFor() {
-    const diff = this._diffFor()
-    return diff.combined ??= combinedDiffRows(this._otherDetails, this.details, diff.files, { resolutions: diff.resolutions.changed })
-  }
-
-  // Whether Code lists every file's diff in one list (bundle-compare-all.js):
-  // only while that list is short enough to read whole; else a file at a
-  // time (bundle-compare-code.js).
-  get _diffFits() { return this._combinedFor().rows < COMBINED_DIFF_MAX }
 
   // Summary band — dependency, size and line deltas, then the file delta
   // with its bucket chips beside it (a removed, added or changed count of
@@ -740,38 +687,20 @@ class BundleCompare extends LitElement {
   // tabs keep to the right of the first line. Sits under the picker once a
   // comparison is live.
   _renderSummary(diff) {
-    return html`<div class="bundle-compare-summary">${renderCompareStats(diff)}
-      <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
-        ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
-          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
-      </div>
-    </div>`
+    return renderComparisonSummary(diff, html`<div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
+      ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
+        aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
+    </div>`)
   }
 
-  _renderPicker(others, hasTarget, scopeSelector, badges) {
-    const noun = this.source?.noun ?? 'bundle'
-    const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${comparePickerStyle(this.source)}
-      @compare-open-line=${event => this._openLine(event.detail)}>
-      <div class="bundle-compare-select-wrap">
-        <span class="bundle-compare-select-hint">Compare</span>
-        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}
-          label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
-        ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>` : nothing}
-      </div>
-      <span class="bundle-compare-arrow" aria-hidden="true">→</span>
-      <div class="bundle-compare-select-wrap">
-        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .versions=${Boolean(this.source)}
-          label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
-        ${hasTarget && this.source?.canSwap?.(this._targetIntegrity) !== false ? html`<button
-            type="button"
-            class="bundle-compare-swap"
-            @click=${() => this._swap()}
-            aria-label=${`Swap the two ${noun}s`}
-          ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
-      </div>
-      ${scopeSelector}${badges}
-    </div>`
+  _renderPicker(others, hasTarget, scopeSelector, comparison) {
+    return renderComparisonPicker({ source: this.source,
+      from: { options: others, value: this._targetIntegrity, pick: value => this._pick(value) },
+      to: { options: this._baseOptions(), value: this._baseKey, placeholder: this._nameFor(this.integrity), pick: value => this._pickBase(value) },
+      clear: hasTarget ? { run: () => this._pick(null) } : null,
+      swap: hasTarget && this.source?.canSwap?.(this._targetIntegrity) !== false ? () => this._swap() : null,
+      extras: scopeSelector, comparison, openLine: detail => this._openLine(detail),
+    })
   }
 
   // What this side may become: the open bundle and those it compares with,
@@ -828,14 +757,14 @@ class BundleCompare extends LitElement {
       && this._otherDetails
       && (this._otherDetails.json || this._otherDetails.bundle)
       && !this._otherDetails.error
-    const badges = this._baseReady && ready ? this.source?.badges?.(this._otherDetails, this.details, this._diffFor().files) ?? nothing : nothing
+    const comparison = this._baseReady && ready ? { base: this._otherDetails, other: this.details, files: this._diffFor().files } : null
     // Picker is always present (when there's anything to pick) so the
     // user can switch the compared bundle without leaving the tab; the
     // swap button rides next to the clear button once a target is live,
     // and the scope selector and a source's badges sit at the row's right
     // end, so the head is one row before a pick and two (picker, summary)
     // after.
-    const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, badges) : scopeSelector
+    const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, comparison) : scopeSelector
 
     const mode = this._baseReady && ready ? this._mode : 'overview'
     let body
@@ -860,22 +789,10 @@ class BundleCompare extends LitElement {
     }
 
     return html`<div class="bundle-compare">
-      <header class="bundle-compare-head">
-        ${picker}
-        ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
-      </header>
-      ${mode === 'code' && this._diffFits ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
-          .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
-          .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
-          .dependencyTags=${this.source?.dependencyTags ?? null}
-          .models=${this._combinedFor().models} .path=${this._codePath} .seek=${this._codeSeek} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
-          @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
-        : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
-          .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
-          .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
-          .dependencyTags=${this.source?.dependencyTags ?? null}
-          .path=${this._codePath} .seek=${this._codeSeek} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
-          @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
+      ${renderComparisonHeader(picker, this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing)}
+      ${mode === 'code' ? renderComparisonViewer({ base: this._otherDetails, other: this.details, diff: this._diffFor(), source: this.source,
+        path: this._codePath, seek: this._codeSeek, baseName: this._nameFor(this._targetIntegrity), otherName: this._nameFor(this.integrity), select: path => { this._codePath = path },
+      })
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }

@@ -23,10 +23,12 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare'
+import { comparisonEntries, fileContents } from './bundle-compare-files.js'
+export { fileEntries, fileContents } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
-import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, orderedComparisonFiles, compareDirectoryOrder } from './bundle-source-tree.js'
 import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
@@ -198,38 +200,6 @@ function countLines(text) {
   return count
 }
 
-// A diff too large to compute before it is asked for.
-// path → { kind, baseBytes, otherBytes, basePath, renamedFrom, modified, meta }
-// for every file that differs between the two sides of `files`
-// (bundle-compare-diff.js): removed, added, or changed, `basePath` naming the
-// file in the base bundle where that differs from its path, `renamedFrom` a
-// renamed one's old path, `modified` whether its contents changed too (false
-// for a changed one whose record alone changed), and `meta` how what a stasis
-// bundle records of it changed.
-export function fileEntries(files) {
-  const entries = new Map()
-  if (!files) return entries
-  for (const row of files.onlyBase) entries.set(row.path, { kind: 'removed', basePath: row.basePath, baseBytes: row.bytes, otherBytes: null })
-  for (const row of files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
-  for (const row of files.changed) {
-    const recorded = { ...row.meta ? { meta: row.meta } : {} }
-    entries.set(row.path, row.renamedFrom == null
-      ? { kind: 'changed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...row.modified === false ? { modified: false } : {}, ...recorded }
-      : { kind: 'renamed', basePath: row.basePath, renamedFrom: row.renamedFrom, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...recorded })
-  }
-  return entries
-}
-
-// A file's two sides, as `entry` names them, from the two bundles' details.
-export function fileContents(base, other, path, { kind, basePath = path }) {
-  let before = kind === 'added' ? '' : bundleFilesAsMap(base).get(basePath)
-  let after = kind === 'removed' ? '' : bundleFilesAsMap(other).get(path)
-  // An importer captured on one side only (or neither) is no change of
-  // contents; what there is of it shows as unchanged.
-  if (kind === 'repointed') before = after = after ?? before
-  return { before, after }
-}
-
 // Whether a text is no larger than the server formats (MAX_PRETTY_BYTES):
 // its UTF-8 counted only where its length leaves it in doubt, each of its
 // UTF-16 units one to three bytes.
@@ -245,24 +215,13 @@ export const diffCounts = (additions, deletions) => html`<span class="bundle-com
   <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
 </span>`
 
+// A diff too large to compute before it is asked for.
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
 // Whether a file reads as its source in place of a diff, a file at a time:
 // its only change a repointed import, moved there by a rename or not, its
 // record the same (see _renderFile).
 const readsAsSource = entry => entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
-
-function dirOrder([a, an], [b, bn]) {
-  return sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path)
-}
-
-// Files in the order the tree shows them, for the default pick and for
-// stepping between files.
-function orderedFiles(node, depth = 0, out = []) {
-  for (const [name, child] of [...node.dirs.entries()].toSorted(dirOrder)) orderedFiles(compactSourceDirectory(name, child, depth).node, depth + 1, out)
-  for (const [, full] of [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))) out.push(full)
-  return out
-}
 
 // Every directory holding a file of the bundle, so a directory of the tree
 // can tell whether it is new (none on the base side) or gone.
@@ -307,8 +266,9 @@ export class BundleCompareCode extends LitElement {
     dependencies: { attribute: false },
     openDependency: { attribute: false },
     dependencyTags: { attribute: false },
-    reviewFile: { attribute: false },
-    reviewBadge: { attribute: false },
+    // Optional review UI: row decorations, filters, progress, and file actions.
+    // File display, tree navigation and source features remain shared.
+    extensions: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -332,6 +292,9 @@ export class BundleCompareCode extends LitElement {
     this.baseAlerts = null
     this.otherAlerts = null
     this.alertTags = null
+    this.extensions = null
+    this._treeLimit = 300
+    this._treeRemaining = Infinity
     this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
@@ -390,6 +353,7 @@ export class BundleCompareCode extends LitElement {
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = this._buildEntries()
       this._counted = new Map()
+      this._treeLimit = this.extensions?.treePageSize ?? Infinity
       // A path may name another pair of files now (another scope pairs a
       // renamed file anew), so what the search kept of it is found again,
       // and a hit still sought in the files as they were is let go.
@@ -450,17 +414,7 @@ export class BundleCompareCode extends LitElement {
   // fileEntries, and every file that imports something that now resolves
   // elsewhere, `repointed` listing those imports.
   _buildEntries() {
-    const entries = fileEntries(this.files)
-    if (!this.files) return entries
-    for (const row of this.resolutions ?? []) {
-      if (!entries.has(row.parent)) {
-        const bytes = bundleFileByteLength(bundleFilesAsMap(this.other).get(row.parent) ?? bundleFilesAsMap(this.base).get(row.parent))
-        entries.set(row.parent, { kind: 'repointed', baseBytes: bytes, otherBytes: bytes })
-      }
-      const entry = entries.get(row.parent)
-      entry.repointed = [...(entry.repointed ?? []), row]
-    }
-    return entries
+    return comparisonEntries(this.base, this.other, this.files, this.resolutions ?? [])
   }
 
   // A file shows while any of its kinds of change does: a modified file with
@@ -500,21 +454,22 @@ export class BundleCompareCode extends LitElement {
   // The tree over the files the kind filter keeps. The display prefix comes
   // from every differing file, so filtering doesn't move the tree's root.
   _tree() {
-    const key = [this._entries, [...this._kinds].join()]
+    const key = [this._entries, `${[...this._kinds].join()}:${!!this.extensions?.fullPaths}`]
     if (this._treeKey?.[0] === key[0] && this._treeKey[1] === key[1]) return this._treeMemo
     const all = [...this._entries.keys()]
     const modules = this._modules()
-    const root = rootLabel(this.files?.root, bundleSourceTreePrefix(stripCommonPathPrefix(all).prefix, modules, all))
+    const root = rootLabel(this.files?.root, this.extensions?.fullPaths ? '' : bundleSourceTreePrefix(stripCommonPathPrefix(all).prefix, modules, all))
     const { prefix } = root
     const shown = all.filter(path => this._shown(this._entries.get(path)))
     const strip = path => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+    const tree = buildBundleSourceTree(shown.map(strip), shown, modules)
     this._treeKey = key
-    this._treeMemo = { prefix, root, tree: buildBundleSourceTree(shown.map(strip), shown, modules), shown: shown.length }
+    this._treeMemo = { prefix, root, tree, shown: shown.length, allOrder: orderedComparisonFiles(tree) }
     return this._treeMemo
   }
 
   _select(path) {
-    if (!path || path === this._current) return
+    if (!path || path === this._current || this.extensions?.canSelect?.() === false) return
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
   }
 
@@ -528,15 +483,18 @@ export class BundleCompareCode extends LitElement {
   // The rail's tree as its path and kind filters leave it, and its files in
   // the order it lists them.
   _railState() {
-    const { prefix, root, tree, shown } = this._tree()
-    const filtered = this._mode === 'files' && this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
-    return { prefix, root, tree, shown, filtered, order: filtered ? orderedFiles(filtered) : [] }
+    const { prefix, root, tree, shown, allOrder } = this._tree()
+    const filtered = filterBundleSourceTree(tree, this._mode === 'files' ? this._query : '', prefix, this.extensions?.fileFilter)
+    return { prefix, root, tree, shown, filtered, order: filtered === tree ? allOrder : filtered ? orderedComparisonFiles(filtered) : [], allOrder }
   }
 
   // The rail: the files that differ as a tree, filtered by path and kind,
   // `current` marked, and the splitter beside it. Picking a file is _select.
   _renderRail({ prefix, root, tree, shown, filtered, order }, current) {
     this._countUntil = null
+    this._treeRemaining = this.extensions?.treePageSize ? this._treeLimit : Infinity
+    this._treeTruncated = false
+    const treeContent = filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'repointed') counts[entry.kind]++
@@ -546,11 +504,11 @@ export class BundleCompareCode extends LitElement {
     const search = SEARCH_MODES.find(({ mode }) => mode === this._mode)
     return html`<aside class="bundle-code-rail">
         <div class="bundle-code-rail-head">
-          <span class="bundle-code-rail-label">Changes</span>
+          <span class="bundle-code-rail-label">${this.extensions?.railLabel ?? 'Changes'}</span>
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
           <span class="bundle-code-rail-actions">
-            <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
-              ?disabled=${this._mode !== 'files' || !!this._query || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
+            <button type="button" class="bundle-code-rail-action" aria-label=${this.extensions?.collapseLabel ?? 'Collapse directories'} data-tooltip="Collapse directories"
+              ?disabled=${this._mode !== 'files' || !!this._query && !this.extensions?.collapseClearsSearch || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
               ${COLLAPSE_DIRS_ICON}
             </button>
           </span>
@@ -560,23 +518,23 @@ export class BundleCompareCode extends LitElement {
         <div class="bundle-compare-code-filter">
           <label class="bundle-compare-code-search">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
-            <input type="search" placeholder=${search.placeholder} aria-label=${search.placeholder} spellcheck="false" autocomplete="off"
-              .value=${live(this._query)} @input=${e => { this._query = e.target.value }}>
+            <input type="search" placeholder=${this._mode === 'files' ? this.extensions?.searchPlaceholder ?? search.placeholder : search.placeholder} aria-label=${this._mode === 'files' ? this.extensions?.searchLabel ?? search.placeholder : search.placeholder} spellcheck="false" autocomplete="off"
+              .value=${live(this._query)} @input=${e => { this._query = e.target.value; this._treeLimit = this.extensions?.treePageSize ?? Infinity }}>
             <span class="bundle-code-search-modes" role="tablist">
               ${SEARCH_MODES.map(({ mode, label, icon }) => html`<button type="button" class=${classMap({ 'bundle-code-search-mode': true, active: mode === this._mode })}
                 role="tab" aria-selected=${String(mode === this._mode)} aria-label=${label} data-tooltip=${label} @click=${() => { this._mode = mode }}>${icon}</button>`)}
             </span>
           </label>
-          <div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
+          ${this.extensions?.filters ?? html`<div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
             ${KINDS.filter(({ kind }) => counts[kind] > 0).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
               aria-pressed=${String(this._kinds.has(kind))} data-tooltip=${`${this._kinds.has(kind) ? 'Hide' : 'Show'} ${label.toLowerCase()} files`}
               @click=${() => this._toggleKind(kind)}>${label.toLowerCase()}</button>`)}
-          </div>
+          </div>`}
         </div>
-        <div class="bundle-code-rail-body bundle-compare-code-tree">
-          ${this._mode === 'code' ? this._renderSearch(order, current, prefix)
-            : filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= OPEN_ALL_MAX) : html`<div class="bundle-code-search-empty">No changed files match.</div>`}
+        <div class="bundle-code-rail-body bundle-compare-code-tree">${this._mode === 'code' ? this._renderSearch(order, current, prefix) : treeContent}
+          ${this._mode === 'files' && this._treeTruncated ? html`<button type="button" class="bundle-compare-code-action" @click=${() => { this._treeLimit += this.extensions.treePageSize; this.requestUpdate() }}>Show more files</button>` : nothing}
         </div>
+        ${this.extensions?.footer?.(path => { this._query = ''; this._select(path) }) ?? nothing}
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
@@ -598,9 +556,9 @@ export class BundleCompareCode extends LitElement {
     const current = this._entries.has(this.path) ? this.path : rail.order[0] ?? null
     if (current && current !== this._current) this._reveal(current, rail.prefix)
     this._current = current
-    this._order = rail.order
+    this._order = this.extensions?.filterContent === false ? rail.allOrder : rail.order
     // The file before the rail, so its search knows how its diff drew (_noteRowless).
-    const main = current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
+    const main = current ? html`${this._renderFile(current, this.extensions?.fullPaths ? '' : rail.prefix)}${this.extensions?.fileActions?.(current, false) ?? nothing}` : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
     return html`<div class="bundle-code-view bundle-compare-code">
       ${this._renderRail(rail, current)}
       <div class="bundle-code-main">
@@ -608,7 +566,6 @@ export class BundleCompareCode extends LitElement {
       </div>
     </div>`
   }
-
 
   _toggleKind(kind) {
     const kinds = new Set(this._kinds)
@@ -618,6 +575,8 @@ export class BundleCompareCode extends LitElement {
   }
 
   _collapseAll(tree) {
+    if (this.extensions?.collapseClearsSearch) this._query = ''
+    this._treeLimit = this.extensions?.treePageSize ?? Infinity
     const walk = node => {
       for (const child of node.dirs.values()) { this._open.set(child.path, false); walk(child) }
     }
@@ -842,54 +801,70 @@ export class BundleCompareCode extends LitElement {
     return { rows, index }
   }
 
+  _takeTreeRow(required = false) {
+    if (this._treeRemaining-- > 0) return true
+    this._treeTruncated = true
+    return required
+  }
+
   _renderTree(node, current, depth, openAll) {
-    const dirs = [...node.dirs.entries()].toSorted(dirOrder)
+    const dirs = [...node.dirs.entries()].toSorted(compareDirectoryOrder)
     const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
+    const directories = dirs.flatMap(([name, child]) => {
+      const compact = compactSourceDirectory(name, child, depth)
+      const pkg = child.package
+      const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
+      const open = this._query ? true : this._open.get(child.path) ?? (openAll || depth === 0 || containsFile(child, current))
+      // The row's top directory is new or gone as a whole, package or not.
+      const dirKind = this._baseDirs().has(child.sourcePath)
+        ? bundleDirs(this.other).has(child.sourcePath) ? null : 'removed'
+        : 'added'
+      if (!this._takeTreeRow(containsFile(child, current))) return []
+      const content = html`<li class="bundle-code-tree-dir">
+        <details .open=${live(open)} @toggle=${event => {
+          const expanded = event.currentTarget.open
+          if (this._open.get(child.path) === expanded) return
+          this._open.set(child.path, expanded)
+          if (this.extensions?.treePageSize) this.requestUpdate()
+        }}>
+          <summary aria-label=${this.extensions?.directoryLabel?.(compact.node) ?? nothing} @click=${e => { this._open.set(child.path, !e.currentTarget.parentElement.open); this.requestUpdate() }}>
+            <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
+            ${pkg ? sourcePackageIcon(pkg.ecosystem) : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored, 'bundle-compare-code-name': true, removed: dirKind === 'removed' })}
+              data-tooltip-truncated data-tooltip=${compact.node.sourcePath}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            </span>
+            ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
+            <span class="bundle-compare-code-dir-count" data-tooltip=${`${child.fileCount} changed ${child.fileCount === 1 ? 'file' : 'files'}`}>${this.extensions?.directorySummary?.(compact.node) ?? child.fileCount}</span>
+            ${dirKind ? html`<span class=${`bundle-compare-code-letter ${dirKind}`} data-tooltip=${`${pkg ? 'Package' : 'Directory'} ${dirKind}`}>${KIND[dirKind].letter}</span>` : nothing}
+          </summary>
+          ${open || !this.extensions?.treePageSize ? this._renderTree(compact.node, current, depth + 1, openAll) : nothing}
+        </details>
+      </li>`
+      return [{ key: child.path, content }]
+    })
+    const leaves = files.flatMap(([name, full]) => {
+      if (!this._takeTreeRow(full === current)) return []
+      const { kind, repointed, renamedFrom, modified } = this._entries.get(full)
+      const imports = repointed ? `${repointed.length} repointed ${repointed.length === 1 ? 'import' : 'imports'}` : ''
+      const content = html`<li class="bundle-code-tree-file">
+        <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
+          aria-label=${this.extensions?.fileLabel?.(full) ?? nothing} aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
+          ${this.extensions?.filePrefix?.(full) ?? nothing}${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
+          ${this.extensions?.fileSuffix?.(full) ?? nothing}
+          ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
+          ${this._fileTags(full, this._entries.get(full), true)}
+          ${this._treeCounts(full, this._entries.get(full))}
+          ${repointed && kind !== 'repointed' ? renderFileChange({ kind: 'repointed' }, imports) : nothing}
+          ${renderFileChange({ kind, modified }, kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label)}
+        </button>
+      </li>`
+      return [{ key: full, content }]
+    })
     return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}
-      aria-label=${depth === 0 ? 'Changed files' : nothing}
+      aria-label=${depth === 0 ? this.extensions?.treeLabel ?? 'Changed files' : nothing}
       @keydown=${depth === 0 ? navigateBundleSourceTree : nothing}>
-      ${repeat(dirs, ([, child]) => child.path, ([name, child]) => {
-        const compact = compactSourceDirectory(name, child, depth)
-        const pkg = child.package
-        const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
-        const open = this._query ? true : this._open.get(child.path) ?? (openAll || depth === 0 || containsFile(child, current))
-        // The row's top directory is new or gone as a whole, package or not.
-        const dirKind = this._baseDirs().has(child.sourcePath)
-          ? bundleDirs(this.other).has(child.sourcePath) ? null : 'removed'
-          : 'added'
-        return html`<li class="bundle-code-tree-dir">
-          <details .open=${live(open)}>
-            <summary @click=${e => { this._open.set(child.path, !e.currentTarget.parentElement.open) }}>
-              <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-              ${pkg ? sourcePackageIcon(pkg.ecosystem) : nothing}
-              <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored, 'bundle-compare-code-name': true, removed: dirKind === 'removed' })}
-                data-tooltip-truncated data-tooltip=${compact.node.sourcePath}>
-                ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
-              </span>
-              ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
-              <span class="bundle-compare-code-dir-count" data-tooltip=${`${child.fileCount} changed ${child.fileCount === 1 ? 'file' : 'files'}`}>${child.fileCount}</span>
-              ${dirKind ? html`<span class=${`bundle-compare-code-letter ${dirKind}`} data-tooltip=${`${pkg ? 'Package' : 'Directory'} ${dirKind}`}>${KIND[dirKind].letter}</span>` : nothing}
-            </summary>
-            ${this._renderTree(compact.node, current, depth + 1, openAll)}
-          </details>
-        </li>`
-      })}
-      ${repeat(files, ([, full]) => full, ([name, full]) => {
-        const { kind, repointed, renamedFrom, modified } = this._entries.get(full)
-        const imports = repointed ? `${repointed.length} repointed ${repointed.length === 1 ? 'import' : 'imports'}` : ''
-        return html`<li class="bundle-code-tree-file">
-          <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
-            aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
-            ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
-            ${this.reviewBadge?.(full) ?? nothing}
-            ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._fileTags(full, this._entries.get(full), true)}
-            ${this._treeCounts(full, this._entries.get(full))}
-            ${repointed && kind !== 'repointed' ? renderFileChange({ kind: 'repointed' }, imports) : nothing}
-            ${renderFileChange({ kind, modified }, kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label)}
-          </button>
-        </li>`
-      })}
+      ${repeat(directories, row => row.key, row => row.content)}${repeat(leaves, row => row.key, row => row.content)}
     </ul>`
   }
 
@@ -1298,7 +1273,6 @@ export class BundleCompareCode extends LitElement {
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${this._dependencyChanges(path)}
-        ${this.reviewFile?.(path, this.base) ?? nothing}
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
         ${body}
       </div>`

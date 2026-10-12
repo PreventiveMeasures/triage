@@ -528,12 +528,16 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   border-top: 1px solid var(--border);
   backdrop-filter: var(--glass-blur);
 }
+.bundle-compare-code-bar, .bundle-compare-all-file-head {
+  flex-wrap: wrap; height: auto; min-height: calc(2.15rem + 1px);
+}
+:is(.bundle-compare-code-bar, .bundle-compare-all-file-head) .bundle-code-main-path { min-width: min(12rem, 100%); }
 .bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }
 
 /* ── Code mode ─────────────────────────────────────────────────────
    The Code tab's rail + splitter + main column (report.css), here over
    the files that differ, with a review diff in the main column. */
-.bundle-compare > :is(bundle-compare-code, bundle-compare-all) {
+:is(.bundle-compare, npm-review) > :is(bundle-compare-code, bundle-compare-all) {
   display: flex;
   flex: 1;
   min-height: 0;

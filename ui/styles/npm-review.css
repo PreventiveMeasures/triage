@@ -1,4 +1,4 @@
-/* Review owns its layout; shared package chrome and diff styles stay intact. */
+/* Review controls decorate the shared comparison layout. */
 npm-review {
   position: relative;
   display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column;
@@ -27,7 +27,7 @@ npm-review button.npm-review-primary:not(:disabled):hover { background: var(--ac
 npm-review button.npm-review-text-button { border: 0; background: transparent; color: var(--muted); padding: .2rem 0; }
 npm-review button.npm-review-text-button:hover { color: var(--accent); }
 npm-review button.npm-review-icon-button { border: 0; background: transparent; width: 1.8rem; padding: .2rem; }
-npm-review select, npm-review textarea, npm-review input[type='search'] {
+npm-review select, npm-review textarea {
   padding: .4rem .6rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   background: var(--bg); color: var(--text); font: inherit; min-width: 0;
 }
@@ -41,7 +41,7 @@ npm-review textarea { display: block; width: 100%; resize: vertical; line-height
   border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgb(0 0 0 / .2);
   }
-.npm-review-head bundle-selector[disabled] { pointer-events: none; opacity: .5; }
+npm-review .bundle-compare-head bundle-selector[disabled] { pointer-events: none; opacity: .5; }
 .npm-review-summary-actions { display: flex; align-items: center; gap: 1.1rem; flex-shrink: 0; }
 .npm-review-progress-block { width: 8.6rem; }
 .npm-review-progress-block > span {
@@ -71,20 +71,7 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   font-size: .68rem;
   font-weight: 400;
   }
-.npm-review-workbench { display: flex; flex: 1; min-width: 0; min-height: 0; }
-npm-review-tree {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 var(--bundle-code-rail-width, 320px);
-  width: var(--bundle-code-rail-width, 320px);
-  min-width: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  }
-.npm-review-tree-head { display: flex; align-items: center; justify-content: space-between; padding: .3rem .65rem; font-size: .72rem; }
-.npm-review-search { display: block; padding: 0 .6rem .3rem; }
-.npm-review-search input { display: block; width: 100%; padding: .3rem .5rem !important; font-size: .73rem !important; }
-.npm-review-filters { display: flex; align-items: center; gap: .7rem; padding: 0 .65rem .35rem; }
+.npm-review-filters { display: flex; align-items: center; gap: .7rem; padding: 0 .15rem; }
 npm-review .npm-review-filters button {
   min-height: 1.4rem;
   border: 0;
@@ -94,19 +81,6 @@ npm-review .npm-review-filters button {
   font-size: .68rem;
   }
 npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text); }
-.npm-review-tree-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; padding: 0 .3rem; }
-.npm-review-tree-scroll ul { list-style: none; padding: 0; margin: 0; }
-npm-review button.npm-review-tree-file, npm-review button.npm-review-tree-directory {
-  display: flex; width: 100%; min-height: 25px; height: 25px; justify-content: flex-start; gap: .35rem;
-  border: 0; border-radius: 3px; padding-block: 0; padding-right: .45rem; background: transparent; text-align: left;
-}
-npm-review button.npm-review-tree-file[aria-current='true'] { background: rgb(from var(--accent) r g b / .14); }
-.npm-review-filename { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-.npm-review-tree-file .npm-review-filename { font: .74rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.npm-review-directory-count { font-size: .64rem; font-variant-numeric: tabular-nums; color: var(--muted); }
-npm-review button.npm-review-tree-directory { color: var(--muted); font-size: .74rem; }
-.npm-review-chevron { display: inline-flex; flex: none; }
-.npm-review-chevron.open { transform: rotate(90deg); }
 .npm-review-note-dot { color: var(--muted); }
 .npm-review-tree-footer {
   display: flex;
@@ -119,17 +93,6 @@ npm-review button.npm-review-tree-directory { color: var(--muted); font-size: .7
   font-size: .65rem;
   }
 npm-review .npm-review-tree-footer button { padding: 0; border: 0; background: transparent; font-size: inherit; min-height: 1.5rem; }
-.npm-review-content { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-npm-review-code { display: flex; flex-direction: column; flex: 1; min-height: 8rem; min-width: 0; }
-npm-review-code .bundle-code-main-bar { flex-wrap: wrap; gap: .35rem; padding: .35rem .65rem; }
-npm-review-code .bundle-code-main-path { min-width: 4rem; flex: 1; }
-npm-review-code .bundle-compare-code-bar .bundle-code-main-stats { display: none; }
-npm-review-code .focus-code-nav-btn:is([aria-label='Previous change'], [aria-label='Next change']) { display: none; }
-npm-review .bundle-compare-diff { min-height: 0; flex: 1; }
-npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-/* Keep the filename readable beside shared chips in a narrow review pane. */
-npm-review-diff .bundle-compare-all-file-head { flex-wrap: wrap; height: auto; min-height: calc(2.15rem + 1px); }
-npm-review-diff .bundle-code-main-path { min-width: min(12rem, 100%); }
 .npm-review-decision {
   flex: none;
   max-height: 50%;
@@ -216,14 +179,6 @@ npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disable
   }
 .npm-review-badge.published { color: var(--accent); background: rgb(from var(--accent) r g b / .12); }
 .npm-review-badge.revoked { color: var(--critical); background: rgb(from var(--critical) r g b / .1); }
-.npm-review-diff-decision {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: .6rem;
-  padding: .4rem .75rem;
-  background: var(--surface);
-  }
 .npm-review-empty { padding: 1rem; color: var(--muted); }
 .npm-review-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 npm-review .npm-review-dialog {
@@ -400,29 +355,21 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
   .npm-review-toolbar { padding-inline: .7rem; }
 }
 @container dependency-review (width <= 600px) {
-  .npm-review-workbench { flex-direction: column; overflow: auto; }
-  npm-review-tree { width: 100%; flex: none; height: 13rem; border-right: 0; border-bottom: 1px solid var(--border); }
-  .npm-review-content { overflow: visible; flex: none; }
-  npm-review-code { min-height: 16rem; max-height: 28rem; }
-  npm-review-diff { height: 70dvh; flex: none; }
-  .npm-review-workbench > bundle-code-splitter { display: none; }
+  npm-review > :is(bundle-compare-code, bundle-compare-all) { overflow: auto; }
+  npm-review .bundle-code-view { flex-direction: column; overflow: visible; }
+  npm-review .bundle-code-rail { width: 100%; flex: none; height: 13rem; border-right: 0; border-bottom: 1px solid var(--border); }
+  npm-review .bundle-code-main { flex: none; height: 70dvh; min-height: 16rem; }
+  npm-review bundle-code-splitter { display: none; }
   .npm-review-decision { max-height: none; overflow: visible; }
   .npm-review-summary-actions { justify-content: space-between; gap: .5rem; }
   .npm-review-toolbar-group { gap: .65rem; }
-  .npm-review-baseline bundle-selector { max-width: 40vw; }
 }
 @media (width <= 600px) {
   .dependency-review-list { padding: 1rem; }
 }
 @media (pointer: coarse) {
-  npm-review button, npm-review select, npm-review button.npm-review-tree-file, npm-review button.npm-review-tree-directory {
+  npm-review button, npm-review select {
   min-height: 44px !important;
   }
   npm-review input[type='search'], npm-review textarea { font-size: 16px !important; }
 }
-
-/* Review always wraps source; keep this preference local to review. */
-npm-review .bundle-compare-code-toggle[aria-label='Wrap lines'] { display: none; }
-npm-review .bundle-compare-diff-table { width: 100%; }
-npm-review .diff-code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-npm-review .diff-fold-actions button svg { flex: none; }

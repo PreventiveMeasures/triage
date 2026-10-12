@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
-import { compareReviewPaths, reviewViewMode } from '../ui/view/npm-review-files.js'
+import { withinComparisonLimits } from '../ui/view/bundle-compare-files.js'
+import { buildBundleSourceTree, orderedComparisonFiles } from '../ui/view/bundle-source-tree.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
@@ -38,17 +39,14 @@ mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: {
   navigate: route => { navigations.push(route) }, replaceRoute: () => {},
 } } })
 mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
-mock.module('../ui/view/npm-review-code.js', { namedExports: {} })
-mock.module('../ui/view/bundle-compare-all.js', { namedExports: {} })
-mock.module('../ui/view/npm-review-diff.js', { namedExports: {} })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
-const { EMPTY_REVIEW_BASE, NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
-const { renderReview, renderReviewEditor } = await import('../ui/view/npm-review-view.js')
+const { EMPTY_REVIEW_BASE, NpmReview, REVIEW_DISPLAY_LIMITS, reviewContext } = await import('../ui/view/npm-review.js')
+const { renderReview, renderReviewEditor, reviewExtensions } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
-const { NpmReviewTree, reviewTree } = await import('../ui/view/npm-review-tree.js')
+const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
 const { reviewFileStates, reviewNote, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
 
 function text(value) {
@@ -91,7 +89,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   assert.deepEqual(page._files, ['asset.bin', 'index.js', 'package.json'])
   assert.deepEqual(page._nonTextFiles, ['asset.bin', 'index.js'], 'a binary-to-text change remains non-reviewable')
   assert.deepEqual(page._summary, { coverage: 'partial', checkedFiles: 1, totalFiles: 3, verdictLimit: 'accept' })
-  assert.equal(reviewTree(page._treeFiles, page._fileStates).checked, 1)
+  assert.match(text(reviewExtensions(page).filters), /Unchecked 2/u)
   for (const mode of ['code', 'diff']) {
     page._mode = mode
     page._selectFile('asset.bin')
@@ -118,7 +116,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
 
 test('Review uses the current comparison source for badges, dependency chips, and file alerts in both diff modes', () => {
   const called = [], dependencyCalls = [], dependencyTags = () => {}, openDependency = () => {}, page = component()
-  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['export const value = 1\n'] } }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['export const value = 1\n'] } }
   page._target = '(empty)'
   page._base = EMPTY_REVIEW_BASE
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
@@ -128,8 +126,11 @@ test('Review uses the current comparison source for badges, dependency chips, an
     files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
   }
   for (const mode of ['code', 'diff']) {
-    page._mode = mode
+    const original = page.constructor
+    page.constructor = { displayLimits: { ...REVIEW_DISPLAY_LIMITS, maxBytes: mode === 'code' ? 0 : Infinity } }
     const result = renderReview(page)
+    page.constructor = original
+    assert.match(text(result), mode === 'code' ? /<bundle-compare-code /u : /<bundle-compare-all /u)
     const rendered = text(result)
     const values = item => Array.isArray(item) ? item.flatMap(values) : item?.strings ? item.values.flatMap(values) : [item]
     assert.match(rendered, /bundle-compare-picker is-versions/u)
@@ -149,7 +150,7 @@ test('Review uses the current comparison source for badges, dependency chips, an
 
 test('review selectors preserve the shared version dates and recent-release warnings', () => {
   const page = component()
-  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
   page._base = EMPTY_REVIEW_BASE; page._target = '(empty)'
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
   const version = { id: '2.0.0', name: '@scope/lib@2.0.0', displayLabel: '2.0.0', format: 'npm', detail: 'latest', date: 'Oct 12, 2026', dateWarning: '3h ago' }
@@ -167,10 +168,10 @@ test('review trees reuse Compare counts and pure-rename markers and fill long li
   page._key = null; answer = { reviews: [], teams: [] }
   page._ensureContext({ ...base, kind: 'sourcemap', json: { sources: ['old.js'], sourcesContent: ['same\n'] } })
   await Promise.resolve()
-  const tree = new NpmReviewTree()
-  tree.files = page._treeFiles
+  const tree = new BundleCompareCode()
+  tree.base = { ...base, kind: 'sourcemap', json: { sources: ['old.js'], sourcesContent: ['same\n'] } }; tree.other = page.details; tree.files = page._diff.files; tree.extensions = reviewExtensions(page)
   tree.willUpdate(new Map([['files']]))
-  const markup = text(tree.render())
+  const markup = text(tree._renderRail(tree._railState(), null))
   assert.match(markup, /bundle-compare-code-letter renamed pure/u)
   assert.match(markup, /bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u)
   assert.match(markup, /class=del empty>−0</u)
@@ -179,13 +180,13 @@ test('review trees reuse Compare counts and pure-rename markers and fill long li
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const update = t.mock.method(tree, 'requestUpdate', () => {})
   tree._lineCounter.reset()
-  tree.render()
+  tree._renderRail(tree._railState(), null)
   assert.equal(tree._lineCounter.counts.size, 1)
   t.mock.timers.tick(0)
   assert.equal(update.mock.callCount(), 1)
-  assert.equal(text(tree.render()), markup)
+  assert.equal(text(tree._renderRail(tree._railState(), null)), markup)
   tree._lineCounter.reset()
-  tree.render()
+  tree._renderRail(tree._railState(), null)
   tree.disconnectedCallback()
   t.mock.timers.tick(0)
   assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving Review')
@@ -193,7 +194,7 @@ test('review trees reuse Compare counts and pure-rename markers and fill long li
 
 test('Finalize tint follows allowed verdicts, including edits awaiting save and security findings', async () => {
   const page = component()
-  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
   page._base = EMPTY_REVIEW_BASE
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
   page._files = ['index.js']
@@ -619,15 +620,23 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
   assert.equal(states.get('index.js').status, 'request-changes')
   assert.equal(states.get('other.js').status, null)
   const files = Array.from({ length: 10000 }, (_, i) => ({ path: `src/file-${String(i).padStart(5, '0')}.js`, kind: 'added' }))
-  const tree = reviewTree([...files, { path: 'index.js', kind: 'added' }, { path: 'other.js', kind: 'added' }], states)
-  assert.equal(tree.checked, 1); assert.equal(tree.total, 10002)
-  const treeView = new NpmReviewTree()
-  treeView.files = files; treeView.states = new Map(); treeView.path = files[0].path
-  treeView.willUpdate(new Map([['files', []], ['states', new Map()], ['path', null]]))
-  assert.equal((text(treeView.render()).match(/class="bundle-code-tree-link npm-review-tree-file"/gu) ?? []).length, 299)
+  const page = component()
+  page._files = [...files.map(row => row.path), 'index.js', 'other.js']; page._reviews = [{ ...review, entries }]
+  const extensions = reviewExtensions(page)
+  assert.match(text(extensions.filters), /All 10002/u)
+  assert.match(text(extensions.filters), /Unchecked 10001/u)
+  const treeView = new BundleCompareCode()
+  treeView.files = { onlyBase: [], onlyOther: files, changed: [] }; treeView.extensions = extensions
+  treeView.path = files[0].path
+  treeView.willUpdate(new Map([['files']]))
+  const rail = () => text(treeView._renderRail(treeView._railState(), treeView.path))
+  assert.equal((rail().match(/class=bundle-code-tree-link/gu) ?? []).length, 299)
   treeView._query = 'file-09999'
-  assert.match(text(treeView.render()), /file-09999.js/u)
-  assert.doesNotMatch(text(treeView.render()), /file-00000.js/u)
+  assert.match(rail(), /file-09999.js/u)
+  assert.doesNotMatch(rail(), /file-00000.js/u)
+  treeView._query = ''; treeView.path = files.at(-1).path
+  assert.match(rail(), /file-09999.js/u, 'a selected file stays available past the tree page limit')
+
 })
 
 
@@ -694,16 +703,16 @@ test('rapid verdict changes save serially with updated revisions, including reve
 test('only saves pending for three seconds block editing, and completion clears the block', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const page = component(), pending = Promise.withResolvers()
-  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
   page._base = EMPTY_REVIEW_BASE; page._target = '@scope/lib@1.0.0'; page._files = ['index.js']
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
   const assertSaveUI = blocked => {
     const rendered = text(renderReview(page))
     assert.equal(rendered.includes('Unsaved changes'), blocked)
     assert.equal(rendered.includes('Saving changes…'), blocked)
-    assert.match(rendered, new RegExp(`label="Review base"[^>]+\\?disabled=${blocked}`, 'u'))
-    assert.match(rendered, new RegExp(`label="Version to review"[^>]+\\?disabled=${blocked}`, 'u'))
-    assert.match(rendered, new RegExp(`aria-label="Clear review base" \\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`label=Review base[^>]+\\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`label=Version to review[^>]+\\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`aria-label=Clear review base \\?disabled=${blocked}`, 'u'))
     assert.match(rendered, new RegExp(`\\?disabled=${blocked}[^>]*>Finalize review`, 'u'))
   }
   page._resetEditor('index.js'); answer = pending.promise
@@ -974,7 +983,7 @@ test('a blank new note does not block finalization or create an empty row', asyn
 
 test('review file order is directories first at every depth', () => {
   const files = ['index.js', 'z/a.js', 'a.js', 'a/z.js', 'a/nested/b.js', 'z/b.js']
-  assert.deepEqual(files.toSorted(compareReviewPaths), ['a/nested/b.js', 'a/z.js', 'z/a.js', 'z/b.js', 'a.js', 'index.js'])
+  assert.deepEqual(orderedComparisonFiles(buildBundleSourceTree(files)), ['a/nested/b.js', 'a/z.js', 'z/a.js', 'z/b.js', 'a.js', 'index.js'])
 })
 
 
@@ -985,10 +994,36 @@ test('review drawers identify the entire version comparison', () => {
 })
 
 test('review automatically uses whole diff below both line and byte limits', () => {
+  const reviewViewMode = files => withinComparisonLimits(files, REVIEW_DISPLAY_LIMITS) ? 'diff' : 'code'
   assert.equal(reviewViewMode([{ before: '', after: 'a\n'.repeat(49_999) }]), 'diff')
   assert.equal(reviewViewMode([{ before: 'a\n'.repeat(25_000), after: 'b\n'.repeat(25_000) }]), 'code')
   assert.equal(reviewViewMode([{ before: '', after: 'x'.repeat(2 * 1024 * 1024 - 1) }]), 'diff')
   assert.equal(reviewViewMode([{ before: 'x'.repeat(1024 * 1024), after: 'x'.repeat(1024 * 1024) }]), 'code')
   assert.equal(reviewViewMode([{ before: '', after: 'é'.repeat(1024 * 1024) }]), 'code', 'the limit measures UTF-8 bytes')
   assert.equal(reviewViewMode([{ before: '', after: { format: 'digest', size: 2 * 1024 * 1024 } }]), 'code')
+})
+
+test('the shared tree keeps review decorations, progress and next-unchecked behavior', () => {
+  const page = component()
+  page._files = ['src/a.js', 'src/b.js', 'index.js']; page._path = 'src/b.js'
+  page._reviews = [{ ...review, entries: [{ ...file, file: 'src/a.js', status: 'accept' }, { ...file, file: 'src/b.js', status: null }] }]
+  const extras = reviewExtensions(page)
+  assert.equal(extras.directorySummary({ sourcePath: 'src' }), '1/2')
+  assert.match(text(extras.filePrefix('src/a.js')), /accept/u)
+  assert.match(text(extras.fileSuffix('src/b.js')), /Has notes/u)
+  assert.equal(extras.fileLabel('src/a.js'), 'src/a.js, Accept')
+  assert.match(text(extras.filters), /Unchecked 2/u)
+  const selected = []
+  const footer = extras.footer(path => selected.push(path))
+  footer.values.find(value => typeof value === 'function')()
+  assert.deepEqual(selected, ['index.js'])
+  page._unchecked = true
+  const filtered = reviewExtensions(page)
+  assert.equal(filtered.fileFilter('src/a.js'), false)
+  assert.equal(filtered.fileFilter('src/b.js'), true, 'a note without a verdict stays unchecked')
+  assert.equal(filtered.canSelect(), true)
+  page._saveBlocked = true
+  assert.equal(filtered.canSelect(), false)
+  page._saveBlocked = false; page._panel = 'notes'
+  assert.equal(filtered.canSelect(), false, 'scrolling behind a dialog must not replace its notes editor')
 })

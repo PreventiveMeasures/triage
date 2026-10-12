@@ -3,9 +3,10 @@ import { live } from 'lit/directives/live.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
-import { renderCompareStats } from './bundle-compare-stats.js'
-import { comparePickerStyle, compareSourceOptions } from './bundle-compare-picker.js'
-import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-header.js'
+import { renderComparisonViewer } from './bundle-compare-view.js'
+import { compareSourceOptions } from './bundle-compare-picker.js'
+import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
@@ -38,18 +39,14 @@ function reviewHeader(page) {
   if (hasBase && !choices.some(row => row.id === page._target)) choices.push(...compareSourceOptions([{ id: page._target, name: page._target, format: 'npm' }]))
   const versions = compareSourceOptions(source.choices)
   if (!versions.some(row => row.id === page.entry.npm.version)) versions.push(...compareSourceOptions([{ id: page.entry.npm.version, name: page.entry.npm.version, format: 'npm' }]))
-  return html`<header class="bundle-compare-head npm-review-head"><div class="bundle-compare-picker is-versions" style=${comparePickerStyle(source)}>
-    <div class="bundle-compare-select-wrap"><span class="bundle-compare-select-hint">Review</span>
-      <bundle-selector .bundles=${choices} .value=${hasBase ? page._target : null} noun="version" versions label="Review base" placeholder="Choose a version…" ?disabled=${busy(page)}
-        @bundle-change=${event => { event.stopPropagation(); void page._navigate(event.detail.value) }}></bundle-selector>
-      ${hasBase ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear review base" ?disabled=${busy(page)}
-        @click=${() => void page._navigate('(empty)')}>×</button>` : nothing}</div>
-    <span class="bundle-compare-arrow" aria-hidden="true">→</span>
-    <div class="bundle-compare-select-wrap"><bundle-selector .bundles=${versions} .value=${page.entry.npm.version} noun="version" versions
-      label="Version to review" ?disabled=${busy(page)} @bundle-change=${event => { event.stopPropagation();
-        void page._navigateTo({ view: 'npm', packageName: page.entry.npm.name, packageSpec: event.detail.value, bundleTab: 'review', ...page._location(page._target) }) }}></bundle-selector></div>
-    ${source.badges?.(page._base, page.details, page._diff.files) ?? nothing}
-    </div><div class="bundle-compare-summary">${renderCompareStats(page._diff)}</div></header>`
+  return renderComparisonHeader(renderComparisonPicker({ source, label: 'Review', disabled: busy(page),
+    from: { options: choices, value: hasBase ? page._target : null, label: 'Review base', pick: value => void page._navigate(value) },
+    to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
+      view: 'npm', packageName: page.entry.npm.name, packageSpec: value, bundleTab: 'review', ...page._location(page._target),
+    }) },
+    clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
+    comparison: { base: page._base, other: page.details, files: page._diff.files },
+  }), renderComparisonSummary(page._diff))
 }
 
 function toolbar(page) {
@@ -153,28 +150,56 @@ function panel(page) {
   </dialog>`
 }
 
+// Review decorates the shared comparison tree and viewer. It never renders a
+// second tree or reimplements source/chip wiring.
+export function reviewExtensions(page) {
+  const states = page._fileStates
+  if (page._treeProgress?.states !== states || page._treeProgress.files !== page._files) {
+    const directories = new Map()
+    let checked = 0
+    for (const path of page._files) {
+      const parts = path.split('/'), reviewed = Number(Boolean(states.get(path)?.status))
+      checked += reviewed
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join('/')
+        const counts = directories.get(dir) ?? { total: 0, checked: 0 }
+        counts.total++; counts.checked += reviewed
+        directories.set(dir, counts)
+      }
+    }
+    page._treeProgress = { states, files: page._files, directories, checked }
+  }
+  const { directories, checked } = page._treeProgress
+  return {
+    railLabel: 'Files', treeLabel: 'Review files', collapseLabel: 'Collapse folders',
+    searchLabel: 'Find a file', searchPlaceholder: 'Find a file…',
+    treePageSize: 300, filePageSize: 40, openAllMax: 0, filterContent: false, fullPaths: true, collapseClearsSearch: true,
+    canSelect: () => !page._blocked && !page._panel,
+    fileFilter: page._unchecked ? path => !states.get(path)?.status : null,
+    fileLabel: path => `${path}, ${verdictLabels[states.get(path)?.status] ?? 'Not reviewed'}`,
+    filePrefix: path => verdictIcon(states.get(path)?.status),
+    fileSuffix: path => states.get(path)?.notes ? html`<span class="npm-review-note-dot" aria-label="Has notes">•</span>` : nothing,
+    directoryLabel: node => { const count = directories.get(node.sourcePath); return `${node.sourcePath}, ${count?.checked ?? 0} of ${count?.total ?? 0} checked` },
+    directorySummary: node => { const count = directories.get(node.sourcePath); return `${count?.checked ?? 0}/${count?.total ?? 0}` },
+    filters: html`<div class="npm-review-filters" aria-label="Filter review files">
+      <button type="button" aria-pressed=${String(!page._unchecked)} @click=${() => { page._unchecked = false }}>All ${page._files.length}</button>
+      <button type="button" aria-pressed=${String(!!page._unchecked)} @click=${() => { page._unchecked = true }}>Unchecked ${page._files.length - checked}</button>
+    </div>`,
+    footer: select => html`<footer class="npm-review-tree-footer"><span>Checked / total</span><button type="button" ?disabled=${page._blocked || page._files.length === checked}
+      @click=${() => { const at = page._files.indexOf(page._path);
+        const next = page._files.find((path, index) => index > at && !states.get(path)?.status) ?? page._files.find(path => !states.get(path)?.status);
+        select(next) }}>Next unchecked ${NEXT_ICON}</button></footer>`,
+    fileActions: (path, inline) => !inline && page._panel === 'notes' ? nothing : renderReviewEditor(page, path, inline),
+  }
+}
+
 export function renderReview(page) {
   if (!page._base) {return html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
     ${page._baseError ? html`<button type="button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`}
-  const states = page._fileStates
-  const baseAlerts = page.source?.files?.alerts?.(page._base), otherAlerts = page.source?.files?.alerts?.(page.details)
-  const dependencies = page.source?.dependencies?.(page._base, page.details) ?? null
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
-    <div class="npm-review-workbench bundle-code-view"><npm-review-tree class="bundle-code-rail" .files=${page._treeFiles}
-      .base=${page._base} .other=${page.details} .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags} .states=${states} .path=${page._path} .unchecked=${page._unchecked}
-      @review-file-select=${event => page._selectFile(event.detail.path)} @review-file-filter=${event => { page._unchecked = event.detail.unchecked }}></npm-review-tree>
-      <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize file tree"
-        data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>
-      <div class="npm-review-content">${page._mode === 'code' ? html`<npm-review-code .base=${page._base} .other=${page.details} .files=${page._diff.files}
-        .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags}
-        .dependencyTags=${page.source?.dependencyTags ?? null} .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
-        .path=${page._path} .order=${page._files} baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
-        @compare-code-select=${event => { event.stopPropagation(); page._selectFile(event.detail.path) }}></npm-review-code>
-        ${page._path && page._panel !== 'notes' ? renderReviewEditor(page) : nothing}`
-        : html`<npm-review-diff .path=${page._path} .base=${page._base} .other=${page.details} .files=${page._diff.files} .reviewAfter=${true}
-          .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags}
-          .dependencyTags=${page.source?.dependencyTags ?? null} .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
-          baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
-          .reviewFile=${path => renderReviewEditor(page, path, true)}></npm-review-diff>`}</div>
-    </div><span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`
+    ${renderComparisonViewer({ base: page._base, other: page.details, diff: page._diff, source: page.source, path: page._path,
+      baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package', otherName: `${page.entry.npm.name}@${page.entry.npm.version}`,
+      select: path => page._selectFile(path), extensions: reviewExtensions(page), limits: page.constructor.displayLimits,
+    })}
+    <span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`
 }

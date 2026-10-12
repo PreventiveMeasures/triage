@@ -5,24 +5,23 @@ import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-pac
 import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'
 import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
-import { bundleCompareFiles } from './bundle-compare-inputs.js'
-import { computeBundleDiff } from './bundle-compare-diff.js'
-import { compareReviewPaths, reviewViewMode } from './npm-review-files.js'
-import { bundleLineCounts } from '../../common/bundle-metadata.js'
+import { prepareComparison } from './bundle-comparison.js'
+import { comparisonFileList } from './bundle-compare-files.js'
+import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
+import { comparisonPresentation } from './bundle-compare-view.js'
 import { reviewFileStates, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview, renderReviewConfirmation, renderReviewEditor, renderReviewPublished } from './npm-review-view.js'
-import './npm-review-code.js'
-import './npm-review-tree.js'
-import './npm-review-diff.js'
 import './bundle-selector.js'
 import './mode-switch.js'
 
+export const REVIEW_DISPLAY_LIMITS = { maxRows: Infinity, maxLines: 50_000, maxBytes: 2 * 1024 * 1024 }
 export const EMPTY_REVIEW_BASE = { integrity: '(empty)', kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, fileSizes: new Map() }
 export const reviewContext = (entry, base) => ({ ecosystem: 'npm', package: entry.npm.name, version: entry.npm.version, integrity: entry.integrity,
   basePackage: base?.npm?.name ?? null, baseVersion: base?.npm?.version ?? null, baseIntegrity: base?.npm ? base.integrity : null })
 const dependency = (name, spec) => `${name}@${spec ?? 'latest'}`
 
 export class NpmReview extends LitElement {
+  static displayLimits = REVIEW_DISPLAY_LIMITS
   static properties = {
     entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false }, source: { attribute: false },
     _teams: { state: true }, _selectedTeams: { state: true }, _additionalTeams: { state: true },
@@ -124,17 +123,13 @@ export class NpmReview extends LitElement {
     const context = reviewContext(this.entry, base), key = JSON.stringify([this.session?.id, this.session?.role, context])
     if (key === this._key) return
     this._controller.abort(); this._cancelSaves(); this._controller = new AbortController(); this._context = context
-    this._diff = computeBundleDiff(bundleCompareFiles(base), bundleCompareFiles(this.details), () => '.')
-    this._files = [...this._diff.files.onlyBase, ...this._diff.files.onlyOther, ...this._diff.files.changed].map(file => file.path).toSorted(compareReviewPaths)
-    const after = bundleCompareFiles(this.details), before = bundleCompareFiles(base)
-    const baseLines = bundleLineCounts(base), otherLines = bundleLineCounts(this.details)
-    const linesOf = (counts, files) => [...files.keys()].reduce((total, path) => total + (counts.get(path) ?? 0), 0)
-    Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, before), otherLines: linesOf(otherLines, after) })
-    this._treeFiles = [['onlyBase', 'removed'], ['onlyOther', 'added'], ['changed', 'changed']].flatMap(([group, kind]) =>
-      this._diff.files[group].map(file => ({ ...file, kind: file.renamedFrom == null ? kind : 'renamed',
-        before: group === 'onlyOther' ? '' : before.get(file.basePath ?? file.path), after: group === 'onlyBase' ? '' : after.get(file.path) }))).toSorted((a, b) => compareReviewPaths(a.path, b.path))
+    this._diff = prepareComparison(base, this.details)
+    this._treeFiles = comparisonFileList(base, this.details, this._diff)
+    this._files = orderedComparisonFiles(buildBundleSourceTree(this._treeFiles.map(file => file.path)))
+    const byPath = new Map(this._treeFiles.map(file => [file.path, file]))
+    this._treeFiles = this._files.map(path => byPath.get(path))
     this._nonTextFiles = this._treeFiles.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path)
-    this._mode = reviewViewMode(this._treeFiles)
+    this._mode = comparisonPresentation(base, this.details, this._diff, REVIEW_DISPLAY_LIMITS).mode
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
     this._selectedReview = null; this._continuation = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
     this._resetEditor(this._path); this._saving = false

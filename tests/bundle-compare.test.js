@@ -80,7 +80,7 @@ test('Code lists every file\'s diff while that list is under 25,000 rows, and a 
   assert.match(listed, /<bundle-compare-all /u)
   assert.doesNotMatch(listed, /<bundle-compare-code /u)
   combinedRows = 25_000
-  delete view._diffFor().combined
+  delete view._diffFor().presentations
   const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
   assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
   assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['false', 'true'])

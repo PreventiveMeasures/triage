@@ -148,13 +148,13 @@ export function sourceDirectoryLabel(name, node) {
 // Filter the presentation built from ALL files: a search must not make an
 // unsafe pnpm wrapper look safe or renumber variants as siblings disappear.
 // Match both the original path and the package name/version shown in the rail.
-export function filterBundleSourceTree(tree, query, prefix = '') {
+export function filterBundleSourceTree(tree, query, prefix = '', accept = null) {
   const q = query.toLowerCase()
   const filter = (node, displayPath, hiddenSrcParent = null) => {
     const files = new Map([...node.files].filter(([name, full]) => {
       const path = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : full
       const displayedName = hiddenSrcParent?.srcNameConflicts.has(name) ? `src/${name}` : name
-      return path.toLowerCase().includes(q) || `${displayPath}/${displayedName}`.toLowerCase().includes(q)
+      return (!accept || accept(full)) && (path.toLowerCase().includes(q) || `${displayPath}/${displayedName}`.toLowerCase().includes(q))
     }))
     const dirs = new Map()
     for (const [name, child] of node.dirs) {
@@ -164,7 +164,7 @@ export function filterBundleSourceTree(tree, query, prefix = '') {
     }
     return files.size > 0 || dirs.size > 0 ? { ...node, files, dirs } : null
   }
-  return q ? filter(tree, '') : tree
+  return q || accept ? filter(tree, '') : tree
 }
 
 // Only fold unbranched, file-free directories. A conservative character
@@ -224,4 +224,16 @@ export function navigateBundleSourceTree(event) {
     else next = (directory ?? row).parentElement.closest('details')?.querySelector('summary') ?? row
   }
   next?.focus()
+}
+
+export function compareDirectoryOrder([a, an], [b, bn]) {
+  return sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path)
+}
+
+// Files in the order the tree shows them, for the default pick and for
+// stepping between files.
+export function orderedComparisonFiles(node, depth = 0, out = []) {
+  for (const [name, child] of [...node.dirs.entries()].toSorted(compareDirectoryOrder)) orderedComparisonFiles(compactSourceDirectory(name, child, depth).node, depth + 1, out)
+  for (const [, full] of [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))) out.push(full)
+  return out
 }

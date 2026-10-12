@@ -58,7 +58,7 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
 }
 
 export class BundleCompareAll extends BundleCompareCode {
-  static properties = { ...BundleCompareCode.properties, models: { attribute: false }, reviewAfter: { type: Boolean } }
+  static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
   // Every file's model is drawn on every render, so all are kept for the
   // comparison, starting from those Compare found counting its rows, each
@@ -118,8 +118,9 @@ export class BundleCompareAll extends BundleCompareCode {
   // stays the rail's while it is in view, though the list ends too soon to
   // bring it to the top.
   _select(path, scroll = true) {
-    if (!path) return
+    if (!path || this.extensions?.canSelect?.() === false) return
     this._current = this._picked = path
+    this._goTo = path
     this.requestUpdate()
     if (scroll) void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
@@ -145,11 +146,11 @@ export class BundleCompareAll extends BundleCompareCode {
   // a frame at a time; and within a screen of its end, the next files are
   // drawn.
   _spy() {
-    if (this._spying) return
+    if (this._spying || this.extensions?.canSelect?.() === false) return
     this._spying = requestAnimationFrame(() => {
       this._spying = 0
       const body = this.querySelector('.bundle-compare-diff')
-      if (!body) return
+      if (!body || this.extensions?.canSelect?.() === false) return
       if (this._fileLimit < this._order.length && body.scrollTop + 2 * body.clientHeight >= body.scrollHeight) this._more()
       const { top, bottom } = body.getBoundingClientRect()
       const picked = this._picked && this._section(this._picked)?.getBoundingClientRect()
@@ -164,6 +165,7 @@ export class BundleCompareAll extends BundleCompareCode {
       if (path !== this._current) {
         this._current = path
         this.requestUpdate()
+        this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
       }
     })
   }
@@ -185,7 +187,6 @@ export class BundleCompareAll extends BundleCompareCode {
       <span class="bundle-code-main-spacer"></span>
       ${this._fileFigures(entry, file.model)}
     </header>
-    ${this.reviewAfter ? nothing : this.reviewFile?.(path, this.base) ?? nothing}
     ${this._fileBody(path, entry, file)}`
   }
 
@@ -198,11 +199,12 @@ export class BundleCompareAll extends BundleCompareCode {
   render() {
     paintingRenameDiffs()
     const rail = this._railState()
-    const { prefix, order } = rail
+    const prefix = this.extensions?.fullPaths ? '' : rail.prefix
+    const order = this.extensions?.filterContent === false ? rail.allOrder : rail.order
     this._order = order
     if (this._goTo && order.includes(this._goTo)) this._current = this._goTo
     if (!order.includes(this._current)) this._current = order[0] ?? null
-    if (this._current) this._reveal(this._current, prefix)
+    if (this._current && (this._goTo || this._current !== this._shownPath)) this._reveal(this._current, rail.prefix)
     // A file opened past those drawn draws the batches up to it.
     const at = order.indexOf(this._current)
     if (at >= this._fileLimit) this._fileLimit = Math.ceil((at + 1) / FILE_BATCH) * FILE_BATCH
@@ -228,8 +230,8 @@ export class BundleCompareAll extends BundleCompareCode {
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
             : repeat(shown.slice(0, this._fileLimit), ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path} data-path=${path}>
-              ${this._fileContent(path, entry, file, prefix)}
-              ${this.reviewAfter ? this.reviewFile?.(path, this.base) ?? nothing : nothing}
+              ${this.extensions?.fileActions ? html`<div class="bundle-compare-file-content">${this._fileContent(path, entry, file, prefix)}</div>
+                ${this.extensions.fileActions(path, true)}` : this._fileContent(path, entry, file, prefix)}
             </section>`)}
           ${shown.length > this._fileLimit ? html`<button type="button" class="bundle-compare-code-action bundle-compare-all-more" @click=${() => this._more()}>Show more files (${(shown.length - this._fileLimit).toLocaleString()} remaining)</button>` : nothing}
         </div>`)
