@@ -215,8 +215,14 @@ repointed import lists those imports alone. Past that, Code shows a file at
 a time, its Previous and Next file buttons stepping through them in the
 tree's order. A link naming the older Diff mode opens Code. Each file's
 head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
-Controls, Minified, ...), after how it read where that differs. Lines always
-wrap. Code can hide whitespace changes, as
+Controls, Minified, ...), after how it read where that differs, and the tree
+tags a file the same way where it can be hard to review by reading it. A file a
+bundle or package starts from is labelled in blue in its head (a Stasis
+bundle's entry, an npm version's main, module, types or bin), and a
+package.json's install scripts (preinstall, install, postinstall, prepare,
+and `node-gyp rebuild` beside a binding.gyp) are marked in its head and in
+the tree, each with its command, one new or changed saying so, and in its
+head one no longer named struck through. Lines always wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
@@ -1129,7 +1135,7 @@ control. A version shows in the bundle view with four tabs:
   needs, with their dist-tags; the arrow keys move along a row and between
   rows; switching keeps the tab shown, and until the versions arrive it holds
   the version shown, disabled), and links its page on npm.
-  Over the summary, where any file can't be reviewed by reading it, a
+  Over the summary, where any file can be hard to review by reading it, a
   warning says how many and why, in categories, the first that holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
   characters (the C0 ones but tab, line feed and carriage return, DEL, the
@@ -1232,7 +1238,7 @@ control. A version shows in the bundle view with four tabs:
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category as in the Files list, under the
-  Overview's warning where any of those can't be reviewed by reading them.
+  Overview's warning where any of those can be hard to review by reading them.
   Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
   are pickers in the same order as for bundles, the version compared with

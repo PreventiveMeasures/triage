@@ -595,6 +595,27 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-rename-to { color: var(--green); }
 /* A renamed file's old name, as much of it as changed, after the new. */
 .bundle-compare-code-name.renamed { flex: 0 1 auto; }
+/* A file a bundle or package starts from, labelled in its head. */
+.bundle-compare-code-entry {
+  flex: none; padding: 0 .3rem;
+  color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border)); border-radius: var(--ui-radius, 3px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+}
+/* A package.json's install scripts, in its head and in the tree: marked as
+   the npm Overview marks them, one no longer named struck through. */
+.bundle-compare-code-install {
+  flex: none; padding: 0 .3rem;
+  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+
+  &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
+  .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
+}
+/* A file that can be hard to review by reading it, tagged in the tree as in its
+   head. */
+.bundle-code-tree-link > .npm-encoding-tag { flex: none; padding: 0 .25rem; font-size: .56rem; }
 .bundle-compare-code-oldname {
   flex: 1 1 auto;
   min-width: 0;

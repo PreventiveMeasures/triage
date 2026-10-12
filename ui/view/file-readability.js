@@ -133,7 +133,7 @@ export function npmFileReadability(path, text) {
 }
 
 // Each category: its name, its tag in a list of files or a file's head, and how it is marked,
-// `warn` for what to look into, `notice` for what can't be reviewed by
+// `warn` for what to look into, `notice` for what can be hard to review by
 // reading it either way.
 export const READABILITY = new Map([
   ['binary', { name: 'Not UTF-8', tag: 'Not UTF-8', mark: 'warn' }],

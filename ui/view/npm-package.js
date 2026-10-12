@@ -20,6 +20,10 @@ import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
+import { installScripts } from './install-scripts.js'
+import { npmEntryFile, npmEntryPath } from './npm-entries.js'
+
+export { npmEntryFile } from './npm-entries.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -54,16 +58,6 @@ export function npmPackageEntries(manifest, paths) {
   return entries
 }
 
-// The file of `files` an entry point names, as require would find it:
-// `./lib/a` as `lib/a`, `lib/a.js`, `.cjs` or `.mjs`, or `lib/a/index.js`;
-// undefined where none is there. The Overview's entry points and the file
-// Code opens on both resolve this way.
-export function npmEntryFile(field, files) {
-  const base = npmEntryPath(field)
-  return [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files?.has(path))
-}
-
-const npmEntryPath = field => field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
 
 // The bundle view's entry for a package version. It has no managed id, so
 // nothing reads it through the bundle routes; `npm` names the version, and
@@ -560,17 +554,9 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   </dl>`
 }
 
-const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare']
-
-// The scripts npm runs as it installs the package, `[script, command]`, in
-// the order it runs them: those its manifest names, and `node-gyp rebuild`
-// for one with a `binding.gyp` at its root (`files`) and neither install
-// script of its own, as npm runs then.
-export function npmInstallScripts(manifest, files = null) {
-  const scripts = { ...manifest.installScripts }
-  if (!scripts.preinstall && !scripts.install && files?.has('binding.gyp')) scripts.install = 'node-gyp rebuild'
-  return INSTALL_SCRIPTS.filter(script => typeof scripts[script] === 'string').map(script => [script, scripts[script]])
-}
+// The scripts npm runs as it installs the package (install-scripts.js), as
+// its manifest names them, `files` its files.
+export const npmInstallScripts = (manifest, files = null) => installScripts(manifest.installScripts, !!files?.has('binding.gyp'))
 
 // An install script's command, each word naming a file of the package
 // opening it.

@@ -213,7 +213,7 @@ export function npmAdvisoriesColumn(entry) {
 }
 
 
-// Those that can't be reviewed by reading, the warning's, and those that can.
+// Those that can be hard to review by reading, the warning's, and those that can.
 const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
@@ -277,7 +277,7 @@ function categoryChip(entry, details, category) {
     html`<span>${name}</span>`, counts.get(category), { classes: mark ? ` is-${mark}` : '' })
 }
 
-// Where any of `total` files (`files` naming them) can't be reviewed by
+// Where any of `total` files (`files` naming them) can be hard to review by
 // reading it, as `counts` has each category's: how many, each category's
 // `chip` showing which.
 function readabilityWarning(counts, total, files, chip) {
@@ -287,19 +287,19 @@ function readabilityWarning(counts, total, files, chip) {
   const warn = present.some(category => READABILITY.get(category).mark === 'warn')
   return html`<div class=${`npm-readability-warning${warn ? ' is-warn' : ''}`} role="note">
     <span class="npm-readability-warning-text"><strong>${unreadable.toLocaleString('en')} of ${total.toLocaleString('en')} ${files}</strong>
-      can't be reviewed by reading them:</span>
+      can be hard to review by reading them:</span>
     <ul class="npm-extensions">${present.map(chip)}</ul>
   </div>`
 }
 
-// Over the summary, where any file can't be reviewed by reading it.
+// Over the summary, where any file can be hard to review by reading it.
 export function npmReadabilityWarning(entry, details) {
   return readabilityWarning(npmFilesRead(details).counts, details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
 // one's type icon, the tag of one the open version adds or changes, and over
-// them, where any of those can't be reviewed by reading it, the Overview's
+// them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
   icon: sourceFileIcon,

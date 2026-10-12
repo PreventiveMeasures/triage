@@ -29,7 +29,9 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { npmFileReadability, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
+import { packageJsonInstallScripts } from './install-scripts.js'
+import { npmEntryFile } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
@@ -80,6 +82,39 @@ function readability(details, path, text) {
   return files.get(path)
 }
 const minified = (details, path, text) => readability(details, path, text).category === 'minified'
+
+// The files a bundle or package version starts from, by path, each with what
+// names it: a Stasis bundle's entries, an npm version's main, module, types
+// and bins, found as its Overview finds them (npm-entries.js).
+const entryNames = new WeakMap()
+function entryPoints(details) {
+  let found = entryNames.get(details)
+  if (found) return found
+  found = new Map()
+  const add = (path, label, note) => { if (path) found.set(path, [...found.get(path) ?? [], { label, note }]) }
+  if (details?.kind === 'stasis') for (const path of details.bundle?.entries ?? []) add(path, 'entry', 'An entry point of the bundle')
+  const manifest = details?.npm?.manifest
+  if (manifest) {
+    const files = new Set(bundleFilesAsMap(details).keys())
+    for (const field of ['main', 'module', 'types']) {
+      if (typeof manifest[field] === 'string') add(npmEntryFile(manifest[field], files), field, `package.json "${field}": ${manifest[field]}`)
+    }
+    for (const [name, file] of Object.entries(manifest.bin ?? {})) if (typeof file === 'string') add(npmEntryFile(file, files), 'bin', `package.json "bin" ${name}: ${file}`)
+  }
+  entryNames.set(details, found)
+  return found
+}
+
+// A package.json's install scripts (install-scripts.js), by bundle and path:
+// `node-gyp rebuild` among them where a binding.gyp is beside it.
+const PACKAGE_JSON = /(?:^|\/)package\.json$/u
+const scriptTexts = new WeakMap()
+function packageScripts(details, path, text) {
+  let files = scriptTexts.get(details)
+  if (!files) scriptTexts.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, packageJsonInstallScripts(text, bundleFilesAsMap(details).has(`${path.slice(0, -'package.json'.length)}binding.gyp`)))
+  return files.get(path)
+}
 
 // Why the server left a file's old names as they were (rename-map.js).
 const RENAME_REASONS = {
@@ -430,6 +465,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
+            ${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
               data-tooltip=${kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label}>${KIND[kind].letter}</span>
@@ -568,19 +604,68 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._readability(path, entry)}`
+      ${this._entryTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}`
   }
 
-  // How a file reads on the sides it has (file-readability.js), tagged as the
-  // npm Overview tags a file (ASCII, UTF-8, Minified, Controls, ...): as it
-  // reads now, after how it read where that differs.
-  _readability(path, entry) {
+  // A file the open bundle or version starts from (for one removed, the one
+  // compared with), labelled with what names it: main, module, types, bin,
+  // or a bundle's entry.
+  _entryTags(path, { kind, basePath = path }) {
+    const names = entryPoints(kind === 'removed' ? this.base : this.other).get(kind === 'removed' ? basePath : path) ?? []
+    const labels = Map.groupBy(names, ({ label }) => label)
+    return [...labels].map(([label, rows]) => html`<span class="bundle-compare-code-entry" data-tooltip=${rows.map(({ note }) => note).join(' · ')}>${label}</span>`)
+  }
+
+  // A package.json's install scripts, as warnings, each with its command:
+  // those it names now (named, for one removed), one new or changed since
+  // saying so, and in its head, one dropped since struck through; the tree
+  // (`compact`) tags those it names now alone.
+  _installTags(path, entry, compact = false) {
+    if (!PACKAGE_JSON.test(path)) return nothing
     const { kind, basePath = path } = entry
     const { before, after } = fileContents(this.base, this.other, path, entry)
-    const was = kind === 'added' || before === undefined ? null : readability(this.base, basePath, before)
-    const now = kind === 'removed' || after === undefined ? null : readability(this.other, path, after)
+    const was = new Map(kind === 'added' || before === undefined ? [] : packageScripts(this.base, basePath, before))
+    const now = new Map(kind === 'removed' || after === undefined ? [] : packageScripts(this.other, path, after))
+    const tags = [...kind === 'removed' ? was : now].map(([script, command]) => {
+      const old = kind === 'removed' ? command : was.get(script)
+      const note = old === undefined ? ', new' : old === command ? '' : `, was: ${old}`
+      return html`<span class="bundle-compare-code-install" data-tooltip=${`npm runs it on install: ${command}${note}`}>${script}</span>`
+    })
+    if (!compact && kind !== 'removed') {
+      for (const [script, command] of was) {
+        if (!now.has(script)) tags.push(html`<span class="bundle-compare-code-install is-dropped" data-tooltip=${`No longer run on install: ${command}`}>${script}</span>`)
+      }
+    }
+    return tags
+  }
+
+  // How a file reads (file-readability.js) on the sides it has: `was`, as
+  // the bundle compared with has it, and `now`; null for a side without it.
+  _reads(path, entry) {
+    const { kind, basePath = path } = entry
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    return {
+      was: kind === 'added' || before === undefined ? null : readability(this.base, basePath, before),
+      now: kind === 'removed' || after === undefined ? null : readability(this.other, path, after),
+    }
+  }
+
+  // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
+  // UTF-8, Minified, Controls, ...): as it reads now, after how it read where
+  // that differs.
+  _readability(path, entry) {
+    const { was, now } = this._reads(path, entry)
     if (!was || !now || was.category === now.category) return npmReadabilityTag(now ?? was)
     return html`<span class="bundle-compare-code-readability">${npmReadabilityTag(was)}<span aria-hidden="true">→</span>${npmReadabilityTag(now)}</span>`
+  }
+
+  // The tree tags a file as its head does where it can be hard to review by
+  // reading it as it reads now (as it read, for one removed): ASCII and UTF-8
+  // go untagged there.
+  _treeTag(path, entry) {
+    const { was, now } = this._reads(path, entry)
+    const shown = now ?? was
+    return shown && READABILITY.get(shown.category).mark ? npmReadabilityTag(shown) : nothing
   }
 
   // A file's lines added and removed, and its sizes.

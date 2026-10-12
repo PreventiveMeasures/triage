@@ -3729,7 +3729,7 @@ npm-downloads-chart {
   font-size: .7rem; line-height: 1.45;
 }
 .npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-/* Files that can't be reviewed by reading them, marked in their tags and
+/* Files that can be hard to review by reading them, marked in their tags and
    chips: `warn` for what to look into (not UTF-8, control characters,
    unexpected long lines), `notice` for minified code and source maps. */
 :is(.npm-extension, .npm-encoding-tag).is-warn {
