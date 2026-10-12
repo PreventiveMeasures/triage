@@ -39,7 +39,10 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
   for (const [path, entry] of combinedEntries(entries)) {
     rows++
     const { before, after } = fileContents(base, other, path, entry)
-    if (typeof before === 'string' && typeof after === 'string') {
+    // Its bytes the same (renamed, or recorded otherwise): a line saying so, however large.
+    if (entry.modified === false) {
+      rows++
+    } else if (typeof before === 'string' && typeof after === 'string') {
       if (isLargeDiff(before, after)) return { rows: Infinity, models }
       const model = lineDiff(before, after)
       models.set(path, model)
@@ -125,12 +128,13 @@ class BundleCompareAll extends BundleCompareCode {
   }
 
   // A file's repointed imports, over its diff where its text changed too:
-  // one whose only change they are lists them alone, without its source;
-  // over the package's package.json, its dependency changes.
+  // one whose only change they are lists them alone, without its source, and
+  // one whose record changed too says how; over the package's package.json,
+  // its dependency changes.
   _fileBody(path, entry, file) {
     const repointed = entry.repointed
       ? this._renderRepointed(path, entry.repointed, [file.after, file.before].find(text => typeof text === 'string' && text !== '') ?? null, false) : nothing
-    const sourceOnly = entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !(file.model?.blocks.length > 0))
+    const sourceOnly = entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta && !(file.model?.blocks.length > 0))
     return html`${this._dependencyChanges(path)}${repointed}${sourceOnly ? nothing : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}`
   }
 

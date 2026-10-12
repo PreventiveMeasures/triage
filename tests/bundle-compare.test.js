@@ -189,6 +189,18 @@ test('the Files section is collapsed until opened, then lists Removed | Added | 
   assert.match(filesPart(renderText(view._renderDiff())), /bundle-compare-cols[^]*bundle-compare-changed/u)
 })
 
+test('the Files section lists as changed a file whose record alone changed, saying how', () => {
+  const view = compare()
+  // The open bundle runs a.js, its bytes the same, as an entry point with its execute bit set.
+  view.details.bundle.entries.add('a.js')
+  view.details.bundle.executable.add('a.js')
+  view._diffKey = null
+  view._openSections = new Set(['files'])
+  const markup = renderText(view._renderDiff())
+  assert.match(markup, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
+  assert.match(markup, /bundle-compare-changed[^]*a\.js[^]*bundle-compare-code-meta"?>\+x<[^]*bundle-compare-code-meta"?>new entry</u)
+})
+
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
   const view = compare()
   view._status = 'ready'

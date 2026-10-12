@@ -56,12 +56,13 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { bundleFileMeta, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
+import { fileMetaTags } from './bundle-compare-meta.js'
 import { COMBINED_DIFF_MAX, combinedDiffRows } from './bundle-compare-all.js'
 import { compareModeOf } from '../../common/managed/routes.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
@@ -427,10 +428,10 @@ class BundleCompare extends LitElement {
 
   // A file's row; a source's `files` (see `source`) give it its type's icon,
   // and a file in the open one its tag.
-  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false) {
+  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined) {
     const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${sizeTpl}
+      ${files ? files.icon(path) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
     </button></li>`
   }
 
@@ -489,8 +490,8 @@ class BundleCompare extends LitElement {
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
     const tagged = kind !== 'removed'
-    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
-      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged)
+    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
@@ -663,7 +664,7 @@ class BundleCompare extends LitElement {
       const layout = treeLayout(baseSources.keys(), otherSources.keys())
       const packageDirs = layoutPackageDirs(bundlePackageDirs(from), bundlePackageDirs(to), layout)
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
-      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout)
+      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout, [bundleFileMeta(from), bundleFileMeta(to)])
       // Each side's lines of code (bundleLineCounts), on its rows and in
       // the totals; a file that isn't text has none.
       const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)

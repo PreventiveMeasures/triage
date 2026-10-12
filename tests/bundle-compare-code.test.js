@@ -30,7 +30,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchNpmRenameDiff() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
-const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 await import('../ui/view/bundle-compare-code.js')
@@ -599,6 +599,53 @@ test('in a stasis bundle, whether whitespace may be hidden is told by the format
   assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
 })
 
+test('a file whose bytes are the same, its record in the stasis bundle changed, is listed, saying how', () => {
+  const same = { 'src/data.js': 'export const data = 1\n', 'bin/run': 'echo run\n', 'src/main.js': 'export default 1\n', 'src/asset.js': 'export {}\n' }
+  const recorded = path => {
+    const element = view(path, [same, same])
+    const { base, other } = element
+    base.bundle.formats.set('src/data.js', 'resource')
+    base.bundle.formats.set('src/asset.js', 'resource')
+    other.bundle.formats.set('src/data.js', 'module')
+    other.bundle.executable.add('bin/run')
+    other.bundle.entries.add('src/main.js')
+    element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), file => /^node_modules\/[^/]+/u.exec(file)?.[0] ?? '__own__', undefined,
+      [bundleFileMeta(base), bundleFileMeta(other)]).files
+    element.willUpdate(new Map([['files']]))
+    return renderText(element.render())
+  }
+  const data = recorded('src/data.js')
+  const marks = fileMarks(data)
+  for (const path of ['src/data.js', 'bin/run', 'src/main.js', 'src/asset.js']) assert.deepEqual(marks[path], ['changed'], `${path}: listed as changed`)
+  assert.match(data, /bundle-compare-code-meta"?>resource → module</u, 'in its head, with no tooltip')
+  assert.match(data, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
+  assert.match(data, /bundle-code-tree-link[^]*?bundle-compare-code-meta"?>format<\/span>\s*<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u,
+    'and its tree row, its lines the same')
+  assert.match(recorded('bin/run'), /The contents are the same\. It is now executable\.[^]*/u)
+  assert.match(recorded('bin/run'), /bundle-compare-code-meta"?>\+x</u)
+  assert.match(recorded('src/main.js'), /bundle-compare-code-meta"?>new entry</u)
+  assert.match(recorded('src/main.js'), /It is now an entry point of the bundle\./u)
+  // A resource whose format is dropped: stasis runs a file with none as code.
+  const dropped = recorded('src/asset.js')
+  assert.match(dropped, /bundle-compare-code-meta"?>resource → none</u)
+  assert.match(dropped, /The contents are the same\. The bundle records no format for it now, resource before, carried as data before, run as code now\./u)
+})
+
+test('a large file whose bytes are the same, its record changed, says so without asking to diff it', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const big = { 'src/big.js': 'x\n'.repeat(60_000) }
+  const element = view('src/big.js', [big, big])
+  const { base, other } = element
+  base.bundle.formats.set('src/big.js', 'resource')
+  other.bundle.formats.set('src/big.js', 'module')
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  element.willUpdate(new Map([['files']]))
+  const markup = renderText(element.render())
+  assert.match(markup, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
+  assert.doesNotMatch(markup, /This diff is large/u)
+  assert.ok(Number.isFinite(combinedDiffRows(base, other, element.files).rows), 'and the one list is not too large for it')
+})
+
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
   const files = ['a.js', 'a/b.js', 'Z.js', 'src/z/y.js', 'src/b.js', 'lib/x/y/z.js']
   const element = view(null, [Object.fromEntries(files.map(path => [path, '1'])), Object.fromEntries(files.map(path => [path, '2']))])
@@ -729,6 +776,31 @@ test('a renamed file whose contents are the same but whose import was repointed 
   assert.doesNotMatch(markup, /Renamed without changes/u)
   assert.match(markup, /class=diff-row ctx is-import role="row" data-line=1>/u)
   assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
+})
+
+test('a renamed file whose contents are the same, its import repointed and its record changed, says how its record changed, in Code and in the one list', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\n"
+  const side = (integrity, parent, target, format) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { [parent]: source } }]]),
+    imports: new Map([['node, import', new Map([[parent, new Map([['lodash/pick', target]])]])]]), formats: new Map([[parent, format]]),
+  }) })
+  const base = side('base', 'src/server.js', 'node_modules/lodash/pick.cjs', 'resource'), other = side('other', 'lib/server.js', 'node_modules/lodash/pick.js', 'module')
+  const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  const shared = { base, other, files, baseName: 'a', otherName: 'b',
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other), new Map(files.changed.map(row => [row.basePath, row.path]))).changed }
+  const said = /Renamed, its contents the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u
+  const element = Object.assign(new CompareCode(), shared, { path: 'lib/server.js' })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  assert.match(markup, said)
+  assert.match(markup, /Repointed import/u, 'its import listed too')
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), shared)
+  all.models = combinedDiffRows(base, other, files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const list = renderText(all.render())
+  assert.match(list, said, 'in the one list')
+  assert.match(list, /Repointed import/u)
 })
 
 test('the Diff view lists every changed file\'s diff in one list, in its rail\'s order, and counts the rows it would show', async () => {

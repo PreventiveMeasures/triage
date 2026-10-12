@@ -14,7 +14,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 const { layoutDir, layoutPackageDirs, treeLayout } = await import('@preventive/compare')
-const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { Bundle } = await import('@exodus/stasis-core/bundle')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
@@ -35,6 +36,46 @@ describe('computeBundleDiff', () => {
     assert.equal(diff.totals.unchangedFiles, 1)
     assert.deepEqual(diff.files.changed.map(row => [row.path, row.baseBytes, row.otherBytes]), [['a/moved.bin', 10, 30]])
     assert.deepEqual(diff.files.onlyBase.map(row => [row.path, row.bytes]), [['a/gone.bin', 4]])
+  })
+
+  it('compares what stasis bundles record of a file beside its bytes: its format, execute bit and being an entry point', () => {
+    // Each side's record of its files, as bundleFileMeta reads a stasis bundle's.
+    const stasis = (formats, executable = [], entries = []) => bundleFileMeta({ kind: 'stasis', bundle: { formats: m(formats), executable: new Set(executable), entries: new Set(entries) } })
+    const files = m({ 'a/data.js': 'x', 'a/run.sh': 'echo', 'a/main.js': 'y', 'a/same.js': 'z', 'a/edited.js': '1' })
+    const edited = m({ 'a/data.js': 'x', 'a/run.sh': 'echo', 'a/main.js': 'y', 'a/same.js': 'z', 'a/edited.js': '2' })
+    const meta = [
+      stasis({ 'a/data.js': 'resource', 'a/main.js': 'commonjs', 'a/same.js': 'module', 'a/edited.js': 'module' }),
+      stasis({ 'a/data.js': 'module', 'a/main.js': 'commonjs', 'a/same.js': 'module', 'a/edited.js': 'commonjs' }, ['a/run.sh'], ['a/main.js']),
+    ]
+    const diff = computeBundleDiff(files, edited, firstSeg, undefined, meta)
+    const rows = Object.fromEntries(diff.files.changed.map(row => [row.path, row]))
+    assert.deepEqual(rows['a/data.js'].meta, [{ field: 'format', from: 'resource', to: 'module' }], 'carried as data, now run as code')
+    assert.equal(rows['a/data.js'].modified, false, 'its bytes the same')
+    assert.deepEqual(rows['a/run.sh'].meta, [{ field: 'executable', from: false, to: true }])
+    assert.deepEqual(rows['a/main.js'].meta, [{ field: 'entry', from: false, to: true }])
+    assert.deepEqual(rows['a/edited.js'].meta, [{ field: 'format', from: 'module', to: 'commonjs' }], 'with its bytes changed too')
+    assert.equal(rows['a/edited.js'].modified, undefined)
+    assert.equal(rows['a/same.js'], undefined, 'one recorded alike is unchanged')
+    assert.equal(diff.totals.unchangedFiles, 1)
+    assert.equal(diff.totals.identical, false)
+    // A format a side leaves unsaid is one too: stasis runs the file as code.
+    const unsaid = (before, after) => computeBundleDiff(m({ 'a/x.js': 'x' }), m({ 'a/x.js': 'x' }), firstSeg, undefined, [stasis(before), stasis(after)]).files.changed[0]?.meta
+    assert.deepEqual(unsaid({ 'a/x.js': 'resource' }, {}), [{ field: 'format', from: 'resource', to: undefined }], 'a resource whose format is dropped, run now')
+    assert.deepEqual(unsaid({}, { 'a/x.js': 'module' }), [{ field: 'format', from: undefined, to: 'module' }])
+    assert.equal(unsaid({}, {}), undefined, 'unsaid on both sides')
+    // Another kind of bundle: nothing to compare.
+    assert.equal(computeBundleDiff(m({ 'a/x.js': 'x' }), m({ 'a/x.js': 'x' }), firstSeg, undefined, [null, stasis({}, ['a/x.js'])]).totals.identical, true, 'a side that is no stasis bundle')
+    assert.equal(bundleFileMeta({ kind: 'sourcemap' }), null)
+    // A renamed file's record, from its old path to its new one.
+    const renamed = computeBundleDiff(m({ 'a/old.js': 'same text\n'.repeat(20) }), m({ 'a/new.js': 'same text\n'.repeat(20) }), firstSeg, undefined,
+      [stasis({ 'a/old.js': 'resource' }), stasis({ 'a/new.js': 'module' }, ['a/new.js'])])
+    assert.deepEqual(renamed.files.changed.map(({ path, renamedFrom, modified, meta: changes }) => ({ path, renamedFrom, modified, changes })),
+      [{ path: 'a/new.js', renamedFrom: 'a/old.js', modified: false, changes: [{ field: 'format', from: 'resource', to: 'module' }, { field: 'executable', from: false, to: true }] }])
+    // As a stasis bundle records them.
+    const bundle = new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'bin/run': 'echo', 'a.js': 'x' } }]]), formats: new Map([['a.js', 'module']]),
+      executable: new Set(['bin/run']), entries: new Set(['a.js']) })
+    const read = bundleFileMeta({ kind: 'stasis', bundle })
+    assert.deepEqual([read('a.js'), read('bin/run')], [{ format: 'module', executable: false, entry: true }, { format: undefined, executable: true, entry: false }])
   })
 
   it('flags identical bundles and counts every file as unchanged', () => {

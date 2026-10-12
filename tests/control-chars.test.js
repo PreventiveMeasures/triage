@@ -21,7 +21,27 @@ test('the controls run C0 but tab and newline, DEL, and C1 to U+009F; the charac
   const controls = [...Array.from({ length: 0x20 }, (_, i) => i).filter(code => code !== 0x09 && code !== 0x0A), ...Array.from({ length: 0x21 }, (_, i) => 0x7F + i)]
   const text = String.fromCodePoint(...controls)
   assert.equal(controlParts(text).length, controls.length, 'each one a box')
-  assert.equal(parts(controlParts('\u009F\u00A0')), '[APC|U+009F APPLICATION PROGRAM COMMAND]\u00A0')
+  assert.equal(parts(controlParts('\u009F\u00A1')), '[APC|U+009F APPLICATION PROGRAM COMMAND]\u00A1', 'past the no-break space, boxed as a space')
+})
+
+test('what reads as a space or as nothing, though it is another character, shows as a labelled box', () => {
+  assert.equal(parts(controlParts('a\u00A0b\u3000c\u2009d')),
+    'a[NBSP|U+00A0 NO-BREAK SPACE]b[IDSP|U+3000 IDEOGRAPHIC SPACE]c[THSP|U+2009 THIN SPACE]d', "Unicode's other spaces")
+  assert.equal(parts(controlParts('const x\u3164 = 1')), 'const x[HF|U+3164 HANGUL FILLER] = 1', 'a letter that draws as nothing, making another name')
+  assert.equal(parts(controlParts('\u115F\u1160\uFFA0\u2800')),
+    '[HCF|U+115F HANGUL CHOSEONG FILLER][HJF|U+1160 HANGUL JUNGSEONG FILLER][HWHF|U+FFA0 HALFWIDTH HANGUL FILLER][BLANK|U+2800 BRAILLE PATTERN BLANK]')
+  assert.equal(parts(controlParts('a\u034Fb')), 'a[CGJ|U+034F COMBINING GRAPHEME JOINER]b')
+  assert.equal(parts(controlParts('x\uFE0F y\u{E0101}')), 'x[VS16|U+FE0F VARIATION SELECTOR-16] y[VS18|U+E0101 VARIATION SELECTOR-18]', 'a variation selector after a letter')
+  assert.equal(parts(controlParts('id1\uFE0F')), 'id1[VS16|U+FE0F VARIATION SELECTOR-16]', 'or a digit, no keycap after it')
+  assert.equal(parts(controlParts('x\uFE0F\u20E3')), 'x[VS16|U+FE0F VARIATION SELECTOR-16]\u20E3', 'or a keycap mark after what no keycap is')
+  assert.equal(parts(controlParts('1\uFE0E\u20E3')), '1[VS15|U+FE0E VARIATION SELECTOR-15]\u20E3', 'or the text selector in a keycap, which takes the emoji one')
+  assert.equal(parts(controlParts('\u{1F02C}\uFE0F \u{1F02C}\u200D\u{1F02D}')),
+    '[U+1F02C|U+1F02C unassigned code point][VS16|U+FE0F VARIATION SELECTOR-16] [U+1F02C|U+1F02C unassigned code point][ZWJ|U+200D ZERO WIDTH JOINER][U+1F02D|U+1F02D unassigned code point]',
+    'or a joiner, beside a code point reserved for emoji to come')
+  assert.equal(parts(controlParts('\u180B')), '[U+180B|U+180B invisible character]', 'one unnamed, as invisible')
+  const drawn = '❤\uFE0F ☺\uFE0E 1\uFE0F\u20E3 #\uFE0F\u20E3'
+  assert.deepEqual(controlParts(drawn), [drawn], "an emoji's own presentation selectors and keycaps stay text")
+  assert.equal(hasControls('a b'), false, 'an ASCII space is none')
 })
 
 test('private use characters, noncharacters and unassigned code points show by number', () => {
