@@ -1,11 +1,13 @@
 // Many packages' recent downloads at once, for the tier each is in by them
 // (npm-downloads-chart.js npmDownloadTier), as the npm viewer tags each
 // dependency a version adds with its package's: from the first of the
-// month before last to yesterday, the latest six weeks and the last whole
-// month. npm's range API takes up to 128 unscoped names in one request, a
-// scoped one only alone; it is asked without credentials, as it answers
-// anyone. Each answer is kept for an hour, and a package's whole year,
-// where kept for its own Overview (npm-insights.ts), answers for it.
+// month before last to yesterday. The viewer leaves out a dependency's
+// latest two weeks, and goes by six weeks and the last whole month before
+// them, so an answer is kept for two weeks: a newer one would add only days
+// it leaves out. npm's range API takes up to 128 unscoped names in one
+// request, a scoped one only alone; it is asked without credentials, as it
+// answers anyone. A package's whole year, where kept for its own Overview
+// (npm-insights.ts), answers for it.
 import { kept } from './kept.ts'
 import { type NpmDownloads, keptNpmDownloads, readDownloads } from './npm-insights.ts'
 import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
@@ -42,7 +44,7 @@ async function ask(range: string, names: string[]): Promise<Map<string, NpmDownl
   return new Map(names.map(name => [name, json[name] == null ? null : readDownloads(json[name])]))
 }
 
-const recent = kept<NpmDownloads | null>(5000)
+const recent = kept<NpmDownloads | null>(5000, undefined, 14 * DAY_MS)
 
 // The recent downloads of each of `names`, by name, null where npm has
 // none; one npm couldn't be asked about is left out.

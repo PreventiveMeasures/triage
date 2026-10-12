@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmDependencyTier, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmDependencyTier, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
@@ -419,11 +419,12 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 })
 
-test('a dependency Compare lists new is tagged with its package\'s tier by downloads, whatever it is, once they arrive, asked with the others\'', async () => {
+test('a dependency Compare lists new is tagged with its package\'s tier by downloads but its latest two weeks\', whatever it is, once they arrive, asked with the others\'', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   // 500 a day: 3,500 a week, among the top 100,000; 4M a day, 28M a week, among the top 2,000.
-  answers.counts['new-low'] = { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) }
-  answers.counts['new-top'] = { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 4e6) }
+  answers.counts['new-low'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 500) }
+  answers.counts['new-top'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 4e6) }
   const settle = () => new Promise(resolve => { setImmediate(resolve) })
   // Asked for in one pass, as a Compare's are: one request for all.
   countsAsked.length = 0
@@ -433,9 +434,28 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   await settle()
   assert.deepEqual(countsAsked, [['new-low', 'new-top', 'unlisted']])
   assert.equal(text(npmDependencyTier({ name: 'unlisted', opens: 'unlisted' }, 'added')), '', 'nothing for one not answered')
+  // Shown one after another, each package's downloads asked for once a
+  // session: 1 depending on A and B, 2 on B and C, 3 on all three.
+  for (const name of ['dep-a', 'dep-b', 'dep-c']) answers.counts[name] = answers.counts['new-low']
+  const show = async (...names) => { countsAsked.length = 0; for (const name of names) npmDependencyTier({ name, opens: name }, 'added'); await settle(); return countsAsked }
+  assert.deepEqual(await show('dep-a', 'dep-b'), [['dep-a', 'dep-b']])
+  assert.deepEqual(await show('dep-b', 'dep-c'), [['dep-c']], 'only the one not had')
+  assert.deepEqual(await show('dep-a', 'dep-b', 'dep-c'), [], 'none, all had')
+  // One whose own figures the session has (as its Overview read them) isn't asked for again.
+  answers.stats['dep-figured'] = { downloads: answers.counts['new-top'] }
+  npmCompareBadges({ npm: { name: 'dep-figured', version: '1.0.0' } }, { npm: { name: 'dep-figured', version: '1.1.0' } })
+  await settle()
+  assert.deepEqual(await show('dep-figured'), [])
+  assert.match(text(npmDependencyTier({ name: 'dep-figured', opens: 'dep-figured' }, 'added')), />top 2,000</u)
   const tag = async (row, kind = 'added') => { npmDependencyTier(row, kind); await settle(); return text(npmDependencyTier(row, kind)) }
-  assert.match(await tag({ name: 'alias', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
-    'the package it opens, an alias\'s too')
+  assert.match(await tag({ name: 'alias', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
+    'the package it opens, an alias\'s too, to Sep 27: its last whole month August')
+  // A package just pulled in, its latest two weeks' downloads 1M a day, but
+  // 100 a day before them: unpopular, as it was.
+  answers.counts['new-spiked'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, (_, i) => i < 58 ? 100 : 1e6) }
+  assert.match(await tag({ name: 'new-spiked', opens: 'new-spiked' }), /npm-downloads-tier is-unpopular[^]*>unpopular</u, 'not by its latest two weeks')
+  assert.deepEqual(npmSettledDownloads(answers.counts['new-spiked'], Date.parse('2026-10-12T12:00:00Z')),
+    { start: '2026-08-01', end: '2026-09-27', days: Array.from({ length: 58 }, () => 100) }, 'to the day before the latest two weeks, Sep 28 to Oct 11')
   assert.match(await tag({ name: 'new-top', opens: 'new-top' }), /npm-downloads-tier is-top[^]*>top 2,000</u, 'green ones too')
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'changed'), '', 'not one the version compared with had')
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'removed'), '')

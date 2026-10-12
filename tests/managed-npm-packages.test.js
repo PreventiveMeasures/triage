@@ -813,6 +813,15 @@ test('many packages\' recent downloads at once: unscoped ones in bulk, a scoped 
   asked.length = 0
   assert.deepEqual(await npmDownloadCounts(['bulk-b', 'bulk-a'], now), { 'bulk-b': counts['bulk-b'], 'bulk-a': counts['bulk-a'] }, 'kept')
   assert.deepEqual(asked, [])
+  // Kept two weeks, as a newer answer would add only days the viewer leaves out.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 13 * 24 * 60 * 60_000 })
+  await npmDownloadCounts(['bulk-a'], now)
+  assert.deepEqual(asked, [], 'thirteen days on')
+  t.mock.timers.tick(2 * 24 * 60 * 60_000)
+  await npmDownloadCounts(['bulk-a', 'bulk-b', 'bulk-unknown'], now)
+  assert.deepEqual(asked, [`${range}/bulk-a,bulk-b,bulk-unknown`], 'asked again past two weeks')
+  t.mock.timers.reset()
+  asked.length = 0
   // A package's year, kept for its Overview, answers for it.
   await npmDownloads('bulk-year')
   asked.length = 0

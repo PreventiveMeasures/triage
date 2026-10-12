@@ -194,6 +194,14 @@ export function npmPackageData(kind, name, ask, shape) {
   return loading
 }
 
+// Whether the session has asked about a package, or has its answer, not
+// failed: what it has needn't be asked for another way.
+export function npmPackageAsked(kind, name) {
+  sessionKept()
+  const kept = packageData.get(`${kind}\0${name}`)
+  return kept !== undefined && kept.status !== 'error'
+}
+
 // One repaint for answers arriving together, as those of one request for
 // many packages do.
 let repaintQueued = false

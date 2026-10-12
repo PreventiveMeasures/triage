@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -36,9 +36,10 @@ function npmPackageStats(name) {
   return npmPackageData('stats', name, () => fetchNpmStats(name), data => ({ downloads: data.downloads ?? null, github: data.github ?? null }))
 }
 
-// Packages' recent downloads, enough for their tiers, for this session:
-// those asked for in one pass (as a Compare's new dependencies are) in one
-// request, up to as many as the server takes in one.
+// Packages' downloads, each its last year as its figures have them, for
+// this session: those asked for in one pass (as a Compare's new
+// dependencies are) in one request, up to as many as the server takes in
+// one.
 const DOWNLOAD_COUNTS_AT_ONCE = 512
 let countsAsked = null
 function askDownloadCounts(name) {
@@ -54,6 +55,10 @@ function askDownloadCounts(name) {
   })
 }
 const npmDownloadCounts = name => npmPackageData('downloads', name, () => askDownloadCounts(name), data => ({ downloads: data.downloads ?? null }))
+// A package's downloads from whatever the session has of them: its figures,
+// asked for or come with a version, else its downloads alone, asked with
+// others'.
+const npmDownloadsOf = name => npmPackageAsked('stats', name) ? npmPackageStats(name) : npmDownloadCounts(name)
 
 // A package's advisories for this session, across its published versions,
 // which each one's `affected` indexes.
@@ -646,31 +651,46 @@ function socketBadges([from, to], affecting) {
   })
 }
 
-// A package's tier by its downloads (`stats`, its figures or its recent
+// A package's tier by its downloads (`downloads`, its figures' or its
 // downloads alone), where `shown` takes its level, its last complete
 // month's downloads in its tooltip, over the month's name; nothing until
 // they arrive.
-function tierTag(stats, shown = () => true) {
-  const tier = stats.status === 'ready' ? npmDownloadTier(stats.downloads) : null
+function tierTag(downloads, shown = () => true) {
+  const tier = downloads ? npmDownloadTier(downloads) : null
   const level = tier === null ? null : npmTierLevel(tier)
   if (level === null || !shown(level)) return nothing
-  const last = npmLastMonth(stats.downloads), total = last?.total.toLocaleString('en')
+  const last = npmLastMonth(downloads), total = last?.total.toLocaleString('en')
   return html`<span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
     .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier)}</span>`
 }
 
+const ready = data => data.status === 'ready' ? data.downloads : null
+
+// A dependency's downloads to the day before its latest two weeks: a
+// package a release just pulled in, as a compromised one depending on it
+// would, could owe those to that release alone. Its own package's tier goes
+// by all of them, its Overview charting them.
+const DAY_MS = 24 * 60 * 60_000
+const DEPENDENCY_DAYS_LEFT_OUT = 14
+export function npmSettledDownloads(downloads, now = Date.now()) {
+  if (!downloads) return null
+  const first = Math.floor(Date.parse(downloads.start) / DAY_MS), last = Math.floor(now / DAY_MS) - 1 - DEPENDENCY_DAYS_LEFT_OUT
+  const days = downloads.days.slice(0, Math.max(0, last - first + 1))
+  return { start: downloads.start, end: new Date((first + days.length - 1) * DAY_MS).toISOString().slice(0, 10), days }
+}
+
 // The package's tier where it is orange or red (past the top 20,000).
 function popularityBadge(name) {
-  const tag = tierTag(npmPackageStats(name), level => level === 'is-low' || level === 'is-unpopular')
+  const tag = tierTag(ready(npmPackageStats(name)), level => level === 'is-low' || level === 'is-unpopular')
   return tag === nothing ? nothing : html`<li>${tag}</li>`
 }
 
 // A dependency Compare lists new (bundle-compare.js source's `dependencyTag`):
-// its package's tier, whatever it is, by its recent downloads, asked with
-// the others'. Nothing for one changed or removed, which the version
-// compared with already had, nor one that names no package in the registry
-// (a git or file one).
-export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(npmDownloadCounts(row.opens)) : nothing
+// its package's tier, whatever it is, by its downloads (npmDownloadsOf) but
+// its latest two weeks' (npmSettledDownloads). Nothing for one changed or
+// removed, which the version compared with already had, nor one that names
+// no package in the registry (a git or file one).
+export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {
