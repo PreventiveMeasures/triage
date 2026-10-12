@@ -84,3 +84,13 @@ test('a root module recording an ecosystem is own source, stamped or stored', ()
     assert.equal(bundleFileGithub(details([root]), 'src/index.js'), null, `${ecosystem}: the root never reads its manifest as a dependency's`)
   }
 })
+
+test('an npm version\'s files link into its repository, at the commit it was published from, only where npm recorded both', () => {
+  const version = fields => ({ kind: 'sourcemap', npm: { name: 'pkg', version: '1.0.0', manifest: fields } })
+  assert.deepEqual(bundleFileGithub(version({ github: { github: 'org/pkg', directory: 'packages/pkg' }, gitHead: commit }), 'lib/a b.js'), {
+    href: `https://github.com/org/pkg/blob/${commit}/packages/pkg/lib/a%20b.js`, github: 'org/pkg', path: 'packages/pkg/lib/a b.js', commit, package: null,
+  }, 'in the directory its repository names')
+  assert.equal(bundleFileGithub(version({ github: { github: 'org/pkg' }, gitHead: commit }), 'index.js').href, `https://github.com/org/pkg/blob/${commit}/index.js`)
+  assert.equal(bundleFileGithub(version({ github: { github: 'org/pkg' } }), 'index.js'), null, 'no commit recorded at publish: no revision to link')
+  assert.equal(bundleFileGithub(version({ gitHead: commit }), 'index.js'), null, 'no repository')
+})

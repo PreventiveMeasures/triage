@@ -3636,6 +3636,14 @@ a.npm-socket-score {
 
   & > li { display: flex; }
 }
+/* A publisher that changed: a warning, linking to the new one's profile. */
+a.npm-compare-publisher {
+  text-decoration: none;
+
+  & .npm-extension-count { color: color-mix(in srgb, var(--high) 60%, var(--text)); }
+  &:hover { border-color: var(--high); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {
   --sev: var(--muted);

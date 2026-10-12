@@ -1,7 +1,12 @@
+import { html, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { repoDirectory, reportRepoGithub } from '@preventive/report'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
+import { bundleCommitTooltip } from './bundle-origin-links.js'
 import { bundleSourcePackageInfo } from './bundle-source-package.js'
 import { moduleEcosystem } from './bundle-source-tree.js'
+import { GITHUB_ICON_SVG } from './icons.js'
+import { sourcePackageIcon } from './source-file-icon.js'
 
 function fileLink(github, directory, file, commit, pkg) {
   const path = [directory, file].filter(Boolean).join('/')
@@ -22,7 +27,17 @@ function fileLink(github, directory, file, commit, pkg) {
 // Best effort: a directory nothing records is taken for the repository root,
 // as the Overview's origin link takes it.
 export function bundleFileGithub(details, path, assigned = null) {
-  if (details?.kind !== 'stasis' || typeof path !== 'string') return null
+  if (typeof path !== 'string') return null
+  // An npm version's file, where npm recorded both its repository and the
+  // commit it was published from: at that commit, in the directory its
+  // repository names. Best effort too: a file its build wrote may not be
+  // in the repository.
+  const npm = details?.npm?.manifest
+  if (npm) {
+    const commit = bundleCommitHash(npm.gitHead)
+    return npm.github?.github && commit ? fileLink(npm.github.github, repoDirectory({ directory: npm.github.directory ?? '' }), path, commit, null) : null
+  }
+  if (details?.kind !== 'stasis') return null
   const bundle = details.bundle
   let owner = null
   for (const [dir, info] of bundle?.modules ?? []) {
@@ -47,4 +62,17 @@ export function bundleFileGithub(details, path, assigned = null) {
   const pkg = bundleSourcePackageInfo({ name: info.name, ecosystem }, info, 0)
   if (!pkg.github) return null
   return fileLink(pkg.github, pkg.directory ?? '', rel, pkg.commit, pkg)
+}
+
+// A file head's GitHub link (bundleFileGithub's `github`), its tooltip naming
+// the repository, the file's path in it and the commit, with what
+// `commitInfo` (a managed bundle's) says of the commit, and a dependency's
+// package.
+export function githubFileLink(github, commitInfo = null) {
+  return html`<a class="bundle-code-github-link" href=${github.href} target="_blank" rel="noopener noreferrer" aria-label="Open on GitHub"
+    data-tooltip=${github.path} data-tooltip-repo=${github.github} data-tooltip-commit=${github.commit ?? nothing}
+    data-tooltip-commit-info=${bundleCommitTooltip(commitInfo, github.commit, github.github) ?? nothing}
+    data-tooltip-package=${github.package?.name ?? nothing} data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
+    data-tooltip-version=${github.package?.version ?? nothing}
+  >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${sourcePackageIcon(github.package.ecosystem)}</span>` : nothing}</a>`
 }

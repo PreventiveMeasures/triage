@@ -375,7 +375,8 @@ test('a file is labelled where a package starts from it, a package.json with its
   const base = version('a', { 'index.js': 'module.exports = 1\n', 'package.json': '{"scripts":{"preinstall":"x","prepare":"tsc","postinstall":"node a.js"}}\n', 'bin/cli.js': '1\n',
     'LICENSE-MIT': 'MIT\n' }, { main: 'index.js', license: 'MIT' })
   const other = version('b', { 'index.js': 'module.exports = 2\n', 'package.json': '{"scripts":{"postinstall":"node setup.js","prepare":"tsc -b","test":"t"}}\n', 'bin/cli.js': '2\n',
-    'dist/app.min.js': `${'var a=1;'.repeat(200)}\n`, 'LICENSE-MIT': 'MIT License\n' }, { main: './index', bin: { tool: './bin/cli.js' }, license: 'MIT' })
+    'dist/app.min.js': `${'var a=1;'.repeat(200)}\n`, 'LICENSE-MIT': 'MIT License\n' }, { main: './index', bin: { tool: './bin/cli.js' }, license: 'MIT',
+    github: { github: 'org/pkg' }, gitHead: 'b'.repeat(40) })
   const element = new CompareCode()
   Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
     files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
@@ -383,6 +384,8 @@ test('a file is labelled where a package starts from it, a package.json with its
   const render = path => { element.path = path; return renderText(element.render()) }
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
   const labels = (markup, kind) => [...markup.matchAll(new RegExp(`class="?bundle-compare-code-${kind}[^>]*>([^<]+)<`, 'gu'))].map(m => m[1])
+  assert.match(head('index.js'), new RegExp(`class="bundle-code-github-link" href=https://github\\.com/org/pkg/blob/${'b'.repeat(40)}/index\\.js `, 'u'),
+    'on GitHub at the commit the open version was published from')
   assert.deepEqual(labels(head('index.js'), 'entry'), ['main'], 'as require finds it')
   assert.deepEqual(labels(head('bin/cli.js'), 'entry'), ['bin'])
   assert.deepEqual(labels(head('package.json'), 'entry'), [])

@@ -35,6 +35,7 @@ import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.j
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
+import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -625,7 +626,15 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${this._githubLink(path, entry)}`
+  }
+
+  // The file on GitHub, at the revision of the side it's read from (the one
+  // compared with for a removed file), where that side records where its
+  // files come from and at what commit (bundle-file-github.js).
+  _githubLink(path, { kind, basePath = path }) {
+    const github = kind === 'removed' ? bundleFileGithub(this.base, basePath) : bundleFileGithub(this.other, path)
+    return github ? githubFileLink(github) : nothing
   }
 
   // The alerts on a file (`otherAlerts`; `baseAlerts` for one removed), in

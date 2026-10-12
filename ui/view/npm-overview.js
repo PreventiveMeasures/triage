@@ -366,7 +366,8 @@ export const npmCompareFiles = {
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: the advisories that affect either,
+// (`other`), each side's details: a publisher that changed, the advisories
+// that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
@@ -374,7 +375,7 @@ export function npmCompareBadges(base, other) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [publisherBadge(sides), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -396,6 +397,18 @@ const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
 const severityOf = advisory => SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
 // The most severe of `advisories`, undefined for none.
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
+
+// The npm account that published each version, where npm says for both and
+// they differ, as when a package changes hands, or is taken over: linking
+// to the open version's publisher's profile.
+function publisherBadge([from, to]) {
+  const now = to.manifest?.publisher, was = from.manifest?.publisher
+  if (!was || !now || was === now) return nothing
+  return html`<li><a class="npm-extension is-warn npm-compare-publisher" href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
+    data-tooltip=${`Published by ~${was} (${from.version}), then ~${now} (${to.version})`}
+    .tooltipContent=${compareTip('Published by', [from, to], [`~${was}`, `~${now}`], 'A different npm account published the open version')}>
+    <span>Publisher</span><span class="npm-extension-count">~${was} → ~${now}</span></a></li>`
+}
 
 // The advisories affecting each version, tinted by the worst still affecting
 // the open one, or green where none does; each version's, by severity, and

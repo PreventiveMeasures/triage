@@ -29,7 +29,7 @@ import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.j
 import { sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
 import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
-import { bundleFileGithub } from './bundle-file-github.js'
+import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
@@ -1610,20 +1610,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         data-copy-path=${path}
         aria-label="Copy file path"
       >${COPY_ICON}</button>
-      ${github ? html`<a
-        class="bundle-code-github-link"
-        href=${github.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Open on GitHub"
-        data-tooltip=${github.path}
-        data-tooltip-repo=${github.github}
-        data-tooltip-commit=${github.commit ?? nothing}
-        data-tooltip-commit-info=${bundleCommitTooltip(entry?.commitInfo, github.commit, github.github) ?? nothing}
-        data-tooltip-package=${github.package?.name ?? nothing}
-        data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
-        data-tooltip-version=${github.package?.version ?? nothing}
-      >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${packageIconFor(github.package.ecosystem)}</span>` : nothing}</a>` : nothing}
+      ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
       ${toggle}
       ${renderSourceWrapToggle()}

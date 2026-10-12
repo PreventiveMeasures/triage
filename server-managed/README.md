@@ -1225,7 +1225,12 @@ control. A version shows in the bundle view with four tabs:
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
-- **Code**: the file tree and source viewer, opening on what `main` names.
+- **Code**: the file tree and source viewer, opening on what `main` names,
+  each file's head linking it on GitHub at the commit the version was
+  published from, where npm recorded both its repository and that commit
+  (in the directory its repository names; a file its build wrote may not
+  be in the repository), as a stasis bundle's do; Compare's file heads link
+  each file as the side it's read from has it.
   A minified file (as the Overview tags them) of a language the server
   formats has a pretty-print toggle in its bar, as a managed bundle's has:
   turned on, the file shows as the server formatted it (see `GET
@@ -1246,7 +1251,10 @@ control. A version shows in the bundle view with four tabs:
   a version as long as `10.90.90` tagged `latest`, so they don't move as its
   versions arrive (a longer one is cut short, whole in its tooltip).
   At the end of its picker row, once the two are compared, chips flag what
-  calls for a look: the advisories affecting either version, counted from
+  calls for a look: a publisher that changed, where npm names the account
+  that published each version and they differ (`~alice → ~bob`, as when a
+  package changes hands, or is taken over), linking to the new one's
+  profile; the advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where
   none does, its tooltip a row for each version's, their severities in

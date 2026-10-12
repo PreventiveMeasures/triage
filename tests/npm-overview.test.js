@@ -343,6 +343,15 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(fresh, /href=https:\/\/socket\.dev\/npm\/package\/unscanned\/overview\/1\.2\.0 [^]*>Quality<[^]*>– → 30</u)
   assert.match(fresh, /compare-tip-version">1\.1\.0<\/span><span class="compare-tip-said"><span class="compare-tip-none">none</u, 'none where it has none')
 
+  // A publisher that changed, as when a package changes hands.
+  const published = publisher => ({ manifest: { publisher } })
+  const handed = await badges(side('handed', '1.0.0', published('alice')), side('handed', '1.1.0', published('mallory')))
+  assert.match(handed, /<li><a class="npm-extension is-warn npm-compare-publisher" href=https:\/\/www\.npmjs\.com\/~mallory [^]*>~alice → ~mallory<\/span><\/a><\/li>/u,
+    'first, linking to the new publisher')
+  assert.match(handed, /compare-tip-head">Published by<[^]*>1\.0\.0<[^]*>~alice<[^]*>1\.1\.0<[^]*>~mallory</u)
+  assert.doesNotMatch(await badges(side('same-hands', '1.0.0', published('alice')), side('same-hands', '1.1.0', published('alice'))), /npm-compare-publisher/u)
+  assert.doesNotMatch(await badges(side('unsaid', '1.0.0'), side('unsaid', '1.1.0', published('alice'))), /npm-compare-publisher/u, 'not where npm doesn\'t say')
+
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
