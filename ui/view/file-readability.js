@@ -33,11 +33,12 @@ export function npmTextEncoding(text) {
 // Lines longer than anyone writes by hand.
 export const NPM_LONG_LINE = 1000
 // Prose, which wraps where it is read: its long lines are paragraphs. By its
-// extension (Markdown, text), or its name alone (`LICENSE-MIT`, `CHANGES`; a
-// dot in it only a version's, `LICENSE-LGPL2.1`; a prose extension after it
-// is one), not code named alike (`lib/history.js`, `dist/notice.min.js`),
-// which can be minified as any.
-export const NPM_PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*(?:\.\d[^/.]*)*)?)$/iu
+// extension (text, Markdown and MDX, and the markup GitHub renders a README
+// from: `README.org`, `README.rdoc`), or its name alone (`LICENSE-MIT`,
+// `CHANGES`; a dot in it only a version's, `LICENSE-LGPL2.1`; a prose
+// extension after it is one), not code named alike (`lib/history.js`,
+// `dist/notice.min.js`), which can be minified as any.
+export const NPM_PROSE = /(?:\.(?:md|markdown|mdown|mkdn|mdx|txt|rst|adoc|asciidoc|textile|rdoc|org|creole|mediawiki|wiki|pod)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*(?:\.\d[^/.]*)*)?)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.
