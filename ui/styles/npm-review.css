@@ -333,6 +333,8 @@ npm-review button.npm-review-danger, .dependency-review-list button.npm-review-d
 .dependency-review-title > span:last-child { flex: none; max-width: 60%; }
 .dependency-review-title span { color: var(--muted); }
 .dependency-review-title:hover, .dependency-review-title:hover span { color: var(--accent); }
+.dependency-review-row.is-revoked .dependency-review-title { color: var(--muted); }
+.dependency-review-row.is-revoked .dependency-review-title > * { text-decoration: line-through; }
 .dependency-review-meta {
   display: flex; align-items: center; gap: .65rem; min-width: 0; margin-top: .2rem;
   color: var(--muted); font-size: .68rem; line-height: 1.5;

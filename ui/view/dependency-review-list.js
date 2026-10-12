@@ -73,7 +73,7 @@ export class DependencyReviewList extends LitElement {
           event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
         }
     }
-    return html`<li class=${`dependency-review-row${expanded ? ' is-expanded' : ''}`}><div class="dependency-review-row-main">
+    return html`<li class=${`dependency-review-row${expanded ? ' is-expanded' : ''}${review.revokedAt === null ? '' : ' is-revoked'}`}><div class="dependency-review-row-main">
       <button type="button" class="dependency-review-expand" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
         aria-label=${`${expanded ? 'Hide' : 'Show'} details for ${reviewTitle(review)}`} @click=${() => this._toggleDetails(review.id)}>${NEXT_ICON}</button>
       <div class="dependency-review-identity"><a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>
