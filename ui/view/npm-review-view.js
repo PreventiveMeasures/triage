@@ -7,10 +7,11 @@ import { NEXT_ICON } from './lit-icons.js'
 import { renderCompareStats } from './bundle-compare-stats.js'
 import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
-const busy = page => page._saving || page._loading
+const busy = page => page._blocked || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
 const coverage = summary => summary.coverage === 'full' ? 'Full' : 'Partial'
 const errorMessage = page => page._error ? html`<p class="npm-review-error" role="alert">${page._error}</p>` : nothing
+const savingMessage = page => page._saveBlocked ? html`<div class="npm-review-saving" role="status">Saving changes…</div>` : nothing
 const verdictChoices = (name, status, change, disabled, allowed = Object.keys(verdictLabels), unchecked = false) => html`<div class="npm-review-verdict-options" role="group" aria-label="Verdict">
   ${Object.entries(unchecked ? { '': 'Not checked', ...verdictLabels } : verdictLabels).map(([value, label]) => html`<label class=${`npm-review-verdict-choice ${value || 'unchecked'}`}>
     <input type="radio" name=${name} aria-label=${label} value=${value} .checked=${live(status === value)} ?disabled=${disabled || value !== '' && !allowed.includes(value)}
@@ -52,7 +53,7 @@ function toolbar(page) {
   const review = page._shownReview
   return html`<div class="npm-review-toolbar"><div class="npm-review-toolbar-group">
     ${isFrozen(page) ? html`${reviewBadge(review)}<button type="button" class="npm-review-text-button" @click=${() => page._openPanel('manage')}>Details</button>` : nothing}
-    <button type="button" class="npm-review-text-button" ?disabled=${page._saving} @click=${() => page._openPanel('notes')}>Review notes</button>
+    <button type="button" class="npm-review-text-button" ?disabled=${page._blocked} @click=${() => page._openPanel('notes')}>Review notes</button>
     <button type="button" class="npm-review-text-button" @click=${() => page._openPanel('history')}>History <span class="npm-review-count">${page._reviews.filter(row => row.publishedAt !== null).length}</span></button>
     <button type="button" class="npm-review-text-button" @click=${() => managedHistory?.navigate({ view: 'reviews' })}>My reviews</button>
     </div>${reviewActions(page)}</div>`
@@ -98,7 +99,7 @@ export function renderReviewConfirmation(page, review) {
       ${errorMessage(page)}</div>
     <footer class="npm-review-dialog-footer"><p>Publishing freezes your verdicts and notes. You can continue in a new review to make changes.</p>
       <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
-      <button type="button" class="npm-review-text-button" ?disabled=${page._saving} @click=${() => page._closePanel()}>Back to files</button></footer>
+      <button type="button" class="npm-review-text-button" ?disabled=${page._blocked} @click=${() => page._closePanel()}>Back to files</button></footer>
   </form>`
 }
 
@@ -132,14 +133,15 @@ function panel(page) {
   if (page._dirty) drafts.set(page._file, {})
   return html`<dialog class="npm-review-dialog" aria-label=${titles[page._panel]} @cancel=${event => { event.preventDefault(); page._closePanel() }}>
     <header class="npm-review-dialog-head"><div><h2>${titles[page._panel]}</h2><p>${reviewTitle(page._context)}</p></div>
-      <button type="button" class="npm-review-icon-button" aria-label="Close panel" ?disabled=${page._saving} @click=${() => page._closePanel()}>×</button></header>
+      <button type="button" class="npm-review-icon-button" aria-label="Close panel" ?disabled=${page._blocked} @click=${() => page._closePanel()}>×</button></header>
     ${page._panel === 'publish' ? renderReviewConfirmation(page, page._activeReview) : html`<div class="npm-review-dialog-body">
       ${page._panel === 'notes' ? renderReviewEditor(page) : page._panel === 'manage' ? renderReviewPublished(page, page._shownReview)
         : page._panel === 'unsaved' ? html`<p>Save these changes before publishing.</p>${[...drafts.keys()].map(file => html`<button type="button"
           @click=${() => { page._closePanel(); page._open(file) }}>${file ?? 'Whole diff notes'} ${NEXT_ICON}</button>`)}`
         : page._reviews.filter(review => review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt).map(review => renderReviewPublished(page, review))}
       ${page._panel === 'history' ? html`${page._reviews.some(review => review.publishedAt !== null) ? nothing : html`<p class="npm-review-muted">No published reviews yet.</p>`}
-        <button type="button" ?disabled=${busy(page)} @click=${() => page._refresh()}>Refresh reviews</button>` : nothing}${errorMessage(page)}</div>`}
+        <button type="button" ?disabled=${busy(page) || page._pendingSaves.length > 0} @click=${() => page._refresh()}>Refresh reviews</button>` : nothing}${errorMessage(page)}</div>`}
+    ${savingMessage(page)}
   </dialog>`
 }
 
@@ -160,5 +162,5 @@ export function renderReview(page) {
         : html`<npm-review-diff .path=${page._path} .base=${page._base} .other=${page.details} .files=${page._diff.files} .reviewAfter=${true}
           baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
           .reviewFile=${path => renderReviewEditor(page, path, true)}></npm-review-diff>`}</div>
-    </div><span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${panel(page)}`
+    </div><span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`
 }

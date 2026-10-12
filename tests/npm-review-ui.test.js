@@ -270,6 +270,160 @@ test('verdict selection autosaves in place and keeps other files pending edits',
   assert.equal(page._editorState('other.js').dirty, true, 'failed autosaves remain available to retry')
 })
 
+test('autosaves allow editing and file navigation, preserving newer notes after the response', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._files = ['index.js', 'other.js']; page._path = 'index.js'; page._resetEditor('index.js')
+  answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept-with-nits')
+  assert.equal(page._blocked, false)
+  page._editFile('index.js', { _comment: 'Typed during the save' })
+  page._selectFile('other.js')
+  assert.equal(page._path, 'other.js')
+  page._beginPublish()
+  assert.equal(page._publishStep, false)
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
+  await saving
+  assert.equal(page._path, 'other.js')
+  page._selectFile('index.js')
+  assert.equal(page._status, 'accept-with-nits')
+  assert.equal(page._comment, 'Typed during the save')
+  assert.equal(page._editRevision, 2)
+  assert.equal(page._dirty, true)
+})
+
+test('rapid verdict changes save serially with updated revisions, including reverting to Not checked', async () => {
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
+  page._reviews = []; page._resetEditor('other.js'); requests.length = 0
+  answer = first.promise
+  const accepting = page._setFileStatus('other.js', 'accept')
+  const clearing = page._setFileStatus('other.js', '')
+  assert.equal(requests.length, 1)
+  assert.equal(page._unsaved, true)
+  const created = { ...review, entries: [{ ...file, id: 'other', file: 'other.js', status: 'accept', comment: '' }] }
+  answer = second.promise
+  first.resolve({ review: created })
+  await accepting
+  assert.equal(page._status, '', 'the earlier save does not revert the latest selection')
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests[1][1], { action: 'save', reviewId: 'review', revision: 1, entryId: 'other', file: 'other.js', comment: '', status: null })
+  second.resolve({ review: { ...created, revision: 2, entries: [{ ...created.entries[0], status: null }] } })
+  await clearing
+  assert.equal(page._unsaved, false)
+  assert.equal(page._status, '')
+})
+
+test('only saves pending for three seconds block editing, and completion clears the block', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const page = component(), pending = Promise.withResolvers()
+  page._resetEditor('index.js'); answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept')
+  t.mock.timers.tick(2999)
+  assert.equal(page._blocked, false)
+  t.mock.timers.tick(1)
+  assert.equal(page._blocked, true)
+  await page._setFileStatus('index.js', 'reject')
+  assert.equal(page._status, 'accept', 'edits stop once the slow-save block appears')
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept' }] } })
+  await saving
+  assert.equal(page._blocked, false)
+  t.mock.timers.tick(3000)
+  assert.equal(page._blocked, false)
+})
+
+test('fast saves cancel their timer without blocking a newer save', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
+  page._resetEditor('index.js'); answer = first.promise
+  const accepting = page._setFileStatus('index.js', 'accept')
+  t.mock.timers.tick(2000)
+  const rejecting = page._setFileStatus('index.js', 'reject')
+  answer = second.promise
+  first.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept' }] } })
+  await accepting
+  t.mock.timers.tick(1000)
+  assert.equal(page._blocked, false, 'the completed request cannot block its successor')
+  second.resolve({ review: { ...review, revision: 3, entries: [{ ...file, status: 'reject' }] } })
+  await rejecting
+  t.mock.timers.tick(3000)
+  assert.equal(page._blocked, false)
+})
+
+test('a failed save cancels queued requests and retains the latest edits for retry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const page = component(), pending = Promise.withResolvers()
+  page._files = ['index.js', 'other.js']; page._resetEditor('index.js'); requests.length = 0
+  answer = pending.promise
+  const first = page._setFileStatus('index.js', 'accept')
+  const second = page._setFileStatus('other.js', 'reject')
+  page._editFile('other.js', { _comment: 'Keep this note' })
+  t.mock.timers.tick(3000)
+  pending.reject(new Error('Connection lost'))
+  await Promise.all([first, second])
+  assert.equal(requests.length, 1, 'queued requests stop on error')
+  assert.equal(page._blocked, false)
+  assert.equal(page._error, 'Connection lost')
+  assert.equal(page._editorState('index.js').status, 'accept')
+  assert.equal(page._editorState('other.js').status, 'reject')
+  assert.equal(page._comment, 'Keep this note')
+  assert.equal(page._unsaved, true)
+  t.mock.timers.tick(3000)
+  assert.equal(page._blocked, false)
+})
+
+test('canceling pending saves clears timers and ignores obsolete responses', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const page = component(), pending = Promise.withResolvers()
+  page._resetEditor('index.js'); answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept')
+  page._cancelSaves()
+  assert.equal(await saving, null)
+  t.mock.timers.tick(3000)
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept' }] } })
+  await Promise.resolve()
+  assert.equal(page._blocked, false)
+  assert.equal(page._activeReview.revision, 1)
+})
+
+test('a response never changes the displayed frozen review or discards pending private edits', async () => {
+  const page = component(), pending = Promise.withResolvers(), published = { ...review, id: 'published', publishedAt: 200 }
+  page._reviews = [review, published]; page._path = 'index.js'; page._resetEditor('index.js')
+  answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept-with-nits')
+  page._editFile('index.js', { _comment: 'Still private' })
+  page._showPublished(published)
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
+  await saving
+  assert.equal(page._shownReview.id, 'published')
+  assert.equal(page._shownReview.entries[0].status, 'request-changes')
+  page._resume()
+  assert.equal(page._comment, 'Still private')
+  assert.equal(page._editRevision, 2)
+})
+
+test('Save & next does not override file navigation during a pending save', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._files = ['index.js', 'next.js', 'last.js']; page._path = 'index.js'; page._resetEditor('index.js')
+  page._comment = 'Updated note'; answer = pending.promise
+  const saving = page._save(true)
+  page._selectFile('last.js')
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Updated note' }] } })
+  await saving
+  assert.equal(page._path, 'last.js')
+})
+
+test('discard during autosave removes only the newer edits, keeping the verdict being saved', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._resetEditor('index.js'); answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept-with-nits')
+  page._editFile('index.js', { _comment: 'Discard this newer note' })
+  page._discardFile('index.js')
+  assert.equal(page._comment, 'A note')
+  assert.equal(page._status, 'accept-with-nits')
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
+  await saving
+  assert.equal(page._unsaved, false)
+})
+
 test('finalization requires at least one checked changed file, not just a note', () => {
   const page = component()
   page._files = ['index.js']

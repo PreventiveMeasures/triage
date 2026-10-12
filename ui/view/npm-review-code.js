@@ -5,11 +5,6 @@ import { BundleCompareCode } from './bundle-compare-code.js'
 // rendering, including binary files, large-file limits and syntax highlighting.
 export class NpmReviewCode extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, order: { attribute: false } }
-  _select(path) { if (!this._steppingChange) super._select(path) }
-  _stepChange(direction) {
-    this._steppingChange = true
-    try { super._stepChange(direction) } finally { this._steppingChange = false }
-  }
   render() {
     this._order = this.order ?? [...this._entries.keys()]
     this._current = this._entries.has(this.path) ? this.path : this._order[0]

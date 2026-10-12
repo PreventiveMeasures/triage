@@ -179,6 +179,22 @@ export class BundleCompareAll extends BundleCompareCode {
     return html`${this._dependencyChanges(path)}${repointed}${sourceOnly ? nothing : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}`
   }
 
+  _fileContent(path, entry, file, prefix) {
+    return html`<header class="bundle-code-main-bar bundle-compare-all-file-head">
+      ${this._fileName(path, entry, prefix)}
+      <span class="bundle-code-main-spacer"></span>
+      ${this._fileFigures(entry, file.model)}
+    </header>
+    ${this.reviewAfter ? nothing : this.reviewFile?.(path, this.base) ?? nothing}
+    ${this._fileBody(path, entry, file)}`
+  }
+
+  _layout(rail, content) {
+    return html`<div class="bundle-code-view bundle-compare-code">
+      ${this._renderRail(rail, this._current)}<div class="bundle-code-main">${content}</div>
+    </div>`
+  }
+
   render() {
     paintingRenameDiffs()
     const rail = this._railState()
@@ -203,10 +219,7 @@ export class BundleCompareAll extends BundleCompareCode {
       : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
     // The diff's controls, while any file shows a change or hides one they can show.
     const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
-    return html`<div class="bundle-code-view bundle-compare-code">
-      ${this._renderRail(rail, this._current)}
-      <div class="bundle-code-main">
-        <header class="bundle-code-main-bar bundle-compare-code-bar">
+    return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
@@ -215,19 +228,11 @@ export class BundleCompareAll extends BundleCompareCode {
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
             : repeat(shown.slice(0, this._fileLimit), ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path} data-path=${path}>
-              <header class="bundle-code-main-bar bundle-compare-all-file-head">
-                ${this._fileName(path, entry, prefix)}
-                <span class="bundle-code-main-spacer"></span>
-                ${this._fileFigures(entry, file.model)}
-              </header>
-              ${this.reviewAfter ? nothing : this.reviewFile?.(path, this.base) ?? nothing}
-              ${this._fileBody(path, entry, file)}
+              ${this._fileContent(path, entry, file, prefix)}
               ${this.reviewAfter ? this.reviewFile?.(path, this.base) ?? nothing : nothing}
             </section>`)}
           ${shown.length > this._fileLimit ? html`<button type="button" class="bundle-compare-code-action bundle-compare-all-more" @click=${() => this._more()}>Show more files (${(shown.length - this._fileLimit).toLocaleString()} remaining)</button>` : nothing}
-        </div>
-      </div>
-    </div>`
+        </div>`)
   }
 }
 

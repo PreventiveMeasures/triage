@@ -1,5 +1,6 @@
 /* Review owns its layout; shared package chrome and diff styles stay intact. */
 npm-review {
+  position: relative;
   display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column;
   background: var(--bg); font-size: .78rem;
   container-type: inline-size; container-name: dependency-review;
@@ -33,6 +34,12 @@ npm-review textarea { display: block; width: 100%; resize: vertical; line-height
 .npm-review-help { line-height: 1.5; }
 .npm-review-error { color: var(--critical); padding: .4rem 1rem; overflow-wrap: anywhere; }
 .npm-review-loading { padding: .3rem 1rem; color: var(--muted); }
+.npm-review-saving {
+  position: absolute; bottom: 1rem; inset-inline: 1rem; z-index: 5;
+  width: fit-content; margin-inline: auto; padding: .5rem .85rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
+  background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgb(0 0 0 / .2);
+  }
 .npm-review-head bundle-selector[disabled] { pointer-events: none; opacity: .5; }
 .npm-review-summary-actions { display: flex; align-items: center; gap: 1.1rem; flex-shrink: 0; }
 .npm-review-progress-block { width: 8.6rem; }
@@ -122,11 +129,12 @@ npm-review-code .bundle-compare-code-bar .bundle-code-main-stats { display: none
 npm-review-code .focus-code-nav-btn:is([aria-label='Previous change'], [aria-label='Next change']) { display: none; }
 npm-review .bundle-compare-diff { min-height: 0; flex: 1; }
 npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.npm-review-file-content > .bundle-compare-all-file-head { background: var(--surface); }
 .npm-review-decision {
   flex: none;
   max-height: 50%;
   overflow: auto;
-  padding: .65rem .85rem;
+  padding: .65rem .75rem;
   border-top: 1px solid var(--border);
   background: var(--surface);
   }
@@ -139,7 +147,8 @@ npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; 
   margin-bottom: .5rem;
   }
 .npm-review-decision-head strong { font-size: .75rem; overflow-wrap: anywhere; }
-.npm-review-verdict-field { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; margin-bottom: .55rem; }
+.npm-review-verdict-field { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.npm-review-verdict-field + textarea { margin-top: .55rem; }
 .npm-review-verdict-options {
   display: inline-flex;
   max-width: 100%;
@@ -159,10 +168,16 @@ npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; 
   text-align: center;
   font-size: .7rem;
   }
-.npm-review-verdict-choice:has(:checked) { background: rgb(from var(--accent) r g b / .17); color: var(--accent); }
+.npm-review-verdict-choice:is(.accept, .accept-with-nits) { --verdict-color: var(--green); }
+.npm-review-verdict-choice.request-changes { --verdict-color: var(--medium); }
+.npm-review-verdict-choice.reject { --verdict-color: var(--critical); }
+.npm-review-verdict-choice:has(:checked) { background: var(--surface-active); color: var(--text); }
+.npm-review-verdict-choice:not(.unchecked):has(:checked) {
+  background: rgb(from var(--verdict-color) r g b / .17); color: var(--verdict-color);
+  }
 .npm-review-verdict-choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 .npm-review-verdict-choice:has(:disabled) { opacity: .4; }
-.npm-review-verdict-choice:not(:has(:disabled)):hover { background: var(--surface-active); }
+.npm-review-verdict-choice:not(:has(:disabled, :checked)):hover { background: var(--surface-active); }
 .npm-review-line-counts { display: inline-flex; flex: none; gap: .25rem; font: .65rem/1.5 ui-monospace, monospace; }
 .npm-review-line-counts .add { color: var(--green); }
 .npm-review-line-counts .del { color: var(--critical); }
@@ -195,9 +210,10 @@ npm-review .bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundl
   font: 600 .65rem/1 sans-serif;
   color: var(--muted);
   }
-.npm-review-verdict-icon.accept { color: var(--green); }
-.npm-review-verdict-icon.accept-with-nits { color: var(--warning); font-size: 1rem; }
-.npm-review-verdict-icon.request-changes, .npm-review-verdict-icon.reject { color: var(--critical); }
+.npm-review-verdict-icon:is(.accept, .accept-with-nits) { color: var(--green); }
+.npm-review-verdict-icon.accept-with-nits { font-size: 1rem; }
+.npm-review-verdict-icon.request-changes { color: var(--medium); }
+.npm-review-verdict-icon.reject { color: var(--critical); }
 .npm-review-badge {
   display: inline-flex;
   padding: .1rem .4rem;
