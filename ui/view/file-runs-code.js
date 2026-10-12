@@ -3,7 +3,7 @@
 // label a file: its tags, their tooltips, and each version's files read once.
 import { html, nothing } from 'lit'
 import { RUNS_CODE } from '../../risk/files/runs-code.js'
-import { npmVersionFileRisk } from '../../risk/npm/compare.js'
+import { npmVersionFileRisk } from '../../risk/npm/files.js'
 
 export { RUNS_CODE, npmFoundAdded, npmRunsCode, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeWithout } from '../../risk/files/runs-code.js'
 export { lineOf, npmIsScript } from '../../risk/files/script.js'

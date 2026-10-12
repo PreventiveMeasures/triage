@@ -72,7 +72,7 @@ import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
-import { auditCache, auditedRepos } from './upstream-cache.ts'
+import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
@@ -2507,6 +2507,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     githubToken,
     repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
     cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+    lastListing: repo => lastListing(deps.config.upstreamCacheDir, deps.db, repo, deps.config.debug),
     debug: deps.config.debug,
   }
   // The figures of the repository the latest version names, noted as its

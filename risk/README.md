@@ -33,7 +33,7 @@ The package assessed is asked for with the npm token the environment has for a s
 
 ## What it tells
 
-- `findings`, each `{ id, severity, … }`, in the order a reviewer reads them:
+- `findings`, each `{ id, severity, … }`, in the order a reviewer reads them. Against `oldVersion`, what changed:
   - `deprecated`
   - `publisher`: red from a known account, orange between unknown ones, yellow to a known one
   - `provenance-lost`
@@ -43,6 +43,8 @@ The package assessed is asked for with the npm token the environment has for a s
   - `new-hosts`
   - `too-new`
   - `popularity`
+
+  Without one, what the version holds, as the npm Overview flags a version on its own (`npm/held.js`): `held-install-scripts`, `held-runs-code`, `held-exfiltration`, `held-obfuscated`, its dependencies' `non-registry-deps` and `unused-deps`, and `deprecated`, `too-new` and `popularity` as above.
 - `files`: each file's stamps (`{ name, severity }`, as a list of files tags and orders it), and what was read of it:
   - how it reads (binary, minified, long lines, source maps, control and invisible characters, an obfuscator's fingerprint)
   - what its code runs beyond itself (eval and its kin, child_process, credentials, the whole environment, publishing)
@@ -63,7 +65,8 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `stamps.js`: all of a file's stamps.
 - `npm/`: a version's and a pair's.
   - `specs.js`, `dependencies.js`, `install-scripts.js`, `downloads.js`, `release.js`, `new-dependency.js`
-  - `compare.js`: the findings.
+  - `compare.js`: a pair's findings; `held.js`: a version's own.
+  - `files.js`: each file read once a version.
   - `diff.js`: renames, as Compare pairs them.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
 

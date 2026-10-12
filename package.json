@@ -256,6 +256,8 @@
     "risk/npm/compare.js",
     "risk/npm/dependencies.js",
     "risk/npm/diff.js",
+    "risk/npm/held.js",
+    "risk/npm/files.js",
     "risk/npm/downloads.js",
     "risk/npm/install-scripts.js",
     "risk/npm/manifest.js",

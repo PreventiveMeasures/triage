@@ -9,14 +9,14 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { factFile, npmAge, npmDeprecation, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmVersionList } from './npm-package.js'
+import { factFile, npmAge, npmDependencyChecks, npmDeprecation, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories-dialog.js'
-import { sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, isNotTextFormat, sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
@@ -26,6 +26,7 @@ import { npmSettledDownloads } from '../../risk/npm/downloads.js'
 import { npmAddedDependency } from '../../risk/npm/new-dependency.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE } from '../../risk/npm/release.js'
 import { npmCompareFindings } from '../../risk/npm/compare.js'
+import { npmHeldFindings, npmVersionFindings } from '../../risk/npm/held.js'
 
 export { npmSettledDownloads } from '../../risk/npm/downloads.js'
 import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
@@ -81,10 +82,11 @@ function npmDownloadsOf(name) {
 }
 
 // A package's advisories for this session, across its published versions,
-// which each one's `affected` indexes.
+// which each one's `affected` indexes; `keptAt`, where its repository's are
+// as GitHub last listed them, when that was.
 function npmPackageAdvisories(name) {
   return npmPackageData('advisories', name, () => fetchNpmAdvisories(name),
-    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
+    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false, keptAt: data.keptAt ?? null }))
 }
 
 // The version's pages elsewhere: npm's, and Socket's report on it where the
@@ -215,11 +217,12 @@ function npmSocketAlerts(entry, alerts, files) {
 
 // The package's downloads in the summary, in a card (npm-downloads-chart.js),
 // with its pages elsewhere and `actions` (the tarball's download) under it.
-export function npmStatsRow(entry, actions) {
+export function npmStatsRow(entry, actions, badges = nothing) {
   const stats = npmPackageStats(entry.npm.name)
   return html`<div class="npm-figures">
     <npm-downloads-chart role="region" aria-label="Downloads" .downloads=${stats.downloads} .status=${stats.status}></npm-downloads-chart>
     <div class="npm-figures-actions">${npmPackageLinks(entry)}${actions}</div>
+    ${badges}
   </div>`
 }
 
@@ -368,8 +371,11 @@ export function npmAdvisoriesColumn(entry) {
     status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
   })).filter(group => group.advisories.length > 0)
   const active = statuses.filter(status => status === 'affects').length
-  const unchecked = ready && !data.repository
-    ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
+  // Where the repository's advisories are as GitHub last listed them, how
+  // long ago; where they couldn't be had, that npm's are alone.
+  const unchecked = ready && data.keptAt
+    ? html`<p class="npm-advisories-note">GitHub's repository advisories are as of ${npmSpan(Date.now() - Date.parse(data.keptAt))} ago: they couldn't be checked now.</p>`
+    : ready && !data.repository ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
   const body = data.status === 'loading' ? html`<p class="bundles-overview-col-empty">Checking advisories…</p>`
     : data.status === 'error' ? html`<p class="bundles-overview-col-empty">Couldn't check advisories.</p>`
     : groups.length === 0 ? html`${unchecked}<p class="bundles-overview-col-empty">No advisories for any version.</p>`
@@ -518,7 +524,9 @@ export function npmFileFlags(details, path, alerts = []) {
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
-  icon: sourceFileIcon,
+  // A file either side holds as not text, under that side's path, is no
+  // license, whatever its name.
+  icon: (path, sides) => sourceFileIcon(path, sides.map(([details, at]) => fileIconFormat(details, at)).find(isNotTextFormat)),
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
@@ -572,10 +580,56 @@ function compareOptions({ name, version, published }) {
     minimumReleaseAge: list.status !== 'ready' || list.teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE }
 }
 
+// What calls for a look at a version on its own (`entry`, read as
+// `details`), in the Overview, as Compare's chips say of two
+// (npmCompareBadges), but for those only a change from one to the other
+// tells (a publisher, provenance, files and hosts new): what risk finds of it
+// (risk/npm/held.js: its deprecation, its install scripts, what any of its
+// files runs beyond itself, an exfiltration host one names and an
+// obfuscator's fingerprint in one, its age under the minimum release age,
+// and its tier by downloads where it is orange or red), dependencies it takes
+// from elsewhere than npm's registry or imports nothing of (npm-package.js
+// npmDependencyChecks), the advisories affecting it, and Socket's scores
+// under their bars. Each once it arrives.
+export function npmOverviewBadges(entry, details) {
+  const { npm } = entry
+  const affecting = advisoriesAffecting([npm])
+  const found = new Map([...npmVersionFindings({ npm }, compareOptions(npm)), ...npmHeldFindings({ ...details, npm })].map(finding => [finding.id, finding]))
+  const chips = [deprecatedBadge(found.get('deprecated')), heldInstallScriptsBadge(npm, found.get('held-install-scripts')), ...npmDependencyChecks(npm, details).map(chip => html`<li>${chip}</li>`),
+    ...heldFileBadges(found), recentBadge(found.get('too-new')), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting), popularityBadge(npm.name, found.get('popularity'))].filter(chip => chip !== nothing)
+  return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">${chips}</ul>`
+}
+
+// The scripts npm runs installing a version (risk/npm/held.js), named, their
+// commands in its tooltip, in orange as Compare's are where they are added or
+// changed.
+function heldInstallScriptsBadge(npm, finding) {
+  if (!finding) return nothing
+  const { scripts } = finding
+  return html`<li><span class="npm-extension is-warn npm-compare-install" data-tooltip=${scripts.map(([script, command]) => `${script}: ${command}`).join('; ')}
+    .tooltipContent=${compareTip('Install scripts', [npm], [tipLines(scripts.map(([script, command]) => [script, command, false]))])}>
+    <span>${scripts.length === 1 ? 'Install script' : 'Install scripts'}</span><span class="npm-extension-count">${scripts.map(([script]) => script).join(', ')}</span></span></li>`
+}
+
+// What a version's files hold that calls for a look (risk/npm/held.js), in
+// orange as their tags are: what any of them runs beyond itself, the kinds
+// named; an exfiltration host one names, the services named; and an
+// obfuscator's fingerprint. Each lists its files in its tooltip, what each
+// holds and where, and nothing more.
+function heldFileBadges(found) {
+  const rows = id => found.get(id)?.files ?? []
+  return [
+    listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', rows('held-runs-code'), row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(rows('held-runs-code').map(row => row.found))),
+    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', rows('held-exfiltration'), row => npmExfiltrationSaid(row.found),
+      npmExfiltrationNames(rows('held-exfiltration').map(row => row.found))),
+    listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', rows('held-obfuscated'), row => npmObfuscationFound(row.found)),
+  ]
+}
+
 // The advisories affecting each side's version, as the Advisories column
 // has them: none where they couldn't be had, and null until they arrive.
 function advisoriesAffecting(sides) {
-  const data = npmPackageAdvisories(sides[1].name)
+  const data = npmPackageAdvisories(sides.at(-1).name)
   if (data.status === 'loading') return null
   return sides.map(({ version }) => {
     const at = data.status === 'ready' ? data.versions.indexOf(version) : -1
@@ -660,21 +714,12 @@ const TIP_FILES = 8
 function fileBadges(found) {
   const rows = id => found.get(id)?.files ?? []
   return [
-    fileBadge('npm-compare-runs', 'Runs code', rows('runs-code'), row => npmRunsCodeSaid(row.added),
-      'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
-      npmRunsCodeKinds(rows('runs-code').map(row => row.added))),
-    fileBadge('npm-compare-exfiltration', 'Exfiltration', rows('exfiltration'), row => npmExfiltrationSaid(row.added),
-      'A host malicious packages send what they take to, or fetch what they run from, new to the file',
-      npmExfiltrationNames(rows('exfiltration').map(row => row.added))),
-    fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes),
-      'Code files the open version adds, of 256 KiB or more'),
-    fileBadge('npm-compare-unreadable', 'Now unreadable', rows('now-unreadable'), row => `${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`,
-      'Its longest line: none over 200 characters before, now one over 2,000'),
-    fileBadge('npm-compare-obfuscated', 'Obfuscated', rows('obfuscated'), row => npmObfuscationFound(row.obfuscation),
-      'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
-    listBadge('is-warn npm-compare-kept-runs', 'Runs code', rows('kept-runs-code'), row => npmRunsCodeSaid(row.found),
-      'What the open version\'s code does beyond itself, in any of its files, none of it new to a file',
-      npmRunsCodeKinds(rows('kept-runs-code').map(row => row.found))),
+    fileBadge('npm-compare-runs', 'Runs code', rows('runs-code'), row => npmRunsCodeSaid(row.added), npmRunsCodeKinds(rows('runs-code').map(row => row.added))),
+    fileBadge('npm-compare-exfiltration', 'Exfiltration', rows('exfiltration'), row => npmExfiltrationSaid(row.added), npmExfiltrationNames(rows('exfiltration').map(row => row.added))),
+    fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
+    fileBadge('npm-compare-unreadable', 'Now unreadable', rows('now-unreadable'), row => `${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`),
+    fileBadge('npm-compare-obfuscated', 'Obfuscated', rows('obfuscated'), row => npmObfuscationFound(row.obfuscation)),
+    listBadge('is-warn npm-compare-kept-runs', 'Runs code', rows('kept-runs-code'), row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(rows('kept-runs-code').map(row => row.found))),
   ]
 }
 
@@ -684,8 +729,7 @@ function fileBadges(found) {
 // with the file it is first named in, and its line.
 function hostsBadge(finding) {
   const rows = (finding?.hosts ?? []).map(({ host, path, line }) => ({ path: host, at: `${path}, line ${line}` }))
-  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at,
-    'Hosts the open version\'s code names in a URL, its comments aside, that the version compared with\'s named in none of its', rows.length === 1 ? rows[0].path : null)
+  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at, rows.length === 1 ? rows[0].path : null)
 }
 
 // A chip on `rows`, files the open version adds or changes, in red.
@@ -695,8 +739,8 @@ function fileBadge(kind, ...rest) {
 
 // A chip on `rows`, each with a `path`, counting them where there are
 // several, or saying `value` of them all, the rows in its tooltip alone, each
-// with what `said` of it.
-function listBadge(classes, label, rows, said, note, value = null) {
+// with what `said` of it, and nothing more.
+function listBadge(classes, label, rows, said, value = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
@@ -706,7 +750,6 @@ function listBadge(classes, label, rows, said, note, value = null) {
       <div class="compare-tip-head">${label}</div>
       <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-      <div class="compare-tip-note">${note}</div>
     </div>`}>
     <span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
@@ -750,10 +793,11 @@ function recentBadge(finding) {
 // The advisories affecting each version, tinted by the worst still affecting
 // the open one, or green where none does; each version's, by severity, and
 // how many the open one brings and fixes, in its tooltip; a click lists them
-// (npm-compare-advisories-dialog.js).
+// (npm-compare-advisories-dialog.js). For one version alone, those affecting
+// it, the Overview's Advisories column listing them.
 function advisoriesBadge(sides, affecting) {
   if (!affecting) return nothing
-  const [was, now] = affecting
+  const now = affecting.at(-1), was = sides.length > 1 ? affecting[0] : now
   if (was.length === 0 && now.length === 0) return nothing
   const tint = now.length === 0 ? 'is-cleared' : `sev-${worstOf(now)}`
   const brought = now.filter(advisory => !was.includes(advisory)).length, fixed = was.filter(advisory => !now.includes(advisory)).length
@@ -761,11 +805,12 @@ function advisoriesBadge(sides, affecting) {
     : html`<span class="compare-tip-count">${list.length}</span><span class="compare-tip-severities">${SEVERITY_ORDER
       .map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length]).filter(([, count]) => count > 0)
       .map(([severity, count]) => html`<span class=${`compare-tip-severity sev-${severity}`}>${count} ${severity}</span>`)}</span>`),
-  `${brought} new · ${fixed} fixed`)
-  return html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog"
-    data-tooltip=${`Advisories affecting ${sides[0].version}: ${was.length}, ${sides[1].version}: ${now.length}`} .tooltipContent=${tooltip}
-    @click=${() => openCompareAdvisories(sides, affecting)}>
-    <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
+  sides.length > 1 ? `${brought} new · ${fixed} fixed` : null)
+  const text = `Advisories affecting ${sides.map(({ version }, i) => `${version}: ${affecting[i].length}`).join(', ')}`
+  const content = html`<span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span>`
+  return sides.length > 1 ? html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog"
+    data-tooltip=${text} .tooltipContent=${tooltip} @click=${() => openCompareAdvisories(sides, affecting)}>${content}</button></li>`
+    : html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`} data-tooltip=${text} .tooltipContent=${tooltip}>${content}</span></li>`
 }
 
 // A tooltip's lines, `[name, value, flagged]` each, `name: value` one to a
@@ -806,22 +851,24 @@ function vulnerabilityBeyond(score, ours, bar) {
 }
 
 // Socket's scores the open version has under its bar, each from the one
-// compared with to the open one, its ring, tint and link the open one's;
-// none for a private package. Vulnerability only where it tells of worse
-// than the advisories found affecting it (vulnerabilityBeyond), once they
-// arrive, as the Advisories badge has the rest.
-function socketBadges([from, to], affecting) {
-  const [was, now] = [from, to].map(npm => npmSocketReport({ npm })?.scores ?? null)
-  if (!now) return []
+// compared with to the open one (or the one version's alone), its ring, tint
+// and link the open one's; none for a private package. Vulnerability only
+// where it tells of worse than the advisories found affecting it
+// (vulnerabilityBeyond), once they arrive, as the Advisories badge has the
+// rest.
+function socketBadges(sides, affecting) {
+  const to = sides.at(-1)
+  const reports = sides.map(npm => npmSocketReport({ npm })?.scores ?? null)
+  if (!reports.at(-1)) return []
   return SOCKET_SCORES.flatMap(([key, label, bar, good]) => {
-    const scores = [was, now].map(side => side ? Math.round(side[key] * 100) : null)
-    const [before, after] = scores
+    const scores = reports.map(side => side ? Math.round(side[key] * 100) : null)
+    const after = scores.at(-1), before = sides.length > 1 ? scores[0] : after
     if (after === null || after >= bar) return []
-    if (key === 'vulnerability' && !(affecting && vulnerabilityBeyond(after, affecting[1], bar))) return []
+    if (key === 'vulnerability' && !(affecting && vulnerabilityBeyond(after, affecting.at(-1), bar))) return []
     if (key === 'maintenance' && to.manifest?.deprecated && after >= DEPRECATED_MAINTENANCE) return []
     return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(after, good)}`} href=${npmSocketHref({ npm: to })} target="_blank" rel="noopener noreferrer"
-      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${before ?? 'none'} for ${from.version}, ${after} for ${to.version}`}
-      .tooltipContent=${compareTip(`Socket's ${label.toLowerCase()} score`, [from, to], scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`
+      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${sides.map(({ version }, i) => `${scores[i] ?? 'none'} for ${version}`).join(', ')}`}
+      .tooltipContent=${compareTip(`Socket's ${label.toLowerCase()} score`, sides, scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`
         : html`<span class=${`compare-tip-score ${socketLevel(score, good)}`}>${socketGauge(score)}${score}</span>`),
       key === 'vulnerability' ? `Shown under ${bar}, where worse than the advisories found` : `Shown under ${bar}`)}>
       ${socketGauge(after)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
@@ -1010,7 +1057,7 @@ export function npmBinaryColumn(paths, sizes) {
   if (paths.size === 0) return nothing
   return overviewColumn({ title: 'Binary files', count: paths.size, list: true, body: html`<ul class="bundles-sources-list">${[...paths].map(path => html`<li>
       <div class="bundles-source-row is-resource">
-        ${sourceFileIcon(path)}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${path}>${path}</span>
+        ${sourceFileIcon(path, 'binary')}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${path}>${path}</span>
         ${sizes.has(path) ? html`<span class="bundles-source-size">${formatBytes(sizes.get(path))}</span>` : nothing}
       </div>
     </li>`)}</ul>` })

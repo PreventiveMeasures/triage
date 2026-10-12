@@ -6,7 +6,7 @@
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { npmVersionFileRisk } from '../../risk/npm/compare.js'
+import { npmVersionFileRisk } from '../../risk/npm/files.js'
 import { NPM_LONG_LINE, OBFUSCATED_COUNTED, OBFUSCATED_NAMES, READABILITY, charactersOf, npmFileReadability, npmLabelMark, npmLargeCode, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'
 
 export { NPM_LARGE_CODE, NPM_LONG_LINE, NPM_PROSE, READABILITY, npmBecameUnreadable, npmFileReadability, npmLabelMark, npmLargeCode, npmObfuscation, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'

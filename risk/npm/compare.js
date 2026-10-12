@@ -10,41 +10,12 @@
 // it changes, each `{ path, basePath?, renamedFrom?, modified? }`, by its path
 // in the open version, the one compared with's `basePath` where it differs.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
+import { npmVersionFileRisk, npmVersionHosts } from './files.js'
+import { npmVersionFindings } from './held.js'
 import { npmBecameUnreadable, npmLargeCode } from '../files/readability.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
-import { npmFileRisk } from '../files/stamps.js'
 import { npmDependencyChanges, npmDependencySpecs, npmFlagDependencyChanges } from './dependencies.js'
-import { npmDownloadTier, npmTierLevel, npmTierLow } from './downloads.js'
-import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange, npmTooNew } from './release.js'
-
-// What a version's files are kept by: its bundle where it is one, else its
-// files' list, else itself.
-const keyOf = version => version.bundle ?? version.json ?? version
-
-// What risk reads of each file of a version (stamps.js npmFileRisk), once a
-// version and path.
-const reads = new WeakMap()
-export function npmVersionFileRisk(version, path) {
-  let files = reads.get(keyOf(version))
-  if (!files) reads.set(keyOf(version), files = new Map())
-  if (!files.has(path)) {
-    const text = bundleFilesAsMap(version).get(path)
-    files.set(path, npmFileRisk(path, typeof text === 'string' ? text : null, bundleFileSizes(version).get(path)))
-  }
-  return files.get(path)
-}
-
-// Every host a version's scripts name (hosts.js npmHosts), once a version.
-const versionHosts = new WeakMap()
-function hostsOf(version) {
-  let hosts = versionHosts.get(keyOf(version))
-  if (!hosts) {
-    hosts = new Set()
-    for (const path of bundleFilesAsMap(version).keys()) for (const host of npmVersionFileRisk(version, path).hosts?.keys() ?? []) hosts.add(host)
-    versionHosts.set(keyOf(version), hosts)
-  }
-  return hosts
-}
+import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
 
 // What the open version does to its files that calls for a look, as red
 // findings: code that runs beyond itself (runs-code.js), new to a file it
@@ -90,7 +61,7 @@ export function npmFileFindings(base, other, files) {
 // first named in and its line: a file unchanged names what it named, so the
 // files the open version adds or changes hold any it names anew.
 export function npmNewHosts(base, other, files) {
-  const found = new Map(), known = hostsOf(base)
+  const found = new Map(), known = npmVersionHosts(base)
   for (const { path } of [...files.onlyOther, ...files.changed]) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {
       if (!known.has(host) && !found.has(host)) found.set(host, { host, path, line })
@@ -119,31 +90,28 @@ export function npmDependencyFindings(base, other) {
 
 // Everything that calls for a look at the open version (`other`) against the
 // one compared with (`base`), in the order a reviewer reads them: an open
-// version npm says is deprecated (`deprecated`); a publisher that changed
-// (release.js npmPublisherChange, `publisher`); provenance lost
-// (`provenance-lost`); install scripts added or changed (`install-scripts`);
-// its dependencies (npmDependencyFindings); its files (npmFileFindings), with
-// `files` how they differ, none without; the hosts its code names anew
-// (npmNewHosts, `new-hosts`); an open version younger than
-// `minimumReleaseAge` (release.js npmTooNew, `too-new`); and the package's
-// tier by `downloads` (downloads.js) where it is past the top 20,000
-// (`popularity`, red where unpopular, else orange). `published` is when the
-// open version was published, where its `npm` doesn't say.
-export function npmCompareFindings(base, other, files = null, { minimumReleaseAge, now = Date.now(), downloads = null, published = other.npm.published } = {}) {
+// version npm says is deprecated (held.js npmVersionFindings, `deprecated`); a
+// publisher that changed (release.js npmPublisherChange, `publisher`);
+// provenance lost (`provenance-lost`); install scripts added or changed
+// (`install-scripts`); its dependencies (npmDependencyFindings); its files
+// (npmFileFindings), with `files` how they differ, none without; the hosts its
+// code names anew (npmNewHosts, `new-hosts`); and the open version's own
+// findings but its deprecation (`too-new`, `popularity`), as `options` asks
+// for them (npmVersionFindings).
+export function npmCompareFindings(base, other, files = null, options = {}) {
   const { manifest } = other.npm
   const publisher = npmPublisherChange(base.npm.manifest, manifest)
   const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json?.sources })))
   const hosts = files && base.json && other.json ? npmNewHosts(base, other, files) : []
-  const tier = downloads ? npmDownloadTier(downloads) : null
+  const own = npmVersionFindings(other, options)
   return [
-    ...manifest?.deprecated ? [{ id: 'deprecated', severity: 'critical', message: manifest.deprecated }] : [],
+    ...own.filter(({ id }) => id === 'deprecated'),
     ...publisher ? [{ id: 'publisher', ...publisher }] : [],
     ...npmProvenanceLost(base.npm.manifest, manifest) ? [{ id: 'provenance-lost', severity: 'critical' }] : [],
     ...scripts ? [{ id: 'install-scripts', severity: 'high', ...scripts }] : [],
     ...npmDependencyFindings(base, other),
     ...files && base.json && other.json ? npmFileFindings(base, other, files) : [],
     ...hosts.length > 0 ? [{ id: 'new-hosts', severity: 'high', hosts }] : [],
-    ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
-    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: npmTierLevel(tier) === 'is-unpopular' ? 'critical' : 'high', tier }] : [],
+    ...own.filter(({ id }) => id !== 'deprecated'),
   ]
 }

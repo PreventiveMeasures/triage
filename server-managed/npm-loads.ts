@@ -3,8 +3,7 @@
 // registry, and the viewer's response built from it, each shared by the
 // readers asking for it meanwhile and held to a few at once per process.
 import { Buffer } from 'node:buffer'
-import { constants } from 'node:fs'
-import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -12,6 +11,7 @@ import { gunzip } from 'node:zlib'
 import { encodeBrotli } from './brotli.ts'
 import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
   npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
+import { readKeptFile, upstreamCachePath } from './upstream-cache.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
 // A tarball larger than that cannot unpack within it, so it is refused as it
@@ -83,16 +83,6 @@ export function setNpmTarballCache(dir: string | null) {
   tarballCache = dir === null ? null : resolve(dir)
 }
 
-// The file upstream keeps a version's tarball in, as its cachePath names
-// it: `@babel+core@7.29.7.tgz`, a capital written `!` and the letter, and a
-// Windows device name's first letter escaped.
-function keptTarballPath(root: string, name: string, version: string): string {
-  const file = encodeURIComponent(`${name}@${version}.tgz`.replaceAll(/[!A-Z]/gu, char => `!${char.toLowerCase()}`))
-    .replaceAll('%40', '@').replaceAll('%2F', '+')
-    .replace(/^(?=(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$))./u, char => `%${char.codePointAt(0)!.toString(16).toUpperCase()}`)
-  return join(root, 'npm', 'tarballs', file)
-}
-
 // Where npm's own cache files content by its sha512, short of an .npmrc
 // moving the cache.
 function npmCachePath(hash: string): string | null {
@@ -104,26 +94,6 @@ function npmCachePath(hash: string): string | null {
   } catch { return null }
   const hex = Buffer.from(hash, 'base64').toString('hex')
   return join(root, '_cacache', 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4), hex.slice(4))
-}
-
-// A kept file, where it is a regular file within the tar stream's bound,
-// checked on the file as opened (a FIFO or device would block or never
-// end), and read to the size it had then.
-async function readKept(path: string): Promise<Uint8Array | null> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => null)
-  if (!handle) return null
-  try {
-    const stats = await handle.stat()
-    if (!stats.isFile() || stats.size > MAX_TAR_BYTES) return null
-    const bytes = Buffer.allocUnsafe(stats.size)
-    for (let at = 0; at < bytes.length;) {
-      const { bytesRead } = await handle.read(bytes, at, bytes.length - at, at)
-      if (bytesRead === 0) return null
-      at += bytesRead
-    }
-    return bytes
-  } catch { return null }
-  finally { await handle.close() }
 }
 
 async function keep(path: string, bytes: Uint8Array) {
@@ -153,10 +123,10 @@ async function downloadTarball(url: string, isPrivate: boolean): Promise<Buffer>
 async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
   const expected = sha512Of(doc.dist.integrity), url = doc.dist.tarball
   if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null) throw new NpmPackageError(502, 'upstream-invalid')
-  const kept = tarballCache === null ? null : keptTarballPath(tarballCache, doc.name, doc.version)
+  const kept = tarballCache === null ? null : upstreamCachePath(tarballCache, 'npm/tarballs', `${doc.name}@${doc.version}.tgz`)
   if (kept !== null) {
     for (const path of [kept, npmCachePath(expected)]) {
-      const bytes = path === null ? null : await readKept(path)
+      const bytes = path === null ? null : await readKeptFile(path, MAX_TAR_BYTES)
       if (bytes && await sha512(bytes) === expected) return bytes
     }
   }

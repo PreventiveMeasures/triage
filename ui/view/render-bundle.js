@@ -26,7 +26,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
 import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -41,7 +41,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS } from '../../common/managed/routes.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
@@ -1608,7 +1608,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
   const github = bundleFileGithub(details, path, entry?.managedId && entry.repoId != null ? { github: entry.repoFullName, directory: entry.repoDirectory } : null)
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
-      ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
+      ${sourceFileIcon(path, fileIconFormat(details, path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${path}</span>
       <button
         type="button"
@@ -2667,10 +2667,10 @@ function renderNpmPackageOverview(entry, details) {
     provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files: paths }), npmOverviewExtras(entry, paths, details), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry, details)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
-    summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
+    summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton, npmOverviewBadges(entry, details))}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
     fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path, true)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
-    fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileIcon: path => sourceFileIcon(path, binaries.has(path) ? 'binary' : undefined), fileFilter: npmFilesFilter(entry),
   })
 }

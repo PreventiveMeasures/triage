@@ -169,7 +169,7 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   assert.equal(res.status, 200)
   const body = res.json()
   assert.deepEqual([body.name, body.version, body.oldVersion, body.published], ['@pub/pkg', '1.2.3', null, '2025-01-01T00:00:00.000Z'])
-  assert.deepEqual(body.findings.map(({ id }) => id), ['install-scripts', 'unused-deps', 'runs-code'], 'everything of it new: its postinstall, a dependency nothing imports, child_process')
+  assert.deepEqual(body.findings.map(({ id }) => id), ['held-install-scripts', 'held-runs-code', 'unused-deps'], 'what it holds: its postinstall, child_process, and a dependency nothing imports')
   assert.deepEqual(body.files['lib/index.js'].stamps, [{ name: 'child_process', severity: 'high' }])
   assert.deepEqual(body.dependencies.added.map(({ name, flags }) => [name, flags.map(({ check }) => check)]), [['dep', ['unimported']]])
   assert.equal((await h.send(riskPath({ version: '1.2.3' }), 'nobody')).status, 401)
@@ -956,6 +956,73 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   const answered = (await h.send('/api/npm/advisories?name=rate-limited')).json()
   assert.equal(answered.repository, true)
   assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
+})
+
+test('where GitHub refuses the listing, or can\'t say whether the repository is public, its listing as last kept is shown, however old', async t => {
+  const h = await setup(t)
+  const names = ['kept-a', 'kept-b', 'kept-c', 'kept-d']
+  registry(t, names.map(name => packageOf(name, '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/kept.git' } })))
+  const repos = { 'org/kept': { full_name: 'org/kept', private: false, visibility: 'public' } }
+  const repoAdvisories = { 'org/kept': [{ ghsa_id: 'GHSA-gggg-hhhh-jjjj', state: 'published', summary: 'Unreviewed', severity: 'high', cwe_ids: [],
+    vulnerabilities: names.map(name => ({ package: { ecosystem: 'npm', name }, vulnerable_version_range: '< 2.0.0' })) }] }
+  const asked = insights(t, { repos, repoAdvisories })
+  const listings = () => asked.filter(([what]) => what === 'repository').length
+  const ids = body => body.advisories.map(row => `${row.source} ${row.id}`)
+  const fresh = (await h.send('/api/npm/advisories?name=kept-a')).json()
+  assert.deepEqual([fresh.repository, fresh.keptAt, ids(fresh)], [true, undefined, ['repository GHSA-gggg-hhhh-jjjj']])
+  // Three hours on, past the 90 minutes upstream takes a listing for, GitHub refuses it.
+  const at = Date.now() - 3 * 60 * 60_000, key = 'github/advisories/org/kept'
+  await h.db.setUpstreamCacheEntry(key, JSON.stringify({ ...JSON.parse(await h.db.getUpstreamCacheEntry(key)), at }), Date.now())
+  const refuse = () => { repoAdvisories['org/kept'] = Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }) }
+  refuse()
+  const refused = (await h.send('/api/npm/advisories?name=kept-b')).json()
+  assert.deepEqual([refused.repository, refused.keptAt, ids(refused)], [true, new Date(at).toISOString(), ['repository GHSA-gggg-hhhh-jjjj']])
+  assert.equal(listings(), 2, 'GitHub refusing it once, the kept listing is taken without asking again')
+  assert.equal(JSON.parse(await h.db.getUpstreamCacheEntry(key)).at, at, 'and left as it was kept')
+  refuse()
+  assert.equal((await h.send('/api/npm/advisories?name=kept-b')).json().keptAt, new Date(at).toISOString())
+  assert.equal(listings(), 3, 'such a list isn\'t kept: GitHub is asked again next time')
+  // GitHub's answer for the repository fails: it can't be told public.
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => String(input) === 'https://api.github.com/repos/org/kept' && repos['org/kept'].visibility === 'public'
+    ? Promise.resolve(Response.json({ message: 'Server Error' }, { status: 500 })) : fetch(input, init))(globalThis.fetch))
+  const untold = (await h.send('/api/npm/advisories?name=kept-c')).json()
+  assert.deepEqual([untold.repository, untold.keptAt, ids(untold)], [true, new Date(at).toISOString(), ['repository GHSA-gggg-hhhh-jjjj']])
+  assert.equal(listings(), 3)
+  // GitHub says it isn't public: its kept listing is never taken.
+  Object.assign(repos['org/kept'], { private: true, visibility: 'private' })
+  const hidden = (await h.send('/api/npm/advisories?name=kept-d')).json()
+  assert.deepEqual([hidden.repository, hidden.keptAt, ids(hidden)], [true, undefined, []])
+  assert.equal(listings(), 3)
+})
+
+test('a kept listing asks GitHub nothing: where npm\'s audit fails, it isn\'t asked a third time, and where upstream won\'t take the listing, npm\'s are alone', async t => {
+  const h = await setup(t)
+  const names = { unaudited: 'org/unaudited', outdated: 'org/outdated' }
+  registry(t, Object.entries(names).map(([name, repo]) => packageOf(name, '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: `git+https://github.com/${repo}.git` } })))
+  const at = Date.now() - 3 * 60 * 60_000
+  // Kept as upstream keeps a listing, but for `outdated` one kept differently, which upstream won't take.
+  for (const [name, repo] of Object.entries(names)) {
+    await h.db.setUpstreamCacheEntry(`github/advisories/${repo}`, JSON.stringify({ at, name: repo, v: name === 'outdated' ? 1 : 2, advisories: [] }), at)
+  }
+  const refused = () => Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } })
+  const repoAdvisories = {}
+  const asked = insights(t, { repos: Object.fromEntries(Object.values(names).map(repo => [repo, { full_name: repo, private: false, visibility: 'public' }])), repoAdvisories,
+    advisories: { outdated: [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] } })
+  const audits = []
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => {
+    if (String(input) !== `${REGISTRY}/-/npm/v1/security/advisories/bulk`) return fetch(input, init)
+    const [name] = Object.keys(JSON.parse(init.body))
+    audits.push(name)
+    return name === 'unaudited' ? Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 })) : fetch(input, init)
+  })(globalThis.fetch))
+  repoAdvisories['org/unaudited'] = refused()
+  assert.equal((await h.send('/api/npm/advisories?name=unaudited')).status, 502)
+  assert.deepEqual(audits, ['unaudited', 'unaudited'], 'with its repository\'s, then with the kept listing, and no more')
+  repoAdvisories['org/outdated'] = refused()
+  const alone = (await h.send('/api/npm/advisories?name=outdated')).json()
+  assert.deepEqual([alone.repository, alone.keptAt, alone.advisories.map(row => row.id)], [false, undefined, ['GHSA-aaaa-bbbb-cccc']])
+  assert.deepEqual(audits.slice(2), ['outdated', 'outdated', 'outdated'], 'its kept listing not taken, npm\'s are asked for alone')
+  assert.deepEqual(asked.filter(([what]) => what === 'repository').map(([, repo]) => repo), ['org/outdated'], 'GitHub asked for a listing only once npm answered, and only by the reader\'s audit')
 })
 
 test('advisories of a repository that isn\'t public, an internal one included, are not asked for, nor where GitHub can\'t say', async t => {

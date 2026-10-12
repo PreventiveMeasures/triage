@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { langForPath } from '../common/code-language.js'
-import { sourceFileType } from '../ui/view/source-file-icon.js'
+import { fileIconFormat, sourceFileType } from '../ui/view/source-file-icon.js'
 import { highlight } from '../ui/prism.js'
 
 test('Stasis formats drive syntax and icons even without or despite a filename extension', () => {
@@ -48,4 +48,33 @@ test('a .map file is JSON when its text is an object, whitespace aside', () => {
   }
   assert.equal(langForPath('dist/index.map.js', undefined, '{}'), 'javascript', 'only the last extension counts')
   assert.equal(langForPath('dist/index.js.map', 'commonjs', '{}'), 'javascript', 'a recorded format still wins')
+})
+
+test('license files wear the license icon by name, when they are text', () => {
+  for (const path of ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE.BSD', 'license', 'Licence', 'node_modules/pkg/LICENSE-MIT',
+    'COPYING', 'COPYING.LESSER', 'copying.txt', 'UNLICENSE', 'Unlicense.md', 'COPYING.LIB', 'LICENSE.Apache-2.0', 'LICENSE.APACHE2', 'LICENSE.GPLv3',
+    'LICENSE.BSD-3-Clause', 'LICENSE.0BSD', 'LICENSE.2.0', 'LICENSE-2.0.txt', 'LICENSE-MIT.txt', 'LICENSE.mit.md']) {
+    assert.equal(sourceFileType(path), 'license', path)
+  }
+  for (const [path, icon] of [['lib/license.js', 'js'], ['license.ts', 'ts'], ['LICENSE.json', 'json'], ['copying.py', 'python'], ['licensed.txt', 'generic'],
+    ['LICENSES/MIT.txt', 'generic'], ['LICENSES', 'generic'], ['my-license', 'generic'], ['copyright', 'generic'], ['license.svg', 'generic'],
+    ['LICENSE.pdf', 'generic'], ['docs/license.PNG', 'generic'], ['COPYING.gz', 'generic'], ['UNLICENSE.docx', 'generic'],
+    ['lib/license.js.map', 'map'], ['LICENSE.map', 'map'], ['COPYING.MAP', 'map'],
+    ['license.go', 'generic'], ['COPYING.cs', 'generic'], ['license.swift', 'generic'], ['pkg/license-checker.go', 'generic'], ['license.libsonnet', 'generic'],
+    ['LICENSE.asc', 'generic'], ['LICENSE-MIT.sig', 'generic']]) {
+    assert.equal(sourceFileType(path), icon, path)
+  }
+  assert.equal(sourceFileType('LICENSE', 'commonjs'), 'js', 'a recorded format still wins')
+  assert.equal(sourceFileType('LICENSE', 'resource'), 'license', 'a Stasis resource stored as text')
+  for (const format of ['resource:base64', 'directory', 'binary']) assert.equal(sourceFileType('LICENSE', format), 'generic', `not text: ${format}`)
+})
+
+test('a file\'s icon format comes from its bundle: what Stasis records, or `binary` for an npm file that is not text', () => {
+  const stasis = { kind: 'stasis', bundle: { formats: new Map([['LICENSE', 'resource:base64'], ['index.js', 'commonjs']]) } }
+  const npm = { kind: 'sourcemap', npmBinaries: new Map([['LICENSE', { size: 4, digest: 'sha512-x' }]]) }
+  assert.equal(fileIconFormat(stasis, 'LICENSE'), 'resource:base64')
+  assert.equal(fileIconFormat(stasis, 'index.js'), 'commonjs')
+  assert.equal(fileIconFormat(npm, 'LICENSE'), 'binary')
+  for (const [details, path] of [[stasis, 'README.md'], [npm, 'index.js'], [null, 'LICENSE'], [{ kind: 'sourcemap' }, 'LICENSE']]) assert.equal(fileIconFormat(details, path), undefined)
+  assert.equal(sourceFileType('LICENSE', fileIconFormat(npm, 'LICENSE')), 'generic')
 })

@@ -2,11 +2,13 @@
 // look at it, against the version before it where one is given, each file's
 // stamps, and its dependencies', from npm's registry, kept in the caller's
 // cache (registry.js) as it goes.
-import { npmCompareFindings, npmVersionFileRisk } from './compare.js'
+import { npmCompareFindings, npmDependencyFindings } from './compare.js'
+import { npmHeldFindings, npmVersionFindings } from './held.js'
+import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
-import { npmDownloadTier, npmTierLevel, npmTierLow } from './downloads.js'
+import { npmTierLevel } from './downloads.js'
 import { npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionFiles } from './registry.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE, npmTooNew } from './release.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
 import { npmFilesDiff } from './diff.js'
 
@@ -27,10 +29,10 @@ const tierOf = tier => ({ tier: Number.isFinite(tier) ? tier : null, level: npmT
 
 // What of an assessment holds whatever the time, kept once a reading and pair:
 // what its files, dependencies, install scripts, publisher and provenance call
-// for (compare.js npmCompareFindings, with no version compared with against an
-// empty one, everything of it new), each file's stamps and what risk read of
-// it (stamps.js npmFileRisk), and its dependencies added and changed, each
-// with its flags (dependencies.js).
+// for (compare.js npmCompareFindings), or with no version compared with, what
+// it holds (held.js npmHeldFindings) and its dependencies against none; each
+// file's stamps and what risk read of it (stamps.js npmFileRisk); and its
+// dependencies added and changed, each with its flags (dependencies.js).
 async function lasting(name, version, oldVersion, facts, context) {
   const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}`
   const hit = context.cache ? await context.cache.read('risk/npm/assessments', key) : null
@@ -38,7 +40,8 @@ async function lasting(name, version, oldVersion, facts, context) {
   const [other, base] = await Promise.all([npmVersionFiles(name, version, facts.versions.get(version), context),
     oldVersion === null ? { kind: 'sourcemap', npm: { name, version: null, manifest: {} }, json: { version: 3, sources: [], sourcesContent: [] } }
       : npmVersionFiles(name, oldVersion, facts.versions.get(oldVersion), context)])
-  const findings = npmCompareFindings(base, other, npmFilesDiff(base, other), { minimumReleaseAge: 0, published: null })
+  const findings = oldVersion === null ? [...npmHeldFindings(other), ...npmDependencyFindings(base, other)]
+    : npmCompareFindings(base, other, npmFilesDiff(base, other), { minimumReleaseAge: 0, published: null })
   const files = Object.fromEntries(other.json.sources.map(path => {
     const { readability, runsCode, exfiltration, hosts, stamps } = npmVersionFileRisk(other, path)
     return [path, { stamps, readability, runsCode, exfiltration, hosts }]
@@ -73,11 +76,11 @@ async function addedDependencies(added, published, context) {
 }
 
 // What calls for a look at `version` of package `name`, as JSON holds it:
-// against `oldVersion` where given, else everything of it new
-// (compare.js npmCompareFindings's order), a deprecation first, and last one
-// younger than `minimumReleaseAge` (two weeks unless given; 0 for none, as a
-// caller's own scopes take), and the package's tier past the top 20,000
-// (`popularity`); `files`, each file's stamps and what risk read of it; and
+// against `oldVersion` where given (compare.js npmCompareFindings's order),
+// else what it holds (held.js npmHeldFindings), a deprecation first, and last
+// one younger than `minimumReleaseAge` (two weeks unless given; 0 for none, as
+// a caller's own scopes take), and the package's tier past the top 20,000
+// (`popularity`; held.js npmVersionFindings); `files`, each file's stamps and what risk read of it; and
 // `dependencies`, those added and changed against it, each with its flags,
 // an added one with its package's tier and age where `downloads` (true unless
 // given false) has them asked. `cache` keeps what is read (registry.js),
@@ -89,18 +92,14 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
   const { published } = facts.versions.get(version)
   const kept = await lasting(name, version, oldVersion, facts, context)
-  const own = downloads ? await npmDownloads(name, context) : null
-  const tier = own ? npmDownloadTier(own) : null
+  const own = npmVersionFindings({ npm: { manifest: { deprecated: facts.deprecated[version] }, published } },
+    { minimumReleaseAge, now, downloads: downloads ? await npmDownloads(name, context) : null })
   const was = oldVersion === null ? null : facts.versions.get(oldVersion).published
   const added = downloads ? await addedDependencies(kept.dependencies.added, [was, published], context) : kept.dependencies.added
   return {
     name, version, oldVersion, published,
-    findings: [
-      ...facts.deprecated[version] ? [{ id: 'deprecated', severity: 'critical', message: facts.deprecated[version] }] : [],
-      ...kept.findings,
-      ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
-      ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: npmTierLevel(tier) === 'is-unpopular' ? 'critical' : 'high', ...tierOf(tier) }] : [],
-    ],
+    findings: [...own.filter(({ id }) => id === 'deprecated'), ...kept.findings,
+      ...own.filter(({ id }) => id !== 'deprecated').map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
     files: kept.files,
     dependencies: { added, changed: kept.dependencies.changed },
   }

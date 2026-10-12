@@ -116,6 +116,26 @@ test('the Code tree keeps a package the base records across a root move, and a r
   assert.equal(element._format('src/old.png'), 'resource:base64')
 })
 
+test('an npm file either side holds as binary reads `binary` in the Code view, each side under its own path', () => {
+  const npm = (integrity, sources, binaries = []) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources), mappings: '' },
+    npmBinaries: new Map(binaries.map(path => [path, { size: 4, digest: `sha512-${path}` }])) })
+  const { element } = compareOf(npm('base', { 'index.js': 'a\n' }, ['LICENSE']), npm('other', { 'index.js': 'b\n', 'LICENSE': 'MIT\n' }))
+  assert.equal(element._entries.get('LICENSE')?.kind, 'changed')
+  assert.equal(element._format('LICENSE'), 'binary', 'binary in the base, text in the open one')
+  assert.equal(element._format('index.js'), undefined)
+})
+
+test('a Stasis file either side holds as not text reads that format in the Code view, though the other holds it as text', () => {
+  const stasis = (integrity, files, formats) => ({ integrity, kind: 'stasis', bundle: new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]), formats: new Map(formats) }) })
+  const base = stasis('base', { 'LICENSE': 'AA==', 'a.js': 'a' }, [['LICENSE', 'resource:base64']])
+  for (const other of [stasis('other', { 'LICENSE': 'MIT\n', 'a.js': 'b' }, [['LICENSE', 'resource']]),
+    { integrity: 'other', kind: 'sourcemap', json: { version: 3, sources: ['LICENSE', 'a.js'], sourcesContent: ['MIT\n', 'b'], mappings: '' } }]) {
+    const { element } = compareOf(base, other)
+    assert.equal(element._entries.get('LICENSE')?.kind, 'changed', other.kind)
+    assert.equal(element._format('LICENSE'), 'resource:base64', other.kind)
+  }
+})
+
 test('the Code tree keeps a base package outside a stripped root where its files read', () => {
   const base = { integrity: 'base', kind: 'stasis', bundle: new Bundle({
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/a.js': 'a', 'src/b.js': 'b' } }],

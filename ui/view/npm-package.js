@@ -17,7 +17,7 @@ import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
-import { sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { npmInstallScripts } from '../../risk/npm/install-scripts.js'
@@ -505,7 +505,7 @@ const DEPENDENCY_CHECKS = [['source', 'Non-registry', () => 'From elsewhere than
 // Beside how many dependencies a version has, a chip for each check any of
 // them is flagged by (npmDependencyFlags), counting them, which in its
 // tooltip.
-function dependencyChecks({ version, manifest }, details) {
+export function npmDependencyChecks({ version, manifest }, details) {
   const flagged = Map.groupBy(npmDependencies(manifest).flatMap(row => npmDependencyFlags(details, row).map(({ check }) => ({ ...row, check }))), ({ check }) => check)
   return DEPENDENCY_CHECKS.filter(([check]) => flagged.has(check)).map(([check, label, note]) => html`<span class="npm-extension is-warn npm-dependency-check"
     data-tooltip=${`${note(version)}: ${flagged.get(check).map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
@@ -620,13 +620,13 @@ export function npmOverviewExtras(entry, files = null, details = null) {
   const scripts = npmInstallScripts(manifest, files)
   const dependencies = npmDependencies(manifest).length
   return html`
-    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
+    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file, fileIconFormat(details, file))}${factFile(file, files, path)}</span></dd>`)}
     ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="npm-install-scripts">${scripts.length === 0 ? 'Yes'
       : scripts.map(([script, command]) => html`<div class="npm-install-script"><span class="npm-install-script-name">${script}</span><code>${scriptCommand(command, files)}</code></div>`)}</dd>` : nothing}
-    <dt>Dependencies</dt><dd class="npm-dependencies-fact">${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}${dependencyChecks(entry.npm, details)}</dd>`
+    <dt>Dependencies</dt><dd class="npm-dependencies-fact">${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}${npmDependencyChecks(entry.npm, details)}</dd>`
 }
 
 // The version shown, in the header, with the package's other versions to

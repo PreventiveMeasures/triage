@@ -486,6 +486,21 @@ test('a source\'s badges are given the one compared with, the open one, and the 
   assert.match(renderText(view.render()), /<badges sha512-1\.0\.0 → sha512-2\.0\.0: a\.js>/u)
 })
 
+test('a file\'s icon reads each side under that side\'s own path, a removed one under the root it had', () => {
+  const { view, source } = sourced()
+  const asked = new Map()
+  view.source = { ...source('2.0.0'), files: { icon: (path, sides) => { asked.set(path, sides.map(([side, at]) => `${side.integrity} ${at}`)); return '' }, tag: () => '', warning: () => '' } }
+  view.willUpdate(new Map([['source', null]]))
+  const map = (integrity, sources) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources) } })
+  view.details = map('sha512-2.0.0', { 'src/index.js': 'b\n', 'src/lib/a.js': 'b\n' })
+  view._otherDetails = map('sha512-1.0.0', { 'LICENSE': 'l\n', 'index.js': 'a\n', 'lib/a.js': 'a\n' })
+  view._targetIntegrity = '1.0.0'
+  view._diffKey = null
+  renderText(view._renderDiff())
+  assert.deepEqual(asked.get('src/LICENSE'), ['sha512-1.0.0 LICENSE', 'sha512-2.0.0 src/LICENSE'], 'removed: the base read where it had the file')
+  assert.deepEqual(asked.get('src/index.js'), ['sha512-1.0.0 index.js', 'sha512-2.0.0 src/index.js'], 'changed: each side under its own path')
+})
+
 test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {
   const { view, source } = sourced()
   const files = { icon: path => `<icon ${path}>`, tag: (shown, path) => `<tag ${shown.integrity} ${path}>`, warning: (shown, paths) => `<warning ${shown.integrity} ${paths.join(',')}>` }

@@ -24,7 +24,7 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
-import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
+import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
@@ -358,9 +358,14 @@ export class BundleCompareCode extends LitElement {
     return paths ? dirsOf(paths, paths.values()) : bundleDirs(this.base)
   }
 
+  // The format a file's icon reads (fileIconFormat): one either side marks as
+  // not text, Stasis's or npm's, each side read under its own path, as the
+  // Overview's file list reads it (npm-overview.js `npmCompareFiles`); else
+  // the shown side's.
   _format(path) {
     const entry = this._entries.get(path)
-    return entry?.kind === 'removed' ? stasisFormat(this.base, entry.basePath ?? path) : stasisFormat(this.other, path)
+    const base = fileIconFormat(this.base, entry?.basePath ?? path), other = fileIconFormat(this.other, path)
+    return [base, other].find(isNotTextFormat) ?? (entry?.kind === 'removed' ? base : other)
   }
 
   // The tree over the files the kind filter keeps. The display prefix comes

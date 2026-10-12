@@ -1,3 +1,9 @@
+import { Buffer } from 'node:buffer'
+import { constants } from 'node:fs'
+import { open } from 'node:fs/promises'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { gunzip } from 'node:zlib'
 import type { CacheStore, Package } from '@preventive/upstream/advisories.js'
 import type { ManagedSql } from './sql.ts'
 
@@ -101,4 +107,69 @@ export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug
       }
     },
   }
+}
+
+// The file upstream keeps `file` in, under `dir` of its disk cache
+// (setCacheDir), as its cachePath names it: `@babel+core@7.29.7.tgz`, a
+// capital written `!` and the letter, and a Windows device name's first
+// letter escaped.
+export function upstreamCachePath(root: string, dir: string, file: string): string {
+  const name = encodeURIComponent(file.replaceAll(/[!A-Z]/gu, char => `!${char.toLowerCase()}`))
+    .replaceAll('%40', '@').replaceAll('%2F', '+')
+    .replace(/^(?=(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$))./u, char => `%${char.codePointAt(0)!.toString(16).toUpperCase()}`)
+  return join(root, dir, name)
+}
+
+// A kept file, where it is a regular file of at most `max` bytes, checked on
+// the file as opened (a FIFO or device would block or never end), and read
+// to the size it had then.
+export async function readKeptFile(path: string, max: number): Promise<Uint8Array | null> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => null)
+  if (!handle) return null
+  try {
+    const stats = await handle.stat()
+    if (!stats.isFile() || stats.size > max) return null
+    const bytes = Buffer.allocUnsafe(stats.size)
+    for (let at = 0; at < bytes.length;) {
+      const { bytesRead } = await handle.read(bytes, at, bytes.length - at, at)
+      if (bytesRead === 0) return null
+      at += bytesRead
+    }
+    return bytes
+  } catch { return null }
+  finally { await handle.close() }
+}
+
+// A kept listing is read to no more than this, gzipped or not: one runs to
+// some hundreds of KiB.
+const LISTING_BYTES = 64 * 1024 * 1024
+const gunzipAsync = promisify(gunzip)
+
+// A repository's listing as last kept where audits keep them (auditCache),
+// however old, for when GitHub can't be reached to refresh it: `at`, when it
+// was kept, and `cache`, a store answering it to upstream as kept just now,
+// so that upstream takes it rather than ask GitHub, and keeping nothing.
+// Upstream checks it as it checks its own. Null where none is kept, or it
+// can't be read.
+export async function lastListing(cacheDir: string | null | undefined, db: UpstreamCacheStore, repo: string, debug = false): Promise<{ at: number; cache: CacheStore } | null> {
+  const key = repo.toLowerCase()
+  let kept: { at?: unknown } | null
+  try {
+    if (cacheDir) {
+      const bytes = await readKeptFile(upstreamCachePath(cacheDir, CACHED_TYPE, `${key}.json.gz`), LISTING_BYTES)
+      kept = bytes && JSON.parse((await gunzipAsync(bytes, { maxOutputLength: LISTING_BYTES })).toString('utf8'))
+    } else {
+      const value = await db.getUpstreamCacheEntry(`${CACHED_TYPE}/${key}`)
+      kept = value === null ? null : JSON.parse(value)
+    }
+  } catch (error) {
+    if (debug) console.warn('managed: kept listing read failed:', error)
+    return null
+  }
+  const at = kept?.at
+  if (typeof at !== 'number') return null
+  return { at, cache: {
+    read: (type, name) => Promise.resolve(type === CACHED_TYPE && name === key ? { ...kept, at: Date.now() } : null),
+    write: () => Promise.resolve(),
+  } }
 }

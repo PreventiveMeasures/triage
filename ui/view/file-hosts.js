@@ -3,7 +3,7 @@
 // files read once, and an exfiltration host's tag.
 import { html, nothing } from 'lit'
 import { EXFILTRATION } from '../../risk/files/hosts.js'
-import { npmVersionFileRisk } from '../../risk/npm/compare.js'
+import { npmVersionFileRisk } from '../../risk/npm/files.js'
 import { linesNote, onlyLine, opensAt } from './file-runs-code.js'
 
 export { EXFILTRATION, npmExfiltration, npmHosts } from '../../risk/files/hosts.js'
