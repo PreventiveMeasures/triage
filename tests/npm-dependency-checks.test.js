@@ -59,6 +59,9 @@ test('an npm: alias names a package and its spec, as npm reads it', () => {
   for (const spec of ['^1.0.0', 'github:a/b', 'npm:', 'npm:a/b/c']) assert.equal(npmAlias(spec), null, spec)
 })
 
+// What DefinitelyTyped's stub of a package's types holds beside its package.json.
+const STUB_FILES = { 'README.md': '# Stub', LICENSE: 'MIT License' }
+
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {
   const unimported = (files, name, manifest, kind = null) => npmDependencyUnimported(version(files, manifest), { name, kind })
   assert.equal(unimported({ 'lib/axios.js': 'import utils from "./utils.js"\n// plain-crypto-js\nconst x = plainCryptoJs' }, 'plain-crypto-js'), true,
@@ -95,12 +98,21 @@ test('a dependency nothing of a version imports is one no code file names as an 
   assert.equal(unimported({ 'index.js': '' }, 'react-dom', {}, 'peer'), false, 'not a peer dependency')
   assert.equal(unimported({ 'index.js': '' }, '@types/node'), false, 'nor types')
   // DefinitelyTyped's stub, once a package has types of its own, depending
-  // on it with no code: not that package, nor another.
-  const stub = types => ({ ...version({ 'README.md': '', LICENSE: '' }), npm: { name: types, version: '2.0.0', manifest: {} } })
-  assert.equal(npmDependencyUnimported(stub('@types/mkdirp'), { name: 'mkdirp', kind: null }), false)
-  assert.equal(npmDependencyUnimported(stub('@types/babel__core'), { name: '@babel/core', kind: null }), false, 'a scope\'s, by DefinitelyTyped\'s name for it')
-  assert.equal(npmDependencyUnimported(stub('@types/mkdirp'), { name: 'plain-crypto-js', kind: null }), true, 'another')
-  assert.equal(npmDependencyUnimported(stub('mkdirp-types'), { name: 'mkdirp', kind: null }), true, 'not a package named otherwise')
+  // on it with no code: not that package from the registry.
+  const stub = (types, files = STUB_FILES) => ({ ...version(files), npm: { name: types, version: '2.0.0', manifest: {} } })
+  const dependsOn = (details, name, range) => npmDependencyUnimported(details, { name, kind: null, range })
+  assert.equal(dependsOn(stub('@types/mkdirp'), 'mkdirp', '*'), false)
+  assert.equal(dependsOn(stub('@types/babel__core'), '@babel/core', '*'), false, 'a scope\'s, by DefinitelyTyped\'s name for it')
+  assert.equal(npmDependencyUnimported(stub('@types/mkdirp'), { name: 'mkdirp', kind: null, from: '^1.0.0', to: '*' }), false, 'a changed one by its new spec')
+  assert.equal(dependsOn(stub('@types/mkdirp'), 'mkdirp', 'npm:mkdirp@^3.0.0'), false, 'an alias of itself')
+  assert.equal(dependsOn(stub('@types/mkdirp'), 'plain-crypto-js', '*'), true, 'not another')
+  assert.equal(dependsOn(stub('mkdirp-types'), 'mkdirp', '*'), true, 'nor for a package named otherwise')
+  // Nor where npm installs another package by that name, or not the registry's.
+  for (const spec of ['npm:plain-crypto-js@^4.2.1', 'github:evil/mkdirp', 'https://example.com/mkdirp.tgz', 'file:../mkdirp']) {
+    assert.equal(dependsOn(stub('@types/mkdirp'), 'mkdirp', spec), true, spec)
+  }
+  // Nor for types with declarations of their own, which would import it.
+  assert.equal(dependsOn(stub('@types/mkdirp', { ...STUB_FILES, 'index.d.ts': 'export declare function mkdirp(): void' }), 'mkdirp', '*'), true, 'types, not a stub')
   assert.equal(npmDependencyUnimported({ npm: {} }, { name: 'dep', kind: null }), false, 'nor where its files aren\'t read')
 })
 
