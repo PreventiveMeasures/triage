@@ -67,7 +67,7 @@ function npmSocketReport(entry) {
 
 // Its five, as Socket's page shows them: its overall score is only the
 // lowest of them, each with the score from which it is green (socketLevel)
-// and the bar under which Compare flags it, out of 100: supply chain under
+// and the bar under which Compare flags the open version's, out of 100: supply chain under
 // 85, and vulnerability under 85 where it tells of worse than the
 // advisories found (vulnerabilityBeyond), both green from 85; quality under
 // 70 (a sabotaged release such as faker's 6.6.6 scores 38, most widely used
@@ -407,24 +407,24 @@ function advisoriesBadge(sides, affecting) {
   if (was.length === 0 && now.length === 0) return nothing
   const tint = now.length === 0 ? 'is-cleared' : `sev-${worstOf(now)}`
   const brought = now.filter(advisory => !was.includes(advisory)).length, fixed = was.filter(advisory => !now.includes(advisory)).length
-  const counts = alignedRight(affecting.map(list => String(list.length)))
-  const tooltip = ['Advisories affecting', ...versionLines(sides, affecting.map((list, i) => list.length === 0 ? 'none'
-    : `${counts[i]}  ${SEVERITY_ORDER.map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length])
-      .filter(([, count]) => count > 0).map(([severity, count]) => `${count} ${severity}`).join(', ')}`)),
-  `${brought} new · ${fixed} fixed`].join('\n')
-  return html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog" data-tooltip=${tooltip}
+  const tooltip = compareTip('Advisories affecting', sides, affecting.map(list => list.length === 0 ? html`<span class="compare-tip-none">none</span>`
+    : html`<span class="compare-tip-count">${list.length}</span><span class="compare-tip-severities">${SEVERITY_ORDER
+      .map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length]).filter(([, count]) => count > 0)
+      .map(([severity, count]) => html`<span class=${`compare-tip-severity sev-${severity}`}>${count} ${severity}</span>`)}</span>`),
+  `${brought} new · ${fixed} fixed`)
+  return html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog"
+    data-tooltip=${`Advisories affecting ${sides[0].version}: ${was.length}, ${sides[1].version}: ${now.length}`} .tooltipContent=${tooltip}
     @click=${() => openCompareAdvisories(sides, affecting)}>
     <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
 }
 
-// Each side's version and what is said of it, a line each, the versions
-// padded to one width (the tooltip is monospace).
-function versionLines(sides, said) {
-  const width = Math.max(...sides.map(({ version }) => version.length))
-  return sides.map(({ version }, i) => `${version.padEnd(width)}  ${said[i]}`)
-}
-// Texts padded at their start to one width, so numbers line up.
-const alignedRight = texts => texts.map(text => text.padStart(Math.max(...texts.map(each => each.length))))
+// A badge's styled tooltip: its `head`, a row for each side's version and
+// what is said of it, and a `note` under them.
+const compareTip = (head, sides, said, note) => html`<div class="compare-tip">
+  <div class="compare-tip-head">${head}</div>
+  <div class="compare-tip-rows">${sides.map(({ version }, i) => html`<span class="compare-tip-version">${version}</span><span class="compare-tip-said">${said[i]}</span>`)}</div>
+  <div class="compare-tip-note">${note}</div>
+</div>`
 
 // The advisories between the two versions, in a dialog: those the open one
 // brings, those it still has, and those it fixes.
@@ -449,22 +449,25 @@ function vulnerabilityBeyond(score, ours, bar) {
   return worst === undefined || SEVERITY_ORDER.indexOf(score <= 25 ? 'critical' : 'high') < SEVERITY_ORDER.indexOf(worst)
 }
 
-// Socket's scores either version has under its bar, each from the one
-// compared with to the open one, its ring, tint and link the open one's
-// where it has one; none for a private package. Vulnerability only where it
-// tells of worse than the advisories found (vulnerabilityBeyond), once they
+// Socket's scores the open version has under its bar, each from the one
+// compared with to the open one, its ring, tint and link the open one's;
+// none for a private package. Vulnerability only where it tells of worse
+// than the advisories found affecting it (vulnerabilityBeyond), once they
 // arrive, as the Advisories badge has the rest.
 function socketBadges([from, to], affecting) {
   const [was, now] = [from, to].map(npm => npmSocketReport({ npm })?.scores ?? null)
-  if (!was && !now) return []
+  if (!now) return []
   return SOCKET_SCORES.flatMap(([key, label, bar, good]) => {
     const scores = [was, now].map(side => side ? Math.round(side[key] * 100) : null)
-    if (!scores.some(score => score !== null && score < bar)) return []
-    if (key === 'vulnerability' && !(affecting && scores.some((score, i) => vulnerabilityBeyond(score, affecting[i], bar)))) return []
-    const [before, after] = scores, shown = after ?? before
-    return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(shown, good)}`} href=${npmSocketHref({ npm: after === null ? from : to })} target="_blank" rel="noopener noreferrer"
-      data-tooltip=${[`Socket's ${label.toLowerCase()} score`, ...versionLines([from, to], alignedRight(scores.map(score => String(score ?? 'none'))))].join('\n')}>
-      ${socketGauge(shown)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
+    const [before, after] = scores
+    if (after === null || after >= bar) return []
+    if (key === 'vulnerability' && !(affecting && vulnerabilityBeyond(after, affecting[1], bar))) return []
+    return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(after, good)}`} href=${npmSocketHref({ npm: to })} target="_blank" rel="noopener noreferrer"
+      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${before ?? 'none'} for ${from.version}, ${after} for ${to.version}`}
+      .tooltipContent=${compareTip(`Socket's ${label.toLowerCase()} score`, [from, to], scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`
+        : html`<span class=${`compare-tip-score ${socketLevel(score, good)}`}>${socketGauge(score)}${score}</span>`),
+      key === 'vulnerability' ? `Shown under ${bar}, where worse than the advisories found` : `Shown under ${bar}`)}>
+      ${socketGauge(after)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
   })
 }
 

@@ -355,7 +355,7 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.deepEqual(labels(pkg, 'install'), ['postinstall', 'preinstall'], 'what runs on install now, then what no longer does; not prepare, run only for a local or git install')
   assert.deepEqual(labels(head('LICENSE-MIT'), 'entry'), ['license'])
   assert.match(head('LICENSE-MIT'), /bundle-compare-code-entry is-license[^]*?data-tooltip=License: MIT>license/u)
-  assert.match(pkg, /data-tooltip=npm runs it on install: node setup\.js, was: node a\.js>postinstall/u)
+  assert.match(pkg, /data-tooltip=node setup\.js, was: node a\.js>postinstall/u)
   assert.match(pkg, /bundle-compare-code-install is-dropped/u)
   const rows = Object.fromEntries([...render('index.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
     .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))

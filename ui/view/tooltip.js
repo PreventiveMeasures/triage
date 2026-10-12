@@ -23,6 +23,10 @@
 //
 // `data-tooltip-icon` puts a built-in icon (`commit`) before the text.
 //
+// A target can carry a lit template as its `tooltipContent` property, shown
+// in place of its `data-tooltip` text (which still marks it as having a
+// tooltip): styled content such as Compare's advisories and Socket scores.
+//
 // A commit a managed bundle records can carry `data-tooltip-commit-info`
 // (see `bundleCommitTooltip` in bundle-origin-links.js): the tags that point
 // to it go under the `data-tooltip-commit` reference, then its subject,
@@ -36,6 +40,7 @@
 // 'right-start' aligns to the row's top instead. A target can override
 // its listener's placement with `data-tooltip-placement`.
 
+import { render } from 'lit'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
 
@@ -154,14 +159,21 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const files = el.dataset.tooltipFiles ?? ''
   const loc = el.dataset.tooltipLoc ?? ''
   const size = el.dataset.tooltipSize ?? ''
-  const content = JSON.stringify([text, textIcon, repo, commit, commitInfo, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
+  const rich = el.tooltipContent ?? null
+  const content = rich ?? JSON.stringify([text, textIcon, repo, commit, commitInfo, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
   if (!text) { hideTooltip(); return }
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
   // re-showing it for every child.
   if (currentTarget === el && currentContent === content) return
-  node.textContent = textIcon ? '' : text
+  node.textContent = textIcon || rich ? '' : text
+  if (rich) {
+    const body = document.createElement('div')
+    body.className = 'tooltip-rich'
+    render(rich, body)
+    node.append(body)
+  }
   if (textIcon) {
     // Only the built-in icon is markup; the text stays literal.
     const line = document.createElement('span')

@@ -283,10 +283,12 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
 
   const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
   assert.match(flagged, /<button type="button" class=npm-extension npm-compare-advisories sev-moderate[^]*>2 → 1</u)
-  assert.match(flagged, /data-tooltip=Advisories affecting\n1\.0\.0  2  1 high, 1 moderate\n2\.0\.0  1  1 moderate\n0 new · 1 fixed\s/u, 'each version on a line')
-  assert.match(flagged, /npm-socket-score is-good[^]*>Quality<[^]*>30 → 90</u, 'under its bar on one side, tinted as the open one stands')
-  assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u)
-  assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Maintenance)</u, 'at or over their bars on both sides')
+  assert.match(flagged, /data-tooltip=Advisories affecting 1\.0\.0: 2, 2\.0\.0: 1\s/u, 'in text, where it can\'t be styled')
+  assert.match(flagged, new RegExp(['compare-tip-version">1\\.0\\.0<', 'compare-tip-count">2<', 'sev-high>1 high<', 'sev-moderate>1 moderate<',
+    'compare-tip-version">2\\.0\\.0<', 'compare-tip-count">1<', 'sev-moderate>1 moderate<', 'compare-tip-note">0 new · 1 fixed<'].join('[^]*'), 'u'),
+  'styled, a row for each version, its severities in their colors')
+  assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u, 'the open one under its bar, from the one compared with')
+  assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Quality|Maintenance)</u, 'the open one at or over their bars, its quality 90 though 1.0.0\'s was 30')
   assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads, September 2026>top 100,000</u)
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
@@ -300,23 +302,23 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   // advisories found: none at all, or only less severe ones.
   const vulnerable = (name, vulnerability, advisories) => {
     answers.advisories[name] = advisories ?? { versions: ['1.1.0', '1.0.0'], advisories: [] }
-    answers.socket[`${name}@1.0.0`] = { scores: scores({ vulnerability }), alerts: [] }
+    answers.socket[`${name}@1.1.0`] = { scores: scores({ vulnerability }), alerts: [] }
     return badges(side(name, '1.0.0'), side(name, '1.1.0'))
   }
-  const affecting = severity => ({ versions: ['1.1.0', '1.0.0'], advisories: [{ id: 'x', severity, affected: [1] }] })
-  assert.match(await vulnerable('unadvised', .84), />Vulnerability<[^]*>84 → –</u, 'where none are found')
+  const affecting = severity => ({ versions: ['1.1.0', '1.0.0'], advisories: [{ id: 'x', severity, affected: [0] }] })
+  assert.match(await vulnerable('unadvised', .84), />Vulnerability<[^]*>– → 84</u, 'where none are found')
   assert.doesNotMatch(await vulnerable('advised', .84, affecting('high')), />Vulnerability</u, 'a high one found, as 84 tells')
   assert.match(await vulnerable('understated', .84, affecting('moderate')), />Vulnerability</u, 'only a moderate one found')
-  assert.match(await vulnerable('critical', .25, affecting('high')), />Vulnerability<[^]*>25 → –</u, 'its floor, past a high one found')
+  assert.match(await vulnerable('critical', .25, affecting('high')), />Vulnerability<[^]*>– → 25</u, 'its floor, past a high one found')
   assert.doesNotMatch(await vulnerable('found', .25, affecting('critical')), />Vulnerability</u, 'a critical one found')
   answers.advisories.pending = new Promise(() => {})
-  answers.socket['pending@1.0.0'] = { scores: scores({ vulnerability: .25 }), alerts: [] }
+  answers.socket['pending@1.1.0'] = { scores: scores({ vulnerability: .25 }), alerts: [] }
   assert.doesNotMatch(await badges(side('pending', '1.0.0'), side('pending', '1.1.0')), />Vulnerability</u, 'not until the advisories arrive')
 
   // Supply chain under 85, green from 85.
   answers.socket['chained@1.0.0'] = { scores: scores({ supplyChain: .84 }), alerts: [] }
   answers.socket['chained@1.1.0'] = { scores: scores({ supplyChain: .85 }), alerts: [] }
-  assert.match(await badges(side('chained', '1.0.0'), side('chained', '1.1.0')), /npm-socket-score is-good[^]*>Supply chain<[^]*>84 → 85</u)
+  assert.doesNotMatch(await badges(side('chained', '1.0.0'), side('chained', '1.1.0')), />Supply chain</u, 'the open one at its bar, though the one compared with was under it')
   answers.socket['chained@1.2.0'] = { scores: scores({ supplyChain: .84 }), alerts: [] }
   assert.match(await badges(side('chained', '1.1.0'), side('chained', '1.2.0')), /npm-socket-score is-fair[^]*>Supply chain<[^]*>85 → 84</u)
 
@@ -328,15 +330,19 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.deepEqual(dialog.groups.map(({ status, heading, rows }) => [status, heading, rows.length]), [['kept', 'Still affecting 2.0.0', 1], ['fixed', 'Fixed in 2.0.0', 1]])
   assert.equal(dialog.isCurrent(), true)
   assert.match(text(npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))),
-    /data-tooltip=Socket's quality score\n1\.0\.0  30\n2\.0\.0  90>/u, 'Socket\'s, a version a line')
+    /compare-tip-head">Socket's license score<[^]*compare-tip-version">1\.0\.0<[^]*compare-tip-score is-good is-max>[^]*100<[^]*compare-tip-version">2\.0\.0<[^]*compare-tip-score is-fair>[^]*70<[^]*compare-tip-note">Shown under 80</u,
+    'Socket\'s, a ring and a tint for each version\'s')
 
-  // Socket has no report on the open one yet, as on one just published.
+  // Socket has no report on the open one yet, as on one just published:
+  // nothing to show; on the one compared with, none in its row.
   answers.socket['unscanned@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
-  const unscanned = await badges(side('unscanned', '1.0.0'), side('unscanned', '1.1.0'))
-  assert.match(unscanned, /Socket's quality score\n1\.0\.0    30\n1\.1\.0  none/u, 'right-aligned, none where it has none')
-  assert.match(unscanned, /href=https:\/\/socket\.dev\/npm\/package\/unscanned\/overview\/1\.0\.0 [^]*>Quality<[^]*>30 → –</u, 'linking to the report it shows')
+  assert.doesNotMatch(await badges(side('unscanned', '1.0.0'), side('unscanned', '1.1.0')), />Quality</u)
+  answers.socket['unscanned@1.2.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  const fresh = await badges(side('unscanned', '1.1.0'), side('unscanned', '1.2.0'))
+  assert.match(fresh, /href=https:\/\/socket\.dev\/npm\/package\/unscanned\/overview\/1\.2\.0 [^]*>Quality<[^]*>– → 30</u)
+  assert.match(fresh, /compare-tip-version">1\.1\.0<\/span><span class="compare-tip-said"><span class="compare-tip-none">none</u, 'none where it has none')
 
-  answers.socket['@acme/secret@1.0.0'] = { scores: scores({ quality: .1 }), alerts: [] }
+  answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 })

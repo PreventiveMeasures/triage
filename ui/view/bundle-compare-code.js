@@ -654,7 +654,7 @@ export class BundleCompareCode extends LitElement {
     const tags = [...kind === 'removed' ? was : now].map(([script, command]) => {
       const old = kind === 'removed' ? command : was.get(script)
       const note = old === undefined ? ', new' : old === command ? '' : `, was: ${old}`
-      return html`<span class="bundle-compare-code-install" data-tooltip=${`npm runs it on install: ${command}${note}`}>${script}</span>`
+      return html`<span class="bundle-compare-code-install" data-tooltip=${`${command}${note}`}>${script}</span>`
     })
     if (!compact && kind !== 'removed') {
       for (const [script, command] of was) {

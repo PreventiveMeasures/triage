@@ -235,6 +235,8 @@ export function npmCompareSource(entry) {
   return {
     noun: 'version',
     base: version,
+    // As long a version as most are, tagged as the latest often is.
+    widest: { name: `${name}@10.90.90`, detail: 'latest' },
     pending: list.status === 'loading',
     error: list.status === 'error' ? `Couldn't list the versions of ${name}.` : null,
     options: choices.filter(choice => choice.id !== version),

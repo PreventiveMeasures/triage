@@ -29,7 +29,7 @@
 // on hand, as an npm package version offers the package's other versions
 // (npm-package.js npmCompareSource): `{ noun, base, options, choices,
 // pending, error, name(id), load(id), open(base, target, mode),
-// dependencies(base, other), badges(base, other) }`, each option `{ id, name, format, detail, date? }`;
+// dependencies(base, other), badges(base, other), widest }`, each option `{ id, name, format, detail, date? }`;
 // its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
 // its place.
@@ -41,7 +41,8 @@
 // picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
 // `from` and `to` in place of `range`. `badges` is what calls for a look at
-// the two, at the picker row's end.
+// the two, at the picker row's end, and `widest` the `{ name, detail }` its
+// selects are sized to hold.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -709,11 +710,12 @@ class BundleCompare extends LitElement {
   _renderPicker(others, hasTarget, scopeSelector, badges) {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-    // A source's versions: each select as wide as the longest it lists, its
-    // tags beside it (at their smaller size), or its placeholder; the menu
+    // A source's: both selects one width from the start, as wide as its
+    // `widest` (a name and its tag, the tag at its smaller size) or the
+    // placeholder, whatever it lists once that arrives, so they don't move as
+    // it does; a longer name is cut short, whole in its tooltip. The menu
     // keeps its own width.
-    const chars = this.source ? Math.max(`Choose a ${noun}…`.length,
-      ...[...others, ...this._baseOptions()].map(option => option.filename.length + (option.detail ? option.detail.length * .87 + 1 : 0))) : null
+    const chars = this.source ? Math.max(`Choose a ${noun}…`.length, this.source.widest.name.length + this.source.widest.detail.length * .87 + 1) : null
     return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare</span>

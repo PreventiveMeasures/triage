@@ -389,6 +389,7 @@ function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1
   const calls = { loads: [], opens: [] }
   const source = base => ({
     noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, displayLabel: base, format: 'npm', detail: '' }, ...options],
+    widest: { name: 'pkg@10.90.90', detail: 'latest' },
     name: id => `pkg@${id.replace(/^sha512-/u, '')}`,
     load: id => { calls.loads.push(id); return Promise.resolve(npm(`sha512-${id}`, id)) },
     open: (opened, target, mode) => calls.opens.push([opened, target, mode]),
@@ -450,6 +451,15 @@ test('a source\'s files list open, each with its type\'s icon, those the open on
   assert.match(summary, /<div class="bundle-compare-modes"[^]*<\/div>\s*<\/div>$/u, 'the mode tabs inside the summary')
   assert.match(markup, /<button type="button" class="bundle-compare-row bundle-compare-row-link"[^]*?data-tooltip=dep>dep</u, 'a dependency it can open is a link')
   assert.match(markup, /<div class="bundle-compare-row">\s*<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=local>/u, 'one it can\'t is not')
+})
+
+test('a source\'s selects are one width from the start, as wide as its widest, whatever it lists once that arrives', () => {
+  const width = view => /--compare-select-chars: (\d+)/u.exec(renderText(view._renderPicker(view._otherOptions(), false, '', '')))?.[1]
+  const { view: pending } = sourced({ options: [], pending: true })
+  // pkg@10.90.90 and `latest` at the tag's smaller size: 12 + 6 × .87 + 1.
+  assert.equal(width(pending), '19', 'while its versions are on their way')
+  const { view: listed } = sourced({ options: [{ id: '10.0.0-beta.123', name: 'pkg@10.0.0-beta.123', displayLabel: '10.0.0-beta.123', format: 'npm', detail: 'next' }] })
+  assert.equal(width(listed), '19', 'a longer one listed is cut short in its select, not widening it')
 })
 
 test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {

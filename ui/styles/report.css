@@ -3650,6 +3650,38 @@ a.npm-socket-score {
   &:hover { border-color: var(--sev); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
+/* Their tooltips, as styled content in the shared one (tooltip.js
+   `tooltipContent`): a head, a row for each version, its number and the
+   advisories' severities or the score's ring, and a note under them. */
+.compare-tip { display: flex; flex-direction: column; gap: .4rem; min-width: 12rem; }
+.compare-tip-head, .compare-tip-note { color: var(--muted); }
+.compare-tip-head { font-size: .66rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.compare-tip-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: .3rem .8rem; }
+.compare-tip-version { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.compare-tip-said { display: flex; align-items: center; gap: .45rem; }
+.compare-tip-count { min-width: 1.4em; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.compare-tip-none { color: var(--muted); }
+.compare-tip-severities { display: flex; flex-wrap: wrap; gap: .2rem; }
+.compare-tip-severity {
+  padding: 0 .3rem; border-radius: 3px;
+  color: #000; font-size: .62rem; font-weight: 700; line-height: 1.5; white-space: nowrap;
+
+  &.sev-critical { background: var(--critical); color: #fff; }
+  &.sev-high { background: var(--high); }
+  &.sev-moderate { background: var(--medium); }
+  &.sev-low { background: var(--low); color: var(--badge-low-text); }
+  &.sev-unknown { background: var(--border); color: var(--text); }
+}
+.compare-tip-score {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-weight: 600; font-variant-numeric: tabular-nums;
+
+  &.is-good { --meter: var(--green); }
+  &.is-fair { --meter: var(--medium); }
+  &.is-poor { --meter: var(--critical); color: color-mix(in srgb, var(--critical) 70%, var(--text)); }
+  &.is-max { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
+}
+.compare-tip-note { font-size: .7rem; }
 /* Its gauge: a hairline ring, filled clockwise from the top to the score in
    its tint, blended with the muted ink so it reads as a hint. */
 .npm-socket-gauge {
