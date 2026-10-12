@@ -601,10 +601,10 @@ function heldFileBadges(details) {
   const exfiltrating = holding((path, text) => npmFileExfiltration(details, path, text)), runs = holding((path, text) => npmFileRunsCode(details, path, text))
   const obfuscated = holding(path => byPath.get(path)?.obfuscation)
   return [
-    listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found), null, npmRunsCodeKinds(runs.map(row => row.found))),
-    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.found), null,
+    listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(runs.map(row => row.found))),
+    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.found),
       npmExfiltrationNames(exfiltrating.map(row => row.found))),
-    listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(row.found), null),
+    listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(row.found)),
   ]
 }
 
@@ -727,21 +727,12 @@ function fileBadges(base, other, files) {
   const runs = [...bundleFilesAsMap(other)].map(([path, text]) => ({ path, found: npmRunsCodeWithout(npmFileRunsCode(other, path, text), flagged) }))
     .filter(row => row.found)
   return [
-    fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
-      'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
-      npmRunsCodeKinds(runsCode.map(row => row.added))),
-    fileBadge('npm-compare-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.added),
-      'A host malicious packages send what they take to, or fetch what they run from, new to the file',
-      npmExfiltrationNames(exfiltrating.map(row => row.added))),
-    fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
-      'Code files the open version adds, of 256 KiB or more'),
-    fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
-      'Its longest line: none over 200 characters before, now one over 2,000'),
-    fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
-      'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
-    listBadge('is-warn npm-compare-kept-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found),
-      'What the open version\'s code does beyond itself, in any of its files, none of it new to a file',
-      npmRunsCodeKinds(runs.map(row => row.found))),
+    fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added), npmRunsCodeKinds(runsCode.map(row => row.added))),
+    fileBadge('npm-compare-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.added), npmExfiltrationNames(exfiltrating.map(row => row.added))),
+    fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path))),
+    fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`),
+    fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation)),
+    listBadge('is-warn npm-compare-kept-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(runs.map(row => row.found))),
   ]
 }
 
@@ -771,8 +762,7 @@ function hostsBadge(base, other, files) {
     }
   }
   const rows = [...found.values()]
-  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at,
-    'Hosts the open version\'s code names in a URL, its comments aside, that the version compared with\'s named in none of its', rows.length === 1 ? rows[0].path : null)
+  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at, rows.length === 1 ? rows[0].path : null)
 }
 
 // A chip on `rows`, files the open version adds or changes, in red.
@@ -782,8 +772,8 @@ function fileBadge(kind, ...rest) {
 
 // A chip on `rows`, each with a `path`, counting them where there are
 // several, or saying `value` of them all, the rows in its tooltip alone, each
-// with what `said` of it, under them a `note` where it has one.
-function listBadge(classes, label, rows, said, note, value = null) {
+// with what `said` of it, and nothing more.
+function listBadge(classes, label, rows, said, value = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
@@ -793,7 +783,6 @@ function listBadge(classes, label, rows, said, note, value = null) {
       <div class="compare-tip-head">${label}</div>
       <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-      ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
     </div>`}>
     <span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
