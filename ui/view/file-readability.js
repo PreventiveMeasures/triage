@@ -38,7 +38,7 @@ export const NPM_LONG_LINE = 1000
 // `CHANGES`; a dot in it only a version's, `LICENSE-LGPL2.1`; a prose
 // extension after it is one), not code named alike (`lib/history.js`,
 // `dist/notice.min.js`), which can be minified as any.
-export const NPM_PROSE = /(?:\.(?:md|markdown|mdown|mkdn|mdx|txt|rst|adoc|asciidoc|textile|rdoc|org|creole|mediawiki|wiki|pod)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*(?:\.\d[^/.]*)*)?)$/iu
+export const NPM_PROSE = /(?:\.(?:md|markdown|mdown|mkdn|mdx|txt|rst|adoc|asciidoc|asc|textile|rdoc|org|creole|mediawiki|wiki|pod)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*(?:\.\d[^/.]*)*)?)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.

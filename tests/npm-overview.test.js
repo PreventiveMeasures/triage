@@ -113,7 +113,7 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
     'code that writes one has none')
   assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=data:application/json,%7B%22version%22%3A3%7D`), 'inline-map', 'percent-encoded')
   for (const prose of ['README.md', 'docs/guide.markdown', 'LICENSE', 'CHANGELOG', 'CHANGELOG.md', 'HISTORY', 'notes.txt', 'LICENSE-MIT', 'LICENSE.txt',
-    'LICENSE-LGPL2.1', 'LICENSE-GPL-3.0', 'README.org', 'README.rdoc', 'History.mdown']) {
+    'LICENSE-LGPL2.1', 'LICENSE-GPL-3.0', 'README.org', 'README.rdoc', 'README.asc', 'History.mdown']) {
     assert.equal(category(prose, `${long} words\nmore`), 'ascii', `${prose}: prose wraps`)
   }
   assert.equal(category('dist/notice.min.js', `${code}\n${long}`), 'minified', 'code named as prose is code')
