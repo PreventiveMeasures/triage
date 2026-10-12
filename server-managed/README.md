@@ -1199,17 +1199,18 @@ control. A version shows in the bundle view with four tabs:
   that holds of it and once in the total, each category's chip finding every
   file it holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
-  or invisible characters (the C0 ones but tab, line feed and carriage
-  return, DEL, the C1 ones, and the bidirectional controls U+202A–U+202E and
-  U+2066–U+2069; and, of those Code shows as boxes, the ones text is hidden
-  in: variation selectors, as a payload a byte a selector, but a variation
+  characters (the C0 ones but tab, line feed and carriage return, DEL, the
+  C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
+  invisible characters (of those Code shows as boxes, the ones text is
+  hidden in: variation selectors, as a payload a byte a selector, but a variation
   sequence Unicode registers (an HTML entity's math symbol, a heading
   anchor's `#`), an emoji's selector doubled as copying text leaves it, or a
   block of them written out as a range in a table of the characters a name
   may hold; Hangul fillers, as a name no one sees, but those composing
   Hangul or among jamo; and tags, but those of a subdivision flag Unicode
   recommends (England's, Scotland's or Wales's); not a BOM, a zero-width or
-  a no-break space, which text has its uses for),
+  a no-break space, which text has its uses for; found in the same pass as
+  control characters, and told apart from them by code point),
   long lines (lines over 1,000 characters: a warning among readable ones,
   as no one writes them, and a notice in minified code, whose they are),
   minified (most of its text on such lines, or named `.min.` with any, or,
@@ -1339,7 +1340,7 @@ control. A version shows in the bundle view with four tabs:
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
   tag naming the control or invisible characters or long lines it holds:
-  each label a file has, Controls and Long lines beside its category, but
+  each label a file has, Controls, Invisible and Long lines beside its category, but
   ASCII, as most files are, and Map, as a source map's name says (Compare's
   file heads tag both, and how a file's changed), and before them,
   Large, quietly, on a JavaScript or TypeScript file of 256 KiB or more

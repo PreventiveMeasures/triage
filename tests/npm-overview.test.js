@@ -90,10 +90,12 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
   assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
-  const note = text => /data-tooltip=([^>]*)>Controls</u.exec(rendered(npmReadabilityFlags(npmFileReadability('lib/a.js', text))))[1]
-  assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
-  assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
-  assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
+  const notes = text => Object.fromEntries([...rendered(npmReadabilityFlags(npmFileReadability('lib/a.js', text))).matchAll(/data-tooltip=([^>]*)>(Controls|Invisible)</gu)]
+    .map(([, note, tag]) => [tag, note]))
+  assert.deepEqual(notes('a\u001B\u202E\u001B'), { Controls: 'Control characters: U+001B \u00D72, U+202E \u00D71' })
+  assert.deepEqual(notes('x\u3164'), { Invisible: 'Invisible characters: U+3164 \u00D71' })
+  assert.deepEqual(notes('a\u001B \u3164\u3164'), { Controls: 'Control characters: U+001B \u00D71', Invisible: 'Invisible characters: U+3164 \u00D72' },
+    'each kind its own tag, though found in one pass')
 })
 
 test('a file reads as text, or is not UTF-8, holds controls, is a source map, has one in it, is minified, or has unexpected long lines', () => {
@@ -107,6 +109,8 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   const labels = (path, text) => npmReadabilityLabels(npmFileReadability(path, text))
   assert.equal(category('lib/a.js', `${code}\u001B`), 'ascii')
   assert.deepEqual(labels('lib/a.js', `${code}\u001B`), ['controls'], 'not as readable ASCII')
+  assert.deepEqual(labels('lib/a.js', `${code}\u3164`), ['invisible'], 'nor as readable UTF-8')
+  assert.deepEqual(labels('lib/a.js', `${code}\u001B\u3164`), ['controls', 'invisible'], 'each kind its own')
   assert.deepEqual(labels('lib/a.js', `${code}\n${code}\n${long}\u202E\n${code}`), ['controls', 'long'])
   assert.deepEqual(labels('dist/a.js', `var r=/[ \f]/;${long}`), ['controls', 'long', 'minified'], 'a minified file holding a form feed is all three')
   assert.deepEqual(labels('lib/a.js', `${code}\n${code}\n${long}\n${code}`), ['long'], 'long lines among readable ones, not as readable ASCII')
@@ -156,19 +160,21 @@ test('the Overview finds a file under each label it has, counting it once, each 
     return details.json.sources.filter(keeps)
   })
 
-  const mixed = version('labelled', { 'dist/min.js': minified, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}', 'lib/long.js': long, 'lib/a.js': 'const a = 1\n' })
+  const mixed = version('labelled', { 'dist/min.js': minified, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}', 'lib/long.js': long, 'lib/a.js': 'const a = 1\n',
+    'lib/hidden.js': 'const { timeout,\u3164 } = req.query\n' })
   const warning = npmReadabilityWarning(mixed.entry, mixed.details)
-  assert.match(rendered(warning), /<strong>3 of 4 files<\/strong>/u, 'each file once')
+  assert.match(rendered(warning), /<strong>4 of 5 files<\/strong>/u, 'each file once')
   assert.match(rendered(warning), /npm-readability-warning is-warn/u)
-  assert.deepEqual(chipsOf(warning), ['Control or invisible characters 1 is-warn', 'Long lines 2 is-warn', 'Minified 1 is-notice', 'Source maps 1 is-notice'],
-    'long lines a warning where some are unexpected')
-  assert.deepEqual(found(mixed), [['dist/min.js'], ['dist/min.js', 'lib/long.js'], ['dist/min.js'], ['dist/min.js.map']], 'the minified file under each of its labels')
+  assert.deepEqual(chipsOf(warning), ['Control characters 1 is-warn', 'Invisible characters 1 is-warn', 'Long lines 2 is-warn', 'Minified 1 is-notice', 'Source maps 1 is-notice'],
+    'control and invisible characters each a chip of their own; long lines a warning where some are unexpected')
+  assert.deepEqual(found(mixed), [['dist/min.js'], ['lib/hidden.js'], ['dist/min.js', 'lib/long.js'], ['dist/min.js'], ['dist/min.js.map']], 'the minified file under each of its labels')
   // Each file's tags in the list: all its labels, but Map, which a source map's name says.
   const listed = path => [...rendered(npmCompareFiles.tag(mixed.details, path)).matchAll(/class="?npm-(?:flag|encoding)-tag[^>]*>([^<]+)</gu)].map(m => m[1])
   assert.deepEqual(listed('dist/min.js'), ['Controls', 'Long lines', 'Minified'])
   assert.deepEqual(listed('dist/min.js.map'), [], 'no Map in a list')
   assert.deepEqual(listed('lib/long.js'), ['Long lines'], 'nor ASCII, as most files are')
   assert.deepEqual(listed('lib/a.js'), [])
+  assert.deepEqual(listed('lib/hidden.js'), ['Invisible', 'UTF-8'])
   const utf8 = version('utf8', { 'lib/b.js': 'const ü = 1\n' })
   assert.deepEqual([...rendered(npmCompareFiles.tag(utf8.details, 'lib/b.js')).matchAll(/class="?npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1]), ['UTF-8'], 'UTF-8 tagged')
 

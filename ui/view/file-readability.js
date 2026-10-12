@@ -163,8 +163,8 @@ export function npmBecameUnreadable(path, was, now) {
 // not), minified (code mostly on long lines, or named .min., or minified
 // into shorter lines: see MINIFIED_AVERAGE), else utf8 or ascii; and
 // whatever it is, the control, bidirectional or invisible characters a text
-// holds (`controls`), which count as a category of their own beside it
-// (npmReadabilityLabels). Prose is
+// holds (`controls`), found in one pass, which count as a label of their own
+// beside it each, control and invisible (npmReadabilityLabels). Prose is
 // readable whatever its lines' lengths, and an inline source map's line
 // counts for none, nor for how much of the code is on long lines. With
 // npmTextEncoding's `kind` and `controls`, its `longest` line's length and
@@ -209,14 +209,14 @@ export function npmFileReadability(path, text) {
 }
 
 // What a file is labelled, in its tags and in the Overview's warning and
-// chips, each finding it: its controls and its long lines, where it holds
-// them, beside its category (how its text is encoded, for one whose long
+// chips, each finding it: its control characters, its invisible ones
+// (characterLabels) and its long lines, where it holds them, beside its category (how its text is encoded, for one whose long
 // lines are unexpected), but for ASCII or UTF-8, which a file that can't be
 // read as it is counts under as none of them. A minified file's long lines
 // are labelled too, as its inline map's are; prose's and a source map's
 // never are.
 export function npmReadabilityLabels(readability) {
-  const flags = [...readability.controls ? ['controls'] : [],
+  const flags = [...characterLabels(readability.controls),
     ...readability.longLines > 0 && ['long', 'minified', 'inline-map'].includes(readability.category) ? ['long'] : []]
   const category = readability.category === 'long' ? readability.kind : readability.category
   return READABILITY.get(category).mark || flags.length === 0 ? [...flags, category] : flags
@@ -232,7 +232,8 @@ export const npmLabelMark = (readability, label) => label === 'long' && readabil
 // reading it either way.
 export const READABILITY = new Map([
   ['binary', { name: 'Binary', tag: 'Binary', mark: 'warn' }],
-  ['controls', { name: 'Control or invisible characters', tag: 'Controls', mark: 'warn' }],
+  ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
+  ['invisible', { name: 'Invisible characters', tag: 'Invisible', mark: 'warn' }],
   ['long', { name: 'Long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
@@ -241,15 +242,20 @@ export const READABILITY = new Map([
   ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
 ])
 
-// The controls, and invisible characters, a text holds: named for which it
-// has, the most found first.
+// The characters a text holds of a label's kind, `controls` (C0, DEL, C1
+// and bidirectional controls) or `invisible`, `[point, times]`, the most
+// found first: those npmTextEncoding found in one pass, told apart by code
+// point. The labels a text's characters take, of those two.
 const CONTROL = new RegExp(CONTROLS.source, 'u')
-function controlsNote(controls) {
-  const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
+const charactersOf = (controls, label) => [...controls ?? []]
+  .filter(([point]) => CONTROL.test(String.fromCodePoint(point)) === (label === 'controls')).toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
+const characterLabels = controls => controls ? ['controls', 'invisible'].filter(label => charactersOf(controls, label).length > 0) : []
+
+// Those characters of a label's kind, by code point and how often.
+function charactersNote(controls, label) {
+  const found = charactersOf(controls, label)
   const named = found.slice(0, 6).map(([point, times]) => `U+${point.toString(16).toUpperCase().padStart(4, '0')} ×${times.toLocaleString('en')}`)
-  const control = found.filter(([point]) => CONTROL.test(String.fromCodePoint(point))).length
-  const kinds = control === found.length ? 'Control characters' : control === 0 ? 'Invisible characters' : 'Control and invisible characters'
-  return `${kinds}: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
+  return `${READABILITY.get(label).name}: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
 // A file's lines longer than anyone writes: how many, and the longest.
@@ -270,7 +276,8 @@ function readabilityNote(readability) {
 // A file's tag in the column a list keeps for it: how it reads, marked where
 // it can't be read as it is, saying why; for one with unexpected long lines,
 // how its text is encoded (ASCII or UTF-8), its long lines tagged beside it
-// (npmReadabilityFlags) rather than in its place, as its controls are.
+// (npmReadabilityFlags) rather than in its place, as its control and
+// invisible characters are.
 export function npmEncodingTag(readability) {
   if (!readability) return nothing
   const category = readability.category === 'long' ? readability.kind : readability.category
@@ -278,17 +285,17 @@ export function npmEncodingTag(readability) {
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
 }
 
-// A file's Controls and Long lines (npmReadabilityLabels), beside its tag as
-// Obfuscated is (npmFileFlagTags), not in its place: a minified file can hold
-// controls, and has long lines. Each says what it found, marked as it is on
+// A file's Controls, Invisible and Long lines (npmReadabilityLabels), beside
+// its tag as Obfuscated is (npmFileFlagTags), not in its place: a minified
+// file can hold control and invisible characters, and has long lines. Each says what it found, marked as it is on
 // the file (npmLabelMark); `marks` those to tag, all by default. Nothing for
 // a file with neither.
 export function npmReadabilityFlags(readability, marks = null) {
-  const shown = readability ? npmReadabilityLabels(readability).filter(label => (label === 'controls' || label === 'long')
+  const shown = readability ? npmReadabilityLabels(readability).filter(label => ['controls', 'invisible', 'long'].includes(label)
     && (marks === null || marks.includes(npmLabelMark(readability, label)))) : []
   if (shown.length === 0) return nothing
-  const note = label => label === 'controls' ? controlsNote(readability.controls)
-    : `${linesNote(readability)}${readability.category === 'long' ? ', among readable ones' : ''}`
+  const note = label => label === 'long' ? `${linesNote(readability)}${readability.category === 'long' ? ', among readable ones' : ''}`
+    : charactersNote(readability.controls, label)
   return shown.map(label => html`<span class=${`npm-flag-tag is-${npmLabelMark(readability, label)}`} data-tooltip=${note(label)}>${READABILITY.get(label).tag}</span>`)
 }
 
@@ -302,8 +309,8 @@ export function npmListedReadabilityTag(readability) {
   return category === 'ascii' || category === 'map' ? npmReadabilityFlags(readability) : npmReadabilityTag(readability)
 }
 
-// A file's tags of how it reads: its controls and long lines, where it has
-// them, then its tag.
+// A file's tags of how it reads: its control and invisible characters and
+// long lines, where it has them, then its tag.
 export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
 
 // What a file is beyond how it reads, before its tag: Large, a code file of
