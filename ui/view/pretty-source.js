@@ -23,8 +23,9 @@ export const prettyTooltip = copy => copy?.status === 'loading' ? 'Pretty-printi
 const KEPT_COPIES = 8
 
 // Copies by integrity and path: `{ status: 'loading' }`, `{ status: 'ready',
-// text }`, or `{ status: 'error', message, retry }`, `retry` where asking
-// again may succeed.
+// text, hash }` (`hash` the copy's own, which a diff of it names:
+// rename-diff.js), or `{ status: 'error', message, retry }`, `retry` where
+// asking again may succeed.
 const copies = new Map()
 // What a copy asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
@@ -85,7 +86,7 @@ async function load(key, copy, entry, path, content, known) {
     const text = entry.npm
       ? await fetchPrettyNpmFile(entry.npm.name, entry.npm.version, path, hash)
       : await fetchPrettyBundleFile(entry.managedId, path, hash)
-    next = { status: 'ready', text }
+    next = { status: 'ready', text, hash: await computeFileHash(text) }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {

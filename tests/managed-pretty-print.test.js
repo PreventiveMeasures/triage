@@ -102,13 +102,15 @@ const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?
 const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
 
 // What a rename diff of the two builds below answers: the old one with the
-// new one's names, formatted, diffed with the new one, and the two files' hashes.
+// new one's names, formatted, diffed with the new one, the two files' hashes
+// and those of the two copies diffed.
 async function renamedBuilds(ignoreWhitespace = false) {
   const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
   const after = await formatted(rebuilt)
   // No name read; the function's first two lines differ in its renamed names alone.
   const marks = [{ a0: 0, a1: 2, b0: 0, b1: 2 }]
-  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks, hash: fileHash(built), otherHash: fileHash(rebuilt) }
+  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks, hash: fileHash(built), otherHash: fileHash(rebuilt),
+    prettyHash: fileHash(await formatted(built)), otherPrettyHash: fileHash(after) }
 }
 // A minifier's two builds of a module: a function's names renamed, a number changed.
 const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'

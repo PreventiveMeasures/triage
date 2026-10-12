@@ -948,8 +948,10 @@ does; and `marks`, the change blocks of the diff of the two copies as
 pretty-printed whose old lines, given the new names, are their new lines,
 no newline added or dropped after the last (none where names were not
 given), each checked by the server to be such a diff's blocks, in order and
-as many lines on either side; and the two files' hashes, `hash` and
-`otherHash`, which the viewer checks are those it asked about. Each diff runs in a worker thread, off the event
+as many lines on either side; the two files' hashes, `hash` and
+`otherHash`, which the viewer checks are those it asked about; and those of
+the two pretty-printed copies the diff was worked out from, `prettyHash` and
+`otherPrettyHash`, which it checks are those of the copies it draws. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429
 `diff-busy` past that, as Code's one list asks for every file it shows at once),
 for at most a minute, its wait included (504 `diff-timeout`); a file that does
@@ -1308,8 +1310,9 @@ control. A version shows in the bundle view with four tabs:
   so it is offered with the pretty-print toggle on, for a managed bundle's or
   a version's files, and says why where it shows the old names after all.
   The viewer takes the server's diff, checked there, as it is once it names
-  the two files asked about, and shows the names where it does not, asking
-  again when the names are hidden again.
+  the two files asked about and, by their hashes, the two copies the viewer
+  draws as those it was worked out from, and shows the names where it does
+  not, asking again when the names are hidden again.
   **Mark renamed lines**, beside it, rather diffs the two sides as they are,
   drawing faint and counting apart (`≈`) the lines the server finds differ
   in names renamed alone. Where either side reads names (`.name`, `.toString`, `.stack`,
