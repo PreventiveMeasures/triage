@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { controlMarkup, controlParts, hasControls } from '../ui/view/control-chars.js'
+import { controlMarkup, controlParts, hasControls, invisibleCharacters } from '../ui/view/control-chars.js'
 import { sourceText } from '../ui/view/source-text.js'
 
 // Parts as text, a box as [label|tooltip].
@@ -21,7 +21,27 @@ test('the controls run C0 but tab and newline, DEL, and C1 to U+009F; the charac
   const controls = [...Array.from({ length: 0x20 }, (_, i) => i).filter(code => code !== 0x09 && code !== 0x0A), ...Array.from({ length: 0x21 }, (_, i) => 0x7F + i)]
   const text = String.fromCodePoint(...controls)
   assert.equal(controlParts(text).length, controls.length, 'each one a box')
-  assert.equal(parts(controlParts('\u009F\u00A0')), '[APC|U+009F APPLICATION PROGRAM COMMAND]\u00A0')
+  assert.equal(parts(controlParts('\u009F\u00A1')), '[APC|U+009F APPLICATION PROGRAM COMMAND]\u00A1', 'past the no-break space, boxed as a space')
+})
+
+test('what reads as a space or as nothing, though it is another character, shows as a labelled box', () => {
+  assert.equal(parts(controlParts('a\u00A0b\u3000c\u2009d')),
+    'a[NBSP|U+00A0 NO-BREAK SPACE]b[IDSP|U+3000 IDEOGRAPHIC SPACE]c[THSP|U+2009 THIN SPACE]d', "Unicode's other spaces")
+  assert.equal(parts(controlParts('const x\u3164 = 1')), 'const x[HF|U+3164 HANGUL FILLER] = 1', 'a letter that draws as nothing, making another name')
+  assert.equal(parts(controlParts('\u115F\u1160\uFFA0\u2800')),
+    '[HCF|U+115F HANGUL CHOSEONG FILLER][HJF|U+1160 HANGUL JUNGSEONG FILLER][HWHF|U+FFA0 HALFWIDTH HANGUL FILLER][BLANK|U+2800 BRAILLE PATTERN BLANK]')
+  assert.equal(parts(controlParts('a\u034Fb')), 'a[CGJ|U+034F COMBINING GRAPHEME JOINER]b')
+  assert.equal(parts(controlParts('x\uFE0F y\u{E0101}')), 'x[VS16|U+FE0F VARIATION SELECTOR-16] y[VS18|U+E0101 VARIATION SELECTOR-18]', 'a variation selector after a letter')
+  assert.equal(parts(controlParts('id1\uFE0F')), 'id1[VS16|U+FE0F VARIATION SELECTOR-16]', 'or a digit, no keycap after it')
+  assert.equal(parts(controlParts('x\uFE0F\u20E3')), 'x[VS16|U+FE0F VARIATION SELECTOR-16]\u20E3', 'or a keycap mark after what no keycap is')
+  assert.equal(parts(controlParts('1\uFE0E\u20E3')), '1[VS15|U+FE0E VARIATION SELECTOR-15]\u20E3', 'or the text selector in a keycap, which takes the emoji one')
+  assert.equal(parts(controlParts('\u{1F02C}\uFE0F \u{1F02C}\u200D\u{1F02D}')),
+    '[U+1F02C|U+1F02C unassigned code point][VS16|U+FE0F VARIATION SELECTOR-16] [U+1F02C|U+1F02C unassigned code point][ZWJ|U+200D ZERO WIDTH JOINER][U+1F02D|U+1F02D unassigned code point]',
+    'or a joiner, beside a code point reserved for emoji to come')
+  assert.equal(parts(controlParts('\u180B')), '[U+180B|U+180B invisible character]', 'one unnamed, as invisible')
+  const drawn = '❤\uFE0F ☺\uFE0E 1\uFE0F\u20E3 #\uFE0F\u20E3'
+  assert.deepEqual(controlParts(drawn), [drawn], "an emoji's own presentation selectors and keycaps stay text")
+  assert.equal(hasControls('a b'), false, 'an ASCII space is none')
 })
 
 test('private use characters, noncharacters and unassigned code points show by number', () => {
@@ -37,6 +57,37 @@ test('tabs, newlines, CRLF line ends and the joiners and tags of an emoji stay t
   assert.deepEqual(controlParts(emoji), [emoji])
   assert.equal(parts(controlParts('a\u200Db')), 'a[ZWJ|U+200D ZERO WIDTH JOINER]b', 'a joiner between letters shows')
   assert.equal(parts(controlParts('🏴\u{E0067}\u{E0062}')), '🏴[g|U+E0067 TAG g][b|U+E0062 TAG b]', 'tags no cancel tag ends name no flag')
+})
+
+test('tags after a black flag show, as the text they hide, but those of a subdivision flag Unicode recommends', () => {
+  assert.equal(parts(controlParts('🏴\u{E0053}\u{E0045}\u{E007F}')), '🏴[S|U+E0053 TAG S][E|U+E0045 TAG E][CANCEL|U+E007F CANCEL TAG]')
+  const flags = ['gbeng', 'gbsct', 'gbwls'].map(code => `🏴${[...code].map(c => String.fromCodePoint(0xE0000 + c.codePointAt(0))).join('')}\u{E007F}`)
+  assert.deepEqual(flags.map(flag => controlParts(flag).length), [1, 1, 1], 'England, Scotland, Wales')
+})
+
+test('the invisible characters text is hidden in are counted where they show, but those that hide nothing', () => {
+  assert.deepEqual(invisibleCharacters('|\u{E0151}\u{E0151}\u{E0156} \u3164 x\u{E0068}'), new Map([[0xE0151, 2], [0xE0156, 1], [0x3164, 1], [0xE0068, 1]]),
+    'a payload in selectors, a filler naming a variable, a tag')
+  assert.deepEqual(invisibleCharacters('a\u{E0141}b\u{E0142} ☀\uFE00 中\u{E01EF} 🏻\uFE0F'),
+    new Map([[0xE0141, 1], [0xE0142, 1], [0xFE00, 1], [0xE01EF, 1], [0xFE0F, 1]]), 'after a letter, or after what Unicode registers no such variant of')
+  assert.deepEqual(invisibleCharacters('가\u3164 = \u3164\u3164'), new Map([[0x3164, 3]]), 'a filler after a syllable, or beside another')
+  assert.deepEqual(invisibleCharacters('🛠\uFE0F\uFE0F\uFE0F a\u{E0141}-\u{E0142}b'), new Map([[0xFE0F, 1], [0xE0141, 1], [0xE0142, 1]]),
+    'a selector past an emoji\'s doubled one, selectors around a hyphen that are no block')
+  assert.deepEqual(invisibleCharacters('x\uFE00-\uFE05 🛠\uFE0E\uFE0F'), new Map([[0xFE00, 1], [0xFE05, 1], [0xFE0F, 1]]),
+    'a range that is no whole block, an emoji\'s selector followed by the other')
+  assert.deepEqual(invisibleCharacters('🏴\u{E0053}\u{E007F}'), new Map([[0xE0053, 1], [0xE007F, 1]]), 'a flag Unicode doesn\'t recommend')
+  assert.equal(invisibleCharacters('❤\uFE0F ☺\uFE0E 📄\uFE0F 1\uFE0F\u20E3 🛠\uFE0F\uFE0F 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'), null,
+    'an emoji\'s own selectors, doubled as copying leaves them, a keycap, a flag')
+  assert.equal(invisibleCharacters('caps: "\u2229\uFE00", [Install](#\uFE0F-install)'), null, 'variants Unicode registers: an HTML entity\'s, a heading anchor\'s')
+  assert.equal(invisibleCharacters('ㅣ\u3164ㅥ \u115F\u1161 \u1100\u1160 \uFFA1\uFFA0'), null, 'fillers composing Hangul, or among jamo')
+  // acorn\'s table of the characters a name may hold past its first.
+  assert.equal(invisibleCharacters('\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F\u17B4-\u17D3\u180B-\u180D a\u034Fb'), null,
+    'a block of selectors in such a table, the other marks that show as nothing')
+  assert.equal(invisibleCharacters('\uFEFFa\u200Bb\u00ADc\u00A0d\u001B'), null, 'format characters, spaces, controls')
+  assert.deepEqual(invisibleCharacters('\u3164 = \u3164', 4), new Map([[0x3164, 1]]), 'looked for from where it is told to, as the first character past ASCII')
+  const run = `x${'\uFE0F'.repeat(1000)}`
+  assert.equal(controlParts(run).length, 1001, 'a long run, each a box')
+  assert.deepEqual(invisibleCharacters(run), new Map([[0xFE0F, 1000]]))
 })
 
 test('a lone CR shows; one ending the text ends a line only where a newline follows it', () => {

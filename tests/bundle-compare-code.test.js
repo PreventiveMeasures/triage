@@ -30,9 +30,10 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchNpmRenameDiff() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
-const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 await import('../ui/view/bundle-compare-code.js')
 const CompareCode = customElements.get('bundle-compare-code')
 
@@ -348,15 +349,29 @@ test('the one-list Code lists a file whose only change is a repointed import by 
     combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
 })
 
-test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs', () => {
-  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n' }, { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n' }]
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(renderText(view(path, files).render()))[1]
+test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its long lines beside that', () => {
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n` },
+    { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
+      'src/short.js': `${code}\n` }]
+  const rendered = path => renderText(view(path, files).render())
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(rendered(path))[1]
   const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
   assert.deepEqual(tags(head('src/ctl.js')), ['ASCII', 'Controls'])
   assert.match(head('src/ctl.js'), /bundle-compare-code-readability/u)
   assert.deepEqual(tags(head('src/same.js')), ['ASCII'], 'once where it reads alike')
   assert.deepEqual(tags(head('src/new.js')), ['UTF-8'], 'an added file as it reads now')
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
+  // Long lines don't take the place of how a file reads: beside it, as it reads now.
+  const longLines = markup => [...markup.matchAll(/class="npm-flag-tag is-warn" data-tooltip=([^>]*)>Long lines</gu)].map(m => m[1])
+  assert.deepEqual(longLines(head('src/long.js')), ['1 line over 1000 characters, the longest 1,013, among readable ones'])
+  assert.deepEqual(tags(head('src/long.js')), ['ASCII'], 'once, read alike')
+  assert.doesNotMatch(head('src/long.js'), /bundle-compare-code-readability/u)
+  assert.deepEqual(longLines(head('src/short.js')), [], 'not where it had them')
+  const tree = /<ul class=bundle-code-tree root[^]*<\/ul>/u.exec(rendered('src/long.js'))[0]
+  const row = name => /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes(`data-tooltip=src/${name}.js>`))
+  assert.match(row('long'), /npm-flag-tag is-warn[^>]*>Long lines</u)
+  assert.doesNotMatch(row('long'), /npm-encoding-tag/u, 'the tree leaving ASCII untagged')
 })
 
 test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {
@@ -368,9 +383,10 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
   const shared = { base, other, baseName: 'a', otherName: 'b', resolutions: [],
     files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files,
     dependencies: { removed: [{ key: '\0gone', name: 'gone', kind: null, range: '1.0.0', opens: 'gone' }],
-      added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh' }],
-      changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept' }] },
-    openDependency: row => opened.push(row.name), dependencyTag: (row, kind) => kind === 'added' ? `[tier ${row.opens}]` : '' }
+      added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh', flags: [] }],
+      changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept', flags: [] }] },
+    openDependency: row => opened.push(row.name),
+    dependencyTags: (row, kind) => [npmDependencyFlagTags(row.flags), kind === 'added' ? `[tier ${row.opens}]` : ''] }
   const element = Object.assign(new CompareCode(), shared)
   element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
   const render = path => { element.path = path; return renderText(element.render()) }
@@ -381,6 +397,17 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
   assert.deepEqual(chips, [['is-added', 'New: fresh', 'freshpeer2.0.0[tier fresh]'], ['is-changed', 'Updated: kept', 'kept^1.0.0 → ^1.1.0'], ['is-removed', 'Removed: gone', 'gone1.0.0']],
     'new, updated and removed, each its range beside its name, a peer dependency marked, and what the source tags one with')
   assert.doesNotMatch(render('lib/package.json'), /bundle-compare-code-deps/u, 'only over the package\'s own')
+  // Each flagged where it calls for a look (npm-dependency-checks.js), the head counting them.
+  const source = { check: 'source', label: 'non-registry', tooltip: 'From GitHub, not npm\'s registry: github:a/kept' }
+  const unimported = { check: 'unimported', label: 'unimported', tooltip: 'New in b, and nothing of it imports it' }
+  element.dependencies = { removed: [], added: [{ ...shared.dependencies.added[0], kind: null, flags: [unimported] }],
+    changed: [{ ...shared.dependencies.changed[0], to: 'github:a/kept', flags: [source] }, { key: '\0other', name: 'other', kind: null, from: '1', to: 'github:a/other', opens: null, flags: [source] }] }
+  const flagged = render('package.json')
+  assert.match(flagged, /<h4>Dependencies <span>1 new · 2 updated<\/span><span class="bundle-compare-code-deps-flagged">1 unimported<\/span><span class="bundle-compare-code-deps-flagged">2 non-registry<\/span><\/h4>/u)
+  assert.match(flagged, /aria-label=New: fresh[^]*>fresh<\/span><span class="bundle-compare-code-dep-range">2\.0\.0<\/span><span class=npm-dependency-flag is-unimported data-tooltip=New in b, and nothing of it imports it>unimported<\/span>/u)
+  assert.match(flagged, /aria-label=Updated: kept[^]*<b>github:a\/kept<\/b><\/span><span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm's registry: github:a\/kept>non-registry</u)
+  assert.match(flagged, /<span class=bundle-compare-code-dep is-changed aria-label=Updated: other>[^]*non-registry<\/span><\/span>/u, 'one opening nothing')
+  element.dependencies = shared.dependencies
   // Each opens as the Overview's rows do.
   const handlers = value => Array.isArray(value) ? value.flatMap(handlers) : value?.values ? value.values.flatMap(handlers) : typeof value === 'function' ? [value] : []
   for (const click of handlers(element._dependencyChanges('package.json'))) click()
@@ -431,6 +458,31 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.match(head('dist/app.min.js'), /<alert malware>/u)
   assert.doesNotMatch(head('index.js'), /<alert/u, 'the open one\'s alerts on a file it has')
   assert.match(render('index.js'), /<alert malware>[^]*?bundle-compare-code-letter added/u, 'in the tree too')
+})
+
+test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
+  const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
+  const big = '// big\n'.repeat(40_000)
+  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = version('a', { 'lib/gone.js': obfuscated, 'lib/big.js': '// small\n', 'lib/plain.js': 'export const a = 1\n' })
+  const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'lib/plain.js': 'export const a = 2\n' })
+  const element = new CompareCode()
+  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const flags = markup => [...markup.matchAll(/class="npm-flag-tag (is-\w+)"[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
+  assert.deepEqual(flags(head('dist/payload.js')), ['Large is-notice', 'Obfuscated is-warn'])
+  assert.match(head('dist/payload.js'), /Obfuscated<\/span>[^]*class=npm-encoding-tag is-notice[^>]*>Minified</u, 'before how it reads')
+  assert.deepEqual(flags(head('lib/big.js')), ['Large is-notice'], 'as it is now')
+  assert.deepEqual(flags(head('lib/gone.js')), ['Obfuscated is-warn'], 'as it was, removed')
+  assert.deepEqual(flags(head('lib/plain.js')), [])
+  const rows = Object.fromEntries([...render('lib/plain.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
+  assert.deepEqual(flags(rows['dist/payload.js']), ['Large is-notice', 'Obfuscated is-warn'], 'in the tree too')
+  assert.deepEqual(flags(rows['lib/gone.js']), ['Obfuscated is-warn'])
+  assert.deepEqual(flags(rows['lib/plain.js']), [])
 })
 
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
@@ -599,6 +651,53 @@ test('in a stasis bundle, whether whitespace may be hidden is told by the format
   assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
 })
 
+test('a file whose bytes are the same, its record in the stasis bundle changed, is listed, saying how', () => {
+  const same = { 'src/data.js': 'export const data = 1\n', 'bin/run': 'echo run\n', 'src/main.js': 'export default 1\n', 'src/asset.js': 'export {}\n' }
+  const recorded = path => {
+    const element = view(path, [same, same])
+    const { base, other } = element
+    base.bundle.formats.set('src/data.js', 'resource')
+    base.bundle.formats.set('src/asset.js', 'resource')
+    other.bundle.formats.set('src/data.js', 'module')
+    other.bundle.executable.add('bin/run')
+    other.bundle.entries.add('src/main.js')
+    element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), file => /^node_modules\/[^/]+/u.exec(file)?.[0] ?? '__own__', undefined,
+      [bundleFileMeta(base), bundleFileMeta(other)]).files
+    element.willUpdate(new Map([['files']]))
+    return renderText(element.render())
+  }
+  const data = recorded('src/data.js')
+  const marks = fileMarks(data)
+  for (const path of ['src/data.js', 'bin/run', 'src/main.js', 'src/asset.js']) assert.deepEqual(marks[path], ['changed'], `${path}: listed as changed`)
+  assert.match(data, /bundle-compare-code-meta"?>resource → module</u, 'in its head, with no tooltip')
+  assert.match(data, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
+  assert.match(data, /bundle-code-tree-link[^]*?bundle-compare-code-meta"?>format<\/span>\s*<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u,
+    'and its tree row, its lines the same')
+  assert.match(recorded('bin/run'), /The contents are the same\. It is now executable\.[^]*/u)
+  assert.match(recorded('bin/run'), /bundle-compare-code-meta"?>\+x</u)
+  assert.match(recorded('src/main.js'), /bundle-compare-code-meta"?>new entry</u)
+  assert.match(recorded('src/main.js'), /It is now an entry point of the bundle\./u)
+  // A resource whose format is dropped: stasis runs a file with none as code.
+  const dropped = recorded('src/asset.js')
+  assert.match(dropped, /bundle-compare-code-meta"?>resource → none</u)
+  assert.match(dropped, /The contents are the same\. The bundle records no format for it now, resource before, carried as data before, run as code now\./u)
+})
+
+test('a large file whose bytes are the same, its record changed, says so without asking to diff it', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const big = { 'src/big.js': 'x\n'.repeat(60_000) }
+  const element = view('src/big.js', [big, big])
+  const { base, other } = element
+  base.bundle.formats.set('src/big.js', 'resource')
+  other.bundle.formats.set('src/big.js', 'module')
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  element.willUpdate(new Map([['files']]))
+  const markup = renderText(element.render())
+  assert.match(markup, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
+  assert.doesNotMatch(markup, /This diff is large/u)
+  assert.ok(Number.isFinite(combinedDiffRows(base, other, element.files).rows), 'and the one list is not too large for it')
+})
+
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
   const files = ['a.js', 'a/b.js', 'Z.js', 'src/z/y.js', 'src/b.js', 'lib/x/y/z.js']
   const element = view(null, [Object.fromEntries(files.map(path => [path, '1'])), Object.fromEntries(files.map(path => [path, '2']))])
@@ -729,6 +828,31 @@ test('a renamed file whose contents are the same but whose import was repointed 
   assert.doesNotMatch(markup, /Renamed without changes/u)
   assert.match(markup, /class=diff-row ctx is-import role="row" data-line=1>/u)
   assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
+})
+
+test('a renamed file whose contents are the same, its import repointed and its record changed, says how its record changed, in Code and in the one list', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\n"
+  const side = (integrity, parent, target, format) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { [parent]: source } }]]),
+    imports: new Map([['node, import', new Map([[parent, new Map([['lodash/pick', target]])]])]]), formats: new Map([[parent, format]]),
+  }) })
+  const base = side('base', 'src/server.js', 'node_modules/lodash/pick.cjs', 'resource'), other = side('other', 'lib/server.js', 'node_modules/lodash/pick.js', 'module')
+  const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  const shared = { base, other, files, baseName: 'a', otherName: 'b',
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other), new Map(files.changed.map(row => [row.basePath, row.path]))).changed }
+  const said = /Renamed, its contents the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u
+  const element = Object.assign(new CompareCode(), shared, { path: 'lib/server.js' })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  assert.match(markup, said)
+  assert.match(markup, /Repointed import/u, 'its import listed too')
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), shared)
+  all.models = combinedDiffRows(base, other, files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const list = renderText(all.render())
+  assert.match(list, said, 'in the one list')
+  assert.match(list, /Repointed import/u)
 })
 
 test('the Diff view lists every changed file\'s diff in one list, in its rail\'s order, and counts the rows it would show', async () => {

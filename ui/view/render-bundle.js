@@ -39,7 +39,7 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTier, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2083,7 +2083,7 @@ function renderBundleSlide(entry) {
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details, entry)],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-                .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, dependencyTag: npmDependencyTier } : null}></bundle-compare>`],
+                .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, dependencyTags: npmDependencyTags } : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
@@ -2654,16 +2654,16 @@ function renderNpmPackageOverview(entry, details) {
   const { sources } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const { paths, binaries, byPath, content } = npmFilesRead(details)
+  const { paths, binaries, content } = npmFilesRead(details)
   // Socket's alerts on the files they name, beside each one's tag.
   const alerts = npmSocketFileAlerts(entry.npm)
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry),
-    provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
+    provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files: paths }), npmOverviewExtras(entry, paths, details), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
-    leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
+    leadColumn: html`${npmDependenciesColumn(entry, details)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
-    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmReadabilityTag(byPath.get(path))}`, fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path)}`, fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }

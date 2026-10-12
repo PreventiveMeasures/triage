@@ -22,8 +22,14 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmDependencyTier, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+// Template text, its values spelled out, `nothing` as none.
+const rendered = value => Array.isArray(value) ? value.map(rendered).join('') : value?.strings ? value.strings.map((part, i) => part + rendered(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+// Code an obfuscator wrote, with `count` names of its own, from `from` on.
+const obfuscated = (count, from = 0x1a2b) => Array.from({ length: count }, (_, i) => `var _0x${(from + i).toString(16)}=_0x${from.toString(16)}[${i}];`).join('')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -77,9 +83,17 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.equal(kind('é\u0085'), 'utf8 + controls', 'C1 controls')
   assert.equal(kind('if (admin) {\u202E } \u2066// x\u2069'), 'utf8 + controls', 'bidirectional controls')
   assert.equal(kind('\uFEFFbom and\u200Bzero width'), 'utf8', 'a BOM and zero-width characters are not controls')
+  assert.equal(kind('eval(d(`|\u{E0151}\u{E0156}\u{E0152}`))'), 'utf8 + controls', 'variation selectors that vary nothing hide text')
+  assert.equal(kind('const { timeout,\u3164 } = req.query'), 'utf8 + controls', 'a Hangul filler hides a name')
+  assert.equal(kind('Made with ❤\uFE0F, \u2229\uFE00 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}'), 'utf8', 'an emoji\'s, a registered variant\'s and a flag\'s are text')
   assert.equal(kind(null), 'binary')
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
+  assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
+  const note = text => npmEncodingTag(npmFileReadability('lib/a.js', text)).values[1]
+  assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
+  assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
+  assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
 })
 
 test('a file reads as text, or is not UTF-8, holds controls, is a source map, has one in it, is minified, or has unexpected long lines', () => {
@@ -191,6 +205,61 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('src/d.css', `${Array.from({ length: 6 }, (_, i) => `.list .item-${i}`).join(', ')} { color: red; margin: 0 auto; }\n`), 'ascii')
   assert.equal(category('src/About.jsx', `export const About = () => <p>${'We build tools that make reviewing code a little easier for everyone '.repeat(8)}</p>\n`), 'ascii',
     'nor what minifiers never write, as JSX')
+})
+
+test('an obfuscator\'s fingerprint is 20 of its _0x names or more, or the loop it turns its strings with', () => {
+  assert.deepEqual(npmObfuscation(obfuscated(20)), { names: 20, loop: false })
+  assert.deepEqual(npmObfuscation(`${obfuscated(5000)}while(!![]){}`), { names: 1000, loop: true }, 'counted to 1,000, the loop found past them')
+  assert.equal(npmObfuscationFound({ names: 1000, loop: false }), '1,000 or more names such as _0x1a2b')
+  assert.equal(npmObfuscationFound({ names: 999, loop: true }), '999 names such as _0x1a2b, and while(!![])')
+  assert.equal(npmObfuscation(obfuscated(19)), null, 'fewer')
+  assert.equal(npmObfuscation(`${obfuscated(10)}${obfuscated(10)}`), null, 'a name used again counts once')
+  assert.deepEqual(npmObfuscation('(function(){while(!![]){try{break}catch(e){}}})()'), { names: 0, loop: true })
+  assert.deepEqual(npmObfuscation('while (!![]) {\n  break\n}'), { names: 0, loop: true }, 'pretty-printed')
+  const lookalikes = Array.from({ length: 30 }, (_, i) => {
+    const hex = (0x1000 + i).toString(16)
+    return `a_0x${hex} _0x${hex}0000 _0X${hex} _0x${hex.slice(0, 3)} $x._0x${hex}z`
+  }).join('\n')
+  assert.equal(npmObfuscation(lookalikes), null, 'not inside another name, past six digits, with a capital X, under four digits')
+  assert.equal(npmObfuscation('while(!![].length){}'), null)
+  assert.deepEqual(npmFileReadability('dist/a.js', obfuscated(25)).obfuscation, { names: 25, loop: false }, 'as a file reads')
+  assert.equal(npmFileReadability('lib/a.js', 'const a = 1\n').obfuscation, null)
+  assert.equal(npmFileReadability('lib/a.png', null).obfuscation, null)
+  for (const path of ['dist/a.js.map', 'README.md', 'docs/deobfuscate.md', 'CHANGELOG']) {
+    assert.equal(npmFileReadability(path, `${obfuscated(25)}while(!![]){}`).obfuscation, null, `${path}: no code that runs`)
+  }
+})
+
+test('a large code file is JavaScript or TypeScript of 256 KiB or more, not a declaration file', () => {
+  assert.equal(NPM_LARGE_CODE, 256 * 1024)
+  for (const path of ['dist/a.js', 'a.mjs', 'a.cjs', 'a.jsx', 'a.ts', 'a.mts', 'a.cts', 'a.tsx', 'LIB/A.JS']) assert.equal(npmLargeCode(path, NPM_LARGE_CODE), true, path)
+  assert.equal(npmLargeCode('dist/a.js', NPM_LARGE_CODE - 1), false, 'smaller')
+  for (const path of ['a.d.ts', 'a.d.mts', 'a.json', 'a.js.map', 'a.css', 'a.wasm', 'README.md', 'bin/cli']) assert.equal(npmLargeCode(path, 10 * NPM_LARGE_CODE), false, path)
+  assert.equal(npmLargeCode('dist/a.js', undefined), false, 'no size')
+})
+
+test('a file becomes unreadable with no line over 200 characters before and one over 2,000 now, prose, maps and inline maps aside', () => {
+  const became = (path, before, after) => npmBecameUnreadable(path, npmFileReadability(path, before), npmFileReadability(path, after))
+  const short = `const a = '${'x'.repeat(188)}'\n`
+  const long = `const a = '${'y'.repeat(2001)}'\n`
+  assert.equal(short.length - 1, 200)
+  assert.equal(became('lib/a.js', short, long), true)
+  assert.equal(became('lib/a.js', `${short}x${short}`, long), false, 'one line over 200 before')
+  assert.equal(became('lib/a.js', short, `const a = '${'y'.repeat(1988)}'\n`), false, 'none over 2,000 now')
+  assert.equal(became('package.json', '{\n  "a": 1\n}\n', `{"a":"${'z'.repeat(2001)}"}`), true, 'any text')
+  for (const path of ['README.md', 'CHANGELOG', 'lib/a.js.map']) assert.equal(became(path, short, long), false, path)
+  assert.equal(became('lib/a.js', short, `${short}//# sourceMappingURL=data:application/json;base64,${'A'.repeat(4000)}\n`), false, 'its inline map\'s line counts for none')
+  assert.equal(became('lib/a.js', null, long), false, 'not text before')
+  assert.equal(npmBecameUnreadable('lib/a.js', null, npmFileReadability('lib/a.js', long)), false, 'no side before')
+})
+
+test('a file is tagged Large, a code file of 256 KiB or more, as a notice, and Obfuscated, as a warning', () => {
+  const tags = rendered(npmFileFlagTags('dist/a.js', npmFileReadability('dist/a.js', `${obfuscated(25)}while(!![]){}`), NPM_LARGE_CODE))
+  assert.equal(tags, '<span class="npm-flag-tag is-notice" data-tooltip=A code file of 256.0 KiB, 256 KiB or more>Large</span>'
+    + '<span class="npm-flag-tag is-warn" data-tooltip=An obfuscator\'s fingerprint: 25 names such as _0x1a2b, and while(!![])>Obfuscated</span>')
+  assert.match(rendered(npmFileFlagTags('dist/b.js', npmFileReadability('dist/b.js', 'while(!![]){}'), 10)), /^<span class="npm-flag-tag is-warn" data-tooltip=An obfuscator's fingerprint: while\(!!\[\]\)>Obfuscated<\/span>$/u)
+  assert.equal(typeof npmFileFlagTags('lib/a.js', npmFileReadability('lib/a.js', 'const a = 1\n'), 20), 'symbol', 'nothing for neither')
+  assert.equal(typeof npmFileFlagTags('lib/a.d.ts', null, NPM_LARGE_CODE), 'symbol')
 })
 
 test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {
@@ -402,6 +471,30 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.doesNotMatch(await badges(scripted('dropped', '1.0.0', { postinstall: 'node a.js' }), scripted('dropped', '1.1.0', undefined)), /npm-compare-install/u, 'not one it drops')
   assert.doesNotMatch(await badges(scripted('kept', '1.0.0', { postinstall: 'node a.js' }), scripted('kept', '1.1.0', { postinstall: 'node a.js' })), /npm-compare-install/u)
 
+  // Dependencies the open version takes from elsewhere than the registry
+  // anew, each version's spec in the tooltip; new ones nothing of it
+  // imports, as axios 1.14.1's plain-crypto-js, which ran its own
+  // postinstall; after install scripts.
+  const depending = (name, version, dependencies, files = {}) => ({ npm: { name, version, manifest: { dependencies } },
+    json: { sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const fetched = await badges(depending('fetched', '1.2.0', { websocket: '^1.0.29' }),
+    depending('fetched', '1.2.1', { websocket: 'github:web3-js/WebSocket-Node#polyfill/globalThis' }, { 'src/index.js': 'require("websocket")' }))
+  assert.match(fetched, /<li><span class="npm-extension is-warn npm-compare-registry"\s+data-tooltip=1\.2\.0: websocket \^1\.0\.29 · 1\.2\.1: websocket github:web3-js\/WebSocket-Node#polyfill\/globalThis[^]*compare-tip-head">From elsewhere than npm's registry<[^]*compare-tip-version">1\.2\.0<[^]*<span class=>websocket: <code>\^1\.0\.29<\/code>[^]*compare-tip-version">1\.2\.1<[^]*class=is-flagged>websocket: <code>github:web3-js\/WebSocket-Node#polyfill\/globalThis<\/code><[^]*>\s*Non-registry deps<\/span><\/li><\/ul>$/u)
+  assert.doesNotMatch(fetched, /npm-compare-unimported/u, 'imported')
+  const compromised = await badges(depending('compromised', '1.14.0', { 'follow-redirects': '^1.15.6' }, { 'lib/axios.js': 'require("follow-redirects")' }),
+    depending('compromised', '1.14.1', { 'follow-redirects': '^1.15.6', 'plain-crypto-js': '^4.2.1' }, { 'lib/axios.js': 'require("follow-redirects")' }))
+  assert.match(compromised, /<li><span class="npm-extension is-warn npm-compare-unimported"\s+data-tooltip=New in 1\.14\.1, imported by nothing of it: plain-crypto-js \^4\.2\.1[^]*compare-tip-head">New, and nothing imports it<[^]*compare-tip-version">1\.14\.1<[^]*class=is-flagged>plain-crypto-js: <code>\^4\.2\.1<\/code><[^]*compare-tip-note">No code file of 1\.14\.1 names it as an import would, nor does an install script; npm installs it all the same, running its install scripts<[^]*>\s*Unused deps<\/span><\/li>/u)
+  assert.doesNotMatch(compromised, /npm-compare-registry/u)
+  const many = await badges(depending('many', '1.0.0', { kept: 'github:a/kept' }),
+    depending('many', '1.1.0', { kept: 'github:a/kept', a: '1', b: '1', c: 'https://example.com/c.tgz', d: 'git+ssh://git@example.com:d.git' }))
+  assert.match(many, /data-tooltip=1\.0\.0: c none; d none · 1\.1\.0: c https:\/\/example\.com\/c\.tgz; d git\+ssh:\/\/git@example\.com:d\.git\s[^]*>\s*Non-registry deps<\/span><\/li>[^]*>\s*Unused deps<\/span><\/li>/u,
+    'each named in its tooltip; not one fetched from elsewhere by the same spec before')
+  assert.match(many, /data-tooltip=New in 1\.1\.0, imported by nothing of it: a 1, b 1, c https:\/\/example\.com\/c\.tgz, d git\+ssh:\/\/git@example\.com:d\.git[^]*compare-tip-head">New, and nothing imports them</u,
+    'the unused ones named in its tooltip alone')
+  assert.match(await badges(scripted('first', '1.0.0', undefined), { ...scripted('first', '1.1.0', { postinstall: 'node x.js' }), npm: { name: 'first', version: '1.1.0', manifest: { installScripts: { postinstall: 'node x.js' }, dependencies: { y: '1' } } } }),
+    /npm-compare-install[^]*npm-compare-unimported/u, 'after install scripts')
+  assert.doesNotMatch(await badges(depending('dropping', '1.0.0', { gone: 'github:a/gone' }), depending('dropping', '1.1.0', {})), /npm-compare-(?:registry|unimported)/u, 'not one it drops')
+
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
   const ago = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()
@@ -421,23 +514,22 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
 
 test('a dependency Compare lists new is tagged with its package\'s tier by downloads but its latest two weeks\', whatever it is, once they arrive, asked with the others\'', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   // 500 a day: 3,500 a week, among the top 100,000; 4M a day, 28M a week, among the top 2,000.
   answers.counts['new-low'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 500) }
   answers.counts['new-top'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 4e6) }
   const settle = () => new Promise(resolve => { setImmediate(resolve) })
   // Asked for in one pass, as a Compare's are: one request for all.
   countsAsked.length = 0
-  npmDependencyTier({ name: 'new-low', opens: 'new-low' }, 'added')
-  npmDependencyTier({ name: 'new-top', opens: 'new-top' }, 'added')
-  npmDependencyTier({ name: 'unlisted', opens: 'unlisted' }, 'added')
+  npmDependencyTags({ name: 'new-low', opens: 'new-low' }, 'added')
+  npmDependencyTags({ name: 'new-top', opens: 'new-top' }, 'added')
+  npmDependencyTags({ name: 'unlisted', opens: 'unlisted' }, 'added')
   await settle()
   assert.deepEqual(countsAsked, [['new-low', 'new-top', 'unlisted']])
-  assert.equal(text(npmDependencyTier({ name: 'unlisted', opens: 'unlisted' }, 'added')), '', 'nothing for one not answered')
+  assert.equal(rendered(npmDependencyTags({ name: 'unlisted', opens: 'unlisted' }, 'added')), '', 'nothing for one not answered')
   // Shown one after another, each package's downloads asked for once a
   // session: 1 depending on A and B, 2 on B and C, 3 on all three.
   for (const name of ['dep-a', 'dep-b', 'dep-c']) answers.counts[name] = answers.counts['new-low']
-  const show = async (...names) => { countsAsked.length = 0; for (const name of names) npmDependencyTier({ name, opens: name }, 'added'); await settle(); return countsAsked }
+  const show = async (...names) => { countsAsked.length = 0; for (const name of names) npmDependencyTags({ name, opens: name }, 'added'); await settle(); return countsAsked }
   assert.deepEqual(await show('dep-a', 'dep-b'), [['dep-a', 'dep-b']])
   assert.deepEqual(await show('dep-b', 'dep-c'), [['dep-c']], 'only the one not had')
   assert.deepEqual(await show('dep-a', 'dep-b', 'dep-c'), [], 'none, all had')
@@ -451,8 +543,8 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   npmCompareBadges({ npm: { name: 'dep-figured', version: '1.0.0' } }, { npm: { name: 'dep-figured', version: '1.1.0' } })
   await settle()
   assert.deepEqual(await show('dep-figured'), [])
-  assert.match(text(npmDependencyTier({ name: 'dep-figured', opens: 'dep-figured' }, 'added')), />top 2,000</u)
-  const tag = async (row, kind = 'added') => { npmDependencyTier(row, kind); await settle(); return text(npmDependencyTier(row, kind)) }
+  assert.match(rendered(npmDependencyTags({ name: 'dep-figured', opens: 'dep-figured' }, 'added')), />top 2,000</u)
+  const tag = async (row, kind = 'added') => { npmDependencyTags(row, kind); await settle(); return rendered(npmDependencyTags(row, kind)) }
   assert.match(await tag({ name: 'alias', range: 'npm:new-low@^1.0.0', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
     'the package it opens, an alias\'s too, to Sep 27: its last whole month August')
   // A package just pulled in, its latest two weeks' downloads 1M a day, but
@@ -464,13 +556,62 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   assert.match(await tag({ name: 'new-top', opens: 'new-top' }), /npm-downloads-tier is-top[^]*>top 2,000</u, 'green ones too')
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'changed'), '', 'not one the version compared with had')
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'removed'), '')
-  assert.equal(await tag({ name: 'local', opens: null }), '', 'nor one naming no package in the registry')
-  countsAsked.length = 0
-  for (const range of ['github:someone/new-top', 'someone/new-top#main', 'git+ssh://git@example.com/new-top.git', 'https://example.com/new-top.tgz', 'file:../new-top', '../new-top', 'workspace:*', 'link:../new-top']) {
-    assert.equal(await tag({ name: 'new-top', range, opens: 'new-top' }), '', `nor one installed from elsewhere, its registry namesake's downloads not its own: ${range}`)
+  assert.equal(await tag({ name: 'local', opens: null }), '', 'nor one that opens no package, as npm doesn\'t install it from the registry')
+  // What calls for a look at one, flagged, whatever its kind.
+  const source = { check: 'source', label: 'non-registry', tooltip: 'From GitHub, not npm\'s registry: github:a/b' }
+  assert.equal(await tag({ name: 'b', opens: null, flags: [source] }, 'changed'), '<span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm\'s registry: github:a/b>non-registry</span>')
+})
+
+test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, one newly obfuscated', async () => {
+  const version = (ver, files) => ({ integrity: `files@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'files', version: ver } })
+  const compared = (base, other) => computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  const badges = async (base, other, files = compared(base, other)) => {
+    npmCompareBadges(base, other, files); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other, files))
   }
-  for (const range of ['^1.0.0', '1.2.3 - 2', '>=1 <2 || 3.x', '*', '', 'latest']) assert.match(await tag({ name: 'new-top', range, opens: 'new-top' }), />top 2,000</u, range)
-  assert.deepEqual(countsAsked, [], 'and nothing asked for them')
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const payload = `${obfuscated(25)}\n${'// padding padding padding\n'.repeat(12_000)}`
+  const big = '// big\n'.repeat(40_000)
+  const base = version('1.0.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\n${code}\n`, 'lib/vendor.js': obfuscated(25, 0x2000), 'lib/big.js': big,
+    'lib/util.js': `${code}\n` })
+  const other = version('1.1.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\nconst payload = '${'y'.repeat(2001)}'\n${code}\n`, 'lib/vendor.js': obfuscated(30, 0x3000),
+    'lib/big-moved.js': big, 'lib/helpers.js': `${code}\n${obfuscated(25)}\n`, 'dist/payload.js': payload })
+  const files = compared(base, other)
+  assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
+    [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')
+  const flagged = await badges(base, other, files)
+  const chips = [...flagged.matchAll(/<li><span class=npm-extension npm-compare-file (npm-compare-\w+)[^]*?>\s*<span>([^<]+)<\/span>(?:<span class="npm-extension-count">([^<]+)<\/span>)?<\/span><\/li>/gu)]
+    .map(([, kind, label, count]) => [kind, label, count ?? null])
+  assert.deepEqual(chips, [['npm-compare-large', 'Large new code', null], ['npm-compare-unreadable', 'Now unreadable', null],
+    ['npm-compare-obfuscated', 'Obfuscated', '2']], 'a large code file added, not one moved; a file become unreadable; files newly obfuscated, one renamed, not one obfuscated before; counted where several, no file named')
+  const outside = flagged.replaceAll(/data-tooltip=[^\n]*|\.tooltipContent=[^]*?<\/div>\s*<\/div>>/gu, '')
+  assert.match(outside, /<span>Large new code<[^]*<span>Now unreadable<[^]*<span>Obfuscated</u)
+  assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
+  const size = `${(payload.length / 1024).toFixed(1)} KiB`
+  assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
+  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
+    + '[^]*compare-tip-note">Code files the open version adds, of 256 KiB or more<', 'u'), 'styled, a row for each file')
+  assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
+  assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
+  assert.doesNotMatch(flagged, /compare-tip-path">lib\/(?:vendor|big-moved)\.js</u)
+  assert.doesNotMatch(await badges(base, other, null), /npm-compare-file/u, 'none until the files are compared')
+  assert.doesNotMatch(await badges(other, base), /npm-compare-file/u, 'none the other way: a file dropped, one readable again, obfuscation gone')
+
+  // Their tags on the files, as in the Files list: what each is now, whatever
+  // it was before.
+  const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="?(npm-\w+-tag)[^>]*>([^<]+)</gu)].map(([, kind, tag]) => `${kind}:${tag}`)
+  assert.deepEqual(tags('dist/payload.js'), ['npm-flag-tag:Large', 'npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'])
+  assert.deepEqual(tags('lib/vendor.js'), ['npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'], 'obfuscated before too: tagged, not flagged')
+  assert.deepEqual(tags('lib/big-moved.js'), ['npm-flag-tag:Large', 'npm-encoding-tag:ASCII'])
+  assert.deepEqual(tags('index.js'), ['npm-flag-tag:Long lines', 'npm-encoding-tag:ASCII'], 'one become unreadable by its Long lines tag, beside ASCII')
+
+  // Many files: counted, the tooltip listing the first eight.
+  const many = (ver, line) => version(ver, Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`lib/f${i}.js`, `${code}\n${line}\n`])))
+  const counted = await badges(many('2.0.0', 'export {}'), many('2.1.0', `const x = '${'z'.repeat(2001)}'`))
+  assert.match(counted, /<span>Now unreadable<\/span><span class="npm-extension-count">10</u)
+  assert.equal(counted.match(/compare-tip-path"/gu).length, 8)
+  assert.match(counted, /compare-tip-note">and 2 more</u)
+  assert.match(counted, /data-tooltip=Now unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {

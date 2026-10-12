@@ -20,6 +20,7 @@ mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 await import('../ui/view/bundle-compare.js')
+const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 const Compare = customElements.get('bundle-compare')
 const { state: compareState } = await import('../client/index.js')
 
@@ -189,6 +190,18 @@ test('the Files section is collapsed until opened, then lists Removed | Added | 
   assert.match(filesPart(renderText(view._renderDiff())), /bundle-compare-cols[^]*bundle-compare-changed/u)
 })
 
+test('the Files section lists as changed a file whose record alone changed, saying how', () => {
+  const view = compare()
+  // The open bundle runs a.js, its bytes the same, as an entry point with its execute bit set.
+  view.details.bundle.entries.add('a.js')
+  view.details.bundle.executable.add('a.js')
+  view._diffKey = null
+  view._openSections = new Set(['files'])
+  const markup = renderText(view._renderDiff())
+  assert.match(markup, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
+  assert.match(markup, /bundle-compare-changed[^]*a\.js[^]*bundle-compare-code-meta"?>\+x<[^]*bundle-compare-code-meta"?>new entry</u)
+})
+
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
   const view = compare()
   view._status = 'ready'
@@ -257,6 +270,20 @@ test('packages list Removed | Added | Changed, each package once with its versio
   view._pkgSort = { ...view._pkgSort, changed: 'size' }
   rows.changed.push({ pkg: 'axios', baseBytes: 5, otherBytes: 15, delta: 10, baseVersions: [], otherVersions: [], direction: null })
   assert.deepEqual(changedOrder(), ['Own source', 'axios', 'lodash', 'react'], 'the largest change first, name breaking ties')
+})
+
+test('a source\'s dependencies list in place of Packages, each tagged as the source tags it, with what calls for a look at it', () => {
+  const view = compare()
+  view.source = { dependencyTags: row => npmDependencyFlagTags(row.flags) }
+  const flag = (check, label) => ({ check, label, tooltip: `${label}, as said` })
+  const rows = { removed: [{ key: '\0gone', name: 'gone', kind: null, range: 'github:a/gone' }],
+    added: [{ key: '\0plain-crypto-js', name: 'plain-crypto-js', kind: null, range: '^4.2.1', flags: [flag('unimported', 'unimported')] }],
+    changed: [{ key: 'optional\0websocket', name: 'websocket', kind: 'optional', from: '^1.0.29', to: 'github:a/websocket', flags: [flag('source', 'non-registry')] }] }
+  const markup = renderText(view._renderDependencies(rows, 'Before', 'After', ['removed', 'added', 'changed']))
+  assert.match(markup, /data-tooltip=plain-crypto-js>plain-crypto-js<\/span>\s*<span class=npm-dependency-flag is-unimported data-tooltip=unimported, as said>unimported<\/span>\s*<span class="bundle-compare-dep-ver"/u)
+  assert.match(markup, /data-tooltip=websocket>websocket<\/span>\s*<span class=npm-dependency-flag is-source data-tooltip=non-registry, as said>non-registry<\/span><span class="npm-dependency-kind">optional<\/span>/u,
+    'before its kind')
+  assert.doesNotMatch(markup.slice(0, markup.indexOf('bundle-compare-group bundle-compare-added')), /npm-dependency-flag/u, 'none on one removed')
 })
 
 test('a package installed under an npm alias keeps one row, its versions joined to its sizes', () => {
@@ -421,8 +448,17 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
   assert.doesNotMatch(diff, />Packages</u)
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
-  view.source = { ...view.source, dependencyTag: (row, kind) => `[${kind} ${row.name}]` }
-  assert.match(renderText(view._renderDiff()), /npm-dependency-kind">peer<\/span>\[added dep\]/u, 'what the source tags one with, beside its kind')
+  view.source = { ...view.source, dependencyTags: (row, kind) => `[${kind} ${row.name}]` }
+  assert.match(renderText(view._renderDiff()), /\[added dep\]<span class="npm-dependency-kind">peer<\/span>/u, 'what the source tags one with, before its kind')
+})
+
+test('a source\'s badges are given the one compared with, the open one, and the comparison\'s files', async () => {
+  const { view, source } = sourced()
+  view.source = { ...source('2.0.0'), badges: (base, other, files) => `<badges ${base.integrity} → ${other.integrity}: ${files.changed.map(row => row.path)}>` }
+  view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'overview' }
+  view.willUpdate(new Map([['request', null]]))
+  await Promise.resolve()
+  assert.match(renderText(view.render()), /<badges sha512-1\.0\.0 → sha512-2\.0\.0: a\.js>/u)
 })
 
 test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {

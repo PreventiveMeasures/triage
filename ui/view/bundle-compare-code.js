@@ -30,11 +30,12 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLongLinesTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
+import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
@@ -165,19 +166,23 @@ function countLines(text) {
 }
 
 // A diff too large to compute before it is asked for.
-// path → { kind, baseBytes, otherBytes, basePath, renamedFrom, modified } for
-// every file that differs between the two sides of `files`
+// path → { kind, baseBytes, otherBytes, basePath, renamedFrom, modified, meta }
+// for every file that differs between the two sides of `files`
 // (bundle-compare-diff.js): removed, added, or changed, `basePath` naming the
 // file in the base bundle where that differs from its path, `renamedFrom` a
-// renamed one's old path, and `modified` whether its contents changed too.
+// renamed one's old path, `modified` whether its contents changed too (false
+// for a changed one whose record alone changed), and `meta` how what a stasis
+// bundle records of it changed.
 export function fileEntries(files) {
   const entries = new Map()
   if (!files) return entries
   for (const row of files.onlyBase) entries.set(row.path, { kind: 'removed', basePath: row.basePath, baseBytes: row.bytes, otherBytes: null })
   for (const row of files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
   for (const row of files.changed) {
-    entries.set(row.path, row.renamedFrom == null ? { kind: 'changed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes }
-      : { kind: 'renamed', basePath: row.basePath, renamedFrom: row.renamedFrom, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+    const recorded = { ...row.meta ? { meta: row.meta } : {} }
+    entries.set(row.path, row.renamedFrom == null
+      ? { kind: 'changed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...row.modified === false ? { modified: false } : {}, ...recorded }
+      : { kind: 'renamed', basePath: row.basePath, renamedFrom: row.renamedFrom, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...recorded })
   }
   return entries
 }
@@ -248,11 +253,12 @@ export class BundleCompareCode extends LitElement {
     otherAlerts: { attribute: false },
     alertTags: { attribute: false },
     // A source's dependency changes, `{ removed, added, changed }`
-    // (npm-package.js npmDependencyChanges), what opens one, and what tags
-    // one (npm-overview.js npmDependencyTier).
+    // (npm-package.js npmDependencyChanges, with npm-dependency-checks.js's
+    // `flags`), what opens one, and what tags one (npm-overview.js
+    // npmDependencyTags).
     dependencies: { attribute: false },
     openDependency: { attribute: false },
-    dependencyTag: { attribute: false },
+    dependencyTags: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -511,7 +517,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
+            ${this._alertTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
             ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
@@ -533,7 +539,8 @@ export class BundleCompareCode extends LitElement {
     if (!counts) return nothing
     const { additions, deletions } = counts
     const renamed = entry.kind === 'renamed'
-    if (renamed && additions === 0 && deletions === 0) {
+    // A file renamed, or recorded otherwise, as it was.
+    if ((renamed || entry.modified === false) && additions === 0 && deletions === 0) {
       return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
     }
     return html`<span class="bundle-compare-code-line-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
@@ -679,12 +686,19 @@ export class BundleCompareCode extends LitElement {
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind }, { before, after, textual, large, model, hiding, changes, whitespace }) {
+  _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, hiding, changes, whitespace }) {
     const size = value => formatBytes(value ?? 0)
+    const recorded = metaSentences(meta)
+    const same = `${kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}`
+    // Its bytes the same (bundle-compare-diff.js): no diff to compute, however large.
+    if (textual && modified === false) return html`<div class="bundle-compare-code-message"><p>${same}</p></div>`
     if (!textual) {
+      if (kind === 'changed' && modified === false) {
+        return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
+      }
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
         : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
+      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.${recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
       return html`<div class="bundle-compare-code-message">
@@ -703,7 +717,7 @@ export class BundleCompareCode extends LitElement {
     const spaced = prefs.ignoreWhitespace && whitespace === 'hideable'
     const hidden = [spaced && 'whitespace', hiding && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
-      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
+      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.${recorded ? ` ${recorded}` : ''}` : same}</p>
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
@@ -715,7 +729,7 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${this._githubLink(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one
@@ -779,11 +793,22 @@ export class BundleCompareCode extends LitElement {
 
   // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
   // UTF-8, Minified, Controls, ...): as it reads now, after how it read where
-  // that differs.
+  // that differs; its long lines, as it reads now, beside that, as Obfuscated
+  // is (file-readability.js npmLongLinesTag).
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
-    if (!was || !now || was.category === now.category) return npmReadabilityTag(now ?? was)
-    return html`<span class="bundle-compare-code-readability">${npmReadabilityTag(was)}<span aria-hidden="true">→</span>${npmReadabilityTag(now)}</span>`
+    const tagged = read => read.category === 'long' ? read.kind : read.category
+    const tag = !was || !now || tagged(was) === tagged(now) ? npmEncodingTag(now ?? was)
+      : html`<span class="bundle-compare-code-readability">${npmEncodingTag(was)}<span aria-hidden="true">→</span>${npmEncodingTag(now)}</span>`
+    return html`${npmLongLinesTag(now ?? was)}${tag}`
+  }
+
+  // What a file is beyond how it reads, as the npm Files list tags it
+  // (file-readability.js npmFileFlagTags), in its head and the tree: as it is
+  // now, or was, for one removed.
+  _flagTags(path, entry) {
+    const { was, now } = this._reads(path, entry)
+    return now ? npmFileFlagTags(path, now, entry.otherBytes) : npmFileFlagTags(entry.basePath ?? path, was, entry.baseBytes)
   }
 
   // The tree tags a file as its head does where it can be hard to review by
@@ -792,7 +817,8 @@ export class BundleCompareCode extends LitElement {
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
-    return shown && READABILITY.get(shown.category).mark ? npmReadabilityTag(shown) : nothing
+    if (!shown || !READABILITY.get(shown.category).mark) return nothing
+    return shown.category === 'long' ? npmLongLinesTag(shown) : npmEncodingTag(shown)
   }
 
   // A file's lines added and removed, and its sizes.
@@ -834,8 +860,8 @@ export class BundleCompareCode extends LitElement {
     const { after, before, textual, model } = file
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
-    // its two sides are one text.
-    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed)
+    // its two sides are one text. One whose record changed too says how.
+    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
@@ -916,21 +942,24 @@ export class BundleCompareCode extends LitElement {
   // ones aren't listed), under one head counting them, each a chip with its
   // range beside its name, those the open version adds, those whose range
   // it changes and those it drops, struck through, each opening as the
-  // Overview's Dependencies rows do.
+  // Overview's Dependencies rows do, and tagged as the source tags it
+  // (`dependencyTags`), the head counting its `flags`, what calls for a look
+  // at it (npm-dependency-checks.js), too.
   _dependencyChanges(path) {
     if (path !== 'package.json' || !this.dependencies) return nothing
     const { added, changed, removed } = this.dependencies
     const chips = [...added.map(row => ['added', row]), ...changed.map(row => ['changed', row]), ...removed.map(row => ['removed', row])]
     if (chips.length === 0) return nothing
     const counts = [[added, 'new'], [changed, 'updated'], [removed, 'removed']].filter(([rows]) => rows.length > 0).map(([rows, noun]) => `${rows.length} ${noun}`)
+    const flagged = Map.groupBy(chips.flatMap(([, row]) => row.flags ?? []), ({ label }) => label)
     const open = this.openDependency
     return html`<section class="bundle-compare-code-deps" aria-label="Dependency changes">
-      <h4>Dependencies <span>${counts.join(' · ')}</span></h4>
+      <h4>Dependencies <span>${counts.join(' · ')}</span>${[...flagged].map(([label, flags]) => html`<span class="bundle-compare-code-deps-flagged">${flags.length} ${label}</span>`)}</h4>
       <ul>${chips.map(([kind, row]) => {
         const range = kind === 'changed'
           ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
           : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
-        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTag?.(row, kind) ?? nothing}`
+        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTags?.(row, kind) ?? nothing}`
         const label = `${{ added: 'New', changed: 'Updated', removed: 'Removed' }[kind]}: ${row.name}`
         return html`<li>${open && row.opens
           ? html`<button type="button" class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label} @click=${() => open(row)}>${content}</button>`

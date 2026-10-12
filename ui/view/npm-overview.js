@@ -9,7 +9,8 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmRegistryRange, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { npmDependencyFlagTags, npmDependencySpecs } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -18,9 +19,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
-
-export { npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscationFound, npmReadabilityTag } from './file-readability.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -370,8 +369,8 @@ const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
 // What the Overview reads of a version's files, once a version: their
-// `paths`, each one's readability (npmFileReadability) and extension by path,
-// how many files each category has, the `binaries`, sorted, its file types
+// `paths`, each one's readability (npmFileReadability), extension and size by
+// path, how many files each category has, the `binaries`, sorted, its file types
 // (npmFileTypes), and its `content`: its text files, their lines of code and
 // all its files' bytes (`unpacked`), the package's own files
 // (isNpmPackageFile) left out, as every package has them.
@@ -391,7 +390,7 @@ export function npmFilesRead(details) {
       content.unpacked += sizes.get(path) ?? 0
     }
     known = {
-      paths: new Set(sources), byPath, counts, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
+      paths: new Set(sources), byPath, counts, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
       types: npmFileTypes(sources, sizes, lines), content,
     }
@@ -449,8 +448,15 @@ export function npmReadabilityWarning(entry, details) {
   return readabilityWarning(npmFilesRead(details).counts, details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
+// A file's tags in the Files list and Compare's: its flags (npmFileFlagTags),
+// then how it reads.
+export function npmFileTags(details, path) {
+  const { byPath, sizes } = npmFilesRead(details)
+  return html`${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
+}
+
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
-// one's type icon and Socket's alerts on it, the tag of one the open version
+// one's type icon and Socket's alerts on it, the tags of one the open version
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
@@ -458,7 +464,7 @@ export const npmCompareFiles = {
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
-  tag: (details, path) => npmReadabilityTag(npmFilesRead(details).byPath.get(path)),
+  tag: npmFileTags,
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)
     const counts = new Map()
@@ -475,20 +481,23 @@ export const npmCompareFiles = {
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: an open version npm says is deprecated,
+// (`other`), each side's details, and `files` the comparison's
+// (computeBundleDiff's): an open version npm says is deprecated,
 // a publisher that changed, provenance lost, install scripts added or
-// changed, an open version under two weeks old (npmRecentRelease), the
-// advisories that affect either,
+// changed, dependencies it takes from elsewhere than npm's registry anew and
+// new ones nothing of it imports, the files it adds or changes that call
+// for one (fileBadges), an open version under two weeks old
+// (npmRecentRelease), the advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
-export function npmCompareBadges(base, other) {
+export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), recentBadge(other.npm),
-    advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files),
+    recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -561,13 +570,93 @@ function installScriptsBadge(base, other) {
   const was = scripts(base)
   const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
   if (flagged.length === 0) return nothing
-  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>`
-    : html`<span class="compare-tip-scripts">${[...list].map(([script, command]) => html`<span class=${marked.includes(script) ? 'is-flagged' : nothing}>${script}: <code>${command}</code></span>`)}</span>`
+  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>` : tipLines([...list].map(([script, command]) => [script, command, marked.includes(script)]))
   const summary = flagged.map(script => `${script} ${was.has(script) ? 'changed' : 'added'}`).join(', ')
   return html`<li><span class="npm-extension is-warn npm-compare-install"
     data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
     .tooltipContent=${compareTip('Install scripts', [base.npm, other.npm], [said(was, []), said(now, flagged)])}>
     <span>${flagged.length === 1 ? 'Install script' : 'Install scripts'}</span><span class="npm-extension-count">${summary}</span></span></li>`
+}
+
+// Files a chip's styled tooltip lists before counting the rest.
+const TIP_FILES = 8
+
+// What the open version does to its files that calls for a look, each as a
+// red chip, though the tags it gives a file (npmFileTags) say little of one
+// alone: a code file of 256 KiB or more it adds (npmLargeCode); a file it
+// changes that had no line over 200 characters and now has one over 2,000
+// (npmBecameUnreadable), which the file's Long lines or Minified tag says
+// of it; and a file it adds or changes with an obfuscator's fingerprint
+// where the one compared with had none (npmObfuscation). By Compare's
+// `files`, a renamed one by its old path; none until they are compared.
+function fileBadges(base, other, files) {
+  if (!files || !base.json || !other.json) return []
+  const [was, now] = [base, other].map(npmFilesRead)
+  const after = row => now.byPath.get(row.path), before = row => was.byPath.get(row.basePath ?? row.path)
+  const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
+  const large = files.onlyOther.filter(row => npmLargeCode(row.path, now.sizes.get(row.path)))
+  const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
+  const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
+  return [
+    fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
+      'Code files the open version adds, of 256 KiB or more'),
+    fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
+      'Its longest line: none over 200 characters before, now one over 2,000'),
+    fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
+      'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
+  ]
+}
+
+// A chip on `rows`, files the open version adds or changes, counting them
+// where there are several, the files in its tooltip alone, each with what
+// `said` of it.
+function fileBadge(kind, label, rows, said, note) {
+  if (rows.length === 0) return nothing
+  const shown = rows.slice(0, TIP_FILES)
+  const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
+  return html`<li><span class=${`npm-extension npm-compare-file ${kind}`}
+    data-tooltip=${`${label}: ${[...shown.map(row => `${row.path} (${said(row)})`), ...more ? [more] : []].join(', ')}`}
+    .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">${label}</div>
+      <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
+      ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
+      <div class="compare-tip-note">${note}</div>
+    </div>`}>
+    <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
+}
+
+// As `Non-registry deps`, the dependencies the open version takes from
+// elsewhere than npm's registry, where the one compared with didn't, or by
+// another spec; and, as `Unused deps`, those it adds that nothing of it
+// imports, which npm installs all the same, its install scripts and all, as
+// a dependency added to run them would be (npm-dependency-checks.js
+// npmFlagDependencyChanges, as Compare's package.json flags each). Their
+// names and specs in their tooltips, each version's for those from
+// elsewhere.
+function dependencyBadges(base, other) {
+  const { added, changed } = npmFlaggedDependencyChanges(base, other)
+  const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
+  // Those from elsewhere by name, each with its spec now; and before.
+  const now = new Map(flagged('source').map(row => [row.name, row.to ?? row.range])), unimported = flagged('unimported')
+  const chips = []
+  if (now.size > 0) {
+    const was = npmDependencySpecs(base.npm.manifest)
+    const said = (specs, marked) => tipLines([...now.keys()].map(name => [name, specs.get(name), marked]))
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
+      data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
+      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
+      Non-registry deps</span></li>`)
+  }
+  if (unimported.length > 0) {
+    const { version } = other.npm
+    const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
+      data-tooltip=${`New in ${version}, imported by nothing of it: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}`}
+      .tooltipContent=${compareTip(`New, and nothing imports ${it}`, [other.npm], [tipLines(unimported.map(({ name, range, kind }) => [kind ? `${name} (${kind})` : name, range, true]))],
+        `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
+      Unused deps</span></li>`)
+  }
+  return chips
 }
 
 // The open version, where it is too recent to trust yet: how long ago it
@@ -599,6 +688,12 @@ function advisoriesBadge(sides, affecting) {
     @click=${() => openCompareAdvisories(sides, affecting)}>
     <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
 }
+
+// A tooltip's lines, `[name, value, flagged]` each, `name: value` one to a
+// line, its value as code, bold where flagged; `name: none`, muted, where it
+// has no value.
+const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([name, value, flagged]) => value == null
+  ? html`<span class="compare-tip-none">${name}: none</span>` : html`<span class=${flagged ? 'is-flagged' : nothing}>${name}: <code>${value}</code></span>`)}</span>`
 
 // A badge's styled tooltip: its `head`, a row for each side's version and
 // what is said of it, and a `note` under them.
@@ -688,14 +783,16 @@ function popularityBadge(name) {
   return tag === nothing ? nothing : html`<li>${tag}</li>`
 }
 
-// A dependency Compare lists new (bundle-compare.js source's `dependencyTag`):
-// its package's tier, whatever it is, by its downloads (npmDownloadsOf) but
-// its latest two weeks' (npmSettledDownloads). Nothing for one changed or
-// removed, which the version compared with already had, nor one that names
-// no package in the registry, nor one installed from elsewhere (a git, file
-// or URL one), whose registry namesake's downloads aren't its own.
-export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens && npmRegistryRange(row.range)
-  ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing
+// What tags a dependency Compare lists (bundle-compare.js source's
+// `dependencyTags`): what calls for a look at it (its `flags`,
+// npm-dependency-checks.js), and for a new one its package's tier, whatever
+// it is, by its downloads (npmDownloadsOf) but its latest two weeks'
+// (npmSettledDownloads). No tier for one changed or removed, which the
+// version compared with already had, nor one that opens no package
+// (npm-package.js npmDependencies), as npm doesn't install it from the
+// registry, whose package of its name has downloads that aren't its own.
+export const npmDependencyTags = (row, kind) => [npmDependencyFlagTags(row.flags),
+  kind === 'added' && row.opens ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing]
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {

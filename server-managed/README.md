@@ -215,8 +215,12 @@ repointed import lists those imports alone. Past that, Code shows a file at
 a time, its Previous and Next file buttons stepping through them in the
 tree's order. A link naming the older Diff mode opens Code. Each file's
 head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
-Controls, Minified, ...), after how it read where that differs, and the tree
-tags a file the same way where it can be hard to review by reading it. A file a
+Controls, Minified, ...), after how it read where that differs, with Long
+lines beside it where it has them now, and the tree
+tags a file the same way where it can be hard to review by reading it (Long
+lines alone, for one with them); both
+tag it Large or Obfuscated as the npm Files list does, as it is now (as it
+was, for one removed). A file a
 bundle or package starts from is labelled in blue in its head (a Stasis
 bundle's entry, an npm version's main, module, types or bin), a license
 file as license in grey (an npm version's at its root, its tooltip naming the
@@ -227,6 +231,23 @@ a local or git install, and `node-gyp rebuild` beside a binding.gyp) are marked 
 the tree, each with its command, one new or changed saying so, and in its
 head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
+Between two stasis bundles, what each records of a file beside its bytes is
+compared too: the format it loads it in (a resource carried as data, or
+`module`, `commonjs` and the rest, run as code, as is a file it records no
+format for, shown as `none`), its execute bit, and its
+being an entry point of the bundle. A file whose record changed is changed,
+its bytes the same or not, and says how in its row of the Overview's Files,
+its head and its tree row (`resource → module`, `+x`, `new entry`; what it
+no longer is struck through), a file whose contents read the same saying it
+in words. Code shows as a labelled box, never as the blank or nothing it
+draws as, each character that reads as something it is not: the controls
+and format characters (bidirectional and zero-width among them), Unicode's
+other spaces (no-break, en and em, thin, ideographic), the default-ignorable
+characters (Hangul fillers, variation selectors, the grapheme joiner, each a
+different name in code from the one it looks like) and the Braille blank;
+an emoji's own joiners, presentation selectors and keycaps, and a
+subdivision flag's tags where Unicode recommends it (England's, Scotland's,
+Wales's), excepted.
 Lines always wrap. Code can hide whitespace changes as
 `diff -b` does: a line re-indented, or with blanks added to a run of them or
 at its end, reads as unchanged, while blanks put between other characters or
@@ -1167,8 +1188,17 @@ control. A version shows in the bundle view with four tabs:
   Over the summary, where any file can be hard to review by reading it, a
   warning says how many and why, in categories, the first that holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
-  characters (the C0 ones but tab, line feed and carriage return, DEL, the
-  C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
+  or invisible characters (the C0 ones but tab, line feed and carriage
+  return, DEL, the C1 ones, and the bidirectional controls U+202A–U+202E and
+  U+2066–U+2069; and, of those Code shows as boxes, the ones text is hidden
+  in: variation selectors, as a payload a byte a selector, but a variation
+  sequence Unicode registers (an HTML entity's math symbol, a heading
+  anchor's `#`), an emoji's selector doubled as copying text leaves it, or a
+  block of them written out as a range in a table of the characters a name
+  may hold; Hangul fillers, as a name no one sees, but those composing
+  Hangul or among jamo; and tags, but those of a subdivision flag Unicode
+  recommends (England's, Scotland's or Wales's); not a BOM, a zero-width or
+  a no-break space, which text has its uses for),
   unexpected long lines (lines over 1,000 characters among readable ones),
   minified (most of its text on such lines, or named `.min.` with any, or,
   with none, its lines averaging over 110 characters and next to none of its
@@ -1213,7 +1243,8 @@ control. A version shows in the bundle view with four tabs:
   install and postinstall, each with its
   name marked as a warning's and its command, a file it names opening it, in the order npm runs them, and
   `node-gyp rebuild` where a `binding.gyp` has no install script of its own),
-  how many dependencies it has, and its files with the lines of code they add
+  how many dependencies it has, with a chip for each check below any of them
+  is flagged by, counting them, which in its tooltip, and its files with the lines of code they add
   up to, its tarball's size and what it unpacks to, each but the tarball's
   size tinted by how big it is: tiny, small, medium, large or gigantic, files,
   lines and bytes counted without the files every package has (package.json,
@@ -1258,14 +1289,45 @@ control. A version shows in the bundle view with four tabs:
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
-  their latest version (an `npm:` alias at the package it names), their kinds
-  and ranges lined up;
+  their latest version (an `npm:` alias at the package it names) where npm
+  installs them from its registry (not a path, `file:` or `./x`, a
+  repository, a URL, nor what npm doesn't install, `workspace:`, as the
+  registry's package of that name isn't what npm installs), their kinds
+  and ranges lined up, each tagged after its name where it calls for a look:
+  non-registry where npm fetches it from elsewhere than its registry, as
+  npm-package-arg resolves a dependency's spec, hosted-git-info reading a
+  repository's host for it: a repository on GitHub, GitLab, Bitbucket, Gist
+  or SourceHut in any form npm takes (`github:owner/repo`, GitHub's
+  `owner/repo` shorthand, `git@github.com:owner/repo`,
+  `ssh://`, `git+https://` or `https://github.com/owner/repo`), named for
+  it, another `git:`, `git+https:` or `git+ssh:` repository, or an `http:`
+  or `https:` tarball; not a `file:` path, nor what npm doesn't install
+  (`workspace:`, `ssh:` to another host) or reads as a path
+  (`git@example.com:org/repo`), its
+  spec in its tooltip; and unimported where nothing of the
+  version imports it: no code file names it as an import would (quoted,
+  alone or before a path in it, `'name'` or `"name/sub"`, after webpack's
+  `~` too, or built from a part of its name up to a `-` or `/`, as a
+  package picks its platform's build, `` `@rollup/rollup-${platform}` ``
+  or `"@typescript/" + name`; prose, source maps, lockfiles and its own
+  package.json aside), nor does an install script npm runs, though npm
+  installs it all the same and runs its install scripts, as a dependency
+  added for those alone would be; not a peer one, which whoever installs the
+  package provides, nor one of DefinitelyTyped's `@types/`;
   Advisories, across every published version, one row each, its head
   counting those that affect the version shown, those first and marked,
   those fixed in it (affecting only older versions) struck through, and
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
-  tag naming the control characters or long lines it holds; and, where the
+  tag naming the control or invisible characters or long lines it holds (one with
+  unexpected long lines still tagged ASCII or UTF-8, Long lines beside it as
+  a warning), and before them,
+  Large, quietly, on a JavaScript or TypeScript file of 256 KiB or more
+  (not a declaration file), which says little of a file alone, and
+  Obfuscated, as a warning, on one with an obfuscator's fingerprint (20
+  names or more such as `_0x1a2b`, `_0x` and four to six hex digits, or the
+  loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
+  source map, which holds the names of the code it maps); and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names,
   each file's head linking it on GitHub at the commit the version was
@@ -1306,7 +1368,24 @@ control. A version shows in the bundle view with four tabs:
   from its maintainers wouldn't; install scripts the open version adds or
   changes (`postinstall added`, node-gyp's `install` for a `binding.gyp` it
   adds among them, not one it drops), each version's with their commands in
-  its tooltip; an open version under two weeks old, as on
+  its tooltip; in red, though their tags on the files say little of one
+  alone, a code file of 256 KiB or more the open version adds (not one
+  renamed), a file it changes that had no line over 200 characters and now
+  has one over 2,000 (prose, source maps and an inline
+  map's line aside, as its Long lines or Minified tag says of it), and a file
+  it adds or changes with an obfuscator's fingerprint where the version
+  compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
+  each counting them where there are several, its tooltip alone listing
+  them, each with its size, its longest line before and now, or what its
+  fingerprint holds;
+  `Non-registry deps`, dependencies the open version takes from
+  elsewhere than npm's registry, as the Overview tags them, where the one
+  compared with didn't, or by another spec, their names and each version's
+  spec in its tooltip; `Unused deps`, new dependencies
+  nothing of the open version imports, as the Overview tells
+  (`plain-crypto-js`, which axios 1.14.1 added to run its postinstall), their
+  names and ranges in its tooltip, one that was another kind of dependency
+  before not new; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
@@ -1331,19 +1410,17 @@ control. A version shows in the bundle view with four tabs:
   20,000), its last complete month's downloads in its tooltip. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
-  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those; one
-  the open version adds from the registry (not from git, a file or a URL,
-  whose registry namesake's downloads aren't its own) is tagged with its
-  package's tier by downloads,
+  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those, each
+  the open version adds or changes tagged as its chips flag it; one it adds
+  that opens a package is tagged with that package's tier by downloads,
   whatever it is, tinted as the package's own is, by its downloads to the
   day before its latest two weeks (which a package a release just pulled in
   could owe to that release alone), the downloads of new ones the session
   hasn't any of asked for in one request (`/api/npm/download-counts`)
-  (a version-specific check, as of
-  a version's age or publisher, would have to cover every version its
-  range takes).
+  (a version-specific check, as of a version's age or publisher, would have
+  to cover every version its range takes).
   Files, open from the start, show each file's type, and the files the open
-  version adds or changes their category as in the Files list, under the
+  version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them.
   Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
@@ -1356,7 +1433,8 @@ control. A version shows in the bundle view with four tabs:
   one's tier by downloads after it),
   tinted as the Dependencies section's groups are: those the open version
   adds, those whose range it changes (`~1.3.8 → ^2.0.0`) and those it drops,
-  struck through, each opening as there: with the pretty-print toggle
+  struck through, each opening as there and tagged as there, the head
+  counting those tagged by each tag (`1 non-registry`): with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
   without JSX) minified on both sides, its names a minifier's, with the old

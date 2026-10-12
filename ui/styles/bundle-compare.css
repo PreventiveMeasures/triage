@@ -228,9 +228,11 @@
 }
 /* Packages take the pane but for what sits around their lists — the
    section and card heads, and the Files / Import resolutions headings
-   below, kept in view — still stopping halfway through a row. */
+   below, kept in view — still stopping halfway through a row. The
+   component measures what sits around them (`--compare-fill-around`). */
 .bundle-compare-rows--fill {
-  max-height: max(5.5 * var(--compare-row), round(down, 100cqh - 8.25rem, var(--compare-row)) - var(--compare-row) / 2);
+  max-height: max(5.5 * var(--compare-row),
+    round(down, 100cqh - var(--compare-fill-around, 8.25rem), var(--compare-row)) - var(--compare-row) / 2);
 }
 /* Sections that open on demand (Files, Import resolutions), the heading
    the disclosure. */
@@ -620,8 +622,11 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-license { background: color-mix(in srgb, var(--muted) 14%, var(--bg)); border-color: var(--border); }
 }
 /* A package.json's install scripts, in its head and in the tree: marked as
-   the npm Overview marks them, one no longer named struck through. */
-.bundle-compare-code-install {
+   the npm Overview marks them, one no longer named struck through; and what
+   a stasis bundle records of a file that changed (its format, its execute
+   bit, its being an entry point), there and in the Overview's rows, what it
+   no longer is struck through. */
+:is(.bundle-compare-code-install, .bundle-compare-code-meta) {
   flex: none; padding: 0 .3rem;
   color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
   border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
@@ -631,8 +636,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
 /* A file that can be hard to review by reading it, tagged in the tree as in its
-   head. */
-.bundle-code-tree-link > .npm-encoding-tag { flex: none; padding: 0 .25rem; font-size: .56rem; }
+   head, as is what it is beyond that (a large code file, one obfuscated). */
+.bundle-code-tree-link > :is(.npm-encoding-tag, .npm-flag-tag) { flex: none; padding: 0 .25rem; font-size: .56rem; }
 .bundle-compare-code-oldname {
   flex: 1 1 auto;
   min-width: 0;
@@ -964,6 +969,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
     color: var(--muted);
     font-size: .66rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
     & span { font-weight: 500; letter-spacing: 0; text-transform: none; }
+    /* How many call for a look, by what (npm-dependency-checks.js). */
+    & .bundle-compare-code-deps-flagged { color: color-mix(in srgb, var(--high) 60%, var(--text)); }
   }
   & ul { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0; padding: 0; list-style: none; }
 }
@@ -983,9 +990,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }
   &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  & .npm-dependency-kind { align-self: center; }
-  /* A new one's tier by downloads, as small as its kind's tag. */
-  & span.npm-downloads-tier { align-self: center; font-size: .6rem; line-height: 1.35; }
+  & :is(.npm-dependency-kind, .npm-dependency-flag, span.npm-downloads-tier) { align-self: center; }
+  /* A new one's tier by downloads, as small as the tags beside it. */
+  & span.npm-downloads-tier { font-size: .6rem; line-height: 1.35; }
 }
 .bundle-compare-code-dep-range {
   color: var(--muted);
