@@ -240,20 +240,42 @@ class BundleCompare extends LitElement {
   // heads; below it, the card's foot, then each section after as it sits
   // closed — Files and Import resolutions their headings, open or not — and
   // the margins between, the last one's included as the pane scrolls it.
-  // None of it moves with a list's height, so setting it settles at once.
+  // Then, below them, the lists of the last block — Files, open with nothing
+  // under it — in their last row run on to the pane's foot, less their
+  // card's and the block's, as `--compare-rest` (see
+  // .bundle-compare-rows--scroll). None of it moves with the height of the
+  // list it is measured for, so setting it settles at once.
   _fitLists() {
     const body = this._fitBody
-    const list = body?.querySelector('.bundle-compare-rows--fill')
-    if (!list) return
-    const box = list.getBoundingClientRect()
-    const content = body.getBoundingClientRect().top + body.clientTop + parseFloat(getComputedStyle(body).paddingTop) - body.scrollTop
-    let around = box.top - content + list.parentElement.getBoundingClientRect().bottom - box.bottom
-    const section = list.closest('.bundle-compare-section')
-    for (let el = section; el; el = el.nextElementSibling) {
-      const closed = el === section ? 0 : (el.matches('details') ? el.querySelector(':scope > summary') : el).getBoundingClientRect().height
-      around += closed + parseFloat(getComputedStyle(el).marginBottom)
+    if (!body) return
+    const style = getComputedStyle(body)
+    const content = body.getBoundingClientRect().top + body.clientTop + parseFloat(style.paddingTop) - body.scrollTop
+    // From the pane's top to a list's, and its card's foot under it.
+    const around = list => {
+      const box = list.getBoundingClientRect()
+      return box.top - content + list.parentElement.getBoundingClientRect().bottom - box.bottom
     }
-    body.style.setProperty('--compare-fill-around', `${around}px`)
+    const fill = body.querySelector('.bundle-compare-rows--fill')
+    if (fill) {
+      let space = around(fill)
+      const section = fill.closest('.bundle-compare-section')
+      for (let el = section; el; el = el.nextElementSibling) {
+        const closed = el === section ? 0 : (el.matches('details') ? el.querySelector(':scope > summary') : el).getBoundingClientRect().height
+        space += closed + parseFloat(getComputedStyle(el).marginBottom)
+      }
+      body.style.setProperty('--compare-fill-around', `${space}px`)
+    }
+    const lists = [...body.querySelectorAll('.bundle-compare-rows--scroll:not(.bundle-compare-rows--fill)')]
+    if (lists.length === 0) return
+    const last = body.lastElementChild
+    const tops = new Map(lists.filter(list => last.contains(list)).map(list => [list, list.parentElement.getBoundingClientRect().top]))
+    const lastRow = Math.max(...tops.values())
+    const pane = body.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+    const margin = parseFloat(getComputedStyle(last).marginBottom)
+    for (const list of lists) {
+      if (tops.get(list) >= lastRow - 1) list.style.setProperty('--compare-rest', `${pane - around(list) - margin}px`)
+      else list.style.removeProperty('--compare-rest')
+    }
   }
 
   // The base bundle changed: compare it afresh, or after a swap, with the
