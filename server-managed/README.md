@@ -215,10 +215,10 @@ repointed import lists those imports alone. Past that, Code shows a file at
 a time, its Previous and Next file buttons stepping through them in the
 tree's order. A link naming the older Diff mode opens Code. Each file's
 head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
-Controls, Minified, ...), after how it read where that differs, with Long
-lines beside it where it has them now, and the tree
-tags a file the same way where it can be hard to review by reading it (Long
-lines alone, for one with them); both
+Controls, Minified, ...), after how it read where that differs, with every
+other label it has now, Controls and Long lines, beside it, and the tree
+tags a file more briefly where it can be hard to review by reading it: its
+category, and its controls and unexpected long lines; both
 tag it Large or Obfuscated as the npm Files list does, as it is now (as it
 was, for one removed). A file a
 bundle or package starts from is labelled in blue in its head (a Stasis
@@ -1194,7 +1194,9 @@ control. A version shows in the bundle view with four tabs:
   rows; switching keeps the tab shown, and until the versions arrive it holds
   the version shown, disabled), and links its page on npm.
   Over the summary, where any file can be hard to review by reading it, a
-  warning says how many and why, in categories, the first that holds of: not
+  warning says how many and why, in categories, a file counted under each
+  that holds of it and once in the total, each category's chip finding every
+  file it holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
   or invisible characters (the C0 ones but tab, line feed and carriage
   return, DEL, the C1 ones, and the bidirectional controls U+202A–U+202E and
@@ -1207,7 +1209,8 @@ control. A version shows in the bundle view with four tabs:
   Hangul or among jamo; and tags, but those of a subdivision flag Unicode
   recommends (England's, Scotland's or Wales's); not a BOM, a zero-width or
   a no-break space, which text has its uses for),
-  unexpected long lines (lines over 1,000 characters among readable ones),
+  long lines (lines over 1,000 characters: a warning among readable ones,
+  as no one writes them, and a notice in minified code, whose they are),
   minified (most of its text on such lines, or named `.min.` with any, or,
   with none, its lines averaging over 110 characters and next to none of its
   spaces outside strings ones a minifier drops, beside punctuation), source
@@ -1216,7 +1219,11 @@ control. A version shows in the bundle view with four tabs:
   not, its tag giving the map's size). Prose (Markdown, text and the markup
   GitHub renders a README from, licenses and changelogs, as `LICENSE-MIT`; not code named alike, as `lib/history.js` or
   `dist/notice.min.js`) is readable whatever its lines' lengths, and an inline map's
-  line counts for none, nor for how much of a file is on long lines. Then the manifest's facts: description, license
+  line counts for none, nor for how much of a file is on long lines; nor are
+  a source map's long lines counted, all it is. A file holding control or
+  invisible characters or long lines is still whatever else it is, as a
+  minified file with a form feed in a regular expression is all three, but
+  readable ASCII or UTF-8. Then the manifest's facts: description, license
   (each license in its expression opening its file in the package: the one
   named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
   file), author (with their npm account, linking its profile, where the
@@ -1330,9 +1337,9 @@ control. A version shows in the bundle view with four tabs:
   those fixed in it (affecting only older versions) struck through, and
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
-  tag naming the control or invisible characters or long lines it holds (one with
-  unexpected long lines still tagged ASCII or UTF-8, Long lines beside it as
-  a warning), and before them,
+  tag naming the control or invisible characters or long lines it holds:
+  each label a file has, Controls and Long lines beside its category (one
+  with unexpected long lines still tagged ASCII or UTF-8), and before them,
   Large, quietly, on a JavaScript or TypeScript file of 256 KiB or more
   (not a declaration file), which says little of a file alone, and
   Obfuscated, as a warning, on one with an obfuscator's fingerprint (20

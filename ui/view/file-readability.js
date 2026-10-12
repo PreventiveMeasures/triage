@@ -158,11 +158,13 @@ export function npmBecameUnreadable(path, was, now) {
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
-// binary (no text), controls (text holding control, bidirectional or
-// invisible characters), map (a source map), long (code with some lines
+// binary (no text), map (a source map), long (code with some lines
 // longer than anyone writes), inline-map (code with its source map in it, minified or
 // not), minified (code mostly on long lines, or named .min., or minified
-// into shorter lines: see MINIFIED_AVERAGE), else utf8 or ascii. Prose is
+// into shorter lines: see MINIFIED_AVERAGE), else utf8 or ascii; and
+// whatever it is, the control, bidirectional or invisible characters a text
+// holds (`controls`), which count as a category of their own beside it
+// (npmReadabilityLabels). Prose is
 // readable whatever its lines' lengths, and an inline source map's line
 // counts for none, nor for how much of the code is on long lines. With
 // npmTextEncoding's `kind` and `controls`, its `longest` line's length and
@@ -193,7 +195,6 @@ export function npmFileReadability(path, text) {
   // its examples: neither runs.
   const obfuscation = NPM_PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
   const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
-  if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (NPM_PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
@@ -207,13 +208,32 @@ export function npmFileReadability(path, text) {
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
 }
 
+// What a file is labelled, in its tags and in the Overview's warning and
+// chips, each finding it: its controls and its long lines, where it holds
+// them, beside its category (how its text is encoded, for one whose long
+// lines are unexpected), but for ASCII or UTF-8, which a file that can't be
+// read as it is counts under as none of them. A minified file's long lines
+// are labelled too, as its inline map's are; prose's and a source map's
+// never are.
+export function npmReadabilityLabels(readability) {
+  const flags = [...readability.controls ? ['controls'] : [],
+    ...readability.longLines > 0 && ['long', 'minified', 'inline-map'].includes(readability.category) ? ['long'] : []]
+  const category = readability.category === 'long' ? readability.kind : readability.category
+  return READABILITY.get(category).mark || flags.length === 0 ? [...flags, category] : flags
+}
+
+// How a label is marked on a file: long lines as a warning where it is
+// otherwise readable, as they are unexpected there, and as a notice in
+// minified code, as minified code is; any other as its category is.
+export const npmLabelMark = (readability, label) => label === 'long' && readability.category !== 'long' ? 'notice' : READABILITY.get(label).mark
+
 // Each category: its name, its tag in a list of files or a file's head, and how it is marked,
 // `warn` for what to look into, `notice` for what can be hard to review by
 // reading it either way.
 export const READABILITY = new Map([
   ['binary', { name: 'Binary', tag: 'Binary', mark: 'warn' }],
   ['controls', { name: 'Control or invisible characters', tag: 'Controls', mark: 'warn' }],
-  ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
+  ['long', { name: 'Long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
   ['inline-map', { name: 'Inline source maps', tag: 'Inline map', mark: 'notice' }],
@@ -232,15 +252,17 @@ function controlsNote(controls) {
   return `${kinds}: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
-function readabilityNote({ average, category, controls, longLines, longest, inlineMap }) {
-  const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
+// A file's lines longer than anyone writes: how many, and the longest.
+const linesNote = ({ longLines, longest }) => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
+
+function readabilityNote(readability) {
+  const { average, category, longLines, inlineMap } = readability
+  const lines = () => linesNote(readability)
   switch (category) {
     case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
-    case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
     case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
     case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
-    case 'long': return `${lines()}, among readable ones`
     default: return nothing
   }
 }
@@ -248,7 +270,7 @@ function readabilityNote({ average, category, controls, longLines, longest, inli
 // A file's tag in the column a list keeps for it: how it reads, marked where
 // it can't be read as it is, saying why; for one with unexpected long lines,
 // how its text is encoded (ASCII or UTF-8), its long lines tagged beside it
-// (npmLongLinesTag) rather than in its place.
+// (npmReadabilityFlags) rather than in its place, as its controls are.
 export function npmEncodingTag(readability) {
   if (!readability) return nothing
   const category = readability.category === 'long' ? readability.kind : readability.category
@@ -256,15 +278,23 @@ export function npmEncodingTag(readability) {
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
 }
 
-// A file's Long lines, beside its tag as Obfuscated is (npmFileFlagTags), saying
-// how many and how long; nothing for one without unexpected long lines.
-export function npmLongLinesTag(readability) {
-  if (readability?.category !== 'long') return nothing
-  return html`<span class="npm-flag-tag is-warn" data-tooltip=${readabilityNote(readability)}>${READABILITY.get('long').tag}</span>`
+// A file's Controls and Long lines (npmReadabilityLabels), beside its tag as
+// Obfuscated is (npmFileFlagTags), not in its place: a minified file can hold
+// controls, and has long lines. Each says what it found, marked as it is on
+// the file (npmLabelMark); `marks` those to tag, all by default. Nothing for
+// a file with neither.
+export function npmReadabilityFlags(readability, marks = null) {
+  const shown = readability ? npmReadabilityLabels(readability).filter(label => (label === 'controls' || label === 'long')
+    && (marks === null || marks.includes(npmLabelMark(readability, label)))) : []
+  if (shown.length === 0) return nothing
+  const note = label => label === 'controls' ? controlsNote(readability.controls)
+    : `${linesNote(readability)}${readability.category === 'long' ? ', among readable ones' : ''}`
+  return shown.map(label => html`<span class=${`npm-flag-tag is-${npmLabelMark(readability, label)}`} data-tooltip=${note(label)}>${READABILITY.get(label).tag}</span>`)
 }
 
-// A file's tags of how it reads: its long lines, where it has them, then its tag.
-export const npmReadabilityTag = readability => readability ? html`${npmLongLinesTag(readability)}${npmEncodingTag(readability)}` : nothing
+// A file's tags of how it reads: its controls and long lines, where it has
+// them, then its tag.
+export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
 
 // What a file is beyond how it reads, before its tag: Large, a code file of
 // NPM_LARGE_CODE or more (`bytes` its size), which says little of a file

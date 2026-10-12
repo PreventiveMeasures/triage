@@ -19,7 +19,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscationFound, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmObfuscationFound, npmReadabilityLabels, npmReadabilityTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
@@ -369,9 +369,31 @@ export function npmAdvisoriesColumn(entry) {
 const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
+// How many of `readabilities` each category has, a file under each label it
+// has (npmReadabilityLabels), each category marked as the most it is on one of
+// them (npmLabelMark: long lines a warning where some are unexpected), and
+// how many files can be hard to review by reading them, each once
+// (`unreadable`).
+const MARKS = [null, 'notice', 'warn']
+function readabilityCounts(readabilities) {
+  const counts = new Map(), marks = new Map()
+  let unreadable = 0
+  for (const readability of readabilities) {
+    const labels = npmReadabilityLabels(readability)
+    for (const label of labels) {
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+      const mark = npmLabelMark(readability, label)
+      if (MARKS.indexOf(mark) > MARKS.indexOf(marks.get(label) ?? null)) marks.set(label, mark)
+    }
+    if (labels.some(label => READABILITY.get(label).mark)) unreadable++
+  }
+  return { counts, marks, unreadable }
+}
+
 // What the Overview reads of a version's files, once a version: their
 // `paths`, each one's readability (npmFileReadability), extension and size by
-// path, how many files each category has, the `binaries`, sorted, its file types
+// path, how many files each category has and how many can be hard to review
+// by reading them (readabilityCounts), the `binaries`, sorted, its file types
 // (npmFileTypes), and its `content`: its text files, their lines of code and
 // all its files' bytes (`unpacked`), the package's own files
 // (isNpmPackageFile) left out, as every package has them.
@@ -381,8 +403,7 @@ export function npmFilesRead(details) {
   if (!known) {
     const { sources, sourcesContent } = details.json
     const byPath = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
-    const counts = new Map()
-    for (const { category } of byPath.values()) counts.set(category, (counts.get(category) ?? 0) + 1)
+    const { counts, marks, unreadable } = readabilityCounts(byPath.values())
     const lines = bundleLineCounts(details), sizes = bundleFileSizes(details)
     const content = { files: 0, lines: 0, unpacked: 0 }
     for (const path of sources.filter(source => !isNpmPackageFile(source))) {
@@ -391,7 +412,7 @@ export function npmFilesRead(details) {
       content.unpacked += sizes.get(path) ?? 0
     }
     known = {
-      paths: new Set(sources), byPath, counts, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
+      paths: new Set(sources), byPath, counts, marks, unreadable, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
       types: npmFileTypes(sources, sizes, lines), content,
     }
@@ -421,22 +442,22 @@ function filterChip(entry, chip, content, count, { classes = '', tooltip = nothi
     @click=${() => { filesShown = { key: shownKey(entry), chip: pressed ? null : chip }; render() }}>${content}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
 }
 
-// A category's chip.
+// A category's chip, finding each file labelled with it.
 function categoryChip(entry, details, category) {
-  const { name, mark } = READABILITY.get(category)
-  const { byPath, counts } = npmFilesRead(details)
-  return filterChip(entry, { id: `category:${category}`, label: name, keeps: path => byPath.get(path)?.category === category },
+  const { name } = READABILITY.get(category)
+  const { byPath, counts, marks } = npmFilesRead(details)
+  const mark = marks.get(category)
+  return filterChip(entry, { id: `category:${category}`, label: name, keeps: path => byPath.has(path) && npmReadabilityLabels(byPath.get(path)).includes(category) },
     html`<span>${name}</span>`, counts.get(category), { classes: mark ? ` is-${mark}` : '' })
 }
 
 // Where any of `total` files (`files` naming them) can be hard to review by
-// reading it, as `counts` has each category's: how many, each category's
+// reading it, as readabilityCounts has them: how many, each category's
 // `chip` showing which.
-function readabilityWarning(counts, total, files, chip) {
+function readabilityWarning({ counts, marks, unreadable }, total, files, chip) {
   const present = UNREADABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
-  const unreadable = present.reduce((sum, category) => sum + counts.get(category), 0)
-  const warn = present.some(category => READABILITY.get(category).mark === 'warn')
+  const warn = present.some(category => marks.get(category) === 'warn')
   return html`<div class=${`npm-readability-warning${warn ? ' is-warn' : ''}`} role="note">
     <span class="npm-readability-warning-text"><strong>${unreadable.toLocaleString('en')} of ${total.toLocaleString('en')} ${files}</strong>
       can be hard to review by reading them:</span>
@@ -446,7 +467,7 @@ function readabilityWarning(counts, total, files, chip) {
 
 // Over the summary, where any file can be hard to review by reading it.
 export function npmReadabilityWarning(entry, details) {
-  return readabilityWarning(npmFilesRead(details).counts, details.json.sources.length, 'files', category => categoryChip(entry, details, category))
+  return readabilityWarning(npmFilesRead(details), details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
 // A file's tags in the Files list and Compare's: what it can run beyond itself
@@ -468,13 +489,10 @@ export const npmCompareFiles = {
   tag: npmFileTags,
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)
-    const counts = new Map()
-    for (const path of paths) {
-      const category = byPath.get(path)?.category
-      if (category) counts.set(category, (counts.get(category) ?? 0) + 1)
-    }
-    return readabilityWarning(counts, paths.length, paths.length === 1 ? 'file added or changed' : 'files added or changed', category => {
-      const { name, mark } = READABILITY.get(category)
+    const read = readabilityCounts(paths.filter(path => byPath.has(path)).map(path => byPath.get(path)))
+    const { counts, marks } = read
+    return readabilityWarning(read, paths.length, paths.length === 1 ? 'file added or changed' : 'files added or changed', category => {
+      const { name } = READABILITY.get(category), mark = marks.get(category)
       return html`<li><span class=${`npm-extension is-${mark}`}><span>${name}</span><span class="npm-extension-count">${counts.get(category).toLocaleString('en')}</span></span></li>`
     })
   },

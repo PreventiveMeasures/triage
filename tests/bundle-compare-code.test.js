@@ -349,29 +349,41 @@ test('the one-list Code lists a file whose only change is a repointed import by 
     combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
 })
 
-test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its long lines beside that', () => {
+test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its controls and long lines beside that', () => {
   const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
-  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n` },
-    { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
-      'src/short.js': `${code}\n` }]
+  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
+    'dist/min.js': `${code}\n` },
+  { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
+    'src/short.js': `${code}\n`, 'dist/min.js': `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n` }]
   const rendered = path => renderText(view(path, files).render())
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(rendered(path))[1]
   const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
-  assert.deepEqual(tags(head('src/ctl.js')), ['ASCII', 'Controls'])
+  const flags = markup => [...markup.matchAll(/class="?npm-flag-tag is-(\w+)"? data-tooltip=[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
+  assert.deepEqual(tags(head('src/ctl.js')), ['ASCII', 'UTF-8'], 'how it reads, its controls aside')
   assert.match(head('src/ctl.js'), /bundle-compare-code-readability/u)
+  assert.deepEqual(flags(head('src/ctl.js')), ['Controls warn'], 'beside it')
+  // Every label a minified file has, as lit-html 2's lit-html.js: a form feed
+  // in a regular expression, its long lines, minified code's.
+  assert.deepEqual(flags(head('dist/min.js')), ['Controls warn', 'Long lines notice'])
+  assert.deepEqual(tags(head('dist/min.js')), ['ASCII', 'Minified'])
   assert.deepEqual(tags(head('src/same.js')), ['ASCII'], 'once where it reads alike')
   assert.deepEqual(tags(head('src/new.js')), ['UTF-8'], 'an added file as it reads now')
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
   // Long lines don't take the place of how a file reads: beside it, as it reads now.
-  const longLines = markup => [...markup.matchAll(/class="npm-flag-tag is-warn" data-tooltip=([^>]*)>Long lines</gu)].map(m => m[1])
+  const longLines = markup => [...markup.matchAll(/class="?npm-flag-tag is-warn"? data-tooltip=([^>]*)>Long lines</gu)].map(m => m[1])
   assert.deepEqual(longLines(head('src/long.js')), ['1 line over 1000 characters, the longest 1,013, among readable ones'])
   assert.deepEqual(tags(head('src/long.js')), ['ASCII'], 'once, read alike')
   assert.doesNotMatch(head('src/long.js'), /bundle-compare-code-readability/u)
   assert.deepEqual(longLines(head('src/short.js')), [], 'not where it had them')
   const tree = /<ul class=bundle-code-tree root[^]*<\/ul>/u.exec(rendered('src/long.js'))[0]
   const row = name => /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes(`data-tooltip=src/${name}.js>`))
-  assert.match(row('long'), /npm-flag-tag is-warn[^>]*>Long lines</u)
+  assert.deepEqual(flags(row('long')), ['Long lines warn'])
   assert.doesNotMatch(row('long'), /npm-encoding-tag/u, 'the tree leaving ASCII untagged')
+  const minRow = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes('data-tooltip=dist/min.js>'))
+  assert.deepEqual(flags(minRow), ['Controls warn'], 'the tree briefer: what it warns of')
+  assert.match(minRow, /npm-encoding-tag is-notice[^>]*>Minified</u)
+  assert.doesNotMatch(row('ctl'), /npm-encoding-tag/u, 'its controls alone where it reads as UTF-8')
+  assert.deepEqual(flags(row('ctl')), ['Controls warn'])
 })
 
 test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {
