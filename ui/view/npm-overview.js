@@ -493,14 +493,23 @@ function deprecatedBadge({ manifest }) {
 
 // The npm account that published each version, where npm says for both and
 // they differ, as when a package changes hands, or is taken over: linking
-// to the open version's publisher's profile.
+// to the open version's publisher's profile. Each account green where it is
+// known to publish one of npm's most downloaded packages (npm-packages.ts
+// npmManifest's `knownAccounts`), else orange; the chip light yellow where
+// the open version's is known, orange where neither is, and red where a
+// known one gave way to one that isn't.
 function publisherBadge([from, to]) {
   const now = to.manifest?.publisher, was = from.manifest?.publisher
   if (!was || !now || was === now) return nothing
-  return html`<li><a class="npm-extension is-warn npm-compare-publisher" href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
+  const [wasKnown, nowKnown] = [[from, was], [to, now]].map(([{ manifest }, account]) => manifest.knownAccounts?.includes(account) === true)
+  const account = (name, known) => html`<span class=${`npm-compare-account ${known ? 'is-known' : 'is-unknown'}`}>~${name}</span>`
+  const [tint, note] = nowKnown ? ['is-to-known', 'A different npm account published the open version, one that publishes one of npm\'s most downloaded packages']
+    : wasKnown ? ['is-from-known', 'An npm account that publishes none of npm\'s most downloaded packages published the open version, after one that does']
+    : ['is-to-unknown', 'A different npm account published the open version; neither publishes one of npm\'s most downloaded packages']
+  return html`<li><a class=${`npm-extension npm-compare-publisher ${tint}`} href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
     data-tooltip=${`Published by ~${was} (${from.version}), then ~${now} (${to.version})`}
-    .tooltipContent=${compareTip('Published by', [from, to], [`~${was}`, `~${now}`], 'A different npm account published the open version')}>
-    <span>Publisher</span><span class="npm-extension-count">~${was} → ~${now}</span></a></li>`
+    .tooltipContent=${compareTip('Published by', [from, to], [account(was, wasKnown), account(now, nowKnown)], note)}>
+    <span>Publisher</span><span class="npm-extension-count">${account(was, wasKnown)} → ${account(now, nowKnown)}</span></a></li>`
 }
 
 // Provenance the one compared with has and the open version hasn't (npm's

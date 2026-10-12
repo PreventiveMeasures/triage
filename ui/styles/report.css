@@ -3668,23 +3668,41 @@ a.npm-socket-score {
 
   & > li { display: flex; }
 }
-/* A publisher that changed: a warning, linking to the new one's profile. */
+/* A publisher that changed, linking to the new one's profile, tinted by the
+   change: light yellow to an account known to publish, mostly fine; orange
+   between two that aren't; red from one that is to one that isn't. */
 a.npm-compare-publisher {
-  text-decoration: none;
+  --tint: var(--high);
+  color: var(--text); text-decoration: none;
+  background: color-mix(in srgb, var(--tint) 14%, var(--bg)); border-color: color-mix(in srgb, var(--tint) 70%, var(--border));
 
-  & .npm-extension-count { color: color-mix(in srgb, var(--high) 60%, var(--text)); }
-  &:hover { border-color: var(--high); }
+  &.is-to-known {
+    --tint: var(--medium);
+    background: color-mix(in srgb, var(--tint) 8%, var(--bg)); border-color: color-mix(in srgb, var(--tint) 45%, var(--border));
+  }
+  &.is-from-known { --tint: var(--critical); }
+  &:hover { border-color: var(--tint); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
-/* Provenance the open version lost: a stronger warning than a publisher's. */
+/* A chip's text in its warning's color, one color to a warning: its value,
+   and the whole of a chip that names its issue (the open version's age, its
+   provenance lost, its deprecation). Only a chip's type, the same whatever
+   its tint (Socket's scores', the publisher's, the advisories'), reads in
+   the text's own color. Each npm account a publisher's chip names, there
+   and in its tooltip, green where it is known to publish, else orange. */
+:is(.npm-compare-account.is-unknown, .npm-extension.npm-compare-published) {
+  color: color-mix(in srgb, var(--high) 60%, var(--text));
+}
+.npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
+:is(.npm-extension.npm-compare-provenance, .npm-extension.npm-compare-deprecated) {
+  color: color-mix(in srgb, var(--critical) 55%, var(--text));
+}
+/* Provenance the open version lost: a stronger warning than its deprecation. */
 .npm-extension.npm-compare-provenance {
-  color: var(--text);
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
-/* The open version deprecated: a chip with no value to color, so red text
-   and all, as an unpopular package's downloads tier reads. */
+/* The open version deprecated, as an unpopular package's downloads tier reads. */
 .npm-extension.npm-compare-deprecated {
-  color: color-mix(in srgb, var(--critical) 55%, var(--text));
   background: color-mix(in srgb, var(--critical) 10%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 50%, var(--border));
 }
 /* The advisories' chip is a button, listing them in a dialog. */
@@ -3698,6 +3716,7 @@ a.npm-compare-publisher {
   &.sev-moderate { --sev: var(--medium); }
   &.sev-low { --sev: var(--low); }
   &.is-cleared { --sev: var(--green); }
+  & .npm-extension-count { color: color-mix(in srgb, var(--sev) 70%, var(--text)); }
   &:hover { border-color: var(--sev); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
