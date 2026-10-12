@@ -610,6 +610,22 @@ test('a file\'s diff drawn keeps its blocks for the search, which doesn\'t diff 
     ['−a0', '+b0', ' b1'])
 })
 
+test('split, the search lists a drawn diff\'s hits in the rows that diff aligned, aligning no block again', async t => {
+  const { prefs } = await import('../ui/view/bundle-compare-code.js')
+  t.after(() => { prefs.layout = 'unified' })
+  prefs.layout = 'split'
+  const element = view('src/api.js')
+  element.render()
+  const { model } = element._fileState('src/api.js', element._entries.get('src/api.js'))
+  assert.equal(model.aligned?.size, 1, 'drawn split, its one block aligned')
+  // Rows the diff could have aligned otherwise, to tell them from another aligning: the added line first.
+  model.aligned.set(0, [[null, 0, false], [0, null, false]])
+  element._mode = 'code'
+  element._query = 'export const a'
+  assert.deepEqual(element._searchResults(element._railState().order).files.find(file => file.path === 'src/api.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`),
+    ['+b0', '−a0'])
+})
+
 test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const published = `var X=1;${'x(1);y(22);'.repeat(40_000)}\n`

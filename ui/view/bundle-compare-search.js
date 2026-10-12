@@ -25,22 +25,27 @@ function matching(lines, matcher, limit = SEARCH_MAX_FILE_HITS, from = 0, to = l
   return hits
 }
 
+// A change block's split rows, aligned as the view aligns them: `blocks` the
+// file's blocks it is one of, `a` and `b` its texts' lines.
+const alignFresh = (a, b, blocks, block) => alignLines(a, b, block)
+
 // One file's first SEARCH_MAX_FILE_HITS hits in the order its diff shows
 // them, unified or `split`, each with its `side` and `sign`: `+` a line
 // added, `−` one removed, ` ` one unchanged, null where its diff isn't known
 // yet (`blocks` null), when only the new text is searched. `blocks` are the
-// change blocks between its two texts, as lineDiff has them.
-export function fileHits(before, after, matcher, blocks, { split = false } = {}) {
+// change blocks between its two texts, as lineDiff has them; `align` gives a
+// block's split rows, as alignFresh does (a caller may keep them).
+export function fileHits(before, after, matcher, blocks, { split = false, align = alignFresh } = {}) {
   if (before === after) return matching(textLines(after), matcher).map(hit => ({ ...hit, side: 'b', sign: ' ' }))
   if (before === '') return matching(textLines(after), matcher).map(hit => ({ ...hit, side: 'b', sign: '+' }))
   if (after === '') return matching(textLines(before), matcher).map(hit => ({ ...hit, side: 'a', sign: '−' }))
-  return changedHits(textLines(before), textLines(after), matcher, blocks, split)
+  return changedHits(textLines(before), textLines(after), matcher, blocks, split, align)
 }
 
 // A changed file's hits, from its old and new texts' lines `a` and `b`: the
 // first of its new text's lines, and of its old text's lines its new one
 // dropped, in the order its diff shows them.
-function changedHits(a, b, matcher, blocks, split) {
+function changedHits(a, b, matcher, blocks, split, align) {
   const newer = matching(b, matcher)
   if (!blocks) return newer.map(hit => ({ ...hit, side: 'b', sign: null }))
   // A line's change block on its side (`a0`–`a1` old, `b0`–`b1` new), found
@@ -63,13 +68,13 @@ function changedHits(a, b, matcher, blocks, split) {
     older.push(...matching(a, matcher, SEARCH_MAX_FILE_HITS - older.length, a0, a1))
   }
   // Split, each changed line's row in its block, aligned as the view aligns
-  // them (alignLines), in the blocks a hit is in.
+  // them (`align`), in the blocks a hit is in.
   const rows = new Map()
   if (split) {
     const hit = new Set([...newer.map(({ line }) => blockAt('b', line)), ...older.map(({ line }) => blockAt('a', line))])
     for (const block of hit) {
       if (!block) continue
-      alignLines(a, b, block).forEach(([left, right], row) => {
+      align(a, b, blocks, block).forEach(([left, right], row) => {
         if (left !== null) rows.set(`a${left}`, row)
         if (right !== null) rows.set(`b${right}`, row)
       })
@@ -100,11 +105,11 @@ function changedHits(a, b, matcher, blocks, split) {
 // file's change blocks, or null where they aren't known (yet), asked for
 // only where either text matches, a file they find no change in left out,
 // as its diff draws no rows; `split` the diff's layout, which orders a
-// change block's lines.
+// change block's lines, in the rows `align` gives (fileHits).
 // Returns `{ files, hits, truncated }`: the files with a hit, `{ path, hits }`,
 // each listing up to SEARCH_MAX_FILE_HITS lines, collected no further;
 // `hits` the lines listed; `truncated` where files were left out.
-export function searchCompareFiles(files, matcher, blocksOf, { split = false } = {}) {
+export function searchCompareFiles(files, matcher, blocksOf, { split = false, align = alignFresh } = {}) {
   const found = []
   let hits = 0
   // Whether a text matches anywhere, read whole: a substring found in a
@@ -123,7 +128,7 @@ export function searchCompareFiles(files, matcher, blocksOf, { split = false } =
       const a = textLines(before), b = textLines(after)
       const blocks = blocksOf(path, before, after)
       if (blocks?.length === 0) continue
-      lines = changedHits(a, b, matcher, blocks, split)
+      lines = changedHits(a, b, matcher, blocks, split, align)
     }
     if (lines.length === 0) continue
     if (found.length === SEARCH_MAX_FILES) return { files: found, hits, truncated: true }

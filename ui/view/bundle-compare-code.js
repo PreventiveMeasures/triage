@@ -31,7 +31,7 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
@@ -324,6 +324,10 @@ export class BundleCompareCode extends LitElement {
     // a count of its changes, for the results to be found again.
     this._rowless = new Map()
     this._rowlessCount = 0
+    // A changed file's blocks, as the search kept them → what their split
+    // rows are kept on (alignedBlock): the diff drawn of them, or else the
+    // search's own `{ a, b, blocks }`, so no block is aligned twice.
+    this._aligned = new WeakMap()
     // A search hit picked, `{ path, side, line, at, query, key }`, until its
     // file's diff draws (`key` the model last sought in), and while what it
     // draws is still coming (`_soughtSettling`); then that row, `{ path,
@@ -663,7 +667,12 @@ export class BundleCompareCode extends LitElement {
       }
       return [{ path, ...contents }]
     })
-    const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split' }), unsigned }
+    const align = (a, b, blocks, block) => {
+      let held = this._aligned.get(blocks)
+      if (!held) this._aligned.set(blocks, held = { a, b, blocks })
+      return alignedBlock(held, blocks.indexOf(block))
+    }
+    const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split', align }), unsigned }
     if (complete) this._found = { key, entries: this._entries, result }
     else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
     return result
@@ -943,7 +952,10 @@ export class BundleCompareCode extends LitElement {
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // The texts as published diffed as the search diffs them (_searchResults):
     // their blocks kept for it, not found again, however large.
-    else if (model) this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
+    else if (model) {
+      this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
+      this._aligned.set(model.blocks, model)
+    }
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
     // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it

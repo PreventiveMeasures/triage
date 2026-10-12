@@ -187,8 +187,10 @@ export function alignLines(a, b, block) {
   return rows
 }
 
-// Alignments are kept on the model: a fold opening re-lists every row.
-function alignedBlock(model, run) {
+// Alignments are kept on the model: a fold opening re-lists every row, and
+// Compare's code search lists a block's hits in them. `model` any holder of
+// lines `a` and `b` and their `blocks`, `run` the block's index there.
+export function alignedBlock(model, run) {
   model.aligned ??= new Map()
   if (!model.aligned.has(run)) model.aligned.set(run, alignBlock(model, model.blocks[run]))
   return model.aligned.get(run)
