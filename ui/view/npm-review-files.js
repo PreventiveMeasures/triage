@@ -1,4 +1,3 @@
-import { lineDiff } from './bundle-compare-code-model.js'
 import { bundleFileByteLength } from '../../common/bundle-sources.js'
 
 // Directories before files at every depth, matching the review tree even when
@@ -24,16 +23,4 @@ export function reviewViewMode(files) {
     }
   }
   return 'diff'
-}
-
-export function reviewLineCounts({ before, after }) {
-  if (typeof before !== 'string' || typeof after !== 'string') return null
-  if (before === after) return { additions: 0, deletions: 0 }
-  if (before === '') return { additions: lines(after), deletions: 0 }
-  if (after === '') return { additions: 0, deletions: lines(before) }
-  // Keep navigation cheap for very large files; their diff can still be opened
-  // explicitly in the code viewer. Only visible tree rows request these counts.
-  if (before.length + after.length > 2_000_000 || lines(before) + lines(after) > 20_000) return null
-  const { additions, deletions } = lineDiff(before, after)
-  return { additions, deletions }
 }

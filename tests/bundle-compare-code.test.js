@@ -1819,7 +1819,7 @@ test('a long tree counts its lines a little at a time, so it paints at once and 
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const update = t.mock.method(element, 'requestUpdate', () => {})
   renderText(element.render())
-  assert.equal(element._counted.size, 1, 'the first file is counted, then the budget is spent')
+  assert.equal(element._lineCounter.counts.size, 1, 'the first file is counted, then the budget is spent')
   t.mock.timers.tick(0)
   assert.equal(update.mock.callCount(), 1, 'another render is asked for, once')
   for (let i = 0; i < 20; i++) renderText(element.render())

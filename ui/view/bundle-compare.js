@@ -56,7 +56,7 @@ import { layoutPackageDirs, rootLabel, treeLayout } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { dirClass, formatDelta, renderCompareStats } from './bundle-compare-stats.js'
-import { comparePickerStyle } from './bundle-compare-picker.js'
+import { comparePickerStyle, compareSourceOptions } from './bundle-compare-picker.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
@@ -784,9 +784,7 @@ class BundleCompare extends LitElement {
   }
 
   _sourceOptions(options) {
-    return options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
-      detail: option.detail, ...option.date && { date: option.date }, ...option.dateWarning && { dateWarning: option.dateWarning },
-      filename: option.name, displayLabel: option.displayLabel, size: '—', summary: null }))
+    return compareSourceOptions(options)
   }
 
   // Build the picker option list, disambiguating duplicate names with a

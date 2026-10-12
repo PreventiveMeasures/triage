@@ -31,7 +31,8 @@ mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, t
 const { state } = await import('../client/state.ts')
 const { graph2 } = await import('../ui/view/graph/state.js')
 const npmPackage = await import('../ui/view/npm-package.js')
-mock.module('../ui/view/npm-package.js', { namedExports: { ...npmPackage, npmVersionList: () => ({ status: 'ready', versions: [] }) } })
+mock.module('../ui/view/npm-package.js', { namedExports: { ...npmPackage, npmVersionList: () => ({ status: 'ready', versions: [] }),
+  npmCompareSource: () => ({ choices: [], options: [] }) } })
 const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
@@ -84,6 +85,26 @@ test('npm Review tab requires membership in a team with dependency review enable
     Object.assign(state, { managedSession: session, managedTeams: teams })
     assert.equal(/data-bundle-tab="review"/u.test(renderText(renderBundlesList([entry]))), shown)
   }
+})
+
+test('Compare and Review receive the same header chip renderer and file metadata source', t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'lib@2.0.0', integrity: 'npm-shared-chips', npm: { name: 'lib', version: '2.0.0' } }
+  const details = { ...entry, kind: 'sourcemap', json: { version: 3, sources: ['index.js'], sourcesContent: ['new\n'] }, sourceSizes: [] }
+  Object.assign(state, { managedSession: { role: 'triage' }, managedTeams: [{ dependencyReview: true }],
+    selectedBundle: entry.integrity, bundles: [entry], bundleDetails: details })
+  const sourceFor = tab => {
+    state.bundleDetailsTab = tab
+    const result = templates(renderBundlesList([entry])).find(template => template.strings[0].includes(tab === 'review' ? '<npm-review ' : '<bundle-compare '))
+    assert.ok(result)
+    return result.values.find(value => typeof value?.badges === 'function')
+  }
+  const compare = sourceFor('compare'), review = sourceFor('review')
+  assert.equal(typeof compare.badges, 'function')
+  assert.equal(review.badges, compare.badges, 'new header chips automatically use the same rendering path')
+  assert.equal(review.files, compare.files)
+  assert.equal(review.reviewVerdictLimit, compare.reviewVerdictLimit)
 })
 
 test('managed bundles have no Issues tab, and an Issues selection restores Overview', t => {

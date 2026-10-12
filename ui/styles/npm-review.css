@@ -107,9 +107,6 @@ npm-review button.npm-review-tree-file[aria-current='true'] { background: rgb(fr
 npm-review button.npm-review-tree-directory { color: var(--muted); font-size: .74rem; }
 .npm-review-chevron { display: inline-flex; flex: none; }
 .npm-review-chevron.open { transform: rotate(90deg); }
-.npm-review-change { flex: none; font: .68rem/1.5 ui-monospace, monospace; color: var(--warning); }
-.npm-review-change.added { color: var(--green); }
-.npm-review-change.removed { color: var(--critical); }
 .npm-review-note-dot { color: var(--muted); }
 .npm-review-tree-footer {
   display: flex;
@@ -181,12 +178,6 @@ npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disable
 .npm-review-verdict-choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 .npm-review-verdict-choice:has(:disabled) { opacity: .4; }
 .npm-review-verdict-choice:not(:has(:disabled, :checked)):hover { background: var(--surface-active); }
-.npm-review-line-counts { display: inline-flex; flex: none; gap: .25rem; font: .65rem/1.5 ui-monospace, monospace; }
-.npm-review-line-counts.unchanged { color: var(--muted); }
-.npm-review-line-counts .add { color: var(--green); }
-.npm-review-line-counts .del { color: var(--critical); }
-.npm-review-empty-count,
-npm-review .bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundle-compare-code-counts > .del { visibility: hidden; }
 /* Share one border when the sticky file header reaches the actions. */
 .npm-review-inline-decision { margin-top: -1px; max-height: none; overflow: visible; }
 .npm-review-inline-decision .npm-review-decision-head { display: none; }

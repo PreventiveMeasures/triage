@@ -1,10 +1,10 @@
 import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
-import { npmCompareSource } from './npm-package.js'
+import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
 import { renderCompareStats } from './bundle-compare-stats.js'
-import { comparePickerStyle } from './bundle-compare-picker.js'
+import { comparePickerStyle, compareSourceOptions } from './bundle-compare-picker.js'
 import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
@@ -32,22 +32,20 @@ function reviewActions(page) {
 }
 
 function reviewHeader(page) {
-  const source = page.source ?? npmCompareSource(page.entry)
+  const source = page.source ?? npmComparisonSource(page.entry)
   const hasBase = Boolean(page._target && page._target !== '(empty)')
-  const choices = source.options.map(row => ({
-    value: `${page.entry.npm.name}@${row.id}`, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail,
-  }))
-  if (hasBase && !choices.some(row => row.value === page._target)) choices.push({ value: page._target, label: page._target })
-  const versions = source.choices.map(row => ({ value: row.id, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail }))
-  if (!versions.some(row => row.value === page.entry.npm.version)) versions.push({ value: page.entry.npm.version, label: page.entry.npm.version })
+  const choices = compareSourceOptions(source.options, row => `${page.entry.npm.name}@${row.id}`)
+  if (hasBase && !choices.some(row => row.id === page._target)) choices.push(...compareSourceOptions([{ id: page._target, name: page._target, format: 'npm' }]))
+  const versions = compareSourceOptions(source.choices)
+  if (!versions.some(row => row.id === page.entry.npm.version)) versions.push(...compareSourceOptions([{ id: page.entry.npm.version, name: page.entry.npm.version, format: 'npm' }]))
   return html`<header class="bundle-compare-head npm-review-head"><div class="bundle-compare-picker is-versions" style=${comparePickerStyle(source)}>
     <div class="bundle-compare-select-wrap"><span class="bundle-compare-select-hint">Review</span>
-      <bundle-selector .options=${choices} .value=${hasBase ? page._target : null} noun="version" versions label="Review base" placeholder="Choose a version…" ?disabled=${busy(page)}
+      <bundle-selector .bundles=${choices} .value=${hasBase ? page._target : null} noun="version" versions label="Review base" placeholder="Choose a version…" ?disabled=${busy(page)}
         @bundle-change=${event => { event.stopPropagation(); void page._navigate(event.detail.value) }}></bundle-selector>
       ${hasBase ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear review base" ?disabled=${busy(page)}
         @click=${() => void page._navigate('(empty)')}>×</button>` : nothing}</div>
     <span class="bundle-compare-arrow" aria-hidden="true">→</span>
-    <div class="bundle-compare-select-wrap"><bundle-selector .options=${versions} .value=${page.entry.npm.version} noun="version" versions
+    <div class="bundle-compare-select-wrap"><bundle-selector .bundles=${versions} .value=${page.entry.npm.version} noun="version" versions
       label="Version to review" ?disabled=${busy(page)} @bundle-change=${event => { event.stopPropagation();
         void page._navigateTo({ view: 'npm', packageName: page.entry.npm.name, packageSpec: event.detail.value, bundleTab: 'review', ...page._location(page._target) }) }}></bundle-selector></div>
     ${source.badges?.(page._base, page.details) ?? nothing}

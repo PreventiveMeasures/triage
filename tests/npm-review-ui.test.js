@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
-import { compareReviewPaths, reviewLineCounts, reviewViewMode } from '../ui/view/npm-review-files.js'
+import { compareReviewPaths, reviewViewMode } from '../ui/view/npm-review-files.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
@@ -27,6 +27,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   latestDependencyReview: (...args) => { latestRequests.push(args); return latestAnswer instanceof Error ? Promise.reject(latestAnswer) : Promise.resolve(latestAnswer) },
 } })
+mock.module('../ui/view/npm-compare-source.js', { namedExports: { npmComparisonSource: () => ({ choices: [], options: [] }) } })
 mock.module('../ui/view/npm-package.js', { namedExports: {
   loadNpmVersion: (name, version) => { loadedBases.push([name, version]); return Promise.resolve({ details: base }) }, npmCompareSource: () => ({ choices: [], options: [] }),
   npmPackageRoute: (entry, tab, location) => ({ view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab, ...location }),
@@ -51,6 +52,11 @@ const { reviewFileStates, reviewNote, reviewTitle, selectReviewOnOpen } = await 
 function text(value) {
   if (Array.isArray(value)) return value.map(text).join('')
   if (value?.strings) return value.strings.map((str, i) => str + text(value.values[i])).join('')
+  if (value?._$litDirective$) {
+    const [first] = value.values
+    if (first && typeof first === 'object' && !Array.isArray(first) && !first.strings) return Object.entries(first).filter(([, on]) => on).map(([name]) => name).join(' ')
+    return text(first)
+  }
   return value == null || typeof value === 'symbol' || typeof value === 'function' ? '' : String(value)
 }
 const entry = { integrity: 'sha512-new', npm: { name: '@scope/lib', version: '2.0.0' } }
@@ -136,6 +142,50 @@ test('Review uses the current comparison source for badges, dependency chips, an
   page.source = { ...page.source, badges: (...sides) => { called.push(sides); return 'Loaded comparison chips' } }
   assert.match(text(renderReview(page)), /Loaded comparison chips/u)
   assert.deepEqual(called.at(-1), [base, page.details])
+})
+
+test('review selectors preserve the shared version dates and recent-release warnings', () => {
+  const page = component()
+  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page._base = EMPTY_REVIEW_BASE; page._target = '(empty)'
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  const version = { id: '2.0.0', name: '@scope/lib@2.0.0', displayLabel: '2.0.0', format: 'npm', detail: 'latest', date: 'Oct 12, 2026', dateWarning: '3h ago' }
+  page.source = { choices: [version], options: [{ ...version, id: '1.0.0', name: '@scope/lib@1.0.0', displayLabel: '1.0.0' }] }
+  const values = value => value?.strings ? value.values.flatMap(values) : [value]
+  const options = values(renderReview(page)).filter(value => Array.isArray(value) && value[0]?.format === 'npm')
+  assert.equal(options.length, 2)
+  assert.deepEqual(options.map(rows => [rows[0].id, rows[0].date, rows[0].dateWarning]),
+    [['@scope/lib@1.0.0', 'Oct 12, 2026', '3h ago'], ['2.0.0', 'Oct 12, 2026', '3h ago']])
+})
+
+test('review trees reuse Compare counts and pure-rename markers and fill long lists across renders', async t => {
+  const page = component()
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['new.js', 'added.js'], sourcesContent: ['same\n', 'added\n'] } }
+  page._key = null; answer = { reviews: [], teams: [] }
+  page._ensureContext({ ...base, kind: 'sourcemap', json: { sources: ['old.js'], sourcesContent: ['same\n'] } })
+  await Promise.resolve()
+  const tree = new NpmReviewTree()
+  tree.files = page._treeFiles
+  tree.willUpdate(new Map([['files']]))
+  const markup = text(tree.render())
+  assert.match(markup, /bundle-compare-code-letter renamed pure/u)
+  assert.match(markup, /bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u)
+  assert.match(markup, /class=del empty>−0</u)
+  let now = 0
+  t.mock.method(performance, 'now', () => (now += 40))
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const update = t.mock.method(tree, 'requestUpdate', () => {})
+  tree._lineCounter.reset()
+  tree.render()
+  assert.equal(tree._lineCounter.counts.size, 1)
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 1)
+  assert.equal(text(tree.render()), markup)
+  tree._lineCounter.reset()
+  tree.render()
+  tree.disconnectedCallback()
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving Review')
 })
 
 test('Finalize tint follows allowed verdicts, including edits awaiting save and security findings', async () => {
@@ -919,13 +969,9 @@ test('a blank new note does not block finalization or create an empty row', asyn
   assert.equal(page._unsaved, false)
 })
 
-test('review file order is directories first at every depth and line counts reflect additions and removals', () => {
+test('review file order is directories first at every depth', () => {
   const files = ['index.js', 'z/a.js', 'a.js', 'a/z.js', 'a/nested/b.js', 'z/b.js']
   assert.deepEqual(files.toSorted(compareReviewPaths), ['a/nested/b.js', 'a/z.js', 'z/a.js', 'z/b.js', 'a.js', 'index.js'])
-  assert.deepEqual(reviewLineCounts({ before: '', after: 'one\ntwo\n' }), { additions: 2, deletions: 0 })
-  assert.deepEqual(reviewLineCounts({ before: 'one\ntwo', after: 'one\nthree' }), { additions: 1, deletions: 1 })
-  assert.deepEqual(reviewLineCounts({ before: 'gone\n', after: '' }), { additions: 0, deletions: 1 })
-  assert.equal(reviewLineCounts({ before: '', after: { format: 'digest' } }), null)
 })
 
 
