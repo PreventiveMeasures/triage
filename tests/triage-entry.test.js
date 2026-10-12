@@ -9,9 +9,7 @@ import { describe, it } from 'node:test'
 
 const {
   bucketOf,
-  clearReportEverywhere,
   entryIsEmpty,
-  ignoredReportsFor,
   isReportIgnored,
   normalizeEntry,
   patchEntry,
@@ -140,7 +138,7 @@ describe('per-report ignore', () => {
     assert.equal(isReportIgnored(map, 'x', 'reportA'), true)
     assert.equal(isReportIgnored(map, 'x', 'reportB'), false)
     setReportIgnored(map, 'x', 'reportB', true)
-    assert.deepEqual(ignoredReportsFor(map, 'x').toSorted(), ['reportA', 'reportB'])
+    assert.deepEqual(map.get('x').ignoredReports.toSorted(), ['reportA', 'reportB'])
   })
   it('removing the last report prunes the id (when nothing else is set)', () => {
     const map = new Map()
@@ -154,22 +152,5 @@ describe('per-report ignore', () => {
     assert.deepEqual(map.get('x'), { color: 'red', ignoredReports: ['reportA'] })
     setReportIgnored(map, 'x', 'reportA', false)
     assert.deepEqual(map.get('x'), { color: 'red' })
-  })
-  it('ignoredReportsFor returns a fresh array (no aliasing)', () => {
-    const map = new Map([['x', { ignoredReports: ['a'] }]])
-    const got = ignoredReportsFor(map, 'x')
-    got.push('mutated')
-    assert.deepEqual(map.get('x').ignoredReports, ['a'])
-  })
-  it('clearReportEverywhere drops one report across all ids', () => {
-    const map = new Map([
-      ['x', { ignoredReports: ['A', 'B'] }],
-      ['y', { color: 'red', ignoredReports: ['A'] }],
-      ['z', { ignoredReports: ['B'] }],
-    ])
-    clearReportEverywhere(map, 'A')
-    assert.deepEqual(map.get('x'), { ignoredReports: ['B'] })
-    assert.deepEqual(map.get('y'), { color: 'red' })
-    assert.deepEqual(map.get('z'), { ignoredReports: ['B'] })
   })
 })

@@ -65,16 +65,16 @@ export async function fetchNpmStats(name, options) {
   return (await loadManagedBundle()).fetchNpmStats(name, options)
 }
 
-export async function fetchNpmDownloadCounts(names, options) {
-  return (await loadManagedBundle()).fetchNpmDownloadCounts(names, options)
-}
-
 export async function fetchNpmAdvisories(name, options) {
   return (await loadManagedBundle()).fetchNpmAdvisories(name, options)
 }
 
 export async function fetchNpmTags(name, version, options) {
   return (await loadManagedBundle()).fetchNpmTags(name, version, options)
+}
+
+export async function fetchNpmRisk(name, version, otherVersion, options) {
+  return (await loadManagedBundle()).fetchNpmRisk(name, version, otherVersion, options)
 }
 
 export async function fetchNpmSocket(name, version, options) {

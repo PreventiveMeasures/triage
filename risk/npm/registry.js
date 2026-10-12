@@ -7,9 +7,9 @@
 // - `risk/npm/versions`, `<name>@<version>`: what a version's document says,
 //   which npm never changes once published: its manifest (manifest.js, its
 //   deprecation aside), when it was published, and its dist.
-// - `risk/npm/packages`, `<name>`: the versions npm says are deprecated, and
-//   when its first version was published, as `at` a time, asked again after
-//   an hour, as npm deprecates a version any time.
+// - `risk/npm/packages`, `<name>`: the versions npm says are deprecated, as
+//   `at` a time, asked again after an hour, as npm deprecates a version any
+//   time.
 // - `risk/npm/public`, `<name>`: when a package anyone can read was first
 //   published, or `{ missing: true }`, as `at` a time, asked again after an
 //   hour.
@@ -107,13 +107,12 @@ const firstPublished = doc => Object.entries(doc?.time ?? {}).filter(([key, at])
   .reduce((first, at) => first === null || Date.parse(at) < Date.parse(first) ? at : first, null)
 
 // What risk reads of `versions` of a package, and of the package: `versions`,
-// each one's `{ manifest, published, dist }`, `deprecated`, by version, and
-// `created`, when its first version was published.
+// each one's `{ manifest, published, dist }`, and `deprecated`, by version.
 export async function npmPackageFacts(name, versions, context) {
   const { cache, now } = context
   const [facts, pkg] = await Promise.all([Promise.all(versions.map(version => cache ? cache.read('risk/npm/versions', `${name}@${version}`) : null)),
     cache ? cache.read('risk/npm/packages', name) : null])
-  if (facts.every(Boolean) && pkg && now - pkg.at < PACKAGE_MS) return { versions: new Map(versions.map((version, i) => [version, facts[i]])), deprecated: pkg.deprecated, created: pkg.created }
+  if (facts.every(Boolean) && pkg && now - pkg.at < PACKAGE_MS) return { versions: new Map(versions.map((version, i) => [version, facts[i]])), deprecated: pkg.deprecated }
   const doc = await packageDocument(name, context, true)
   if (!doc) throw new NpmRiskError('package-not-found', `npm has no package ${name}`)
   const read = new Map(versions.map(version => {
@@ -123,12 +122,11 @@ export async function npmPackageFacts(name, versions, context) {
     return [version, { manifest, published: isTime(doc.time?.[version]) ? doc.time[version] : null, dist: { tarball: json.dist?.tarball, integrity: json.dist?.integrity } }]
   }))
   const deprecated = Object.fromEntries(Object.entries(doc.versions ?? {}).filter(([, json]) => typeof json?.deprecated === 'string' && json.deprecated !== '').map(([version, json]) => [version, json.deprecated]))
-  const created = firstPublished(doc)
   if (cache) {
     await Promise.all([...read].map(([version, fact]) => cache.write('risk/npm/versions', `${name}@${version}`, fact)))
-    await cache.write('risk/npm/packages', name, { at: now, deprecated, created })
+    await cache.write('risk/npm/packages', name, { at: now, deprecated })
   }
-  return { versions: read, deprecated, created }
+  return { versions: read, deprecated }
 }
 
 // `promise`, given up on once `signal` aborts, its reason thrown: what it

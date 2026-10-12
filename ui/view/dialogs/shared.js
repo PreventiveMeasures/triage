@@ -68,7 +68,7 @@ export function severityBadge(sev) {
 // Short, stable display label for a bundle integrity — used by the
 // sync-download / sync-upload item lists when an item carries no
 // explicit label.
-export function bundleShortLabel(integrity) {
+function bundleShortLabel(integrity) {
   return `bundle-${integrity.slice('sha512-'.length, 'sha512-'.length + 12)}…`
 }
 

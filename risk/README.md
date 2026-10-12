@@ -2,7 +2,11 @@
 
 What calls for a look at an npm package version, for a reviewer: every heuristic the npm viewer flags a version or a file by, apart from any view of them. Plain JavaScript, no DOM, no UI.
 
-Risk is to be told on the managed server alone (`GET /api/npm/risk`, server-managed/npm-risk.ts), never in the e2e and local modes. Until the viewer reads it from there, it still computes its tags and chips with these modules itself.
+Risk is told on the managed server alone (`GET /api/npm/risk`, server-managed/npm-risk.ts), never in the e2e and local modes. The npm viewer reads what it tells of a version, and of a pair, from there (ui/view/npm-risk.js, file-risk.js): its chips, its files' tags and its dependencies' flags, tiers and ages, computing none of them. What the viewer still reads of files itself:
+
+- A Stasis bundle's, for their tags (`npm/files.js`), as no server tells them.
+- What it does with a file: whether it is minified, to pretty-print it or hide a minifier's renames in it; its characters, to show them; its lines.
+- What it lists: a version's dependencies and their changes, its install scripts, its downloads by week and month, and a release's age in its version list.
 
 ## Asking
 
@@ -16,13 +20,15 @@ const assessment = await assessNpm('axios', '1.14.1', {
 })
 ```
 
+What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` (`npm/assess.js`), of versions held as the viewer holds one, and `npmAssessmentOf` makes an assessment of it with what is told fresh: the managed server's, and a test's of versions it holds.
+
 `assessNpm` reads npm's registry and downloads API itself, and keeps what it reads in `cache`, each record under its own type, for the caller to route each type where it belongs:
 
 | Type | Key | What | Changes |
 | --- | --- | --- | --- |
 | `npm/tarballs` | `<name>@<version>` | a version's tarball, its bytes (upstream's `getTarball`, checked against its integrity) | never |
 | `risk/npm/versions` | `<name>@<version>` | what its document says: manifest, publish time, dist | never |
-| `risk/npm/packages` | `<name>` | its deprecated versions, when its first version was published | asked again after an hour |
+| `risk/npm/packages` | `<name>` | its deprecated versions | asked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
 | `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
@@ -60,7 +66,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - what its code runs beyond itself (eval and its kin, child_process, credentials, the whole environment, publishing)
   - the exfiltration hosts it names
   - the hosts its code calls
-- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out) and, where it is new since the version compared with, when it was first published.
+- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
 
 Severities, the most first: `critical` (red), `high` (orange), `moderate` (yellow), `low`, `notice`.
 

@@ -10,7 +10,7 @@
 // per-report ignore is a client-local concept keyed by report name.
 export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted' | 'ignored'
 
-export const TRIAGE_BUCKETS: readonly TriageBucket[] = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
+const TRIAGE_BUCKETS: readonly TriageBucket[] = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
 
 // One finding's server-side triage entry (also the write shape — writes
 // replace the whole entry). Absent fields are unset; `flagged` is tri-state:

@@ -2610,8 +2610,8 @@ function renderNpmPackageOverview(entry, details) {
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry),
     provenanceNamesBuilder: npmProvenanceNamesBuilder(entry.npm), files: paths }), npmOverviewExtras(entry, paths, details), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
-    leadColumn: html`${npmDependenciesColumn(entry, details)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
-    summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton, npmOverviewBadges(entry, details))}`,
+    leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
+    summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton, npmOverviewBadges(entry))}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
     fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path, true)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),

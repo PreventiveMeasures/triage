@@ -4,11 +4,6 @@ import type { CacheStore } from '@preventive/upstream/npm.js'
 // How severe a stamp or a finding is, the most first: `critical` red, `high`
 // a warning's orange, `moderate` yellow, `low`, and a `notice`.
 export type Severity = 'critical' | 'high' | 'moderate' | 'low' | 'notice'
-export const SEVERITIES: readonly Severity[]
-
-// Which reading of a version an assessment kept is: one more whenever a
-// heuristic changes what it finds.
-export const RISK_VERSION: number
 
 // How old a version must be to be trusted unless said: two weeks, in ms.
 export const DEFAULT_MINIMUM_RELEASE_AGE: number
@@ -80,6 +75,12 @@ export interface DependencyRisk {
   flags: { check: string; label: string; tooltip: string }[]
   tier?: number | null
   level?: string
+  // Its last whole month's downloads, by what its tier goes by: none where
+  // npm counts none of them.
+  month?: { total: number; from: string }
+  // Whether npm counts none of its downloads, as of a package published
+  // the day before; unpopular all the same.
+  uncounted?: true
   created?: string
   gap?: number
 }
@@ -96,6 +97,4 @@ export interface NpmAssessment {
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
 
-export function npmTooNew(published: string, options?: { minimumReleaseAge?: number; now?: number }): boolean
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown
-export function npmCompareFindings(base: unknown, other: unknown, files?: unknown, options?: Record<string, unknown>): Finding[]

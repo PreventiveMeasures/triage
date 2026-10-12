@@ -31,7 +31,7 @@ const SOCKET_BADGE = 'https://badge.socket.dev/npm/package'
 const BADGE_BYTES = 16 * 1024
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
-export const DAY_MS = 24 * 60 * 60_000
+const DAY_MS = 24 * 60 * 60_000
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -41,30 +41,24 @@ const isDay = (value: unknown): value is string => typeof value === 'string' && 
 // none for a day npm leaves out; null where npm has none for it.
 export interface NpmDownloads { start: string; end: string; days: number[] }
 
-export const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
+const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
 
 // Its last year, as npm counts it (to the last day it has counted), from
 // the first of the month that year starts in, so that month is whole too.
 async function askDownloads(name: string): Promise<NpmDownloads | null> {
-  const year = (await askDownloadRange('last-year', [name])).get(name) ?? null
+  const year = await askDownloadRange('last-year', name)
   const start = new Date(year?.start ?? 0)
   if (year === null || start.getUTCDate() === 1) return year
   const first = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)
-  const before = await askDownloadRange(`${isoDay(first)}:${isoDay(start.getTime() - DAY_MS)}`, [name]).then(found => found.get(name), () => null)
+  const before = await askDownloadRange(`${isoDay(first)}:${isoDay(start.getTime() - DAY_MS)}`, name).catch(() => null)
   return before?.start === isoDay(first) && before.days.length === (start.getTime() - first) / DAY_MS
     ? { start: before.start, end: year.end, days: [...before.days, ...year.days] } : year
 }
 
-// npm's downloads of `names` over `range`, by name: null where npm has
-// none. One name is answered alone; many (npm-download-counts.ts), each by
-// its name, up to 128 unscoped ones.
-export async function askDownloadRange(range: string, names: string[], signal?: AbortSignal): Promise<Map<string, NpmDownloads | null>> {
-  const json = await askUpstreamJson(`${DOWNLOADS_API}/${range}/${names.map(name => name.replace('/', '%2f')).join(',')}`,
-    { headers: { accept: 'application/json' }, limit: names.length * DOWNLOADS_BYTES, ...signal && { signal } })
-  if (json === null) return new Map(names.map(name => [name, null]))
-  if (names.length === 1) return new Map([[names[0]!, readDownloads(json)]])
-  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
-  return new Map(names.map(name => [name, json[name] == null ? null : readDownloads(json[name])]))
+// npm's downloads of `name` over `range`: null where npm has none.
+async function askDownloadRange(range: string, name: string): Promise<NpmDownloads | null> {
+  const json = await askUpstreamJson(`${DOWNLOADS_API}/${range}/${name.replace('/', '%2f')}`, { headers: { accept: 'application/json' }, limit: DOWNLOADS_BYTES })
+  return json === null ? null : readDownloads(json)
 }
 
 // One package's downloads as npm's range API gives them.
@@ -93,9 +87,6 @@ export const npmLatestRepo = (name: string, repo: string | null): void => void l
 export function npmDownloads(name: string): Promise<NpmDownloads | null> {
   return downloads(name, () => askDownloads(name))
 }
-
-// A package's year kept, asking for nothing; undefined where none is.
-export const keptNpmDownloads = (name: string) => downloads.peek(name)
 
 const SOCKET_SCORES = ['overall', 'supplyChain', 'vulnerability', 'quality', 'maintenance', 'license'] as const
 const SOCKET_SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, middle: 2, low: 3 }

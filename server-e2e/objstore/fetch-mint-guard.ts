@@ -35,8 +35,8 @@ export type FetchMintGuard = {
   size: () => number
 }
 
-export const DEFAULT_FETCH_MINT_WINDOW_MS = 60_000
-export const DEFAULT_FETCH_MINT_MAX_ENTRIES = 50_000
+const DEFAULT_FETCH_MINT_WINDOW_MS = 60_000
+const DEFAULT_FETCH_MINT_MAX_ENTRIES = 50_000
 
 export function createFetchMintGuard(
   { windowMs = DEFAULT_FETCH_MINT_WINDOW_MS, maxEntries = DEFAULT_FETCH_MINT_MAX_ENTRIES }:

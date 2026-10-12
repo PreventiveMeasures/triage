@@ -3,6 +3,7 @@ import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
 import { renamedDiff } from '@preventive/compare/names.js'
+import { toldVersion } from './_npm-risk.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
@@ -53,8 +54,12 @@ function renderText(value) {
 
 // A source map's version, by its integrity and files; an npm version's where
 // it has a `manifest`.
-const version = (integrity, files, manifest = null) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
-  ...manifest && { npm: { name: 'pkg', version: integrity, manifest } } })
+// An npm version, with a manifest, its risk told as the server tells it
+// (_npm-risk.js); else a bundle's files.
+const version = (integrity, files, manifest = null) => {
+  const read = { integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } }
+  return manifest ? toldVersion({ ...read, npm: { name: 'pkg', version: integrity, manifest } }) : read
+}
 
 // Code comparing `base` with `other`, `fields` among its properties, ready to
 // render: `render(path)` its text with `path` open, `head(path)` its file's head.

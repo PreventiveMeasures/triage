@@ -1,4 +1,4 @@
-export const MAX_PULL_REQUEST_URL = 2048
+const MAX_PULL_REQUEST_URL = 2048
 
 export interface PullRequestRef { repo: string; number: number }
 export type GithubFixRef = PullRequestRef & { kind: 'pull' | 'issue' }

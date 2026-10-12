@@ -60,13 +60,6 @@ export function isReportIgnoreScoped(entry: TriageEntry | undefined, report: str
   return Array.isArray(entry?.scopedIgnoredReports) && entry.scopedIgnoredReports.includes(report)
 }
 
-// Report names in which `id` is per-report ignored, as a fresh array
-// (callers — snapshot / persist — must not alias the live entry).
-export function ignoredReportsFor(map: TriageMap, id: string): string[] {
-  const list = map.get(id)?.ignoredReports
-  return Array.isArray(list) ? list.slice() : []
-}
-
 // Sanitize an arbitrary (possibly wire / legacy) entry into the clean
 // in-memory shape: migrate `deleted` → `triage: 'deleted'`, coerce an
 // invalid `triage` to absent, drop empty fields. Returns `undefined`
@@ -154,13 +147,4 @@ export function setReportIgnored(map: TriageMap, id: string, report: string, ign
   const markers = new Set(map.get(id)?.scopedIgnoredReports ?? [])
   if (ignored && scoped) markers.add(report)
   return patchEntry(map, id, { ignoredReports: set.size > 0 ? [...set] : undefined, scopedIgnoredReports: [...markers] })
-}
-
-// Drop one report name from every entry's ignoredReports (report
-// deletion / un-assignment). Snapshots the keys first since the loop
-// mutates the map.
-export function clearReportEverywhere(map: TriageMap, report: string): void {
-  for (const [id, entry] of [...map]) {
-    if (entry.ignoredReports?.includes(report)) setReportIgnored(map, id, report, false)
-  }
 }

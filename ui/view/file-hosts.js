@@ -3,15 +3,13 @@
 // files read once, and an exfiltration host's tag.
 import { html, nothing } from 'lit'
 import { EXFILTRATION } from '../../risk/files/hosts.js'
-import { npmVersionFileRisk } from '../../risk/npm/files.js'
+import { fileRiskOf } from './file-risk.js'
 import { linesNote, onlyLine, opensAt } from './file-runs-code.js'
 
-export { EXFILTRATION, npmExfiltration, npmHosts } from '../../risk/files/hosts.js'
 
-// The hosts a version's file names and the exfiltration services it names, as
-// risk read it, once a version (risk/npm/compare.js npmVersionFileRisk).
-export const npmFileHosts = (details, path) => npmVersionFileRisk(details, path).hosts
-export const npmFileExfiltration = (details, path) => npmVersionFileRisk(details, path).exfiltration
+// The exfiltration services a version's file names, as risk read it
+// (file-risk.js fileRiskOf).
+export const npmFileExfiltration = (details, path) => fileRiskOf(details, path).exfiltration
 
 // The services any of `founds` names, by name, in their order: `webhook.site, Telegram`.
 export const npmExfiltrationNames = founds => [...EXFILTRATION].filter(([service]) => founds.some(found => found.has(service))).map(([, { name }]) => name).join(', ')

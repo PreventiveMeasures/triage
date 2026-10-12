@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmRunsCode, npmRunsCodeFlags } from '../ui/view/file-runs-code.js'
+import { npmRunsCode, npmRunsCodeFlags } from '../risk/files/runs-code.js'
 
 const found = (path, text) => {
   const runs = npmRunsCode(path, text)

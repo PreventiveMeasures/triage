@@ -26,7 +26,7 @@ const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups,
 const {
   PARTIAL_MODES, REVALIDATE_FILTERS, REVALIDATE_KINDS, activeRevalidateKinds,
   canDropRevalidation, configureRevalidation, formatRunMeta, hasRevalidateField,
-  hasRevalidateStamp, isRevalidation, isRevalidationRow, reachableRevalidateFilters,
+  hasRevalidateStamp, isRevalidation, reachableRevalidateFilters,
   revalidateKind, revalidateStamp, revalidationShown, voidsConfidence,
 } = await import('../ui/view/format.js')
 
@@ -1422,16 +1422,14 @@ describe('the revalidation layer switch', () => {
   })
 
   it('reads the field past the switch where it has to', () => {
-    // These two gate the switch and drop the pass's own rows, so they
-    // answer the same either way — otherwise turning the layer off
-    // would hide the control that turns it back on.
+    // This gates the switch, so it answers the same either way —
+    // otherwise turning the layer off would hide the control that turns
+    // it back on.
     for (const on of [true, false]) {
       configureRevalidation(on)
       assert.equal(hasRevalidateField({ revalidate: 'confirmed' }), true, String(on))
       assert.equal(hasRevalidateField({ revalidate: 'revalidation' }), true, String(on))
       assert.equal(hasRevalidateField({}), false, String(on))
-      assert.equal(isRevalidationRow({ revalidate: 'revalidation' }), true, String(on))
-      assert.equal(isRevalidationRow({ revalidate: 'confirmed' }), false, String(on))
     }
     // …and an unrecognised value is still no stamp, either way.
     configureRevalidation(false)

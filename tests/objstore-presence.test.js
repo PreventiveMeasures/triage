@@ -30,7 +30,7 @@ const {
   discoverRemoteBundleIntegrities, discoverRemoteFileNames,
   downloadFileFromRemote, fetchFile, isBundleInRemote, isInRemote,
   onAutoDownloaded, onChange, openWorkspace, putFile, recheckRemoteStorage,
-  remoteBundleCount, remoteBundleIntegrities, remoteCount, remoteFileNames,
+  remoteCount,
   resolveReportDifference, differingReports, holdLocalChangeChecks,
 } = await import('../client/sync/objstore-presence.js')
 
@@ -569,7 +569,7 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('remoteCount + remoteFileNames discover names from a peer-PUT inventory', async () => {
+  it('remoteCount + discoverRemoteFileNames follow a peer-PUT inventory', async () => {
     // The presence module subscribes via openWorkspace; objstore-put
     // broadcasts add tags to `remoteTags`. The background
     // `fetchByTag` worker decodes those tags to plaintext fileNames
@@ -586,10 +586,8 @@ describe('client/sync/objstore-presence', () => {
         }
         // Tag count reflects immediately on broadcast.
         await awaitPresence(() => remoteCount(ws.id) === 2, 'two tags broadcast')
-        // Decoded names land asynchronously via the background
-        // fetchByTag worker.
-        await awaitPresence(() => remoteFileNames(ws.id).length === 2, 'two names decoded')
-        const names = remoteFileNames(ws.id).toSorted()
+        // Names are decoded by the fetchByTag discovery.
+        const names = (await discoverRemoteFileNames(ws.id)).toSorted()
         assert.deepEqual(names, ['alpha.json', 'beta.json'])
       } finally { peer.close() }
     } finally {
@@ -1167,7 +1165,7 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('remoteBundleCount + remoteBundleIntegrities classify peer-uploaded bundles via discovery', async () => {
+  it('discovery classifies peer-uploaded bundles', async () => {
     const integrityA = 'sha512-disc-bundle-A'
     const integrityB = 'sha512-disc-bundle-B'
     // Workspace doesn't pre-claim the bundles — peer uploads them and
@@ -1181,9 +1179,7 @@ describe('client/sync/objstore-presence', () => {
         await peer.putBundle({ integrity: integrityB, name: 'b.js', content: Buffer.from('B'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
-      // Wait for the discovery pass to classify both tags.
-      await awaitPresence(() => remoteBundleCount(ws.id) === 2, 'remoteBundleCount=2 after discovery')
-      const integrities = remoteBundleIntegrities(ws.id).toSorted()
+      const integrities = (await discoverRemoteBundleIntegrities(ws.id)).toSorted()
       assert.deepEqual(integrities, [integrityA, integrityB].toSorted())
     } finally {
       closeWorkspace(ws.id)
@@ -1200,10 +1196,9 @@ describe('client/sync/objstore-presence', () => {
         await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('z'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
-      // Without awaiting discovery, `remoteBundleIntegrities` may
-      // return [] because the background fetch hasn't classified the
-      // tag yet. `discoverRemoteBundleIntegrities` awaits and returns
-      // the full classified set.
+      // The background fetch may not have classified the tag yet;
+      // `discoverRemoteBundleIntegrities` awaits and returns the full
+      // classified set.
       const integrities = await discoverRemoteBundleIntegrities(ws.id)
       assert.deepEqual(integrities, [integrity])
     } finally {
@@ -1291,39 +1286,6 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('reports badge count is not inflated by peer-uploaded bundle tags (regression)', async () => {
-    // Pre-fix: the reports badge used `remoteCount` which includes
-    // bundle tags, so a workspace with 0 local reports + 2 peer-
-    // uploaded bundles rendered "2 cloud" on the reports badge and
-    // the download dialog opened empty. The fix splits the count via
-    // `remoteCount - remoteBundleCount`. The presence module exposes
-    // both counts; this test pins that `remoteBundleCount` correctly
-    // captures the bundles so the subtraction in the badge math is
-    // valid.
-    const integA = 'sha512-reports-isolation-A'
-    const integB = 'sha512-reports-isolation-B'
-    const ws = await createWorkspaceWithBundles('reports-isolation', [])
-    try {
-      const peer = await openPeerSession(ws)
-      try {
-        await peer.putBundle({ integrity: integA, name: 'b.js', content: Buffer.from('A'), prev: null })
-        await peer.putBundle({ integrity: integB, name: 'b.js', content: Buffer.from('B'), prev: null })
-      } finally { peer.close() }
-      openWorkspace(ws.id)
-      // Post-discovery: 2 total tags, both classified as bundles.
-      await awaitPresence(() => remoteBundleCount(ws.id) === 2, 'both bundles classified')
-      assert.equal(remoteCount(ws.id), 2, '2 total remote tags')
-      assert.equal(remoteBundleCount(ws.id), 2, 'both classified as bundles')
-      // The reports badge formula `remoteCount - remoteBundleCount` =
-      // 0 — correct, no reports in cloud.
-      assert.equal(remoteCount(ws.id) - remoteBundleCount(ws.id), 0,
-        'reports cloud count excludes bundle tags')
-    } finally {
-      closeWorkspace(ws.id)
-      await deleteWorkspace(ws.id)
-    }
-  })
-
   it('fetchBundleFromRemote refuses bytes whose sha512 does not match the requested integrity', async () => {
     // The content-forgery defense at `objstore-presence.js`'s
     // `fetchBundleFromRemote`: a workspace member can PUT a blob
@@ -1364,8 +1326,8 @@ describe('client/sync/objstore-presence', () => {
   it('bundle and report tags are classified independently — neither pollutes the other', async () => {
     // Cross-classification pin: a workspace holding both a report and
     // a bundle should expose them under their respective cache maps.
-    // The total `remoteCount` is 2, but `remoteFileNames` reports 1
-    // and `remoteBundleIntegrities` reports 1 — proving the discovery
+    // The total `remoteCount` is 2, but discovery names 1 report and
+    // 1 bundle — proving the discovery
     // worker classifies each tag correctly via the fetchByTag
     // discriminated round-trip.
     const integrity = 'sha512-mixed-bundle'
@@ -1379,14 +1341,9 @@ describe('client/sync/objstore-presence', () => {
         await peer.putBundle({ integrity, name: 'b.js', content: Buffer.from('bundle-bytes'), prev: null })
       } finally { peer.close() }
       openWorkspace(ws.id)
-      await awaitPresence(() => remoteCount(ws.id) === 2 && remoteBundleCount(ws.id) === 1, 'both kinds classified')
-      // The post-discovery counts: 2 total, 1 of each kind.
-      assert.equal(remoteCount(ws.id), 2, '2 total remote tags')
-      assert.equal(remoteBundleCount(ws.id), 1, '1 classified as bundle')
-      const fileNames = remoteFileNames(ws.id)
-      assert.deepEqual(fileNames, [fileName], 'report side only')
-      const integrities = remoteBundleIntegrities(ws.id)
-      assert.deepEqual(integrities, [integrity], 'bundle side only')
+      await awaitPresence(() => remoteCount(ws.id) === 2, '2 total remote tags')
+      assert.deepEqual(await discoverRemoteFileNames(ws.id), [fileName], 'report side only')
+      assert.deepEqual(await discoverRemoteBundleIntegrities(ws.id), [integrity], 'bundle side only')
     } finally {
       closeWorkspace(ws.id)
       await deleteWorkspace(ws.id)

@@ -5,7 +5,7 @@ import { scanScopeOptions } from '../scan/scopes.js'
 // Full scope control shared by Scan, Compare, Advisories, Treemap, and the bundle graph. Keep IDs
 // intact: presentation recognizes standard scopes, while custom bundle scopes remain selectable.
 // `--scope-height` lets a host toolbar match its control height (default 2rem options, auto select).
-export class BundleScopeSelector extends LitElement {
+class BundleScopeSelector extends LitElement {
   static properties = { reasons: { attribute: false }, value: { attribute: false }, label: { type: String } }
   constructor() { super(); this.reasons = []; this.value = ''; this.label = 'Choose scope' }
   _select(value) { this.dispatchEvent(new CustomEvent('scope-change', { detail: { value }, bubbles: true, composed: true })) }

@@ -106,18 +106,18 @@ export const sourceFolderIcon = html`<svg width="16" height="16" viewBox="0 0 16
 
 export const sourceNpmIcon = html`<svg class="bundle-code-tree-npm" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M1 1h14v14H1Zm3 3v8h4V6h2v6h2V4Z"/></svg>`
 
-export const sourceSoldeerIcon = html`<svg class="bundle-code-tree-soldeer" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+const sourceSoldeerIcon = html`<svg class="bundle-code-tree-soldeer" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
   <path d="m8 1 6 3.5v7L8 15l-6-3.5v-7Z" fill="none" stroke="currentColor" stroke-width="1"/>
   <path d="m8 3 2.5 4L8 8.5 5.5 7Zm-2.5 5L8 9.5 10.5 8 8 13Z" fill="currentColor"/>
 </svg>`
 
-export const sourceComposerIcon = html`<svg class="bundle-code-tree-composer" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+const sourceComposerIcon = html`<svg class="bundle-code-tree-composer" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
   <path d="M8 1 15 4.5v7L8 15l-7-3.5v-7Z" fill="#8892bf"/>
   <path d="m1 4.5 7 3.5 7-3.5M8 8v7M4.5 2.75l7 3.5" fill="none" stroke="var(--surface, #fff)" stroke-width=".9"/>
 </svg>`
 
 // Front-center Cargo box, adapted from https://www.svgrepo.com/svg/373489/cargo (CC0).
-export const sourceCargoIcon = html`<svg class="bundle-code-tree-cargo" width="12" height="12" viewBox="9.25 6.14 14 14" aria-hidden="true">
+const sourceCargoIcon = html`<svg class="bundle-code-tree-cargo" width="12" height="12" viewBox="9.25 6.14 14 14" aria-hidden="true">
   <path d="m16.264 11.547 6.2-2.446v8.16l-6.2 2.485Zm0-.019-6.2-2.481v8.123l6.2 2.522Z" fill="#e5ac3d" stroke="#73561f" stroke-miterlimit="10" stroke-width=".05430921534373718px"/>
   <path d="m16.277 11.508 6.169-2.435-6.2-2.531-6.2 2.467Z" fill="#e3b04e" stroke="#73561f" stroke-miterlimit="10" stroke-width=".05430921534373718px"/>
   <path d="m12.82 10.149 6.196-2.467" fill="none" stroke="#73561f" stroke-miterlimit="10" stroke-width=".05430921534373718px"/>

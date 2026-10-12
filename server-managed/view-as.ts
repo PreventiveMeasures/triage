@@ -16,7 +16,7 @@ import { VIEW_COOKIE, buildCookie, clearCookie, cookieName, parseCookies } from 
 export const VIEW_AS_PATH = '/api/auth/view-as'
 export const VIEW_ONLY_ERROR = 'view-only'
 
-export function viewCookieName(config: ManagedConfig): string {
+function viewCookieName(config: ManagedConfig): string {
   return cookieName(config, VIEW_COOKIE)
 }
 

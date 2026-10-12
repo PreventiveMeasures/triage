@@ -51,7 +51,7 @@ export async function runLocalTriageImport(raw, { session, confirmImport, ...opt
 
 // Preserve fields omitted by the export. Disagreements only concern fields
 // actually offered; imported comments are appended, never attributed or erased.
-export function mergeImportTriage(incoming, snapshots) {
+function mergeImportTriage(incoming, snapshots) {
   const conflicts = [], entries = Object.create(null)
   for (const [id, offered] of Object.entries(incoming)) {
     const snapshot = snapshots[id]

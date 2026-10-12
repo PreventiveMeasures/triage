@@ -57,12 +57,6 @@ const SCAN_BUNDLE_FIXTURES = [
   },
 ]
 
-export const SCAN_FIXTURES = [
-  { id: 'scan-104', bundleId: 'bundle-checkout', bundleName: 'checkout.stasis', reason: 'app', status: 'completed', createdAt: 'Today, 09:42', duration: '4m 18s', files: 5, reportSaved: true },
-  { id: 'scan-103', bundleId: 'bundle-worker', bundleName: 'worker.stasis', reason: 'All', status: 'running', createdAt: 'Today, 09:51', duration: '1m 06s', files: 5, reportSaved: false },
-  { id: 'scan-102', bundleId: 'bundle-checkout', bundleName: 'checkout.stasis', reason: 'run', status: 'stopped', createdAt: 'Yesterday, 17:20', duration: '38s', files: 4, reportSaved: false },
-]
-
 export function cloneScanFixtures() {
   return SCAN_BUNDLE_FIXTURES.map((bundle) => ({
     ...bundle,

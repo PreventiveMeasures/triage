@@ -19,11 +19,7 @@ export const VISIBILITY_PERMISSION_LABELS: Record<VisibilityPermission, string> 
 export type TeamUserPermissions = Record<VisibilityPermission, boolean>
 
 // All-off — the default for a fresh membership.
-export const DEFAULT_TEAM_USER_PERMISSIONS: TeamUserPermissions = { dependencies: false, security: false }
-
-export function isVisibilityPermission(x: unknown): x is VisibilityPermission {
-  return typeof x === 'string' && (VISIBILITY_PERMISSIONS as readonly string[]).includes(x)
-}
+const DEFAULT_TEAM_USER_PERMISSIONS: TeamUserPermissions = { dependencies: false, security: false }
 
 // Coerce arbitrary input (a request body) into a full permission set: a key is
 // granted only when explicitly `true`; anything else (absent, non-bool) is off.

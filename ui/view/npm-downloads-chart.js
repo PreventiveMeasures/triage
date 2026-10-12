@@ -5,7 +5,7 @@
 import { LitElement, html, nothing, svg } from 'lit'
 import { DAY_MS, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel } from '../../risk/npm/downloads.js'
 
-export { DAY_MS, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel } from '../../risk/npm/downloads.js'
+export { DAY_MS } from '../../risk/npm/downloads.js'
 
 const HEIGHT = 72
 // The plot runs to the card's right edge, as the switch over it does.
@@ -40,8 +40,12 @@ const downloadsIn = (count, when) => `${whole.format(count)} downloads, ${when}`
 // the chart's readout names it (`September 2026`); null without one.
 export function npmLastMonth(downloads) {
   const last = npmDownloadMonths(downloads).at(-1)
-  return last ? { total: last.total, month: monthName(last.from) } : null
+  return last ? npmMonthSaid(last) : null
 }
+
+// A month's downloads (`{ total, from }`, as npmDownloadMonths has it) as a
+// tooltip says them: `{ total, month }`, the month by its name.
+export const npmMonthSaid = ({ total, from }) => ({ total, month: monthName(from) })
 
 // A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
 // times a power of ten.

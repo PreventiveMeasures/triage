@@ -30,7 +30,7 @@ function branchKind(name) {
 // Version-like branches (v22.x, 3.12, v22.x-staging) lead, newest line first,
 // plain lines before suffixed ones so each reads as one run. The rest keep
 // GitHub's order after them.
-export function orderBranches(names) {
+function orderBranches(names) {
   const keyed = names.map(name => {
     const match = VERSION.exec(name)
     return { name, parts: match?.[1].split('.').map(part => part.toLowerCase() === 'x' ? Infinity : Number(part)), suffix: match?.[2] ?? '' }
@@ -50,7 +50,7 @@ export function orderBranches(names) {
 // Branches sharing a first path segment collapse under it when there are more
 // than two of them, listed after the other branches. An expanded prefix lists
 // its branches without the prefix. The default branch stays outside any group.
-export function groupBranches(names, expanded, defaultBranch) {
+function groupBranches(names, expanded, defaultBranch) {
   const prefix = name => name === defaultBranch || !name.includes('/') ? null : name.slice(0, name.indexOf('/'))
   const groups = Map.groupBy(names.filter(prefix), prefix)
   const entries = names.filter(name => !(groups.get(prefix(name))?.length > 2)).map(name => ({ name }))

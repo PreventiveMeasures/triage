@@ -21,7 +21,7 @@ async function withLoadingToast(message, signal, load) {
 
 // Navigation and the configured service belong to the local/E2E host, not
 // the reusable scan component (which also lives inside Manage).
-export function currentScanServer() {
+function currentScanServer() {
   return availableScanServer({
     hostname: window.location.hostname,
     devServer: document.querySelector('meta[name="deepview-scan-server"]')?.content,

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmExfiltration, npmExfiltrationNames, npmExfiltrationSaid, npmHosts } from '../ui/view/file-hosts.js'
-import { npmFoundAdded } from '../ui/view/file-runs-code.js'
+import { npmExfiltrationNames, npmExfiltrationSaid } from '../ui/view/file-hosts.js'
+import { npmExfiltration, npmHosts } from '../risk/files/hosts.js'
+import { npmFoundAdded } from '../risk/files/runs-code.js'
 
 const hosts = (path, text) => {
   const found = npmHosts(path, text)

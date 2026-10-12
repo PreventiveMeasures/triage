@@ -21,7 +21,7 @@ const REPORT_MODES = [
 ]
 
 // The host owns scan settings. Native radio groups provide keyboard navigation.
-export class ScanModeSelector extends LitElement {
+class ScanModeSelector extends LitElement {
   static properties = { mode: {}, analyzer: {}, reportMode: {} }
   static styles = unsafeCSS(styles)
 

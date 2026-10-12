@@ -13,7 +13,7 @@ const RAIL_HIT_MAX = 200
 const RAIL_HIT_VISIBLE = 28
 const RAIL_HIT_LEAD = 12
 
-export function clipRailHit(text, ranges) {
+function clipRailHit(text, ranges) {
   const first = ranges.length > 0 ? ranges[0][0] : 0
   const indent = text.length - text.trimStart().length
   const from = first - indent > RAIL_HIT_VISIBLE ? first - RAIL_HIT_LEAD : 0

@@ -7,7 +7,7 @@ import type { WorkspaceShareFeedState } from './workspace-shares.ts'
 
 // Short database reads work across instances without pinning a Neon connection.
 // All polling belongs to the awaited request; nothing runs after it completes.
-export const TEAM_FEED_POLL_MS = 3_000
+const TEAM_FEED_POLL_MS = 3_000
 export const TEAM_FEED_LIFETIME_MS = 240_000 // below the configured Vercel 300s
 const HEARTBEAT_MS = 15_000
 

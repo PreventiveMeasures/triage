@@ -15,7 +15,7 @@
 import { readFile } from './storage.js'
 import { analyzeReport } from '@preventive/report'
 import { LINKS_KIND, countLinkedIds, parseLinkedFindings } from './linked-findings.js'
-import { getItem as getSecureItem, hydrateKey, setItem as setSecureItem } from './secure-storage.js'
+import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
 
 const COUNTS_KEY = 'deepview.fileCounts'
 
@@ -63,18 +63,15 @@ const COMPATIBLE_VERSIONS = new Set([3, COUNTS_VERSION])
 let cache = null
 function load() {
   if (cache) return cache
-  cache = readCounts()
-  return cache
-}
-function readCounts(raw = getSecureItem(COUNTS_KEY)) {
   let data
-  try { data = JSON.parse(raw || '{}') } catch { data = {} }
+  try { data = JSON.parse(getSecureItem(COUNTS_KEY) || '{}') } catch { data = {} }
   // An accepted marker is carried forward under the current one, so a
   // blob converges on a single version without a pass over its entries;
   // anything else is discarded and refilled.
   if (COMPATIBLE_VERSIONS.has(data?.__v)) data.__v = COUNTS_VERSION
   else data = { __v: COUNTS_VERSION }
-  return data
+  cache = data
+  return cache
 }
 function persist() {
   setSecureItem(COUNTS_KEY, JSON.stringify(cache))
@@ -84,9 +81,9 @@ function persist() {
 // Normalize a cache entry to the `{ count, source }` shape. Legacy
 // entries were bare numbers — accept those and treat the source as
 // unknown. `__v` is the version marker, not a file entry.
-function entryOf(name, data = load()) {
+function entryOf(name) {
   if (name === '__v') return undefined
-  const v = data[name]
+  const v = load()[name]
   if (v === undefined) return undefined
   if (typeof v === 'number') return { count: v }
   return v
@@ -106,14 +103,6 @@ export function getCount(name) {
 // extension is better than nothing.
 export function getKind(name) {
   return entryOf(name)?.source
-}
-
-// Managed mode skips local boot. Read a fresh metadata snapshot for its lazy
-// importer, including after unlock, without relying on the sidebar's cache or
-// replacing an in-progress ensureCounts walk's mutable cache object.
-export async function getFileKinds(names) {
-  const data = readCounts(await hydrateKey(COUNTS_KEY))
-  return new Map(names.map(name => [name, entryOf(name, data)?.source]))
 }
 
 // `source` is whatever `analyzeContent` returned, `undefined` for a

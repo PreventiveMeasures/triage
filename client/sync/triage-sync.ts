@@ -342,9 +342,8 @@ let keyframeInterval = 100
 // Non-recoverable failure threshold. After this many consecutive
 // encrypt/sign failures on a session — typically a corrupt/unusable
 // key — we stop retrying, set the session's `error`, and aggregate
-// to status `'error'` so the UI can warn. Mutable so a test can
-// drop it to 1.
-let maxConsecutiveFailures = 5
+// to status `'error'` so the UI can warn.
+const maxConsecutiveFailures = 5
 
 // Delay before retrying a save the server shed with the `busy` NACK
 // (per-socket inflight cap — self-inflicted backpressure, not global
@@ -1827,13 +1826,6 @@ export function setHeartbeatTimings(opts: { pingMs?: number, pongMs?: number } =
 // the keyframe path with a handful of saves. Production stays at 100.
 export function setKeyframeInterval(n: number): void {
   if (typeof n === 'number' && n >= 1) keyframeInterval = n
-}
-
-// Test-only knob: lower the consecutive-failure threshold so a test
-// can drive a session into the `error` state with one fault rather
-// than five. Production stays at 5.
-export function setMaxConsecutiveFailures(n: number): void {
-  if (typeof n === 'number' && n >= 1) maxConsecutiveFailures = n
 }
 
 // Test-only knob: shorten the busy-retry delay so a unit test can

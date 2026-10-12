@@ -24,7 +24,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 
-export const DEFAULT_TOKEN_TTL_MS = 5 * 60 * 1000
+const DEFAULT_TOKEN_TTL_MS = 5 * 60 * 1000
 
 export type PutTokenPayload = {
   op: 'put'

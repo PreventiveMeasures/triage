@@ -1,6 +1,6 @@
 // Table identifiers are code constants. Renames retain rows and foreign keys;
 // an ambiguous old/new pair must be resolved before the server can start.
-export const MANAGED_TABLE_RENAMES = [
+const MANAGED_TABLE_RENAMES = [
   ['selected_repo', 'managed_selected_repo'],
   ['team_repo', 'managed_team_repo'],
   ['team_user', 'managed_team_user'],
