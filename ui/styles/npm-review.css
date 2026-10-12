@@ -129,7 +129,7 @@ npm-review-code .bundle-compare-code-bar .bundle-code-main-stats { display: none
 npm-review-code .focus-code-nav-btn:is([aria-label='Previous change'], [aria-label='Next change']) { display: none; }
 npm-review .bundle-compare-diff { min-height: 0; flex: 1; }
 npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.npm-review-file-content > .bundle-compare-all-file-head { background: var(--surface); }
+.npm-review-file-content > .bundle-compare-all-file-head { background: rgb(from var(--surface) r g b / 1); }
 .npm-review-decision {
   flex: none;
   max-height: 50%;
