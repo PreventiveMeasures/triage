@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { changeBlocks } from '../common/line-diff.js'
+import { buildSearchMatcher } from '../ui/view/bundle-search-scan.js'
+import { SEARCH_MAX_FILES, SEARCH_MAX_FILE_HITS, fileHits, searchCompareFiles } from '../ui/view/bundle-compare-search.js'
+
+const matcher = query => buildSearchMatcher(query, false, false)
+const lines = hits => hits.map(({ side, line, sign }) => `${sign ?? '?'}${side}${line}`)
+
+test('an added file is searched in its new text, a removed one in its old, an unchanged one as it is', () => {
+  assert.deepEqual(lines(fileHits('', 'a fetch\nb\nfetch c\n', matcher('fetch'), null)), ['+b0', '+b2'])
+  assert.deepEqual(lines(fileHits('x\nFETCH\n', '', matcher('fetch'), null)), ['−a1'])
+  assert.deepEqual(lines(fileHits('fetch\n', 'fetch\n', matcher('fetch'), null)), [' b0'])
+})
+
+test('a changed file lists its new lines added or unchanged, and the old lines it dropped, in the order its diff shows them', () => {
+  const before = 'keep fetch\nold fetch\nsame\ntail fetch\n'
+  const after = 'keep fetch\nnew fetch\nsame\ntail fetch\nmore fetch\n'
+  const hits = fileHits(before, after, matcher('fetch'), changeBlocks(before, after))
+  assert.deepEqual(lines(hits), [' b0', '−a1', '+b1', ' b3', '+b4'], 'a removed line sits before the lines added in its block; the unchanged old ones are not listed twice')
+  assert.deepEqual(hits[2].ranges, [[4, 9]])
+  assert.equal(hits[1].text, 'old fetch')
+})
+
+test('a changed file whose diff is not known yet lists its new lines unsigned', () => {
+  assert.deepEqual(lines(fileHits('a\nfetch old\n', 'a\nfetch new\n', matcher('fetch'), null)), ['?b1'])
+})
+
+test('the search lists files in the order given, skips ones that aren\'t text, and asks for a diff only where a side matches', () => {
+  const asked = []
+  const blocksOf = (path, before, after) => { asked.push(path); return changeBlocks(before, after) }
+  const found = searchCompareFiles([
+    { path: 'b.js', before: 'x\n', after: 'x fetch\n' },
+    { path: 'logo.png', before: new Uint8Array(1), after: new Uint8Array(2) },
+    { path: 'a.js', before: 'one\n', after: 'two\n' },
+    { path: 'gone.js', before: 'fetch()\n', after: '' },
+    { path: 'old.js', before: 'drop fetch\nkeep\n', after: 'keep\n' },
+  ], matcher('fetch'), blocksOf)
+  assert.deepEqual(found.files.map(file => [file.path, lines(file.hits)]), [['b.js', ['+b0']], ['gone.js', ['−a0']], ['old.js', ['−a0']]])
+  assert.equal(found.hits, 3)
+  assert.equal(found.truncated, false)
+  assert.deepEqual(asked, ['b.js', 'old.js'], 'a.js matches on neither side, so it is not diffed')
+})
+
+test('the search lists up to its caps of lines a file and of files', () => {
+  const many = Array.from({ length: SEARCH_MAX_FILE_HITS + 5 }, () => 'fetch').join('\n')
+  const files = Array.from({ length: SEARCH_MAX_FILES + 1 }, (_, i) => ({ path: `f${i}.js`, before: '', after: many }))
+  const found = searchCompareFiles(files, matcher('fetch'), () => null)
+  assert.equal(found.files.length, SEARCH_MAX_FILES)
+  assert.equal(found.files[0].hits.length, SEARCH_MAX_FILE_HITS)
+  assert.equal(found.hits, SEARCH_MAX_FILES * SEARCH_MAX_FILE_HITS)
+  assert.equal(found.truncated, true)
+})

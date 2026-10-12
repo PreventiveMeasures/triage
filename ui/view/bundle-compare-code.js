@@ -11,6 +11,9 @@
 // importers are listed too, with each import's old and new target — and
 // `path` the selected file, which the slide owns so the Overview's
 // file rows can open one here. A pick dispatches `compare-code-select`.
+// The rail's search filters the tree by path, or, as the Code tab's does in
+// its Code mode, searches the code the diffs show (bundle-compare-search.js),
+// a hit opening its file at its line.
 // Light DOM, like the slide, so the tree takes the Code tab's styles and
 // the copy button reaches the document-level [data-copy-path] delegate.
 import { LitElement, html, nothing } from 'lit'
@@ -28,7 +31,10 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, listedBlocks, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { buildSearchMatcher } from './bundle-search-scan.js'
+import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
+import { railHitText } from './search-marks.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
@@ -40,7 +46,7 @@ import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
+import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -67,9 +73,20 @@ const MAX_IMPORT_LINES = 3
 // Directories all start open (a review reads every change) unless the
 // tree is too long to scan that way.
 const OPEN_ALL_MAX = 300
-// Time a render of the tree spends counting its files' lines (_lineCounts)
-// before leaving the rest to the next.
+// Time a render of the tree spends counting its files' lines (_lineCounts),
+// or a search diffing the files it found (_searchResults), before leaving
+// the rest to the next.
 const COUNT_BUDGET_MS = 30
+// The rail search's modes, as the Code tab's rail names them
+// (bundle-code-search.js): filter the tree by path, or search code.
+const SEARCH_MODES = [
+  { mode: 'files', label: 'Filter files', placeholder: 'Filter changed files', icon: FILES_MODE_ICON },
+  { mode: 'code', label: 'Search code', placeholder: 'Search changed code', icon: CODE_MODE_ICON },
+]
+// Lines a hit opens its fold by past itself, so it isn't at the fold's edge.
+const SEEK_MARGIN = EXPAND_STEP / 2
+// A search hit's sign as its row is classed and read.
+const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', label: 'Removed' }, ' ': { name: 'ctx', label: 'Unchanged' } }
 
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
@@ -258,6 +275,8 @@ export class BundleCompareCode extends LitElement {
     path: {},
     _query: { state: true },
     _kinds: { state: true },
+    // 'files' (the query filters the tree) or 'code' (it searches code).
+    _mode: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -274,6 +293,15 @@ export class BundleCompareCode extends LitElement {
     this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
+    this._mode = 'files'
+    // A changed file's change blocks, as the search found them (listedBlocks),
+    // by path; and its last results, kept while the query and files are.
+    this._blocks = new Map()
+    this._found = null
+    // A search hit picked, `{ path, side, line, query }`, until its file's
+    // diff draws; then that row, `{ path, index }`, until it is scrolled to.
+    this._sought = null
+    this._soughtRow = null
     // Directory path → open, for the disclosures the user toggled.
     this._open = new Map()
     this._models = new Map()
@@ -300,6 +328,7 @@ export class BundleCompareCode extends LitElement {
         this._expansions.clear()
         this._limits.clear()
         this._forced.clear()
+        this._blocks.clear()
       }
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
@@ -316,6 +345,26 @@ export class BundleCompareCode extends LitElement {
       if (body) body.scrollTop = 0
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
     }
+    this._scrollSought()
+  }
+
+  // The row of a search hit picked (see _seek), once drawn, scrolled into
+  // view and flashed; a hit whose file drew no diff, dropped.
+  _scrollSought() {
+    if (this._sought?.path === this._current) this._sought = null
+    if (!this._soughtRow) return
+    const { path, index } = this._soughtRow
+    this._soughtRow = null
+    const table = [...this.querySelectorAll('.bundle-compare-diff-table')].find(element => element.dataset.path === path)
+    const row = table?.children[index]
+    if (!row) return
+    // A line taller than half the view (a long one, wrapped) shows from its top.
+    const view = row.closest('.bundle-compare-diff')
+    row.scrollIntoView({ block: view && row.offsetHeight > view.clientHeight / 2 ? 'start' : 'center' })
+    row.classList.remove('is-sought')
+    void row.offsetWidth
+    row.classList.add('is-sought')
+    row.addEventListener('animationend', () => row.classList.remove('is-sought'), { once: true })
   }
 
   // fileEntries, and every file that imports something that now resolves
@@ -400,13 +449,13 @@ export class BundleCompareCode extends LitElement {
   // the order it lists them.
   _railState() {
     const { prefix, root, tree, shown } = this._tree()
-    const filtered = this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
+    const filtered = this._mode === 'files' && this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
     return { prefix, root, tree, shown, filtered, order: filtered ? orderedFiles(filtered) : [] }
   }
 
   // The rail: the files that differ as a tree, filtered by path and kind,
   // `current` marked, and the splitter beside it. Picking a file is _select.
-  _renderRail({ prefix, root, tree, shown, filtered }, current) {
+  _renderRail({ prefix, root, tree, shown, filtered, order }, current) {
     this._countUntil = null
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
@@ -414,13 +463,14 @@ export class BundleCompareCode extends LitElement {
       if (entry.modified) counts.changed++
       if (entry.repointed) counts.repointed++
     }
+    const search = SEARCH_MODES.find(({ mode }) => mode === this._mode)
     return html`<aside class="bundle-code-rail">
         <div class="bundle-code-rail-head">
           <span class="bundle-code-rail-label">Changes</span>
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
           <span class="bundle-code-rail-actions">
             <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
-              ?disabled=${!!this._query || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
+              ?disabled=${this._mode !== 'files' || !!this._query || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
               ${COLLAPSE_DIRS_ICON}
             </button>
           </span>
@@ -430,7 +480,12 @@ export class BundleCompareCode extends LitElement {
         <div class="bundle-compare-code-filter">
           <label class="bundle-compare-code-search">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
-            <input type="search" placeholder="Filter changed files" aria-label="Filter changed files" .value=${live(this._query)} @input=${e => { this._query = e.target.value }}>
+            <input type="search" placeholder=${search.placeholder} aria-label=${search.placeholder} spellcheck="false" autocomplete="off"
+              .value=${live(this._query)} @input=${e => { this._query = e.target.value }}>
+            <span class="bundle-code-search-modes" role="tablist">
+              ${SEARCH_MODES.map(({ mode, label, icon }) => html`<button type="button" class=${classMap({ 'bundle-code-search-mode': true, active: mode === this._mode })}
+                role="tab" aria-selected=${String(mode === this._mode)} aria-label=${label} data-tooltip=${label} @click=${() => { this._mode = mode }}>${icon}</button>`)}
+            </span>
           </label>
           <div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
             ${KINDS.filter(({ kind }) => counts[kind] > 0).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
@@ -439,7 +494,8 @@ export class BundleCompareCode extends LitElement {
           </div>
         </div>
         <div class="bundle-code-rail-body bundle-compare-code-tree">
-          ${filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= OPEN_ALL_MAX) : html`<div class="bundle-code-search-empty">No changed files match.</div>`}
+          ${this._mode === 'code' ? this._renderSearch(order, current, prefix)
+            : filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= OPEN_ALL_MAX) : html`<div class="bundle-code-search-empty">No changed files match.</div>`}
         </div>
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
@@ -474,6 +530,122 @@ export class BundleCompareCode extends LitElement {
     }
     walk(tree)
     this.requestUpdate()
+  }
+
+  // ── Code search ──────────────────────────────────────────────────
+
+  // Code mode's results: each file with lines that match, under its name,
+  // each line with its number and sign as its diff shows them (a line removed
+  // numbered in the old text); a pick opens the file there (_seek).
+  _renderSearch(order, current, prefix) {
+    if (!this._query) return html`<div class="bundle-code-search-hint">Type to search the code of the changed files.</div>`
+    const { files, hits, truncated } = this._searchResults(order)
+    if (files.length === 0) return html`<div class="bundle-code-search-empty">No matches.</div>`
+    const strip = path => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+    return html`<div class="bundle-code-search-results bundle-compare-search">
+      <div class="bundle-code-search-summary">${hits.toLocaleString()} ${hits === 1 ? 'hit' : 'hits'} in ${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'}${truncated ? `, the first ${SEARCH_MAX_FILES}` : ''}</div>
+      ${repeat(files, file => file.path, ({ path, hits: lines }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: path === current })}>
+        <button type="button" class=${`bundle-code-search-file-name bundle-compare-code-name ${this._entries.get(path).kind}`}
+          data-tooltip-truncated data-tooltip=${path} @click=${() => this._select(path)}>${strip(path)}</button>
+        <ul class="bundle-code-search-hits">
+          ${lines.map(hit => html`<li class="bundle-code-search-hit">
+            <button type="button" class="bundle-code-search-hit-link" aria-label=${`${SIGNS[hit.sign]?.label ?? 'Line'} ${hit.line + 1}${hit.side === 'a' ? ' of the old text' : ''}: ${hit.text.trim().slice(0, 80)}`}
+              @click=${() => this._seek(path, hit)}>
+              <span class="bundle-code-search-hit-ln">${hit.line + 1}</span>
+              <span class=${`bundle-compare-search-sign ${SIGNS[hit.sign]?.name ?? ''}`} aria-hidden="true">${hit.sign ?? ''}</span>
+              <span class="bundle-code-search-hit-text mono">${railHitText(hit.text, hit.ranges)}</span>
+            </button>
+          </li>`)}
+        </ul>
+      </div>`)}
+    </div>`
+  }
+
+  // The search's results over the files the rail lists (`order`), as
+  // searchCompareFiles finds them in the texts their diffs show: none for a
+  // file whose bytes are the same, which shows no text (but where its imports
+  // repointed, when it shows its source). Kept while the query, the files
+  // and the kinds shown are. A changed file's blocks are found a little at a
+  // time, as the tree's line counts are: one whose budget is spent lists its
+  // new text's lines, unsigned, and another render signs them.
+  _searchResults(order) {
+    const key = `${this._query}\0${order.join('\0')}`
+    if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
+    const until = performance.now() + COUNT_BUDGET_MS
+    let complete = true
+    const blocksOf = (path, before, after) => {
+      if (this._blocks.has(path)) return this._blocks.get(path)
+      if (performance.now() > until) {
+        complete = false
+        return null
+      }
+      const blocks = listedBlocks(before, after)
+      this._blocks.set(path, blocks)
+      return blocks
+    }
+    const files = order.flatMap(path => {
+      const entry = this._entries.get(path)
+      return entry.modified === false && !entry.repointed ? [] : [{ path, ...fileContents(this.base, this.other, path, entry) }]
+    })
+    const result = searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf)
+    if (complete) this._found = { key, entries: this._entries, result }
+    else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
+    return result
+  }
+
+  // A search hit picked: its file opened, its line brought into view where
+  // the file's diff draws (see _seekRows).
+  _seek(path, hit) {
+    this._sought = { path, side: hit.side, line: hit.line, query: this._query }
+    if (path === this._current) this.requestUpdate()
+    else this._select(path, false)
+  }
+
+  // The line a hit names in the text a file's diff shows, `{ side, line }`:
+  // in a pretty-printed copy, the line holding the same match, counted in
+  // order on its side; null where none does there.
+  _soughtLine(path, entry, pretty, model) {
+    const { side, line, query } = this._sought
+    if (pretty?.status !== 'ready') return { side, line }
+    const matcher = buildSearchMatcher(query, false, false)
+    const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
+    const ordinal = raw.slice(0, line).reduce((sum, text) => sum + matcher.ranges(text).length, 0)
+    let seen = 0
+    for (let i = 0; i < model[side].length; i++) {
+      seen += matcher.ranges(model[side][i]).length
+      if (seen > ordinal) return { side, line: i }
+    }
+    return null
+  }
+
+  // A sought line's row among a diff's `rows`, a fold it is in opened past
+  // it, and the rows shown taken to it: `{ rows, index }`, `index` -1 where
+  // it isn't among them. `key` names the diff's model, as its expansions and
+  // limit are kept.
+  _seekRows(key, model, { side, line }, split) {
+    const shows = row => side === 'b'
+      ? ((row.kind === 'ctx' || row.kind === 'add') && row.b === line) || (row.kind === 'change' && row.right === line)
+      : ((row.kind === 'ctx' || row.kind === 'del') && row.a === line) || (row.kind === 'change' && row.left === line)
+    let expansion = this._expansions.get(key) ?? new Map()
+    let rows = diffRows(model, expansion, { split })
+    let index = rows.findIndex(shows)
+    if (index === -1) {
+      const fold = rows.find(row => row.kind === 'fold' && line >= row[side] && line < row[side] + row.count)
+      if (fold) {
+        // Opened from its top where it has one to open (a run after a change),
+        // else from its bottom (the run before the first), else whole.
+        const open = expansion.get(fold.run) ?? {}
+        const depth = line - fold[side]
+        expansion = new Map(expansion).set(fold.run, fold.down ? { ...open, top: (open.top ?? 0) + depth + 1 + SEEK_MARGIN }
+          : fold.up ? { ...open, bottom: (open.bottom ?? 0) + fold.count - depth + SEEK_MARGIN } : { all: true })
+        this._expansions.set(key, expansion)
+        rows = diffRows(model, expansion, { split })
+        index = rows.findIndex(shows)
+      }
+    }
+    const limit = this._limits.get(key) ?? ROW_LIMIT
+    if (index >= limit) this._limits.set(key, Math.ceil((index + 1) / ROW_LIMIT) * ROW_LIMIT)
+    return { rows, index }
   }
 
   _renderTree(node, current, depth, openAll) {
@@ -1038,9 +1210,15 @@ export class BundleCompareCode extends LitElement {
     const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready' ? 'pretty' : '') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
+    // A search hit picked in this file: its line, shown, to scroll to.
+    const sought = this._sought?.path === path ? this._soughtLine(path, this._entries.get(path), pretty, model) : null
+    if (sought && sought.line < model.b.length) {
+      if (sought.line >= (this._limits.get(key) ?? ROW_LIMIT)) this._limits.set(key, Math.ceil((sought.line + 1) / ROW_LIMIT) * ROW_LIMIT)
+      this._soughtRow = { path, index: sought.line }
+    }
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const lines = model.b.length > limit ? model.b.slice(0, limit) : model.b
-    return html`<div class="bundle-compare-diff-table single"
+    return html`<div class="bundle-compare-diff-table single" data-path=${path}
         style=${styleMap({ '--diff-num-width': `${String(model.b.length).length + 1}ch` })} role="table" aria-label="Source">
         ${repeat(lines, (_, i) => i, (_, i) => html`<div class=${classMap({ 'diff-row': true, ctx: true, 'is-import': marked.has(i) })} role="row" data-line=${i + 1}>
           <span class="diff-num">${i + 1}</span>${this._codeCell(lit, 'b', i, null)}
@@ -1092,10 +1270,15 @@ export class BundleCompareCode extends LitElement {
     this.requestUpdate()
   }
 
-  _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty, changes, hiding, reading }) {
-    const expansion = this._expansions.get(key) ?? new Map()
+  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, reading }) {
+    const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
-    const rows = diffRows(model, expansion, { split })
+    // A search hit picked in this file: its row, opened and shown, to scroll to.
+    const sought = this._sought?.path === path ? this._soughtLine(path, entry, pretty, model) : null
+    const seek = sought ? this._seekRows(key, model, sought, split) : null
+    if (seek?.index >= 0) this._soughtRow = { path, index: seek.index + (split ? 1 : 0) }
+    const expansion = this._expansions.get(key) ?? new Map()
+    const rows = seek?.rows ?? diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
     const lit = {
@@ -1113,7 +1296,7 @@ export class BundleCompareCode extends LitElement {
     const digits = String(Math.max(model.a.length, model.b.length, 1)).length
     return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${reading && !prefs.markRenames ? html`<p class="bundle-compare-code-note">Renamed lines are marked rather than hidden: the file reads names (${changes.reads.map(read => `.${read}`).join(', ')}), which a rename changes.</p>` : nothing}
-      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })}
+      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
           <span class="diff-half">Before<strong data-tooltip-truncated data-tooltip=${this.baseName}>${this.baseName}</strong></span>

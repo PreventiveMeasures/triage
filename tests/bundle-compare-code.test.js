@@ -387,6 +387,71 @@ test('the kind filters hide files, keeping a modified file under Repointed when 
   assert.deepEqual(Object.keys(fileMarks(renderText(element.render()))), ['src/server.js'])
 })
 
+test('the rail\'s Code mode searches the code the diffs show, each hit signed and numbered as its diff has it, the tree no longer filtered by path', () => {
+  const element = view()
+  element._query = 'export'
+  assert.deepEqual(element._railState().order, [], 'Files mode filters paths, and none holds the query')
+  element._mode = 'code'
+  assert.equal(element._railState().order.length, 7, 'Code mode filters none')
+  const markup = renderText(element.render())
+  assert.doesNotMatch(markup, /class=bundle-code-tree-link/u, 'results in place of the tree')
+  // Each file's hits as `sign line`, in the order its diff shows them.
+  const found = Object.fromEntries([...markup.matchAll(/data-tooltip=([^\s>]+) @click=>[^<]*<\/button>\s*<ul class="bundle-code-search-hits">([^]*?)<\/ul>/gu)].map(([, path, hits]) =>
+    [path, [...hits.matchAll(/bundle-code-search-hit-ln">(\d+)<\/span>\s*<span class=bundle-compare-search-sign (\w*) aria-hidden="true">/gu)].map(([, line, sign]) => `${sign} ${line}`)]))
+  assert.deepEqual(found, {
+    'src/api.js': ['del 1', 'add 1', 'ctx 2'],
+    'src/features/search.js': ['add 1'],
+    'src/legacy.js': ['del 1'],
+    'src/server.js': ['ctx 2'],
+    'node_modules/left-pad/index.js': ['del 1'],
+    'node_modules/zod/index.js': ['add 1'],
+  })
+  assert.match(markup, /8 hits in 6 files/u)
+  assert.match(markup, /<mark class="bundle-search-mark">export<\/mark>/u)
+  element._query = 'nothing like it'
+  assert.match(renderText(element.render()), /No matches\./u)
+})
+
+test('a search hit in an unchanged run opens its fold to it, and its row is the one scrolled to', () => {
+  const long = (marker, change) => Array.from({ length: 60 }, (_, i) => i === 30 ? `const needle = ${marker}` : i === 59 ? `tail ${change}` : `line ${i}`).join('\n') + '\n'
+  const element = view('src/long.js', [{ 'src/long.js': long(1, 'a') }, { 'src/long.js': long(1, 'b') }])
+  const numbers = markup => [...markup.slice(markup.indexOf('aria-label="Diff"')).matchAll(/<span class="diff-num">(\d+)<\/span>/gu)].map(m => Number(m[1]))
+  assert.ok(!numbers(renderText(element.render())).includes(31), 'line 31 starts folded away')
+  element._mode = 'code'
+  element._query = 'needle'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/long.js')
+  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 30, ' '])
+  element._seek('src/long.js', hit)
+  const shown = numbers(renderText(element.render()))
+  assert.ok(shown.includes(31), 'its fold opened to it')
+  assert.ok(!shown.includes(5), 'and no further than a margin past it')
+  const { index } = element._soughtRow
+  const rows = renderText(element.render()).slice(renderText(element.render()).indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[index], /<span class="diff-num">31<\/span>/u, 'the row scrolled to is line 31')
+})
+
+test('a search hit in a minified file opens, pretty-printed, at the line holding the same match', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/search.min.js', [{ 'dist/search.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/search.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
+  element.base.managedId = 'b1'
+  element.other.managedId = 'b2'
+  pretty.set('b1:dist/search.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b2:dist/search.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'Z(1)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/search.min.js')
+  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 0, '+'], 'found on the one line of the file as published')
+  element._seek('dist/search.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">6<\/span>[^]*Z\(1\)/u, 'the pretty-printed copy\'s line 6, Z(1);')
+})
+
 test('a repointed file stays a source view with its line links while whitespace changes are hidden', t => {
   const element = view('src/server.js')
   element._setWhitespace(true)

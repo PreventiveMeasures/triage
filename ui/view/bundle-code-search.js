@@ -35,6 +35,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
+import { CODE_MODE_ICON, FILES_MODE_ICON } from './lit-icons.js'
 
 const PLACEHOLDER = {
   files:   'Filter files…',
@@ -56,14 +57,8 @@ const SEARCH_ICON = html`<svg class="bundle-code-search-icon" viewBox="0 0 16 16
 </svg>`
 
 const MODE_ICONS = {
-  // files: shape family matches the sidebar's packages button.
-  files: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M2 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5Z"/>
-  </svg>`,
-  code: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M5.5 4.5L2 8l3.5 3.5"/>
-    <path d="M10.5 4.5L14 8l-3.5 3.5"/>
-  </svg>`,
+  files: FILES_MODE_ICON,
+  code: CODE_MODE_ICON,
   // issues: matches the warning idiom used elsewhere for findings/severity.
   issues: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
     <circle cx="8" cy="8" r="6"/>

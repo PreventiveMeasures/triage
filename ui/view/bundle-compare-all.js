@@ -104,16 +104,18 @@ class BundleCompareAll extends BundleCompareCode {
       this._shownPath = this._current
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
     }
+    this._scrollSought()
   }
 
-  // A file picked in the rail: the list scrolls to it, its head at the top,
-  // and it stays the rail's while it is in view, though the list ends too
-  // soon to bring it to the top.
-  _select(path) {
+  // A file picked in the rail: the list scrolls to it, its head at the top
+  // (unless `scroll` is false, a search hit scrolling to its line), and it
+  // stays the rail's while it is in view, though the list ends too soon to
+  // bring it to the top.
+  _select(path, scroll = true) {
     if (!path) return
     this._current = this._picked = path
     this.requestUpdate()
-    void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
+    if (scroll) void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
   }
 

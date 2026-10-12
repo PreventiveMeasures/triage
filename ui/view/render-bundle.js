@@ -59,6 +59,7 @@ import { bundleCommitTooltip, bundleOriginLinks } from './bundle-origin-links.js
 import { bundleLineCounts, bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
+import { railHitText, renderSearchMarks, sliceSearchLine } from './search-marks.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
@@ -1136,23 +1137,6 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats, sources)
 }
 
-// The Code rail's hit rows fit ~40 mono chars at the default rail
-// width before the CSS ellipsis, so a match further along would be
-// marked but off screen. When the first match sits past
-// RAIL_HIT_VISIBLE chars of text (indentation doesn't count — the row
-// collapses it), start the row RAIL_HIT_LEAD chars before the match
-// behind a `…`. RAIL_HIT_MAX caps the rendered text.
-const RAIL_HIT_MAX = 200
-const RAIL_HIT_VISIBLE = 28
-const RAIL_HIT_LEAD = 12
-
-function clipRailHit(text, ranges) {
-  const first = ranges.length > 0 ? ranges[0][0] : 0
-  const indent = text.length - text.trimStart().length
-  const from = first - indent > RAIL_HIT_VISIBLE ? first - RAIL_HIT_LEAD : 0
-  return sliceSearchLine(text, ranges, from, RAIL_HIT_MAX)
-}
-
 // Scan order shared by the Code rail's code search and the Search tab:
 // own source first, then dependencies, each in path order. Cached per
 // sources map, which bundleSourcesAsMap itself caches per bundle.
@@ -1246,9 +1230,7 @@ function renderBundleCodeContentResults(details, sources, query, currentPath, pr
         data-tooltip-truncated data-tooltip=${p}
       >${bare}</button>
       <ul class="bundle-code-search-hits">
-        ${hits.map((h) => {
-          const clip = clipRailHit(h.text, h.ranges)
-          return html`<li class="bundle-code-search-hit">
+        ${hits.map((h) => html`<li class="bundle-code-search-hit">
           <button
             type="button"
             class="bundle-code-search-hit-link"
@@ -1257,12 +1239,9 @@ function renderBundleCodeContentResults(details, sources, query, currentPath, pr
             data-bundle-view-scroll-block="start"
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
-            <span class="bundle-code-search-hit-text mono">${clip.clipped
-              ? html`<span class="bundle-search-clip">…</span>`
-              : nothing}${renderSearchMarks(clip.text, clip.ranges)}</span>
+            <span class="bundle-code-search-hit-text mono">${railHitText(h.text, h.ranges)}</span>
           </button>
-        </li>`
-        })}
+        </li>`)}
       </ul>
     </div>`
     })}
@@ -1710,41 +1689,6 @@ function clipSearchLine(text, ranges, max) {
   const firstStart = ranges.length > 0 ? ranges[0][0] : 0
   const from = firstStart > max - 60 ? Math.max(0, firstStart - 60) : 0
   return sliceSearchLine(text, ranges, from, max)
-}
-
-// Cut `text` to `max` chars starting at `from`, shifting the match
-// ranges into the slice (spans cut by an edge are clamped, spans
-// outside it dropped). `clipped` reports a cut head.
-function sliceSearchLine(text, ranges, from, max) {
-  const slice = text.slice(from, from + max)
-  if (from === 0) return { text: slice, ranges, clipped: false }
-  const shifted = []
-  for (const [s, e] of ranges) {
-    const ns = s - from
-    const ne = e - from
-    if (ne <= 0 || ns >= slice.length) continue
-    shifted.push([Math.max(0, ns), Math.min(slice.length, ne)])
-  }
-  return { text: slice, ranges: shifted, clipped: true }
-}
-
-// Wrap each matched span in a <mark>, leaving the rest as plain text
-// nodes (Lit auto-escapes both). `ranges` are already clipped into
-// `text`; spans are clamped + de-overlapped defensively.
-function renderSearchMarks(text, ranges) {
-  if (ranges.length === 0) return text
-  const out = []
-  let pos = 0
-  for (const [s, e] of ranges) {
-    const cs = Math.max(pos, Math.min(s, text.length))
-    const ce = Math.max(cs, Math.min(e, text.length))
-    if (ce <= cs) continue
-    if (cs > pos) out.push(text.slice(pos, cs))
-    out.push(html`<mark class="bundle-search-mark">${text.slice(cs, ce)}</mark>`)
-    pos = ce
-  }
-  if (pos < text.length) out.push(text.slice(pos))
-  return out
 }
 
 // One source line inside a snippet: line-number gutter + code.

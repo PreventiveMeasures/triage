@@ -21,3 +21,14 @@ export const WRAP_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fi
 
 // "Collapse directories" in a file tree rail.
 export const COLLAPSE_DIRS_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M5 2h8a1 1 0 0 1 1 1v8M3 5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM4.5 9.5h4"/></svg>`
+
+// The Code tab's rail search modes (bundle-code-search.js), as Compare's Code
+// rail offers them too: filter files (a folder, as the sidebar's packages
+// button draws one), and search code.
+export const FILES_MODE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M2 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5Z"/>
+</svg>`
+export const CODE_MODE_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M5.5 4.5L2 8l3.5 3.5"/>
+  <path d="M10.5 4.5L14 8l-3.5 3.5"/>
+</svg>`

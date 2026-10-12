@@ -73,13 +73,22 @@ export function fileLineCounts(before, after) {
   if (before === after) return { additions: 0, deletions: 0 }
   if (before === '') return { additions: lineCount(after), deletions: 0 }
   if (after === '') return { additions: 0, deletions: lineCount(before) }
-  if (before.length + after.length > COUNT_CHARS || lineCount(before) + lineCount(after) > COUNT_LINES) return null
+  const blocks = listedBlocks(before, after)
+  if (!blocks) return null
   let additions = 0, deletions = 0
-  for (const { a0, a1, b0, b1 } of changeBlocks(before, after)) {
+  for (const { a0, a1, b0, b1 } of blocks) {
     additions += b1 - b0
     deletions += a1 - a0
   }
   return { additions, deletions }
+}
+
+// The change blocks between two texts, as a list beside their diffs finds
+// them (a tree's counts, a search's added and removed lines): null for texts
+// too large to diff while it draws.
+export function listedBlocks(before, after) {
+  if (before.length + after.length > COUNT_CHARS || lineCount(before) + lineCount(after) > COUNT_LINES) return null
+  return changeBlocks(before, after)
 }
 
 // Whether hiding whitespace changes hides one between two texts: whether the
