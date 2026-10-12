@@ -14,6 +14,8 @@ test('a script is read for eval, Function and child_process, each with the lines
   assert.deepEqual(found('a.js', 'Function?.("return payload")()\nglobalThis.Function?.("x")()\nFunction.call(null, "y")\nFunction.apply(null, ["z"])\neval?.(w)\n'),
     { eval: [5], function: [1, 2, 3, 4] }, 'called optionally, or by its call or apply')
   assert.deepEqual(found('a.js', 'window?.Function("x")()\nself?.Function?.("y")()\n'), { function: [1, 2] }, 'the global object\'s, reached optionally')
+  assert.deepEqual(found('a.js', 'Function/* webpack */("return payload")()\nnew Function// note\n("x")\nf(...eval(y))\n'), { eval: [4], function: [1, 2] },
+    'a comment before its arguments, and spread')
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
     { 'child-process': [1, 2, 3] }, 'a module named by the string that names it, required or imported')
   assert.deepEqual(found('a.ts', 'eval(x)\nimport cp from "child_process"\n'), { eval: [1], 'child-process': [2] }, 'in RUNS_CODE\'s order')
@@ -36,6 +38,7 @@ test('a template literal\'s substitutions are code, read as their own, its text 
 
 test('a name read as another or as a property, or in a string, a regular expression or a comment, is none', () => {
   assert.equal(found('a.js', 'vm.eval(x); evaluate(); myeval(); obj.eval\nx.Function(1); Function.prototype.call\n'), null)
+  assert.equal(found('a.js', 'vm . eval(payload)\nvm.\neval(p)\nobj . Function("x")\nobj?. Function("y")\n'), null, 'a property after blanks too')
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
   assert.equal(found('a.js', 'const docs = "see child_process"\n// require("child_process")\n'), null, 'a string naming a module only where it is one')
   assert.equal(found('a.js', "const s = 'a \\\neval(x)'\nconst d = \"b \\\nFunction(y)\"\n"), null, 'a string continued on the next line')
@@ -47,4 +50,18 @@ test('what is no script runs nothing: a declaration file, prose, data', () => {
   assert.equal(found('data.json', '{"eval(":1}\n'), null)
   assert.equal(found('a.js', undefined), null, 'binary')
   assert.equal(found('a.js', 'module.exports = {}\n'), null)
+})
+
+test('a text reads in time as its length, what is left open read to its end', { timeout: 10_000 }, () => {
+  // Each took minutes to read when a lookbehind scanned back over each blank
+  // run anew, or a comment, a regular expression's class or a string left
+  // open was tried again from each later slash or quote.
+  for (const [text, runs] of [
+    [`x${' '.repeat(1e6)}eval(1)\n`, { eval: [1] }],
+    [`vm.${' '.repeat(1e6)}eval(1)\n`, null],
+    [`${'Function/*'.repeat(1e5)}\neval(1)\n`, null],
+    [`${'[/'.repeat(5e5)}\neval(1)\n`, { eval: [2] }],
+    [`"${'\\"'.repeat(5e5)}\neval(1)\n`, { eval: [2] }],
+    [`\`${'\\`'.repeat(5e5)}\neval(1)\n`, null],
+  ]) assert.deepEqual(found('a.js', text), runs)
 })

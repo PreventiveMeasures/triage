@@ -22,23 +22,28 @@ import { JS_STRING_OR_COMMENT } from './file-readability.js'
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const DECLARATION = /\.d\.[cm]?ts$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
+// What may come between a call's parts: blanks and comments
+// (`Function/* note */(…)`).
+const GAP = String.raw`(?:\s|/\*[\s\S]{0,100}?\*/|//[^\n]{0,100}\n)*`
 // Function called: as it is, optionally (`Function?.(…)`), or by its call or
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
-const FUNCTION_CALL = String.raw`Function(?:\s*\??\.\s*(?:call|apply))?\s*(?:\?\.\s*)?\(`
+const FUNCTION_CALLED = String.raw`(?:${GAP}\??\.${GAP}(?:call|apply))?${GAP}(?:\?\.${GAP})?\(`
 // Told before anything is set aside: most files say none of it at all.
-const SAYS_ANY = new RegExp(`eval|${FUNCTION_CALL}|child_process`, 'u')
+const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u')
 
-// A name read as one, not as a property's (`vm.eval`) or part of another's
-// (`evaluate`), or as the global object's (`window.eval`, `globalThis?.eval`).
-const BEFORE = String.raw`(?<![\p{ID_Continue}$.#])(?:(?:globalThis|window|global|self)\s*\??\.\s*)?`
+// A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
+// `...eval` aside) or part of another's (`evaluate`), or as the global
+// object's (`window.eval`, `globalThis?.eval`); looked back on only where the
+// name or the global object's starts, so a long run of blanks reads in one go.
+const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.\s*)(?:(?:globalThis|window|global|self)\s*\??\.\s*)?${name}`
 const AFTER = String.raw`(?![\p{ID_Continue}$])`
 
 // Each kind, in the order its tags show: its tag, what it does, and how its
 // code reads, or for a module, its name.
 export const RUNS_CODE = new Map([
-  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${BEFORE}eval${AFTER}`, 'gu') }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${BEFORE}${FUNCTION_CALL}`, 'gu') }],
+  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}`, 'gu') }],
+  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)', module: /^(?:node:)?child_process$/u }],
 ])
 
