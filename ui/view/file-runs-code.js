@@ -4,9 +4,10 @@
 // A quick read, not a parse: a script's code with its strings, regular
 // expressions and comments set aside as file-readability.js tells them, a
 // module by the string naming it where it is loaded (`require('child_process')`,
-// `import … from 'node:child_process'`); a declaration file (.d.ts) runs
-// nothing, and a call written not to read as one (`window['ev' + 'al']`)
-// goes unseen, as does one in a template literal in another's substitution
+// `import … from 'node:child_process'`); a declaration file (.d.ts) read as
+// TypeScript, as node runs it (stripping its types, `declare function
+// eval(…)` among them, a function named, not called). A call written not to
+// read as one (`window['ev' + 'al']`) goes unseen, as does one in a template literal in another's substitution
 // (`${`${eval(x)}`}`), whose backtick ends the outer one as the regular
 // expression telling strings reads it.
 //
@@ -18,10 +19,10 @@
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT } from './file-readability.js'
 
-// JavaScript or TypeScript, or a script run by node by its hashbang
-// (`bin/cli`, with no extension), not a declaration file.
+// JavaScript or TypeScript (a declaration file too, which node runs as any
+// other), or a script run by node by its hashbang (`bin/cli`, with no
+// extension).
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
-const DECLARATION = /\.d\.[cm]?ts$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
 // What may come between a call's parts: blanks and comments
 // (`Function/* note */(…)`), each comment ending at its first `*/`.
@@ -37,7 +38,7 @@ const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u'
 // `...eval` aside) or part of another's (`evaluate`), or as the global
 // object's (`window.eval`, `globalThis?.eval`); looked back on only where the
 // name or the global object's starts, so a long run of blanks reads in one go.
-const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?:(?:globalThis|window|global|self)${GAP}\??\.${GAP})?${name}`
+const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:globalThis|window|global|self)${GAP}\??\.${GAP})?${name}`
 const AFTER = String.raw`(?![\p{ID_Continue}$])`
 
 // Each kind, in the order its tags show: its tag, what it does, and how its
@@ -52,7 +53,9 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*|\bimport)${GAP}\(|\b(?:from|import))${GAP}$`, 'u')
 const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
 export const RUNS_CODE = new Map([
-  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}`, 'gu') }],
+  // Not a property TypeScript types as optional (`eval?: T`), JavaScript's
+  // `?:` none of its own.
+  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}(?!\\s*\\?:)`, 'gu') }],
   ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)', module: /^(?:node:)?child_process$/u }],
 ])
@@ -60,7 +63,7 @@ export const RUNS_CODE = new Map([
 // The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
 // order; null for none, or for a file that is no script.
 export function npmRunsCode(path, text) {
-  if (typeof text !== 'string' || DECLARATION.test(path) || !(SCRIPT.test(path) || NODE_HASHBANG.test(text)) || !SAYS_ANY.test(text)) return null
+  if (typeof text !== 'string' || !(SCRIPT.test(path) || NODE_HASHBANG.test(text)) || !SAYS_ANY.test(text)) return null
   const found = new Map()
   read(text, 0, (kind, offset) => found.set(kind, [...found.get(kind) ?? [], offset]))
   if (found.size === 0) return null

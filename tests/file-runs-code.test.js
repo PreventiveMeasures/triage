@@ -57,8 +57,15 @@ test('a name read as another or as a property, or in a string, a regular express
   assert.equal(found('a.js', "const s = 'a \\\neval(x)'\nconst d = \"b \\\nFunction(y)\"\n"), null, 'a string continued on the next line')
 })
 
-test('what is no script runs nothing: a declaration file, prose, data', () => {
-  assert.equal(found('lib.d.ts', 'declare function eval(x: string): any\n'), null)
+test('a declaration file is read as node runs it, its types stripped', () => {
+  assert.deepEqual(found('index.d.ts', 'export declare const x: number\neval(payload)\nimport { spawn } from \'child_process\'\n'), { eval: [2], 'child-process': [3] })
+  assert.equal(found('lib.d.ts', 'declare function eval(x: string): any\nfunction /* c */ eval() {}\nimport type { ChildProcess } from \'child_process\'\n'), null,
+    'a function named eval, declared, and a type-only import, both stripped')
+  assert.equal(found('lib.dom.d.ts', 'interface I {\n    eval?: Values;\n}\n'), null, 'a property typed optional')
+  assert.deepEqual(found('a.js', 'const run = c ? eval : f\n'), { eval: [1] }, 'eval chosen in a ternary')
+})
+
+test('what is no script runs nothing: prose, data', () => {
   assert.equal(found('README.md', 'Never call eval(x); use child_process carefully.\n'), null)
   assert.equal(found('data.json', '{"eval(":1}\n'), null)
   assert.equal(found('a.js', undefined), null, 'binary')
