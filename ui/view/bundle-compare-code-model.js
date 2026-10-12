@@ -2,13 +2,13 @@
 // `state`. Two texts in, what a review needs out: the change blocks
 // between them (common/line-diff.js, or the server's with renamed names
 // hidden: server-managed/rename-diff.ts), the rows a unified or split
-// diff shows with unchanged runs folded down to their context, the
-// words that changed inside a changed line, and those words marked in a
-// line's syntax-highlighted markup.
+// diff shows with unchanged runs folded down to their context, and the
+// words that changed inside a changed line (@preventive/compare's
+// wordRanges and pairLines) marked in a line's syntax-highlighted markup.
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { diff, parseDiff } from '@preventive/diff'
+import { pairLines } from '@preventive/compare'
 import { changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }
@@ -21,67 +21,6 @@ export const EXPAND_STEP = 20
 // fold's own row would take nearly the room they do.
 const MIN_FOLD = 4
 
-// A word of a line as renamedAlone reads it: a comment, a string or template
-// on that line (to its end, where it does not close there), a name, a run of
-// whitespace, or any other character.
-const LINE_WORD = /\/\/.*|\/\*.*?\*\/|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?|[A-Za-z_$][\w$]*|\s+|[^]/uy
-// A regular expression on a line, from its `/` to the next one neither
-// escaped nor in a class, and its flags, or to the line's end.
-const REGEX_WORD = /\/(?:[^/\\[]|\\.|\[(?:[^\]\\]|\\.)*\]?)*\/?[A-Za-z]*/uy
-// Names after which an expression starts: a `/` after one is a regular
-// expression's (`return /a/`), as after a name it is otherwise a division's.
-const BEFORE_EXPRESSION = new Set(['await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw', 'typeof', 'void', 'yield'])
-// A name a minifier gives, and words of its length that are no variable's.
-const SHORT_NAME = /^[A-Za-z_$][\w$]{0,2}$/u
-const SHORT_KEYWORDS = new Set(['as', 'do', 'for', 'get', 'if', 'in', 'let', 'new', 'of', 'set', 'try', 'var'])
-
-// A line's words, as LINE_WORD reads them, and a regular expression whole:
-// a `/` is read as a division only after a name (none of BEFORE_EXPRESSION),
-// a number or a `]`, and as a regular expression's start after anything else,
-// even where it divides (`(a) / b`), so that no name in a regular expression
-// is read as a variable's: a division read so keeps the rest of its line
-// whole, which can only keep a block from being marked.
-function lineWords(line, ignoreWhitespace) {
-  const words = []
-  LINE_WORD.lastIndex = 0
-  for (let prior = ''; LINE_WORD.lastIndex < line.length;) {
-    const at = LINE_WORD.lastIndex
-    let [word] = LINE_WORD.exec(line)
-    if (word === '/' && prior !== ']' && !(/^[\w$]+$/u.test(prior) && !BEFORE_EXPRESSION.has(prior))) {
-      REGEX_WORD.lastIndex = at;
-      [word] = REGEX_WORD.exec(line)
-      LINE_WORD.lastIndex = at + word.length
-    }
-    if (/\S/u.test(word)) prior = word
-    if (!ignoreWhitespace || /\S/u.test(word)) words.push(word)
-  }
-  return words
-}
-
-// Whether two lines differ in short names alone, as a minifier renames them:
-// the same words otherwise, in order, and each name changed none after a `.`
-// or `#` (a property's) or before a `:` (a key's, a label's, or a ternary's,
-// told apart from none), nor a keyword. A check apart from the server's on
-// the blocks it marks (rename-diff-worker.js), which can only keep a block
-// from being marked: it reads no string, regular expression or template
-// across lines, which the server's renaming never touches.
-export function renamedAlone(before, after, ignoreWhitespace = false) {
-  const [x, y] = [lineWords(before, ignoreWhitespace), lineWords(after, ignoreWhitespace)]
-  if (x.length !== y.length) return false
-  const near = (list, from, step) => {
-    for (let k = from; k >= 0 && k < list.length; k += step) if (/\S/u.test(list[k])) return list[k]
-    return ''
-  }
-  let changed = false
-  for (let i = 0; i < x.length; i++) {
-    if (x[i] === y[i]) continue
-    if (![x[i], y[i]].every(word => SHORT_NAME.test(word) && !SHORT_KEYWORDS.has(word))) return false
-    if ([x, y].some(list => ['.', '#'].includes(near(list, i - 1, -1)) || near(list, i + 1, 1) === ':')) return false
-    changed = true
-  }
-  return changed
-}
-
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
@@ -90,16 +29,16 @@ export function renamedAlone(before, after, ignoreWhitespace = false) {
 // blocks found elsewhere: the server's, its old side given the new one's
 // names (server-managed/rename-diff.ts). `marks` are the blocks the server
 // found to differ in renamed names alone (rename-diff-worker.js): those of
-// these blocks that are one of them and that differ so line by line here too
-// (renamedAlone) are `marked`, counted apart from the lines added and
-// removed (`renamed`), for a view to draw them apart rather than hiding them.
+// these blocks that are one of them are `marked`, counted apart from the
+// lines added and removed (`renamed`), for a view to draw them apart rather
+// than hiding them.
 export function lineDiff(before, after, { ignoreWhitespace = false, changes = null, marks = null } = {}) {
   const a = textLines(before), b = textLines(after)
   const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
   const told = new Set((marks ?? []).map(({ a0, a1, b0, b1 }) => `${a0},${a1},${b0},${b1}`))
   const marked = new Set()
   blocks.forEach(({ a0, a1, b0, b1 }, i) => {
-    if (told.has(`${a0},${a1},${b0},${b1}`) && a1 - a0 === b1 - b0 && a.slice(a0, a1).every((line, k) => renamedAlone(line, b[b0 + k], ignoreWhitespace))) marked.add(i)
+    if (told.has(`${a0},${a1},${b0},${b1}`) && a1 - a0 === b1 - b0) marked.add(i)
   })
   let additions = 0, deletions = 0, renamed = 0
   blocks.forEach((block, i) => {
@@ -114,37 +53,6 @@ export function lineDiff(before, after, { ignoreWhitespace = false, changes = nu
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
   return { a, b, blocks, additions, deletions, renamed, marked, noEol, words: new Map() }
-}
-
-// The blanks diff -w leaves out of a line: the C locale's.
-const BLANK = /[ \t\n\v\f\r]/u
-
-// Whether diff -w, as `model` was found with it, hides a change in blanks of
-// more than one kind: a line it pairs as unchanged whose blanks differ from
-// its counterpart's between the same two characters where the two hold more
-// than one kind, as spaces turned to tabs, or a tab put among spaces. A
-// change in how many of one kind (re-indenting, spacing) is what -w is for.
-export function hidesMixedWhitespace({ a, b, blocks }) {
-  let ai = 0, bi = 0
-  for (let run = 0; run <= blocks.length; run++) {
-    const end = run < blocks.length ? blocks[run].a0 : a.length
-    for (; ai < end; ai++, bi++) if (a[ai] !== b[bi] && mixesBlanks(a[ai], b[bi])) return true
-    if (run < blocks.length) ({ a1: ai, b1: bi } = blocks[run])
-  }
-  return false
-}
-
-// Two lines alike but for their blanks: whether, before any of their other
-// characters or after the last, their blanks differ and hold more than one
-// kind between them.
-function mixesBlanks(x, y) {
-  for (let i = 0, j = 0; ; i++, j++) {
-    let gapX = '', gapY = ''
-    while (i < x.length && BLANK.test(x[i])) gapX += x[i++]
-    while (j < y.length && BLANK.test(y[j])) gapY += y[j++]
-    if (gapX !== gapY && new Set(gapX + gapY).size > 1) return true
-    if (i >= x.length || j >= y.length) return false
-  }
 }
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
@@ -192,72 +100,12 @@ export function diffRows(model, expansion = new Map(), { context = DIFF_CONTEXT,
   return rows
 }
 
-// Words, runs of whitespace, and single symbols: the units a changed line
-// is compared by, so `foo(a)` → `foo(b)` marks `a` and `b` alone.
-const TOKEN = /[\p{L}\p{N}_$]+|\s+|[^\p{L}\p{N}_$\s]/gu
-// Past these a word diff is noise (minified lines) or too slow to be worth
-// it; the line keeps its whole-line color alone.
-const WORD_DIFF_MAX_CHARS = 2000
-const WORD_DIFF_MAX_TOKENS = 800
-// Lines whose words are mostly replaced are not the same line edited: they
-// don't pair, and their words aren't marked.
-const WORD_DIFF_MAX_CHANGED = .6
-// A removed line looks this many added lines ahead for its counterpart; a
-// block longer than PAIR_MAX_LINES on either side lines up by position.
-const PAIR_LOOKAHEAD = 6
-const PAIR_MAX_LINES = 200
-
-// How two lines differ word by word: the character ranges `[from, to)`
-// that changed on each side (ranges split only by whitespace merged) and
-// the smaller share of either line they cover. Null past the size limits.
-function compareWords(left, right) {
-  if (left.length > WORD_DIFF_MAX_CHARS || right.length > WORD_DIFF_MAX_CHARS) return null
-  const lt = left.match(TOKEN) ?? [], rt = right.match(TOKEN) ?? []
-  if (lt.length > WORD_DIFF_MAX_TOKENS || rt.length > WORD_DIFF_MAX_TOKENS) return null
-  // Each distinct token becomes one line naming it, so the line diff runs
-  // over tokens without a token's own characters (a `\r`) meaning anything.
-  const ids = new Map()
-  const encode = tokens => tokens.map(token => {
-    if (!ids.has(token)) ids.set(token, String(ids.size))
-    return `${ids.get(token)}\n`
-  }).join('')
-  const tokenDiff = diff(encode(lt), encode(rt), { format: 'unified', context: 0 })
-  const blocks = tokenDiff ? parseDiff(tokenDiff)[0]?.blocks ?? [] : []
-  const offsets = tokens => tokens.reduce((list, token) => { list.push(list.at(-1) + token.length); return list }, [0])
-  const lo = offsets(lt), ro = offsets(rt)
-  const ranges = (side, at, line) => mergeRanges(blocks.filter(block => block[`${side}1`] > block[`${side}0`])
-    .map(block => [at[block[`${side}0`]], at[block[`${side}1`]]]), line)
-  const a = ranges('a', lo, left), b = ranges('b', ro, right)
-  const share = (list, line) => list.reduce((sum, [from, to]) => sum + to - from, 0) / Math.max(1, line.length)
-  return { a, b, share: Math.min(share(a, left), share(b, right)) }
-}
-
-// The ranges to mark in a removed line and the added line it pairs with,
-// or null when marking them would not help.
-export function wordRanges(left, right) {
-  if (left === right) return null
-  const words = compareWords(left, right)
-  return words && words.share <= WORD_DIFF_MAX_CHANGED ? { a: words.a, b: words.b } : null
-}
-
-// A block's lines as rows of [removed line, added line, paired]. Each
-// removed line pairs with the most alike added line among the next few,
-// in order, when they are alike enough to be one line edited; the lines
-// left between pairs share rows by position, unpaired.
+// A block's lines as rows of [removed line, added line, paired]: each removed
+// line paired with the added line it was edited into (pairLines), the lines
+// left between pairs sharing rows by position, unpaired.
 function alignBlock(model, block) {
   const { a, b } = model
-  const pairs = []
-  if (block.a1 - block.a0 <= PAIR_MAX_LINES && block.b1 - block.b0 <= PAIR_MAX_LINES) {
-    let next = block.b0
-    for (let i = block.a0; i < block.a1 && next < block.b1; i++) {
-      let best = null, bestShare = Infinity
-      for (let j = next; j < Math.min(block.b1, next + PAIR_LOOKAHEAD) && bestShare > 0; j++) {
-        const words = a[i] === b[j] ? { share: 0 } : compareWords(a[i], b[j])
-        if (words && words.share <= WORD_DIFF_MAX_CHANGED && words.share < bestShare) { best = j; bestShare = words.share }
-      }
-      if (best !== null) { pairs.push([i, best]); next = best + 1 }
-    }
-  }
+  const pairs = pairLines(a.slice(block.a0, block.a1), b.slice(block.b0, block.b1)).map(([i, j]) => [block.a0 + i, block.b0 + j])
   const rows = []
   let i = block.a0, j = block.b0
   for (const [pa, pb] of [...pairs, [block.a1, block.b1]]) {
@@ -276,16 +124,6 @@ function alignedBlock(model, run) {
   model.aligned ??= new Map()
   if (!model.aligned.has(run)) model.aligned.set(run, alignBlock(model, model.blocks[run]))
   return model.aligned.get(run)
-}
-
-function mergeRanges(ranges, text) {
-  const merged = []
-  for (const [from, to] of ranges) {
-    const last = merged.at(-1)
-    if (last && /^\s*$/u.test(text.slice(last[1], from))) last[1] = to
-    else merged.push([from, to])
-  }
-  return merged
 }
 
 // Wrap the characters in `ranges` of one line's highlighted markup in

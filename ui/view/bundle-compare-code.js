@@ -19,6 +19,7 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
@@ -27,13 +28,12 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, lineDiff, markHighlighted, markSegments } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
-import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
@@ -41,7 +41,7 @@ import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
-  // Moved or re-extensioned (see detectRenames); one whose contents changed
+  // Moved or re-extensioned (computeBundleDiff's renames); one whose contents changed
   // too shows under Modified as well.
   { kind: 'renamed', label: 'Renamed', letter: '→' },
   { kind: 'added', label: 'Added', letter: 'A' },
@@ -126,7 +126,7 @@ function packageScripts(details, path, text) {
   return files.get(path)
 }
 
-// Why the server left a file's old names as they were (rename-map.js).
+// Why the server left a file's old names as they were (@preventive/compare's renamedDiff).
 const RENAME_REASONS = {
   unparsed: "the file couldn't be parsed",
   dynamic: 'the file reads names by their spelling (eval or with)',
@@ -535,7 +535,7 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const changes = renames && !large
-        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate(), after) : null
+        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate()) : null
       const ready = changes?.status === 'ready'
       // Where either side reads names (`f.name`, `f.toString()`), a rename may
       // change what the code does, which hiding renamed names could hide: its
@@ -553,7 +553,7 @@ export class BundleCompareCode extends LitElement {
     // Whitespace changes hidden would hide blanks of more than one kind
     // changing (hidesMixedWhitespace): the file is diffed with them shown.
     let found = diffed(prefs.ignoreWhitespace)
-    const mixedWhitespace = prefs.ignoreWhitespace && !!found.model && hidesMixedWhitespace(found.model)
+    const mixedWhitespace = prefs.ignoreWhitespace && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixedWhitespace) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, mixedWhitespace }

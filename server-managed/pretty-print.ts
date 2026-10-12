@@ -6,6 +6,7 @@
 // the caller's to check.
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
+import { format } from '@preventive/compare/pretty.js'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
@@ -14,19 +15,17 @@ import type { OpenedBlob } from './blob-store.ts'
 import { type BundleCacheStorage, readBundleDetails } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
-import { formatChecked } from './pretty-format.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 import { loadNpmFiles } from './npm-loads.ts'
 import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
 
 // Part of every kept copy's name; bumped when what the formatter writes for
-// the same file changes, so copies written before are no longer read.
-const PRETTY_VERSION = 1
+// the same file changes, or what its check lets through, so copies written
+// before are no longer read.
+const PRETTY_VERSION = 2
 // Formats running at once per process, each holding its file's syntax tree.
 const MAX_ACTIVE_FORMATS = 2
-
-export { PRETTY_OPTIONS, sameCode } from './pretty-format.ts'
 
 export class PrettyError extends Error {
   status: number
@@ -49,14 +48,15 @@ const prettyFile = ({ hash, extension }: PrettyRequest) =>
 
 let activeFormats = 0
 
-// The text formatted and Brotli-encoded, where formatting changed only its
-// layout (sameCode).
+// The text formatted and Brotli-encoded, where @preventive/compare's checks
+// find formatting changed only its layout: refused as `unsupported` where it
+// has no check for the kind of file, `unformattable` or `pretty-mismatch`.
 export async function prettyBody(text: string, extension: string): Promise<Buffer> {
   if (Buffer.byteLength(text) > MAX_PRETTY_BYTES) throw new PrettyError(413, 'file-too-large')
   if (activeFormats >= MAX_ACTIVE_FORMATS) throw new PrettyError(429, 'pretty-busy')
   activeFormats++
   let result
-  try { result = await formatChecked(text, extension) }
+  try { result = await format(text, extension) }
   finally { activeFormats-- }
   if ('error' in result) {
     if (result.error === 'pretty-mismatch') console.warn(`managed: pretty-printing a .${extension} file changed more than its layout; not served`)

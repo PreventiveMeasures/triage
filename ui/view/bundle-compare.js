@@ -47,6 +47,7 @@ import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
+import { layoutPackageDirs, rootLabel, treeLayout } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
@@ -54,7 +55,7 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { bundleLayout, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, layoutPackageDirs, rootLabel } from './bundle-compare-diff.js'
+import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
@@ -608,7 +609,7 @@ class BundleCompare extends LitElement {
       // Classify original paths and preserve recorded Stasis package
       // boundaries from either side, as the open one lays its files out
       // where their roots differ. Own source has one identity.
-      const layout = bundleLayout(baseSources.keys(), otherSources)
+      const layout = treeLayout(baseSources.keys(), otherSources.keys())
       const packageDirs = layoutPackageDirs(bundlePackageDirs(from), bundlePackageDirs(to), layout)
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout)

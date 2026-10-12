@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, renamedAlone, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, lineDiff, markHighlighted, markSegments, textLines } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -55,14 +55,6 @@ test('ignoring whitespace pairs lines that differ only in it', () => {
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n').blocks.length, 1)
 })
 
-test('ignoring whitespace would hide blanks of more than one kind where they change between the same two characters', () => {
-  const hides = (before, after) => hidesMixedWhitespace(lineDiff(before, after, { ignoreWhitespace: true }))
-  for (const [before, after] of [['    a()\n', '\ta()\n'], ['f(a, b)\n', 'f(a,\tb)\n'], ['x = 1\n', 'x =\t 1\n'], ['\t x\n', '\t  x\n'], ['a\n  b\nc\n', 'a\n\tb\nc\n'],
-    ['x  \r\n', 'x\n']]) assert.equal(hides(before, after), true, JSON.stringify([before, after]))
-  for (const [before, after] of [['  a()\n', '    a()\n'], ['\t\ta()\n', '\ta()\n'], ['f(a,b)\n', 'f(a, b)\n'], ['x\r\n', 'x\n'], ['a\n', 'a\n'], ['a\n', 'b\n'],
-    ['  a\n', '\tb\n']]) assert.equal(hides(before, after), false, JSON.stringify([before, after]))
-})
-
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {
   const before = 'start\n  const rows = query.all({ limit: 50 })\n  res.json(rows)\nend\n'
   const after = 'start\n  const limit = Math.min(Number(req.query.limit) || 50, 200)\n  const rows = query.all({ limit })\n  res.json(rows)\nend\n'
@@ -83,14 +75,6 @@ test('changed lines pair with the added line they were edited into, in unified a
   ], 'unrelated lines share rows by position')
 })
 
-test('word ranges mark what changed inside a paired line', () => {
-  assert.deepEqual(wordRanges('const total = sum(a, b)', 'const total = sum(a, c)'), { a: [[21, 22]], b: [[21, 22]] })
-  assert.deepEqual(wordRanges('return foo bar', 'return baz qux'), { a: [[7, 14]], b: [[7, 14]] }, 'ranges split only by whitespace merge')
-  assert.equal(wordRanges('alpha beta gamma', 'one two three'), null, 'a line mostly replaced is not worth marking')
-  assert.equal(wordRanges('x'.repeat(5000), 'y'), null)
-  assert.equal(wordRanges('same', 'same'), null)
-})
-
 test('marks go around the changed characters without crossing highlight tags', () => {
   const markup = '<span class="token keyword">const</span> a <span class="token operator">=</span> &lt;b&gt;'
   // Text: `const a = <b>` — mark `a = <` (6..11).
@@ -102,25 +86,12 @@ test('marks go around the changed characters without crossing highlight tags', (
   ])
 })
 
-test('a block the server marks is marked only where its lines differ in short names alone, by a check of the view\'s own', () => {
-  assert.equal(renamedAlone('f(a, b);', 'f(c, d);'), true)
-  for (const [before, after] of [['x.ab = 1;', 'x.cd = 1;'], ['f("ab");', 'f("cd");'], ['for (a in b)', 'for (a of b)'], ['{ ab: 1 }', '{ cd: 1 }'],
-    ['return a + 1;', 'return a + 2;'], ['var abcd;', 'var efgh;'], ['f(a);', 'f(a);'], ['f(a) // ab', 'f(a) // cd'], ['f(a ,b)', 'f(a, b)'],
-    ['a.replace(/ab/g, b)', 'a.replace(/cd/g, b)'], ['if (a) /x[/]ab/.test(b);', 'if (a) /x[/]cd/.test(b);'], ['return /ab/;', 'return /cd/;'],
-    ['f((a) / b);', 'f((c) / d);']]) {
-    assert.equal(renamedAlone(before, after), false, `${before} → ${after}`)
-  }
-  assert.equal(renamedAlone('f(a ,b)', 'f(c, d)', true), true, 'whitespace ignored where the diff ignores it')
-  for (const [before, after] of [['f(a / b, c[0] / 2);', 'f(d / e, g[0] / 2);'], ['x = this.n / a;', 'x = this.n / b;']]) assert.equal(renamedAlone(before, after), true, `${before} → ${after}: a division`)
-  const after = 'function q(b) {\n  return b + 2;\n}\n', before = 'function q(a) {\n  return a + 1;\n}\n'
-  const blocks = lineDiff(before, after).blocks
-  assert.deepEqual(blocks, [{ a0: 0, a1: 2, b0: 0, b1: 2 }])
-  // Told the block differs in names alone, the view finds `1` → `2` in it, and marks none.
-  const told = lineDiff(before, after, { marks: blocks })
-  assert.equal(told.marked.size, 0)
-  assert.deepEqual([told.additions, told.deletions, told.renamed], [2, 2, 0])
-  const renamed = lineDiff('function q(a) {\n  return a;\n}\nf(1);\n', 'function q(b) {\n  return b;\n}\nf(2);\n')
-  const marked = lineDiff('function q(a) {\n  return a;\n}\nf(1);\n', 'function q(b) {\n  return b;\n}\nf(2);\n', { marks: [renamed.blocks[0]] })
+test('a block the server marks is marked, its lines counted apart, and a mark that is no block of the diff is none', () => {
+  const after = 'function q(b) {\n  return b;\n}\nf(2);\n', before = 'function q(a) {\n  return a;\n}\nf(1);\n'
+  const { blocks } = lineDiff(before, after)
+  assert.deepEqual(blocks, [{ a0: 0, a1: 2, b0: 0, b1: 2 }, { a0: 3, a1: 4, b0: 3, b1: 4 }])
+  const marked = lineDiff(before, after, { marks: [blocks[0]] })
   assert.deepEqual([...marked.marked], [0])
   assert.deepEqual([marked.additions, marked.deletions, marked.renamed], [1, 1, 2], 'the renamed lines counted apart')
+  assert.equal(lineDiff(before, after, { marks: [{ a0: 0, a1: 1, b0: 0, b1: 1 }] }).marked.size, 0, 'part of a block')
 })

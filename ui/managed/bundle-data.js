@@ -128,6 +128,7 @@ const PRETTY_ERRORS = {
   413: 'This file is too large to pretty-print.',
   422: "This file couldn't be read as code.",
   'pretty-mismatch': 'Pretty-printing would change more than its layout, so it is shown as published.',
+  unsupported: "This kind of file can't be checked once pretty-printed, so it is shown as published.",
   429: 'Too many files are being pretty-printed. Try again shortly.',
   502: "The npm registry couldn't be reached.",
 }

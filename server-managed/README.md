@@ -888,8 +888,10 @@ layout needs. The first request reads the bundle, checks the file's hash (409
 `hash-mismatch` where it differs) and formats it, off the event loop and two
 files at a time per process (429 `pretty-busy` past that). A file that does
 not parse is 422 `unformattable`; one whose output, checked apart from the
-formatter (`sameCode` in `pretty-print.ts`), differs from it in more than
-layout is 422 `pretty-mismatch` and is logged. The Brotli bytes are kept in
+formatter by @preventive/compare's `format` (a script's syntax tree as oxc
+parses it, a style sheet's as css-tree does, JSON's strings and comments as
+written), differs from it in more than layout is 422 `pretty-mismatch` and is
+logged, and one of a kind it has no check for 422 `unsupported`. The Brotli bytes are kept in
 the bundle's cache directory by content hash, encrypted with its data key
 where storage is, and removed with the bundle; later requests stream them as
 they are. Access is checked before and again after formatting, and the
@@ -898,7 +900,7 @@ endpoint supports HEAD.
 `GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
 diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the
 `other` bundle's, for Compare's **Hide renamed names**, in steps each checked
-apart (`rename-map.js`, `pretty-format.ts`, `rename-diff-worker.js`). Both
+apart, by @preventive/compare's `renamedDiff` (`rename-diff-worker.js`). Both
 files are pretty-printed as `pretty` has them (and kept as it keeps them).
 The old copy is then given the new copy's names: both are parsed
 (oxc-parser) and each name resolved, by JavaScript's scopes, to the variable
@@ -946,7 +948,8 @@ does; and `marks`, the change blocks of the diff of the two copies as
 pretty-printed whose old lines, given the new names, are their new lines,
 no newline added or dropped after the last (none where names were not
 given), each checked by the server to be such a diff's blocks, in order and
-as many lines on either side. Each diff runs in a worker thread, off the event
+as many lines on either side; and the two files' hashes, `hash` and
+`otherHash`, which the viewer checks are those it asked about. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429
 `diff-busy` past that, as Code's one list asks for every file it shows at once),
 for at most a minute, its wait included (504 `diff-timeout`); a file that does
@@ -1304,15 +1307,12 @@ control. A version shows in the bundle view with four tabs:
   /api/npm/rename-diff` below, `GET /api/bundles/:id/rename-diff` for bundles),
   so it is offered with the pretty-print toggle on, for a managed bundle's or
   a version's files, and says why where it shows the old names after all.
-  The viewer checks the server's change blocks again against the new side as
-  it draws it, and shows the names where they would not take the old side to
-  it (as where the server diffed another copy), asking again when the names
-  are hidden again: a diff never hides a change for a name renamed.
+  The viewer takes the server's diff, checked there, as it is once it names
+  the two files asked about, and shows the names where it does not, asking
+  again when the names are hidden again.
   **Mark renamed lines**, beside it, rather diffs the two sides as they are,
   drawing faint and counting apart (`≈`) the lines the server finds differ
-  in names renamed alone, each where the viewer finds so too: short names
-  alone differ, no property, key, keyword, string, comment or regular
-  expression. Where either side reads names (`.name`, `.toString`, `.stack`,
+  in names renamed alone. Where either side reads names (`.name`, `.toString`, `.stack`,
   `.callee`, `.caller`), whose values a rename changes, renamed lines are
   marked so rather than hidden, whatever the toggle, and it says so. It
   is offered for those files alone: an author's name renamed, to a

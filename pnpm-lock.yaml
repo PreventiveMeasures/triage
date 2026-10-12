@@ -14,9 +14,12 @@ importers:
       '@exodus/stasis-core':
         specifier: 1.0.0-beta.9
         version: 1.0.0-beta.9
+      '@preventive/compare':
+        specifier: ^1.0.0
+        version: 1.0.0(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
       '@preventive/diff':
-        specifier: ^1.0.1
-        version: 1.0.1
+        specifier: ^1.0.2
+        version: 1.0.2
       '@preventive/report':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
@@ -26,6 +29,9 @@ importers:
       '@preventive/upstream':
         specifier: 1.0.0
         version: 1.0.0
+      css-tree:
+        specifier: ^3.2.1
+        version: 3.2.1
       oxc-minify:
         specifier: ^0.152.0
         version: 0.152.0
@@ -880,13 +886,31 @@ packages:
     resolution: {integrity: sha512-lJN3Wdt1pdsYXjAKJatYFn97N1l+0Kge6ixHIvHR1bdk5Zy/zDxigPbc3Rv1F13zObgV6X1TK7IvvHEaqFCvIA==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.0.0-beta.4.tgz}
     engines: {node: '>=24.14.0'}
 
+  '@preventive/compare@1.0.0':
+    resolution: {integrity: sha512-ZY2dsJNmKKQ8zaXfG0brp2i6ghyqZsNQEZRPJf/KLfMaa6W9ldGt25C0qxaRZAMsRxouW2OfmjB1dNH7rUV4tw==, tarball: https://registry.npmjs.org/@preventive/compare/-/compare-1.0.0.tgz}
+    engines: {node: '>=24.14.0'}
+    peerDependencies:
+      css-tree: '>=3.2.1'
+      oxc-minify: '>=0.152.0'
+      oxc-parser: '>=0.152.0'
+      oxfmt: '>=0.72.0'
+    peerDependenciesMeta:
+      css-tree:
+        optional: true
+      oxc-minify:
+        optional: true
+      oxc-parser:
+        optional: true
+      oxfmt:
+        optional: true
+
   '@preventive/deptree@1.0.0-alpha.11':
     resolution: {integrity: sha512-OJd4JpogvomvbmwyIc3MHc1gskpg/fm3odkY8iLsui3ZBhtqXMb8dU3JaC52NUKZVzhfTuLHgiHSuV/Ep5zIyg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.11.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
-  '@preventive/diff@1.0.1':
-    resolution: {integrity: sha512-e4c673eQKCuEPHP8IZdirOXdOYONAkIjb9FdLLKGZ4xkDZNLF19w9V9ETzQAR5Z3iOu/N5tgZBGuBCLZzNTz2A==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.1.tgz}
+  '@preventive/diff@1.0.2':
+    resolution: {integrity: sha512-nZuUrASfcH9YdfTRsrZgI1i5vPYu6x609jLC6ilvtl9qeT1TCdw+emnNAGNKlXh2c4WPd9GyuLkuBjzo5yAr6w==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.2.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/lockfile@1.0.0-alpha.7':
@@ -2136,12 +2160,24 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
+  '@preventive/compare@1.0.0(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+      '@preventive/diff': 1.0.2
+    optionalDependencies:
+      css-tree: 3.2.1
+      oxc-minify: 0.152.0
+      oxc-parser: 0.152.0
+      oxfmt: 0.72.0
+    transitivePeerDependencies:
+      - '@noble/hashes'
+
   '@preventive/deptree@1.0.0-alpha.11':
     dependencies:
       '@chalker/queue': 1.0.1
       '@exodus/bytes': 1.16.0
       '@preventive/archive': 1.0.0-beta.4
-      '@preventive/diff': 1.0.1
+      '@preventive/diff': 1.0.2
       '@preventive/lockfile': 1.0.0-alpha.7
       '@preventive/upstream': 1.0.0-alpha.12
       '@preventive/vfs': 1.0.0-beta.4
@@ -2149,7 +2185,7 @@ snapshots:
       - '@noble/hashes'
       - semver
 
-  '@preventive/diff@1.0.1': {}
+  '@preventive/diff@1.0.2': {}
 
   '@preventive/lockfile@1.0.0-alpha.7':
     dependencies:
@@ -2167,7 +2203,7 @@ snapshots:
     dependencies:
       '@exodus/bytes': 1.16.0
       '@preventive/archive': 1.0.0-beta.4
-      '@preventive/diff': 1.0.1
+      '@preventive/diff': 1.0.2
       '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'

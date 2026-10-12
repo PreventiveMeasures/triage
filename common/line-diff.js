@@ -1,6 +1,7 @@
 // The change blocks between two texts' lines, found by @preventive/diff: what
-// the viewer's Compare diffs (ui/view/bundle-compare-code-model.js), and the
-// server's diff with renamed names hidden (server-managed/rename-diff.ts).
+// the viewer's Compare diffs (ui/view/bundle-compare-code-model.js); and the
+// server's check, apart from @preventive/compare's own, that its diff with
+// renamed names hidden takes the old side to the new (server-managed/rename-diff.ts).
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
@@ -47,18 +48,4 @@ export function blocksHold(before, after, blocks, ignoreWhitespace = false) {
     j = b1
   }
   return true
-}
-
-// The blocks of the diff of `before` and `after` whose lines differ in names
-// renamed alone: those whose old lines, as `given` has them (the old text with
-// the new side's names, line for line), are their new lines, alike as the
-// diff has lines alike, and no newline added or dropped after their last.
-// None (null) where `given` has other lines than `before`.
-export function markedBlocks(before, given, after, ignoreWhitespace = false) {
-  const news = textLines(after), renamed = textLines(given)
-  if (renamed.length !== textLines(before).length) return null
-  const alike = ignoreWhitespace ? (x, y) => x.replaceAll(/\s/gu, '') === y.replaceAll(/\s/gu, '') : (x, y) => x === y
-  const ended = endsLine(before) === endsLine(after)
-  return changeBlocks(before, after, ignoreWhitespace)
-    .filter(({ a0, a1, b0, b1 }) => a1 - a0 === b1 - b0 && (ended || b1 < news.length) && renamed.slice(a0, a1).every((line, k) => alike(line, news[b0 + k])))
 }
