@@ -72,7 +72,8 @@ test('request catchers and out-of-band hosts, services that could be fine, and I
     ['Remote', ['paste-ee', 'transfer-sh', 'file-io', '0x0', 'ngrok', 'localtunnel', 'cloudflare-tunnel', 'serveo', 'pipedream-api']],
     ['IP lookup', ['ipify', 'ifconfig-me', 'icanhazip', 'ip-api', 'ipapi', 'checkip']],
   ], 'Pipedream\'s endpoints catch what is sent; its own API could be fine')
-  for (const lookalike of ['scripts/transfer.sh', 'run("./transfer.sh")', 'this.file.io = io', 'go("https://ngrok.com/docs")', 'go("https://notpaste.ee")',
+  assert.deepEqual(exfiltration('lib/u.js', 'up("https://me@transfer.sh/x")\nup("https://file.io:443/x")\n'), { 'transfer-sh': [1], 'file-io': [2] }, 'the host after a user, or before a port')
+  for (const lookalike of ['scripts/transfer.sh', 'run("./transfer.sh")', 'this.file.io = io', 'up("https://transfer.sh@example.com/upload")', 'up("https://file.io:x@example.com")', 'go("https://ngrok.com/docs")', 'go("https://notpaste.ee")',
     'go("https://ipify.organic")', 'go("https://myipapi.co")', 'go("https://ngrok.io.evil.example/x")']) {
     assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
   }
