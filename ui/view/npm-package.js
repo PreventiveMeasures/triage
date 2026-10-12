@@ -292,18 +292,16 @@ export function npmCompareSource(entry) {
     dependencies: npmFlaggedDependencyChanges,
     openDependency,
     // A swap or a pick on this side opens `base`, compared with `target`.
-    open: (base, target, mode) => {
-      if (!isManagedUiMode() || !managedHistory?.active) return
-      void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
-        ...(target ? { compareSpec: target, ...compareModeField(mode) } : {}) })
-    },
+    open: (base, target, mode) => navigateToNpm(name, base, 'compare', target ? { compareSpec: target, ...compareModeField(mode) } : {}),
   }
 }
 
-export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview') {
+// Opens a version on `bundleTab`, with the route's other `fields` (what it
+// is compared with); the lookup where no package is named.
+export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview', fields = {}) {
   if (!isManagedUiMode() || !managedHistory?.active) return
   void managedHistory.navigate(packageName == null ? { view: 'npm' }
-    : { view: 'npm', packageName, packageSpec, bundleTab })
+    : { view: 'npm', packageName, packageSpec, bundleTab, ...fields })
 }
 
 function showLookup(lookup) {
@@ -506,9 +504,8 @@ const aliasOf = range => npmAlias(range)?.name ?? null
 function openDependency({ opens, from, to }) {
   if (!opens) return
   const after = to && npmRangeVersion(to), before = from && npmRangeVersion(from)
-  if (!before || !after || before === after || aliasOf(from) !== aliasOf(to)) { navigateToNpm(opens); return }
-  if (!isManagedUiMode() || !managedHistory?.active) return
-  void managedHistory.navigate({ view: 'npm', packageName: opens, packageSpec: after, bundleTab: 'compare', compareSpec: before })
+  if (!before || !after || before === after || aliasOf(from) !== aliasOf(to)) navigateToNpm(opens)
+  else navigateToNpm(opens, after, 'compare', { compareSpec: before })
 }
 
 // The Overview's Dependencies column, in place of the Packages one a single

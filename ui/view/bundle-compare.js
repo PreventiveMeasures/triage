@@ -897,6 +897,7 @@ class BundleCompare extends LitElement {
     // after.
     const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, badges) : scopeSelector
 
+    const mode = this._baseReady && ready ? this._mode : 'overview'
     let body
     if (!this._baseReady) {
       body = html`<div class="bundle-compare-empty">Loading bundle…</div>`
@@ -913,11 +914,11 @@ class BundleCompare extends LitElement {
       body = html`<div class="bundle-compare-empty is-error">Couldn't read the selected ${noun}: ${this._otherDetails.error}</div>`
     } else if (!this._otherDetails.json && !this._otherDetails.bundle) {
       body = html`<div class="bundle-compare-empty is-error">The selected ${noun} couldn't be parsed.</div>`
-    } else {
+    } else if (mode !== 'code') {
+      // Code shows in place of the body.
       body = this._renderDiff()
     }
 
-    const mode = this._baseReady && ready ? this._mode : 'overview'
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
