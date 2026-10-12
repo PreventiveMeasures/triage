@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
 import { setCacheDir } from '@preventive/upstream/npm.js'
-import { auditCache, auditedRepos, upstreamCache } from '../server-managed/upstream-cache.ts'
+import { auditCache, auditedRepos, lastListing, upstreamCache } from '../server-managed/upstream-cache.ts'
 import { checkUpstreamCacheStore } from './_managed-upstream-cache.js'
 
 const signal = () => new AbortController().signal
@@ -161,6 +161,37 @@ test('with a cache directory, audits keep listings and npm version documents on 
   calls.length = 0
   assert.equal((await recheck()).status, 200)
   assert.deepEqual(calls, ['https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'], 'neither npm nor GitHub is asked again')
+})
+
+test('a listing as last kept, however old, is read where audits keep it, the database or upstream\'s disk cache, and answered as kept now', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const dir = await mkdtemp(join(tmpdir(), 'triage-upstream-last-'))
+  t.after(async () => { setCacheDir(false); db.close(); await rm(dir, { recursive: true, force: true }) })
+  const calls = stubGithub(t)
+  assert.equal(await lastListing(null, db, 'org/dep'), null, 'none is kept yet')
+  assert.equal(await lastListing(dir, db, 'org/dep'), null)
+  const kept = await fetchBundleAdvisories(packages, signal(), { details: true, cache: auditCache(null, db, signal()) })
+  setCacheDir(dir)
+  assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { details: true, cache: auditCache(dir, db, signal()) }), kept)
+  assert.equal(calls.length, 2, 'kept in each')
+  const stored = await db.getUpstreamCacheEntry('github/advisories/org/dep'), [file] = await readdir(join(dir, 'github/advisories'))
+  // Three hours on, GitHub fails: upstream takes neither as it is.
+  const later = Date.now() + 3 * 60 * 60_000
+  t.mock.method(Date, 'now', () => later)
+  stubGithub(t, () => Response.json({ message: 'unavailable' }, { status: 500 }))
+  assert.equal((await fetchBundleAdvisories(packages, signal(), { cache: auditCache(null, db, signal()) })).status, 502)
+  for (const cacheDir of [null, dir]) {
+    const last = await lastListing(cacheDir, db, 'Org/Dep')
+    assert.ok(last.at < later - 2 * 60 * 60_000, 'when it was kept')
+    assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { details: true, cache: last.cache }), kept, 'found by any spelling of its name')
+    assert.equal(await last.cache.read('github/advisories', 'org/other'), null, 'its own listing alone')
+  }
+  assert.equal(await db.getUpstreamCacheEntry('github/advisories/org/dep'), stored, 'nothing is written')
+  assert.deepEqual(await readdir(join(dir, 'github/advisories')), [file])
+  const warn = t.mock.method(console, 'warn', () => {})
+  await db.setUpstreamCacheEntry('github/advisories/org/broken', '{not json', later)
+  assert.equal(await lastListing(null, db, 'org/broken', true), null, 'one that can\'t be read is none')
+  assert.equal(warn.mock.callCount(), 1)
 })
 
 test('an audit asks for the listings of the repositories it knows in one database read', async t => {

@@ -75,10 +75,11 @@ function npmDownloadsOf(name) {
 }
 
 // A package's advisories for this session, across its published versions,
-// which each one's `affected` indexes.
+// which each one's `affected` indexes; `keptAt`, where its repository's are
+// as GitHub last listed them, when that was.
 function npmPackageAdvisories(name) {
   return npmPackageData('advisories', name, () => fetchNpmAdvisories(name),
-    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
+    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false, keptAt: data.keptAt ?? null }))
 }
 
 // The version's pages elsewhere: npm's, and Socket's report on it where the
@@ -363,8 +364,11 @@ export function npmAdvisoriesColumn(entry) {
     status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
   })).filter(group => group.advisories.length > 0)
   const active = statuses.filter(status => status === 'affects').length
-  const unchecked = ready && !data.repository
-    ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
+  // Where the repository's advisories are as GitHub last listed them, how
+  // long ago; where they couldn't be had, that npm's are alone.
+  const unchecked = ready && data.keptAt
+    ? html`<p class="npm-advisories-note">GitHub's repository advisories are as of ${npmSpan(Date.now() - Date.parse(data.keptAt))} ago: they couldn't be checked now.</p>`
+    : ready && !data.repository ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
   const body = data.status === 'loading' ? html`<p class="bundles-overview-col-empty">Checking advisories…</p>`
     : data.status === 'error' ? html`<p class="bundles-overview-col-empty">Couldn't check advisories.</p>`
     : groups.length === 0 ? html`${unchecked}<p class="bundles-overview-col-empty">No advisories for any version.</p>`
