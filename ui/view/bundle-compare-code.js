@@ -591,8 +591,9 @@ export class BundleCompareCode extends LitElement {
   // view hides them; but one whose diff here is of its pretty-printed copies
   // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
   // for, lists its new text's lines alone, unsigned, so the rail claims no
-  // sign nor removed line its diff doesn't show; and an added or removed
-  // file shown pretty-printed lists its lines numbered as published. The
+  // sign nor removed line its diff doesn't show, and none at all where its
+  // printed copies, both kept, are the same (_printedSame); and an added or
+  // removed file shown pretty-printed lists its lines numbered as published. The
   // reason is in `unsigned` by path (UNSIGNED). Diffs are found a little at a time, as the
   // tree's line counts are, a render's budget counted from its first: a file
   // past it lists its new text's lines unsigned, and another render signs
@@ -631,7 +632,12 @@ export class BundleCompareCode extends LitElement {
       if (!this._searchable(entry)) return []
       const contents = fileContents(this.base, this.other, path, entry)
       const { before, after } = contents
-      if (this._prettyShown(path, entry, contents)) unsigned.set(path, before !== '' && after !== '' && before !== after ? 'printed' : 'numbered')
+      if (this._prettyShown(path, entry, contents)) {
+        const changed = before !== '' && after !== '' && before !== after
+        // Its printed copies the same: its diff here draws no change to seek.
+        if (changed && this._printedSame(path, entry)) return []
+        unsigned.set(path, changed ? 'printed' : 'numbered')
+      }
       return [{ path, ...contents }]
     })
     const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split' }), unsigned }
@@ -655,6 +661,13 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     return ![[this.base, basePath, contents.before], [this.other, path, contents.after]]
       .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
+  }
+
+  // Whether a file's printed copies, both kept (keptPrettyCopy: asked for
+  // where the file was shown, never here), are the same.
+  _printedSame(path, { basePath = path }) {
+    const [before, after] = [[this.base, basePath], [this.other, path]].map(([details, file]) => keptPrettyCopy(details, file))
+    return before?.status === 'ready' && after?.status === 'ready' && before.hash === after.hash
   }
 
   // A search hit picked: its file opened, its line brought into view where

@@ -573,6 +573,24 @@ test('a file whose printed copy failed shows, and is searched, as published', as
   assert.equal(found.unsigned.has('dist/failed.min.js'), false)
 })
 
+test('a file whose printed copies are the same isn\'t listed once they are kept: its diff draws no change to seek', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(1);\n` }, { 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}fetch( 1 );\n` }])
+  element.base.managedId = 'b23'
+  element.other.managedId = 'b24'
+  pretty.set('b23:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
+  pretty.set('b24:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'fetch('
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/same.min.js')
+  assert.ok(listed(), 'listed, unsigned, while its copies aren\'t kept: none is asked for to search it')
+  element.path = 'dist/same.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /The contents are the same\./u)
+  assert.equal(listed(), false)
+})
+
 test('a hit in a file whose printed copy is still coming is sought again in the copy once it comes', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view('src/api.js', [{ 'dist/coming.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
