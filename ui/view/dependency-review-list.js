@@ -122,7 +122,7 @@ export class DependencyReviewList extends LitElement {
         return html`<section class="dependency-review-section"><h2>${label}<span class="npm-review-count">${reviews.length}</span></h2>
           <ol>${reviews.map(review => this._row(review))}</ol>${reviews.length === 0 && !this._loading ? html`<p class="npm-review-muted">${published ? 'No published reviews yet.' : 'No reviews in progress.'}</p>` : nothing}</section>`
       })}
-      ${this._next ? html`<button type="button" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._load(true)}>Load more</button>` : nothing}
+      ${this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._load(true)}>Load more</button>` : nothing}
     </section>`
   }
 }

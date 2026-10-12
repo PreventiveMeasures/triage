@@ -5,33 +5,32 @@ npm-review {
   background: var(--bg); font-size: .78rem;
   container-type: inline-size; container-name: dependency-review;
 }
-npm-review *, .dependency-review-list * { box-sizing: border-box; }
-npm-review button:not([class^='bundle-'], .npm-extension, .focus-code-nav-btn,
-  :where(.diff-fold-actions button, .bundle-compare-code-layout button)),
-.dependency-review-list button:not(.bundle-code-copy-path) {
+/* Only decorate review controls; Compare owns the controls inside its viewer. */
+.npm-review-button {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   padding: .35rem .65rem; min-height: 1.9rem; border: 1px solid var(--border);
   border-radius: var(--ui-radius, 5px); background: var(--surface); color: var(--text); font: inherit;
-}
-npm-review button:disabled, .dependency-review-list button:disabled { opacity: .45; }
-npm-review button:not(:disabled, .npm-extension):hover,
-.dependency-review-list button:not(:disabled):hover { background: var(--surface-active); }
-npm-review button:focus-visible, .dependency-review-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-npm-review button.npm-review-primary {
-  background: var(--action-bg);
-  color: var(--action-text);
-  border-color: transparent;
-  font-weight: 600;
+  &:not(:disabled, .npm-review-primary):hover { background: var(--surface-active); }
+  &.npm-review-primary {
+    background: var(--action-bg); color: var(--action-text); border-color: transparent; font-weight: 600;
+    &:not(:disabled):hover { filter: brightness(1.12); }
   }
-npm-review button.npm-review-primary:not(:disabled):hover { background: var(--action-bg); filter: brightness(1.12); }
-npm-review button.npm-review-text-button { border: 0; background: transparent; color: var(--muted); padding: .2rem 0; }
-npm-review button.npm-review-text-button:hover { color: var(--accent); }
-npm-review button.npm-review-icon-button { border: 0; background: transparent; width: 1.8rem; padding: .2rem; }
-npm-review select, npm-review textarea {
+  &.npm-review-text-button {
+    border: 0; background: transparent; color: var(--muted); padding: .2rem 0;
+    &:hover { color: var(--accent); }
+  }
+  &.npm-review-icon-button { border: 0; background: transparent; width: 1.8rem; padding: .2rem; }
+  &.npm-review-danger { color: var(--critical); }
+}
+.npm-review-button:disabled, .dependency-review-list button:disabled { opacity: .45; }
+.npm-review-button:focus-visible, .dependency-review-list :is(button, a):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+npm-review textarea {
   padding: .4rem .6rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   background: var(--bg); color: var(--text); font: inherit; min-width: 0;
+  display: block; width: 100%; resize: vertical; line-height: 1.5;
 }
-npm-review textarea { display: block; width: 100%; resize: vertical; line-height: 1.5; }
 .npm-review-muted, .npm-review-help { color: var(--muted); font-size: .72rem; }
 .npm-review-help { line-height: 1.5; }
 .npm-review-error { color: var(--critical); padding: .4rem 1rem; overflow-wrap: anywhere; }
@@ -41,7 +40,6 @@ npm-review textarea { display: block; width: 100%; resize: vertical; line-height
   border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgb(0 0 0 / .2);
   }
-npm-review .bundle-compare-head bundle-selector[disabled] { pointer-events: none; opacity: .5; }
 .npm-review-summary-actions { display: flex; align-items: center; gap: 1.1rem; flex-shrink: 0; }
 .npm-review-progress-block { width: 8.6rem; }
 .npm-review-progress-block > span {
@@ -62,24 +60,17 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   border-bottom: 1px solid var(--border);
   }
 .npm-review-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; }
-.npm-review-count {
-  display: inline-block;
+.npm-review-count, .npm-review-badge {
   border-radius: 3px;
-  padding: 0 .25rem;
   background: var(--surface-active);
   color: var(--muted);
   font-size: .68rem;
-  font-weight: 400;
   }
+.npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
+.npm-review-badge { display: inline-flex; padding: .1rem .4rem; }
 .npm-review-filters { display: flex; align-items: center; gap: .7rem; padding: 0 .15rem; }
-npm-review .npm-review-filters button {
-  min-height: 1.4rem;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: .68rem;
-  }
+npm-review :is(.npm-review-filters, .npm-review-tree-footer) button { padding: 0; border: 0; background: transparent; }
+npm-review .npm-review-filters button { min-height: 1.4rem; color: var(--muted); font-size: .68rem; }
 npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text); }
 .npm-review-note-dot { color: var(--muted); }
 .npm-review-tree-footer {
@@ -92,7 +83,7 @@ npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text);
   color: var(--muted);
   font-size: .65rem;
   }
-npm-review .npm-review-tree-footer button { padding: 0; border: 0; background: transparent; font-size: inherit; min-height: 1.5rem; }
+npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
 .npm-review-decision {
   flex: none;
   max-height: 50%;
@@ -122,7 +113,7 @@ npm-review .npm-review-tree-footer button { padding: 0; border: 0; background: t
   }
 .npm-review-verdict-choice { position: relative; display: flex; min-width: 0; }
 .npm-review-verdict-choice + .npm-review-verdict-choice { border-left: 1px solid var(--border); }
-.npm-review-verdict-choice input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: default; }
+.npm-review-verdict-choice input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: default; }
 .npm-review-verdict-choice > span {
   display: flex;
   align-items: center;
@@ -131,13 +122,14 @@ npm-review .npm-review-tree-footer button { padding: 0; border: 0; background: t
   text-align: center;
   font-size: .7rem;
   }
-.npm-review-verdict-choice:is(.accept, .accept-with-nits) { --verdict-color: var(--green); }
-.npm-review-verdict-choice.request-changes, .npm-review-finalize.request-changes { --verdict-color: var(--medium); }
-.npm-review-verdict-choice.reject, .npm-review-finalize.reject { --verdict-color: var(--critical); }
+:is(.npm-review-verdict-choice, .npm-review-verdict-icon, .npm-review-finalize) {
+  &:is(.accept, .accept-with-nits) { --verdict-color: var(--green); }
+  &.request-changes { --verdict-color: var(--medium); }
+  &.reject { --verdict-color: var(--critical); }
+}
 .npm-review-verdict-choice:has(:checked) { background: var(--surface-active); color: var(--text); }
 .npm-review-verdict-choice:not(.unchecked):has(:checked),
-npm-review button.npm-review-finalize:is(.request-changes, .reject),
-npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disabled):hover {
+.npm-review-finalize:is(.request-changes, .reject) {
   background: rgb(from var(--verdict-color) r g b / .17); color: var(--verdict-color);
   }
 .npm-review-verdict-choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -163,27 +155,15 @@ npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disable
   border-radius: 50%;
   flex: none;
   font: 600 .65rem/1 sans-serif;
-  color: var(--muted);
+  color: var(--verdict-color, var(--muted));
   }
-.npm-review-verdict-icon:is(.accept, .accept-with-nits) { color: var(--green); }
 .npm-review-verdict-icon.accept-with-nits { font-size: 1rem; }
-.npm-review-verdict-icon.request-changes { color: var(--medium); }
-.npm-review-verdict-icon.reject { color: var(--critical); }
-.npm-review-badge {
-  display: inline-flex;
-  padding: .1rem .4rem;
-  border-radius: 3px;
-  background: var(--surface-active);
-  color: var(--muted);
-  font-size: .68rem;
-  }
 .npm-review-badge.published { color: var(--accent); background: rgb(from var(--accent) r g b / .12); }
 .npm-review-badge.revoked { color: var(--critical); background: rgb(from var(--critical) r g b / .1); }
 .npm-review-empty { padding: 1rem; color: var(--muted); }
 .npm-review-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 npm-review .npm-review-dialog {
   position: fixed; inset: 0 0 0 auto; margin: 0; width: min(26rem, 100%); max-width: 100%; height: 100dvh; max-height: 100dvh;
-  padding: 0;
   border: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
@@ -201,11 +181,11 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
   padding: 1.1rem 1.25rem .9rem;
   border-bottom: 1px solid var(--border);
   }
-.npm-review-dialog-head h2 { margin: 0; font-size: 1.15rem; }
+.npm-review-dialog-head h2 { font-size: 1.15rem; }
 .npm-review-dialog-head p { margin: .2rem 0 0; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
 .npm-review-dialog-body { display: flex; flex-direction: column; gap: 1.1rem; padding: 1rem 1.25rem; }
 .npm-review-dialog-body > label { display: block; font-weight: 600; }
-.npm-review-dialog-body select, .npm-review-dialog-body textarea { display: block; width: 100%; margin-top: .5rem; font-weight: 400; }
+.npm-review-dialog-body textarea { margin-top: .5rem; font-weight: 400; }
 .npm-review-dialog-body .npm-review-help { display: block; font-weight: 400; margin-top: .4rem; }
 .npm-review-dialog-body .npm-review-decision { max-height: none; padding: 0; border: 0; background: none; overflow: visible; }
 .npm-review-dialog-body .npm-review-error { padding: 0; }
@@ -216,7 +196,7 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .npm-review-coverage p { margin: .5rem 0 0; color: var(--muted); font-size: .72rem; }
 npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; padding: .2rem .45rem; }
 .npm-review-coverage .npm-review-progress { margin-top: .6rem; }
-.npm-review-team-options { padding: 0; margin: 0; border: 0; min-width: 0; }
+.npm-review-team-options { border: 0; min-width: 0; }
 .npm-review-team-options legend { font-weight: 600; margin-bottom: .4rem; }
 .npm-review-team-options mode-switch { display: block; width: 100%; margin-top: .4rem; }
 .npm-review-team-options .npm-review-error { margin-top: .4rem; }
@@ -249,13 +229,10 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 .npm-review-published fieldset button { margin-top: .6rem; }
 .npm-review-revoke { margin-top: .9rem; }
 .npm-review-revoke button { margin-top: .6rem; }
-npm-review button.npm-review-danger, .dependency-review-list button.npm-review-danger { color: var(--critical); }
 .dependency-review-list {
   max-width: 76rem; width: 100%; margin-inline: auto; padding: 2rem;
   container-type: inline-size; container-name: review-list;
 }
-.dependency-review-list > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.dependency-review-list h1 { margin: 0; }
 .dependency-review-list > p { color: var(--muted); margin: .4rem 0 1.6rem; }
 .dependency-review-section { margin-top: 1.2rem; }
 .dependency-review-section h2 {
@@ -265,11 +242,10 @@ npm-review button.npm-review-danger, .dependency-review-list button.npm-review-d
   color: var(--muted);
   font-size: .72rem;
   font-weight: 500;
-  margin: 0;
   padding: .4rem .5rem;
   border-bottom: 1px solid var(--border);
   }
-.dependency-review-section ol { list-style: none; padding: 0; margin: 0; }
+.dependency-review-section ol { list-style: none; }
 .dependency-review-row { border-bottom: 1px solid var(--border); font-size: .78rem; }
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {
@@ -309,25 +285,22 @@ npm-review button.npm-review-danger, .dependency-review-list button.npm-review-d
 }
 .dependency-review-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
 .dependency-review-row-actions review-audit-copy { display: inline-flex; }
-.dependency-review-list button.dependency-review-expand,
-.dependency-review-list button.dependency-review-discard,
-.dependency-review-open {
+.dependency-review-expand, .dependency-review-discard, .dependency-review-open {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 1.35rem; height: 1.35rem; min-height: 0; padding: 0; border: 0;
-  border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted);
+  width: 1.8rem; height: 1.8rem; border: 0;
+  border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); font: inherit;
+  &:not(:disabled):hover { background: var(--surface-active); }
 }
-.dependency-review-open:hover { color: var(--accent); background: var(--surface-active); }
+.dependency-review-open:hover { color: var(--accent); }
+.dependency-review-expand { width: 1.35rem; height: 1.35rem; }
 .dependency-review-expand[aria-expanded='true'] svg { transform: rotate(90deg); }
-review-audit-copy .bundle-code-copy-path,
-.dependency-review-list button.dependency-review-discard,
-.dependency-review-open { width: 1.8rem; height: 1.8rem; }
+review-audit-copy .bundle-code-copy-path { width: 1.8rem; height: 1.8rem; }
 review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .95rem; }
-.dependency-review-list button.dependency-review-discard:not(:disabled):hover { color: var(--critical); }
-.dependency-review-title:focus-visible, .dependency-review-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dependency-review-discard:not(:disabled):hover { color: var(--critical); }
 .dependency-review-details { margin: 0 .5rem .7rem 2.45rem; }
 .dependency-review-final-note { margin-bottom: .5rem; }
 .dependency-review-entries {
-  list-style: none; padding: 0; margin: 0 0 0 .75rem; max-height: 20rem; overflow: auto; overscroll-behavior: contain;
+  list-style: none; margin-left: .75rem; max-height: 20rem; overflow: auto; overscroll-behavior: contain;
 }
 .dependency-review-entries > li {
   display: grid; grid-template-columns: minmax(0, 1fr) 8.5rem minmax(0, 1.6fr); align-items: baseline;
@@ -336,7 +309,7 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
 .dependency-review-entry-file { display: flex; align-items: baseline; gap: .4rem; font: .72rem/1.5 ui-monospace, monospace; min-width: 0; }
 .dependency-review-entry-file > span { overflow-wrap: anywhere; min-width: 0; }
 .dependency-review-entry-file .source-file-icon { width: 13px; height: 13px; align-self: start; margin-top: .13rem; }
-.dependency-review-entry-verdict { justify-self: start; text-align: left; }
+.dependency-review-entry-verdict { justify-self: start; }
 .dependency-review-entry-verdict .npm-review-verdict { font-size: .68rem; white-space: nowrap; }
 .dependency-review-entry-note { min-width: 0; }
 .dependency-review-row .npm-review-note { margin: 0; color: var(--text); font-size: .72rem; line-height: 1.5; }
@@ -368,8 +341,6 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
   .dependency-review-list { padding: 1rem; }
 }
 @media (pointer: coarse) {
-  npm-review button, npm-review select {
-  min-height: 44px !important;
-  }
+  npm-review button { min-height: 44px !important; }
   npm-review input[type='search'], npm-review textarea { font-size: 16px !important; }
 }
