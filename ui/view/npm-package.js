@@ -8,7 +8,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
-import { compareModeField, compareModeOf } from '../../common/managed/routes.js'
+import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -20,11 +20,10 @@ import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
-import { installScripts } from './install-scripts.js'
+import { npmInstallScripts } from './install-scripts.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { NPM_DEPENDENCY_KINDS, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
+import { NPM_DEPENDENCY_KINDS, npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
 
-export { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -88,12 +87,10 @@ export function npmPackageDetails(entry, data) {
   }
 }
 
-const NPM_ROUTE_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
-
 // The route of the version an entry names, on `tab`, at `location`.
 export function npmPackageRoute(entry, tab = 'overview', location = null) {
   if (!entry?.npm) return null
-  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: NPM_ROUTE_TABS.has(tab) ? tab : 'overview', ...location }
+  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: NPM_TABS.has(tab) ? tab : 'overview', ...location }
 }
 
 // Versions read and version lists, for the session and role that read them:
@@ -462,8 +459,7 @@ export function npmDependencies(manifest) {
   const rows = []
   for (const [field, kind] of NPM_DEPENDENCY_KINDS) {
     for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
-      const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
-      const opens = alias ?? name
+      const opens = npmAlias(range)?.name ?? name
       rows.push({ name, range, kind, opens: isNpmPackageName(opens) && npmRegistrySpec(range) ? opens : null })
     }
   }
@@ -500,9 +496,9 @@ export function npmFlaggedDependencyChanges(base, other) {
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
-const RANGE_VERSION = /^(?:npm:(?:@[^/@]+\/)?[^/@]+@)?(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
-export const npmRangeVersion = range => RANGE_VERSION.exec(range.trim())?.[1] ?? null
-const aliasOf = range => /^npm:((?:@[^/@]+\/)?[^/@]+)@/u.exec(range)?.[1] ?? null
+const RANGE_VERSION = /^(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
+export const npmRangeVersion = range => RANGE_VERSION.exec(npmAlias(range)?.spec ?? range.trim())?.[1] ?? null
+const aliasOf = range => npmAlias(range)?.name ?? null
 
 // A dependency Compare lists opens its package, as the Overview's do; a
 // changed one whose ranges each name a version of the same package opens
@@ -571,8 +567,6 @@ export function factFile(path, files, label = path) {
 }
 
 
-
-// An npm account, linking to its profile on npmjs.com.
 // An npm account, linking its profile: green where it's known to publish
 // one of npm's most downloaded packages (npm-packages.ts npmManifest's
 // `knownAccounts`), else yellow.
@@ -633,10 +627,6 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
   </dl>`
 }
-
-// The scripts npm runs as it installs the package (install-scripts.js), as
-// its manifest names them, `files` its files.
-export const npmInstallScripts = (manifest, files = null) => installScripts(manifest.installScripts, !!files?.has('binding.gyp'))
 
 // An install script's command, each word naming a file of the package
 // opening it.

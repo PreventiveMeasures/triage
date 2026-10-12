@@ -353,7 +353,7 @@ test('downloads group into 7-day weeks ending on the last day, a partial oldest 
 })
 
 test('each license in an expression opens its own file, else the package\'s only one', async () => {
-  const { npmLicenseParts } = await import('../ui/view/npm-package.js')
+  const { npmLicenseParts } = await import('../ui/view/npm-entries.js')
   const parts = (license, paths) => npmLicenseParts(license, paths).map(({ text, file }) => file ? `${text}→${file}` : text)
   assert.deepEqual(parts('MIT OR Apache-2.0', ['LICENSE-MIT', 'LICENSE-APACHE', 'index.js']), ['MIT→LICENSE-MIT', ' OR ', 'Apache-2.0→LICENSE-APACHE'])
   assert.deepEqual(parts('(MIT AND BSD-3-Clause)', ['LICENSE']), ['(', 'MIT→LICENSE', ' AND ', 'BSD-3-Clause→LICENSE', ')'])

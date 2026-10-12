@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges, npmRegistrySpec } from '../ui/view/npm-dependency-checks.js'
+import { npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges, npmRegistrySpec } from '../ui/view/npm-dependency-checks.js'
 
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
 // A version's details: its files, by path, and its manifest.
@@ -51,6 +51,12 @@ test('a dependency npm installs from its registry is told by its spec, as npm-pa
   // Every one npm fetches from elsewhere (npmDependencySource) among them,
   // as one reading of a spec answers both.
   for (const [spec] of FROM_ELSEWHERE) assert.equal(npmRegistrySpec(spec), false, spec)
+})
+
+test('an npm: alias names a package and its spec, as npm reads it', () => {
+  assert.deepEqual(npmAlias('npm:@scope/real@^1.0.0'), { name: '@scope/real', spec: '^1.0.0' })
+  assert.deepEqual(npmAlias(' NPM:other '), { name: 'other', spec: '' }, 'any case, trimmed, with no spec')
+  for (const spec of ['^1.0.0', 'github:a/b', 'npm:', 'npm:a/b/c']) assert.equal(npmAlias(spec), null, spec)
 })
 
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {

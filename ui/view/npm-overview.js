@@ -9,7 +9,9 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE } from './npm-entries.js'
+import { npmInstallScripts } from './install-scripts.js'
 import { npmDependencyFlagTags, npmDependencySpecs } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
@@ -603,13 +605,13 @@ function provenanceBadge([from, to]) {
       'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
 }
 
-// The scripts npm runs installing the open version (npm-package.js
+// The scripts npm runs installing the open version (install-scripts.js
 // npmInstallScripts, node-gyp's for a binding.gyp among them) that the one
 // compared with didn't, or ran another command for; one dropped isn't
 // flagged. Each version's, with their commands, in its tooltip, those
 // added or changed in bold.
 function installScriptsBadge(base, other) {
-  const scripts = ({ npm, json }) => new Map(npmInstallScripts(npm.manifest ?? {}, new Set(json?.sources ?? [])))
+  const scripts = ({ npm, json }) => new Map(npmInstallScripts(npm.manifest, json?.sources))
   const now = scripts(other)
   const was = scripts(base)
   const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
@@ -955,7 +957,7 @@ export function npmFileExtensions(paths, sizes, lines = new Map()) {
 // The files every package has, at its root: its manifest, readme and license
 // files (npm-package.js NPM_LICENSE_FILE).
 const PACKAGE_FILE = /^(?:package\.json|readme(?:\.md)?)$/iu
-export const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
+const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
 
 // The package's file types: its own files (isNpmPackageFile) as `package`,
 // where it has any, then its extensions, each as npmFileExtensions has them.

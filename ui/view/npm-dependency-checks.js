@@ -7,7 +7,7 @@
 // them.
 import { html } from 'lit'
 import { NPM_PROSE } from './file-readability.js'
-import { installScripts } from './install-scripts.js'
+import { npmInstallScripts } from './install-scripts.js'
 
 // The kinds of dependency a manifest names, by its field
 // (npm-package.js npmDependencies).
@@ -121,6 +121,13 @@ export function npmDependencySource(spec) {
   return from === 'registry' || from === 'path' ? null : from
 }
 
+// The package and spec an `npm:` alias names (`npm:pkg@^1.2.3`), as
+// specFrom reads one; null for a spec that isn't one.
+export function npmAlias(spec) {
+  const [, name, range = ''] = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@(.*))?$/iu.exec(String(spec ?? '').trim()) ?? []
+  return name ? { name, spec: range } : null
+}
+
 // Whether npm installs a dependency's spec from its registry (specFrom):
 // not from a path, a repository or a URL, nor a scheme npm doesn't install
 // (`workspace:`), the registry's package of that name being what npm
@@ -151,7 +158,7 @@ function importsOf({ json, npm }) {
   let found = importsByVersion.get(json)
   if (found) return found
   const sources = json.sources ?? [], texts = json.sourcesContent ?? []
-  found = { whole: new Set(), parts: new Set(), commands: installScripts(npm?.manifest?.installScripts, sources.includes('binding.gyp')).map(([, command]) => command) }
+  found = { whole: new Set(), parts: new Set(), commands: npmInstallScripts(npm?.manifest, sources).map(([, command]) => command) }
   for (const [i, path] of sources.entries()) {
     if (typeof texts[i] !== 'string' || path === 'package.json' || (NPM_PROSE.test(path) && !MDX.test(path)) || NO_IMPORTS.test(path)) continue
     for (const [, run, end] of texts[i].matchAll(QUOTED)) {
