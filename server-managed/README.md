@@ -1620,11 +1620,10 @@ archived, pushedAt }` for the repository the latest version's manifest names,
 the last page of their list, one a page; null where GitHub didn't say); either
 is null where it can't be had, `github` for a repository GitHub does not
 say is public. A repository renamed or transferred since, which GitHub
-answers with a 301 to it by its id (`https://api.github.com/repositories/<id>`),
-is followed there once, with the token GitHub took for its old name
-(upstream refuses redirects, and its error has no `Location`, so the old
-name is asked again for it), `repo` then its name now; a redirect anywhere
-else, or a second, is no repository to show. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
+answers with a redirect to it by its id (`https://api.github.com/repositories/<id>`),
+is followed there once by upstream (`getRepo`'s `followRedirect`), with the
+same token, `repo` then its name now; a redirect anywhere else, or a second,
+is no repository to show. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
 many packages' recent downloads at once by name (`{ start, end, days }`,
 from the first of the month before last to yesterday; null where npm has
 none; one npm couldn't be asked about left out), up to 512 names: npm's
