@@ -22,7 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags, npmRunsCodeWithout } from './file-runs-code.js'
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
@@ -669,11 +669,10 @@ function fileBadges(base, other, files) {
       .filter(row => row.added)
   }
   const exfiltrating = gained(npmFileExfiltration), runsCode = gained(npmFileRunsCode)
-  // Any of its files holding what the red chip doesn't name.
-  const tags = found => npmRunsCodeFlags(found).map(({ name }) => name)
-  const flagged = new Set(runsCode.flatMap(row => tags(row.added)))
-  const runs = [...bundleFilesAsMap(other)].map(([path, text]) => ({ path, found: npmFileRunsCode(other, path, text) }))
-    .filter(row => row.found && tags(row.found).some(tag => !flagged.has(tag)))
+  // What any of its files holds that the red chip doesn't name.
+  const flagged = new Set(runsCode.flatMap(row => npmRunsCodeFlags(row.added).map(({ name }) => name)))
+  const runs = [...bundleFilesAsMap(other)].map(([path, text]) => ({ path, found: npmRunsCodeWithout(npmFileRunsCode(other, path, text), flagged) }))
+    .filter(row => row.found)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
       'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
@@ -689,7 +688,7 @@ function fileBadges(base, other, files) {
       'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
     listBadge('is-warn npm-compare-kept-runs', 'Runs code', runs, row => npmRunsCodeSaid(row.found),
       'What the open version\'s code does beyond itself, in any of its files, none of it new to a file',
-      npmRunsCodeKinds(runs.map(row => row.found), flagged)),
+      npmRunsCodeKinds(runs.map(row => row.found))),
   ]
 }
 

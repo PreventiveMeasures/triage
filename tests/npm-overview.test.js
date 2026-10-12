@@ -773,9 +773,10 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
   const kept = await badges(base, version('1.0.1', { ...files, 'lib/b.js': 'module.exports = x => eval(x) // more\n' }))
   assert.doesNotMatch(kept, /npm-compare-runs/u, 'nor in red for eval a file already held')
   assert.match(kept, /npm-compare-kept-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u, 'in orange')
-  const both = await badges(base, version('1.0.2', { ...files, 'lib/a.js': "require('child_process')\n" }))
+  const both = await badges(base, version('1.0.2', { ...files, 'lib/b.js': "module.exports = x => eval(x)\nrequire('child_process')\n" }))
   assert.match(both, /npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">child_process<\/span>[^]*?npm-compare-kept-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u,
     'what is new in red, what is kept in orange')
+  assert.match(both, /npm-compare-kept-runs[^]*?compare-tip-path">lib\/b\.js<\/span><span class="compare-tip-said">eval \(line 1\)</u, 'a file\'s kept kinds alone in orange, what is new to it in red')
   // Laid out under other roots (`package/` read as none), a file added at a
   // path the one compared with held another file at is new all the same.
   const rooted = version('2.0.0', { 'package/lib/a.js': 'eval(x)\nconst a = 1\n', 'package/index.js': 'module.exports = 1\n' })
