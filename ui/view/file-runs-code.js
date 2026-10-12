@@ -5,7 +5,9 @@
 // expressions and comments set aside as file-readability.js tells them, a
 // module named by the string that names it; a declaration file (.d.ts) runs
 // nothing, and a call written not to read as one (`window['ev' + 'al']`)
-// goes unseen.
+// goes unseen, as does one in a template literal in another's substitution
+// (`${`${eval(x)}`}`), whose backtick ends the outer one as the regular
+// expression telling strings reads it.
 //
 // Labels to assist a reviewer, making the plain cases less likely to be
 // missed, not a check to rely on: code can come to eval, Function or
@@ -68,7 +70,7 @@ function read(code, base, at) {
   for (const { 0: match, 1: string, index } of code.matchAll(JS_STRING_OR_COMMENT)) {
     starts.push(index)
     ends.push(index + match.length)
-    if (string?.[0] === '`') for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
+    if (string?.[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
     if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
     for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1))) at(kind, base + index)
   }
@@ -81,7 +83,7 @@ function read(code, base, at) {
 
 // Where each of a template literal's substitutions' code starts and ends, in
 // it, for those that say any of RUNS_CODE: from its `${` to the `}` that
-// closes it, braces in its strings aside.
+// closes it.
 function substitutions(template) {
   const found = []
   for (let i = template.indexOf('${'); i !== -1; i = template.indexOf('${', i)) {
@@ -89,20 +91,36 @@ function substitutions(template) {
       i += 2
       continue
     }
-    let depth = 0, end = i + 2, quote = null
-    for (; end < template.length; end++) {
-      const char = template[end]
-      if (quote) {
-        if (char === '\\') end++
-        else if (char === quote) quote = null
-      } else if (char === '"' || char === "'") quote = char
-      else if (char === '{') depth++
-      else if (char === '}' && depth-- === 0) break
-    }
+    const end = closing(template, i + 2)
     if (SAYS_ANY.test(template.slice(i + 2, end))) found.push([i + 2, end])
     i = end
   }
   return found
+}
+
+// A string, regular expression or comment where it starts, told as
+// JS_STRING_OR_COMMENT tells them in a whole text.
+const TOKEN = new RegExp(JS_STRING_OR_COMMENT.source, 'muy')
+
+// Where the `}` closing code from `from` in a text is, or the text's end for
+// none: the first its braces leave unbalanced, those in its strings, regular
+// expressions and comments aside (`${/* } */ x}`, `${/}/.test(x)}`).
+function closing(text, from) {
+  let depth = 0
+  for (let at = from; at < text.length; at++) {
+    const char = text[at]
+    if ('"\'`/'.includes(char)) {
+      TOKEN.lastIndex = at
+      const token = TOKEN.exec(text)
+      if (token) {
+        at += token[0].length - 1
+        continue
+      }
+    }
+    if (char === '{') depth++
+    else if (char === '}' && depth-- === 0) return at
+  }
+  return text.length
 }
 
 // How many of a sorted list's numbers are below a value.
