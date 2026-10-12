@@ -80,13 +80,14 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
 // `.sshd`), or a token's name; a command publishing (`npm publish`, `pnpm
-// publish …`) or the registry's who-am-I, a publisher's first step with a
-// token. And the registry's host, where a PUT request is one publishing.
+// publish …`, options before it as npm takes them, `npm --tag next publish`)
+// or the registry's who-am-I, a publisher's first step with a token. And the
+// registry's host, where a PUT request is one publishing.
 // Told first of a string by what any of them says.
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 const HOLDS = [
   ['credentials', new RegExp(String.raw`(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])|${TOKEN_NAME}`, 'gu')],
-  ['publish', /(?<![\w-])(?:npm|pnpm|yarn)\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
+  ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
   ['registry', /registry\.(?:npmjs\.org|yarnpkg\.com)/gu],
 ]
 // A module a kind loads: vm, child_process, and libnpmpublish, npm's own
@@ -97,10 +98,12 @@ const MODULES = [
   ['publish', /^(["'\u0060])libnpmpublish\1$/u],
 ]
 // A string a program is run with publishing (`spawn('npm', ['publish'])`),
-// after the one naming it, and a request's method set to PUT (`{ method:
-// 'PUT' }`, `options.method = 'put'`).
+// after the one naming it, its options and their values between
+// (`['--tag', 'next', 'publish']`), and a request's method set to PUT
+// (`{ method: 'PUT' }`, `options.method = 'put'`).
 const PROGRAM = /^(["'\u0060])(?:npm|pnpm|yarn)\1$/u
 const PUBLISH = /^(["'\u0060])publish\1$/u
+const OPTION = /^(["'\u0060])-/u
 const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
 const PUT = /^(["'\u0060])put\1$/iu
 const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
@@ -167,8 +170,10 @@ export const npmFileRunsCode = cachedPerFile(npmRunsCode)
 // anything is read.
 function read(code, base, at) {
   if (!SAYS_ANY.test(code)) return
-  // The string before, and where it ends.
-  let end = 0, previous = ''
+  // Where the string before ends; whether the strings since a program's name
+  // are its arguments, an option or its value each, and whether the last is
+  // an option.
+  let end = 0, option = false, program = false
   for (const { 0: token, 1: string, groups, index } of code.matchAll(READS)) {
     if (string === undefined) {
       for (const kind of CODE_KINDS) if (groups[kind]) at(kind, base + index)
@@ -182,10 +187,14 @@ function read(code, base, at) {
     const text = inner.length === 0 ? string : textOf(string, inner)
     if (HOLDS_ANY.test(text)) for (const [kind, holds] of HOLDS) for (const { index: within } of text.matchAll(holds)) at(kind, base + index + within)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
-    if (PUBLISH.test(string) && PROGRAM.test(previous) && ARGUMENTS_BETWEEN.test(code.slice(end, index))) at('publish', base + index)
+    if (program && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
+      if (PUBLISH.test(string)) at('publish', base + index)
+      program = OPTION.test(string) || option
+      option = OPTION.test(string)
+    } else program = false
+    if (PROGRAM.test(string)) [program, option] = [true, false]
     if (PUT.test(string) && METHOD.test(code.slice(Math.max(0, index - 300), index))) at('put', base + index)
     end = index + token.length
-    previous = string
   }
 }
 

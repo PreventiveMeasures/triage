@@ -76,6 +76,9 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     { publish: [2, 3, 4] }, 'a PUT, the registry named in the file')
   assert.deepEqual(found('a.js', 'spawn(\'npm\', [/* explain */ \'publish\'])\nexecFile("pnpm", // why\n  ["publish"])\nspawn(\'npm\', [run, \'publish\'])\n'), { publish: [1, 3] },
     'comments between its program and arguments, not another argument')
+  assert.deepEqual(found('a.js', 'execSync(\'npm --silent publish\')\nexecSync(`npm --tag=next --access public publish ${dir}`)\nspawn(\'npm\', [\'--tag\', \'next\', \'publish\'])\nspawn(\'npm\', [\'--silent\', \'publish\'])\n'),
+    { publish: [1, 2, 3, 4] }, 'npm\'s options before it, and their values')
+  assert.equal(found('a.js', 'spawn(\'npm\', [\'install\', \'publish\'])\nexecSync(\'npm install publish\')\n'), null, 'another command\'s argument named publish')
   assert.equal(found('a.js', 'fetch(url, { method: \'PUT\' })\naxios.put(url, body)\nbus.publish(\'topic\')\nconst commands = [\'publish\']\n'), null,
     'a PUT where the file names no registry, and publish not run by npm')
   assert.equal(found('a.js', 'const methods = [\'GET\', \'PUT\']\nconst registry = \'https://registry.npmjs.org/\'\nfetch(registry + \'-/v1/search\')\n'), null,
@@ -145,6 +148,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`${"{ method: 'PUT' }, ".repeat(1e5)}'registry.npmjs.org'\n`, { publish: [1] }],
     [`${'JSON.stringify( '.repeat(1e5)}process.env)\n`, { env: [1] }],
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
+    [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
   ]) assert.deepEqual(found('a.js', text), runs)
   // A minute, when each hit copied those before it.
   assert.equal(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval').length, 1e5, 'as many hits as lines')
