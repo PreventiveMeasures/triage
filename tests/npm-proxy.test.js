@@ -287,10 +287,11 @@ describe('npm-proxy: dispatcher gates + handler', () => {
     // 2 s ceiling — the propagation lands well under 100 ms in
     // practice but we don't want a flaky test under load. Throws
     // a clear AssertionError if the propagation never fires.
+    let ceiling
     await Promise.race([
       abortPropagated,
-      new Promise((_resolve, reject) => { setTimeout(() => reject(new Error('AbortSignal did NOT fire on client disconnect within 2s')), 2_000) }),
-    ])
+      new Promise((_resolve, reject) => { ceiling = setTimeout(() => reject(new Error('AbortSignal did NOT fire on client disconnect within 2s')), 2_000) }),
+    ]).finally(() => clearTimeout(ceiling))
   })
 
   it('stays responsive across a slow upstream and a fresh probe', async () => {
