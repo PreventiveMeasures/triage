@@ -1291,13 +1291,16 @@ control. A version shows in the bundle view with four tabs:
   it has any (peer and optional ones included), which open in the viewer at
   their latest version (an `npm:` alias at the package it names), their kinds
   and ranges lined up, each tagged after its name where it calls for a look:
-  non-registry where npm fetches it from elsewhere than its registry (an
-  `http:` or `https:` URL, a `git:`, `git+https:` or `git+ssh:`
-  repository, or over `ssh:` or as `git@host:path` on a host npm knows,
-  `github:`, `gitlab:`, `bitbucket:`, `gist:` or `sourcehut:`, or GitHub's
-  `owner/repo` shorthand, each as npm reads a spec; not a `file:` path, nor
-  what npm doesn't install, as `workspace:`, or reads as a path, as
-  `git@example.com:org/repo`), its
+  non-registry where npm fetches it from elsewhere than its registry, as
+  npm-package-arg resolves a dependency's spec, hosted-git-info reading a
+  repository's host for it: a repository on GitHub, GitLab, Bitbucket, Gist
+  or SourceHut in any form npm takes (`github:owner/repo`, GitHub's
+  `owner/repo` shorthand, `git@github.com:owner/repo`,
+  `ssh://`, `git+https://` or `https://github.com/owner/repo`), named for
+  it, another `git:`, `git+https:` or `git+ssh:` repository, or an `http:`
+  or `https:` tarball; not a `file:` path, nor what npm doesn't install
+  (`workspace:`, `ssh:` to another host) or reads as a path
+  (`git@example.com:org/repo`), its
   spec in its tooltip, and opening nothing, as the registry's package of
   that name isn't what npm installs; and unimported where nothing of the
   version imports it: no code file names it as an import would (quoted,

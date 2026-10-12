@@ -12,41 +12,99 @@ import { installScripts } from './install-scripts.js'
 // (npm-package.js npmDependencies).
 export const NPM_DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
 
-// The hosts npm takes a repository on by name (`github:owner/repo`), as
-// hosted-git-info, which reads them for it, has them; their domains, on
-// which it takes one as `git@host:path` too, and over `ssh:`
-// (`ssh://git@github.com/org/repo`) but SourceHut's.
-const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist'], ['sourcehut', 'SourceHut']])
-const SSH_HOSTS = new Set(['github.com', 'gitlab.com', 'bitbucket.org', 'gist.github.com'])
-const GIT_HOSTS = new Set([...SSH_HOSTS, 'git.sr.ht'])
+// The hosts npm takes a repository on (hosted-git-info, which npm-package-arg
+// reads a spec with): by name (`github:owner/repo`), or by its domain over
+// the protocols each takes, where its path names a repository, `[user,
+// project, committish]`, and not a tarball or a file.
+const trim = project => project?.replace(/\.git$/u, '')
+const GIT_HOSTS = new Map([
+  ['github', { label: 'GitHub', domain: 'github.com', protocols: ['git:', 'http:', 'git+ssh:', 'git+https:', 'ssh:', 'https:'], repo({ pathname, hash }) {
+    const [, user, project, type, committish] = pathname.split('/', 5)
+    return (!type || type === 'tree') && user && trim(project) ? [user, trim(project), type ? committish : hash.slice(1)] : null
+  } }],
+  ['bitbucket', { label: 'Bitbucket', domain: 'bitbucket.org', protocols: ['git+ssh:', 'git+https:', 'ssh:', 'https:'], repo({ pathname, hash }) {
+    const [, user, project, aux] = pathname.split('/', 4)
+    return aux !== 'get' && user && trim(project) ? [user, trim(project), hash.slice(1)] : null
+  } }],
+  ['gitlab', { label: 'GitLab', domain: 'gitlab.com', protocols: ['git+ssh:', 'git+https:', 'ssh:', 'https:'], repo({ pathname, hash }) {
+    const path = pathname.slice(1)
+    const at = path.lastIndexOf('/')
+    if (path.includes('/-/') || path.includes('/archive.tar.gz')) return null
+    return path.slice(0, Math.max(at, 0)) && trim(path.slice(at + 1)) ? [path.slice(0, at), trim(path.slice(at + 1)), hash.slice(1)] : null
+  } }],
+  ['gist', { label: 'Gist', domain: 'gist.github.com', protocols: ['git:', 'git+ssh:', 'git+https:', 'ssh:', 'https:'], repo({ pathname, hash }) {
+    const [, user, project, aux] = pathname.split('/', 4)
+    return aux !== 'raw' && (user || project) ? [project ? user : null, trim(project || user), hash.slice(1)] : null
+  } }],
+  ['sourcehut', { label: 'SourceHut', domain: 'git.sr.ht', protocols: ['git+ssh:', 'https:'], repo({ pathname, hash }) {
+    const [, user, project, aux] = pathname.split('/', 4)
+    return aux !== 'archive' && user && trim(project) ? [user, trim(project), hash.slice(1)] : null
+  } }],
+])
+const BY_DOMAIN = new Map([...GIT_HOSTS.values()].map(host => [host.domain, host]))
+// The protocols hosted-git-info reads a URL by as it is, the hosts' names too.
+const PROTOCOLS = new Set(['git+ssh:', 'ssh:', 'git+https:', 'git:', 'http:', 'https:', 'git+http:', ...[...GIT_HOSTS.keys()].map(name => `${name}:`)])
+
 // GitHub's `owner/repo` shorthand, before a commit, branch or tag
-// (`#v1.0.0`) or not, as hosted-git-info tells it: one slash, neither first
-// nor last, and no space, `@` or `:`.
-const GITHUB_SHORTHAND = /^[^/\s@:]+\/[^/\s@:]+$/u
+// (`#v1.0.0`) or not, as hosted-git-info tells it: a slash, not first, nor
+// last before any `#`; no `.` first; and no space, `@`, `:` or second slash
+// before any `#`.
+function githubShorthand(spec) {
+  const hash = spec.indexOf('#'), slash = spec.indexOf('/')
+  const beforeHash = at => at > -1 && !(hash > -1 && at > hash)
+  return slash > 0 && !spec.startsWith('.') && (hash > -1 ? spec[hash - 1] !== '/' : !spec.endsWith('/'))
+    && ![/\s/u.exec(spec)?.index ?? -1, spec.indexOf('@'), spec.indexOf(':'), spec.indexOf('/', slash + 1)].some(beforeHash)
+}
+
+// A URL as hosted-git-info parses one: a protocol it doesn't know put
+// before a `git@host:path` (as `git+ssh://`) or given its `//`, and else
+// `host:path` read as `host/path`.
+const safeUrl = text => { try { return new URL(text) } catch { return null } }
+function hostedUrl(spec) {
+  const at = spec.indexOf('@'), colon = spec.indexOf(':')
+  const corrected = PROTOCOLS.has(spec.slice(0, colon + 1)) || at > -1 && at < colon ? spec : at > -1 ? `git+ssh://${spec}`
+    : spec.indexOf('//') === colon + 1 ? spec : `${spec.slice(0, colon + 1)}//${spec.slice(colon + 1)}`
+  if (safeUrl(corrected)) return safeUrl(corrected)
+  const before = char => { const hash = corrected.indexOf('#'); return corrected.lastIndexOf(char, hash > -1 ? hash : Infinity) }
+  let scp = before(':') > before('@') ? `${corrected.slice(0, before(':'))}/${corrected.slice(before(':') + 1)}` : corrected
+  if (scp.lastIndexOf(':', scp.indexOf('#') > -1 ? scp.indexOf('#') : Infinity) === -1 && !scp.includes('//')) scp = `git+ssh://${scp}`
+  return safeUrl(scp)
+}
+
+// The host npm takes a spec's repository on (hosted-git-info's fromUrl), or
+// null: one by its name, whatever its path, or by its domain over a protocol
+// it takes, where its path names a repository; none whose parts don't
+// decode.
+function gitHost(spec) {
+  if (!spec) return null
+  const url = hostedUrl(githubShorthand(spec) ? `github:${spec}` : spec)
+  if (!url) return null
+  const named = GIT_HOSTS.get(url.protocol.slice(0, -1))
+  const host = named ?? BY_DOMAIN.get(url.hostname.replace(/^www\./u, ''))
+  const parts = named ? [url.pathname.replace(/^\/?[^@]*@|^\//u, ''), url.hash.slice(1)] : host?.protocols.includes(url.protocol) && host.repo(url)
+  try { return parts ? (parts.forEach(part => part && decodeURIComponent(part)), host) : null } catch { return null }
+}
 
 // Where a dependency's spec has npm fetch it from, where that isn't its
-// registry, as npm reads a spec (npm-package-arg's resolve): a host npm
-// takes a repository on by name (`github:`, `gitlab:`, `bitbucket:`, `gist:`,
-// `sourcehut:`); `git`, a repository's (`git:`, `git+https:`, `git+http:`,
-// `git+ssh:`, `git+rsync:`, `git+ftp:`, `git+file:`, and over `ssh:` or as
-// `git@host:path` on a host it knows, as on another it installs nothing);
-// `URL`, a tarball's (`https:`, `http:`, with its `//` or without); GitHub,
-// for its `owner/repo` shorthand. Null for the registry's ranges, tags and
-// `npm:` aliases, for a path (`./x`, `~/x`, `/x`, `file:`), and for what npm
-// doesn't install (`workspace:`, `git+foo:`), or reads as a path
+// registry, as npm-package-arg's resolve reads a spec: not a path (`./x`,
+// `~/x`, `/x`, `c:/x`, `file:`) nor an `npm:` alias of a registry package;
+// then a repository on a host npm knows (gitHost), named for it (GitHub);
+// then a URL, `git` for a repository's (`git:`, `git+https:`, `git+ssh:`,
+// `git+http:`, `git+rsync:`, `git+ftp:`, `git+file:`, and `git+ssh://` to
+// `user@host:path`) and `URL` for a tarball's (`https:`, `http:`). Null for
+// the registry's ranges and tags, for a URL npm doesn't install
+// (`workspace:`, `ssh:` on another host), and for what it reads as a path
 // (`git@example.com:x/y`).
 export function npmDependencySource(spec) {
   const value = String(spec ?? '').trim()
-  if (/^(?:\.|~?\/)/u.test(value)) return null
-  const scheme = /^(git\+)?([a-z]+):/iu.exec(value)
-  const named = scheme && !scheme[1] && HOSTS.get(scheme[2].toLowerCase())
-  if (named) return named
-  if (/^(?:git|git\+(?:https?|ssh|rsync|ftp|file)):/iu.test(value)) return 'git'
-  if (/^https?:/iu.test(value)) return 'URL'
-  // As hosted-git-info reads them: `ssh:` and the host as spelled, `www.` aside.
-  const host = (scheme ? /^ssh:\/\/(?:[^@/]*@)?([^:/#]+)/u : /^[^@\s]+@([^:/\s]+):/u).exec(value)?.[1].replace(/^www\./u, '')
-  if ((scheme ? SSH_HOSTS : GIT_HOSTS).has(host)) return 'git'
-  return !scheme && GITHUB_SHORTHAND.test(value.split('#', 1)[0]) ? 'GitHub' : null
+  if (/^(?:[.]|~\/|\/|[a-z]:|file:|npm:)/iu.test(value)) return null
+  const host = gitHost(value)
+  if (host) return host.label
+  if (!/^(?:git\+)?[a-z]+:/iu.test(value)) return null
+  const scp = /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#.*)?$/iu.exec(value)
+  if (value.startsWith('git+ssh:') && scp && !/:\d+(?:\/|$)/u.test(scp[1])) return 'git'
+  const protocol = safeUrl(value)?.protocol
+  return /^(?:git|git\+(?:https?|rsync|ftp|file|ssh)):$/u.test(protocol) ? 'git' : /^https?:$/u.test(protocol) ? 'URL' : null
 }
 
 // Files no import is read from: prose, by its extension (Markdown, text) or

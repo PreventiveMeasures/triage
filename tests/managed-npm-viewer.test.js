@@ -80,7 +80,7 @@ test('the Overview flags a dependency from elsewhere than the registry, and one 
   const entry = npmPackageEntry({ ...data, name: 'eth-sig-util', version: '1.4.2', manifest })
   const details = npmPackageDetails(entry, { ...data, files: [['index.js', 60, 'const abi = require(\'ethereumjs-abi\')\nconst util = require(\'ethereumjs-util\')']] })
   const rows = text(npmDependenciesColumn(entry, details)).split('<li>').slice(1)
-  assert.match(rows[0], /^<div class="bundles-source-row npm-dependency-row is-resource"><span class="npm-dependency-name"><span class="bundles-source-path"[^>]*>ethereumjs-abi<\/span><span class=npm-dependency-flag is-source data-tooltip=From a git repository, not npm's registry: git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>non-registry<\/span><\/span>/u,
+  assert.match(rows[0], /^<div class="bundles-source-row npm-dependency-row is-resource"><span class="npm-dependency-name"><span class="bundles-source-path"[^>]*>ethereumjs-abi<\/span><span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm's registry: git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>non-registry<\/span><\/span>/u,
     'its flag after its name, opening nothing')
   assert.doesNotMatch(rows[1], /npm-dependency-flag/u, 'ethereumjs-util')
   assert.match(rows[2], /data-npm-dependency=react[^]*>react<\/span><\/span>\s*<span class="npm-dependency-kind">peer</u, 'a peer one isn\'t asked about')
