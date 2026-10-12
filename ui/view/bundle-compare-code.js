@@ -367,9 +367,9 @@ export class BundleCompareCode extends LitElement {
   }
 
   // The row of a search hit picked (see _seek), once drawn, scrolled into
-  // view and flashed; a hit whose file drew no diff, dropped, but while its
-  // printed copies or renamed names are still coming: the diff they draw
-  // seeks it again.
+  // view and flashed; a hit whose file drew no diff, dropped, but while that
+  // diff is still to be drawn (_soughtSettling): the diff drawn then seeks it
+  // again.
   _scrollSought() {
     if (this._sought?.path === this._current && !this._soughtSettling) this._sought = null
     if (!this._soughtRow) return
@@ -891,9 +891,10 @@ export class BundleCompareCode extends LitElement {
       : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
-    // A hit sought here waits while what its diff shows is still coming (see
-    // _scrollSought).
-    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || changes?.status === 'loading'
+    // A hit sought here waits while its diff isn't drawn yet: its printed
+    // copies or renamed names still coming, or its renamed names failed to
+    // hide, until they are shown (see _scrollSought).
+    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || changes?.status === 'loading' || changes?.status === 'error'
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, whitespace }
   }
 

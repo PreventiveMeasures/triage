@@ -556,6 +556,35 @@ test('a hit in a file whose printed copy is still coming is sought again in the 
   assert.equal(element._sought, null, 'and done with once found there')
 })
 
+test('a hit in a file whose renamed names failed to hide waits, and opens at its line once they are shown', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/unhidden.min.js', [{ 'dist/unhidden.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/unhidden.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b19'
+  element.other.managedId = 'b20'
+  pretty.set('b19:dist/unhidden.min.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b20:dist/unhidden.min.js', 'var X = 1;\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  pretty.set('b19:dist/unhidden.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /Couldn't hide renamed names/u)
+  element._mode = 'code'
+  element._query = 'q(X)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/unhidden.min.js')
+  element._seek('dist/unhidden.min.js', hit)
+  element.render()
+  // As the view does once drawn, the row's scrolling aside (there is no DOM here).
+  element._soughtRow = null
+  element._scrollSought()
+  assert.ok(element._sought, 'kept: its diff isn\'t drawn')
+  element._setRenames(false)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">2<\/span>[^]*q\(<mark class="diff-word">X/u, 'shown, at the copy\'s line 2')
+})
+
 test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
   // Every reading of the clock past the budget: the scan alone outlasts it.
   let clock = 0
