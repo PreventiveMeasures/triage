@@ -51,6 +51,8 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     + 'process.env.NPM_TOKEN\nprocess.env[\'GITHUB_TOKEN\']\nconst { NPM_TOKEN } = process.env\n'), { credentials: [1, 2, 3, 4, 5, 6] })
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),
     { env: [1, 2, 3, 4] }, 'the environment\'s values read out whole, a kind of its own')
+  assert.deepEqual(found('a.js', 'fetch(url, { body: JSON.stringify({ ...process.env }) })\nnew URLSearchParams({ ...process.env, host })\n'), { env: [1, 2] },
+    'a copy of them read out')
   assert.equal(found('a.js', 'process.env.NODE_ENV\nspawn(c, { env: process.env })\nspawn(c, { env: { ...process.env, X: 1 } })\nif (\'HOME\' in process.env) f()\n'
     + 'JSON.stringify(process.env.X)\nObject.values(process.env[name])\nObject.keys(process.env).filter(key => /^debug_/iu.test(key))\nfor (const name in process.env) f(name)\n'), null,
     'one variable, the environment handed to a program, or its names listed')

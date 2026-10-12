@@ -44,17 +44,19 @@ const FUNCTION_CALLED = String.raw`(?:${GAP}\??\.${GAP}(?:call|apply))?${GAP}(?:
 // `process.env[name]`).
 const ENV = String.raw`process${GAP}\.${GAP}env(?![\p{ID_Continue}$])(?!${GAP}(?:\??\.|\[))`
 // Its values read out whole (`JSON.stringify(process.env)`,
-// `Object.entries(process.env)`, `new URLSearchParams(process.env)`), not as a
-// program is handed it (`{ env: process.env }`, `{ ...process.env }`), nor its
+// `Object.entries(process.env)`, `new URLSearchParams(process.env)`), or a
+// copy of them (`JSON.stringify({ ...process.env })`), not as a program is
+// handed it (`{ env: process.env }`, `{ ...process.env }`), nor its
 // names listed (`Object.keys(process.env)`, as debug picks its DEBUG_ ones),
 // nor one variable asked for (`'HOME' in process.env`), nor its entries or
 // values picked among as they are read (`Object.entries(process.env)
 // .reduce(…)`, as npm's agent finds its proxy's, `.filter(…)`, `.find(…)`).
 const PICKED = String.raw`${GAP}\)${GAP}\??\.${GAP}(?:filter|find|findLast|some|every|reduce)(?![\p{ID_Continue}$])`
-const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${ENV}`
-  + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${ENV}(?!${PICKED})`
+const COPY = String.raw`(?:\{${GAP}\.\.\.${GAP})?`
+const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${COPY}${ENV}`
+  + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${COPY}${ENV}(?!${PICKED})`
 // Any of RUNS_CODE, as a text may say it.
-const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
+const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
 
 // A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
 // `...eval` aside) or part of another's (`evaluate`), or as the global
