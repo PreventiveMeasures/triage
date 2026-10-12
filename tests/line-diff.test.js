@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { blocksHold, changeBlocks, markedBlocks } from '../common/line-diff.js'
-import { random } from './_js-programs.js'
+import { blocksHold, changeBlocks } from '../common/line-diff.js'
+
+// A random number in [0, 1) for each call, from a seed (mulberry32).
+function random(seed) {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 test('change blocks are checked to take one text\'s lines to another\'s, hiding no change', () => {
   const after = 'a\nB\nc\nd\ne\n', before = 'a\nb\nc\nd\n'
@@ -30,13 +41,6 @@ test('change blocks are checked to take one text\'s lines to another\'s, hiding 
     assert.equal(blocksHold(old, now, old.startsWith('a') === now.startsWith('a') ? [] : [{ a0: 0, a1: 1, b0: 0, b1: 1 }]), false, `${JSON.stringify(old)} → ${JSON.stringify(now)}: its newline left out`)
   }
   assert.equal(blocksHold('a\nx', 'a\nx\n', [], true), true, 'as diff -w ignores it')
-})
-
-test('blocks marked as differing in renamed names alone are the diff\'s, those lines alike given the names, a newline after the last none added or dropped', () => {
-  assert.deepEqual(markedBlocks('f(a);\nh();\ng(1);\n', 'f(b);\nh();\ng(1);\n', 'f(b);\nh();\ng(2);\n'), [{ a0: 0, a1: 1, b0: 0, b1: 1 }])
-  assert.deepEqual(markedBlocks('f(a);\ng(a);\n', 'f(b);\ng(b);\n', 'f(b);\ng(b);'), [], 'the last line\'s newline dropped')
-  assert.deepEqual(markedBlocks('a\nx', 'a\nx', 'a\nx\n'), [])
-  assert.equal(markedBlocks('f(a);\n', 'f(b);\ng();\n', 'f(b);\n'), null, 'a renamed text of other lines')
 })
 
 test('what changeBlocks finds holds, for texts made at random, whitespace ignored or not', () => {

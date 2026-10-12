@@ -7,17 +7,17 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
-import { format } from 'oxfmt'
+import { format } from '@preventive/compare/pretty.js'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createBundleCache } from '../server-managed/bundle-cache.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
-import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
+import { createPrettyCache, prettyBody } from '../server-managed/pretty-print.ts'
 import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
-import { changeBlocks, markedBlocks } from '../common/line-diff.js'
+import { changeBlocks } from '../common/line-diff.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -30,7 +30,7 @@ const config = {
 }
 const minified = 'function add(a,b){return a+b}const s=css`a{color:red}`;export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
 const fileHash = text => `sha512-${createHash('sha512').update(text).digest('base64')}`
-const formatted = async text => (await format('pretty.js', text, PRETTY_OPTIONS)).code
+const formatted = async text => (await format(text, 'js')).code
 
 // A package's tarball downloads among the registry's calls.
 const downloads = (calls, { doc }) => calls.filter(call => call.url === doc.dist.tarball).length
@@ -102,12 +102,13 @@ const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?
 const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
 
 // What a rename diff of the two builds below answers: the old one with the
-// new one's names, formatted, diffed with the new one.
+// new one's names, formatted, diffed with the new one, and the two files' hashes.
 async function renamedBuilds(ignoreWhitespace = false) {
   const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
   const after = await formatted(rebuilt)
-  // No name read; the function's two lines differ in its renamed names alone.
-  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks: markedBlocks(await formatted(built), before, after, ignoreWhitespace) }
+  // No name read; the function's first two lines differ in its renamed names alone.
+  const marks = [{ a0: 0, a1: 2, b0: 0, b1: 2 }]
+  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks, hash: fileHash(built), otherHash: fileHash(rebuilt) }
 }
 // A minifier's two builds of a module: a function's names renamed, a number changed.
 const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
@@ -125,22 +126,7 @@ test('pretty-printing takes code by extension, up to a size, and leaves template
   await assert.rejects(prettyBody('x'.repeat(MAX_PRETTY_BYTES + 1), 'js'), { status: 413, message: 'file-too-large' })
 })
 
-test('a formatted copy is checked, apart from the formatter, to differ from its file only in layout', async () => {
-  // What formatting may respell: whitespace, quotes, parentheses, semicolons, numbers.
-  assert.equal(sameCode(
-    "var a='x',b='it\\'s';f(x=>x);a=1,b=2;x={'a':1};var n=.5,m=1E+3,k=1.50;!(a||b)||(c||d);new Foo",
-    'var a = "x",\n  b = "it\'s";\nf((x) => x);\n((a = 1), (b = 2));\nx = { "a": 1 };\nvar n = 0.5,\n  m = 1e3,\n  k = 1.5;\n!(a || b) || c || d;\nnew Foo();\n'), true)
-  for (const [output, what] of [['a = b + c;', 'an operator'], ['a = b;', 'a name'], ['a = c - b;', 'the order'], ['a = b - c; d;', 'an addition'],
-    ['a = b - 2;', 'a name for a number'], ['a = "b" - c;', 'a name for a string']]) {
-    assert.equal(sameCode('a=b-c', output), false, what)
-  }
-  assert.equal(sameCode('a=/x/img.test(s)', 'a = /x/gim.test(s);\n'), true, 'flags in order')
-  assert.equal(sameCode('a=/x/im', 'a = /x/gim;\n'), false, 'a flag')
-  assert.equal(sameCode('a=1.5', 'a = 1.25;\n'), false, 'a number')
-  assert.equal(sameCode('a()/* keep me */', 'a();\n'), false, 'a comment')
-  assert.equal(sameCode('A[class*=x]{COLOR:RED}', 'a[class*="x"] {\n  color: red;\n}\n'), false)
-  assert.equal(sameCode('A[class*=x]{COLOR:RED}', 'a[class*="x"] {\n  color: red;\n}\n', true), true, 'CSS compares without quotes or case')
-  // Published minified code and styles pass it as formatted.
+test('published minified code and styles pretty-print, checked by @preventive/compare to change their layout alone', async () => {
   const require = createRequire(import.meta.url)
   for (const file of ['prismjs/components/prism-core.min.js', 'prismjs/components/prism-javascript.min.js', 'prismjs/themes/prism.min.css']) {
     const text = await readFile(require.resolve(file), 'utf8')
@@ -161,7 +147,7 @@ test('a public npm file is formatted once, kept unencrypted by its hash, and ser
   assert.equal(first.headers['cache-control'], 'private, no-store')
   assert.equal(first.text(), await formatted(minified))
   // Kept as the response's bytes, in the public namespace, as they are.
-  const kept = await readdir(join(h.dir, 'cache', 'npm', 'pretty-v1'))
+  const kept = await readdir(join(h.dir, 'cache', 'npm', 'pretty-v2'))
   assert.deepEqual(kept, [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
   const again = await h.send(npmPretty('lib', '1.0.0', 'dist/lib.min.js', hash))
   assert.deepEqual(again.bytes, first.bytes)
@@ -220,9 +206,9 @@ test('a bundle file is formatted once, kept encrypted in its cache, and removed 
   assert.equal(first.headers['content-encoding'], 'br')
   assert.equal(first.text(), await formatted(minified))
   const copy = `${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`
-  const kept = await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v1'))
+  const kept = await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v2'))
   assert.deepEqual(kept, [copy])
-  const stored = await h.raw.open(`cache-encrypted-v1/bundles/${id}/pretty-v1/${copy}`)
+  const stored = await h.raw.open(`cache-encrypted-v1/bundles/${id}/pretty-v2/${copy}`)
   const chunks = []
   for await (const chunk of stored.stream) chunks.push(chunk)
   assert.equal(Buffer.concat(chunks).subarray(0, 16).toString(), 'DeepView.storage')
@@ -281,7 +267,7 @@ test('a bundle file is diffed with another bundle\'s, both pretty-printed, renam
   assert.equal(expected.blocks.length, 1, 'the renamed lines alike, the changed one shown')
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json(), await renamedBuilds(true))
   // Both copies were kept, as the pretty-print toggle's are.
-  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v1'))).length, 1)
+  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v2'))).length, 1)
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
 })
 

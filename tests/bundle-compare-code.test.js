@@ -2,29 +2,28 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
-import { changeBlocks, markedBlocks } from '../common/line-diff.js'
-import { renameMap } from '../server-managed/rename-map.js'
+import { renamedDiff } from '@preventive/compare/names.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // The server's pretty-printed copies, by bundle and path, and its diffs of
-// two with renamed names hidden, worked out from them as it does, the old side
-// given the new side's names (each asked for noted; an error in place of the
-// base's copy fails its diff).
+// two with renamed names hidden, worked out from them as it does
+// (@preventive/compare's renamedDiff), naming the two files' hashes (each
+// asked for noted; an error in place of the base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
-// Bundles whose diffs the server answers with blocks that hide a change.
+// Bundles whose diffs the server answers for another base file than the one asked about.
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
   fetchPrettyNpmFile() {},
-  fetchBundleRenameDiff(id, other, params) {
+  async fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
-    if (before instanceof Error) return Promise.reject(before)
-    const { text = before, reason = null, reads = [] } = renameMap(before, after)
-    const marks = misanswered.has(`${id}:marks`) ? changeBlocks(before, after, params.ignoreWhitespace) : reason ? [] : markedBlocks(before, text, after, params.ignoreWhitespace) ?? []
-    return Promise.resolve({ before: text, blocks: misanswered.has(id) ? [] : changeBlocks(text, after, params.ignoreWhitespace), reason, reads, marks })
+    if (before instanceof Error) throw before
+    const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' })
+    assert.deepEqual(warnings, [])
+    return { ...diff, hash: misanswered.has(id) ? `${params.hash}x` : params.hash, otherHash: params.otherHash }
   },
   fetchNpmRenameDiff() {},
 } })
@@ -597,7 +596,7 @@ test('a rename diff that failed for a reason that may pass is asked for again wh
   assert.match(shown, /Only renamed names changed in this file\./u)
 })
 
-test('a diff the server answers that would hide a change shows the names, and is asked for again', async t => {
+test('a diff the server answers for other files than those asked about shows the names, and is asked for again', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/told.min.js', [{ 'dist/told.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(1);\n` }, { 'dist/told.min.js': `var X=1;${'q(X);'.repeat(250)}f(2);\n` }])
   element.base.managedId = 'b11'
@@ -607,7 +606,7 @@ test('a diff the server answers that would hide a change shows the names, and is
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
-  // No blocks, though `f(1)` became `f(2)`: drawn, the change would be hidden.
+  // The answer of another file's diff: drawn, it might hide a change.
   misanswered.add('b11')
   element._setRenames(true)
   await settle()
@@ -647,25 +646,6 @@ test('names a file reads keep renamed names from being hidden: its renamed lines
   assert.match(marked, /diff-row del renamed/u, 'marked as asked, too')
   assert.doesNotMatch(marked, /Renamed lines are marked rather than hidden/u, 'no note where the viewer asked for it')
   assert.match(marked, /aria-pressed=true aria-disabled=\s+aria-label="Mark renamed lines"/u, 'and the toggle free to turn it off for other files')
-})
-
-test('a block the server marks that the view finds a change in is drawn as one', async t => {
-  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
-  const element = view('dist/told.min.js', [{ 'dist/told.min.js': `var Y=1;${'q(Y);'.repeat(250)}f("a");\n` }, { 'dist/told.min.js': `var X=1;${'q(X);'.repeat(250)}f("b");\n` }])
-  element.base.managedId = 'b15'
-  element.other.managedId = 'b16'
-  pretty.set('b15:dist/told.min.js', 'var Y = 1;\nq(Y);\nf("a");\n')
-  pretty.set('b16:dist/told.min.js', 'var X = 1;\nq(X);\nf("b");\n')
-  state.bundleSourcePretty = true
-  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
-  // The server marks every block of the diff, `f("a")` → `f("b")` among them.
-  misanswered.add('b15:marks')
-  element._setRenames(true)
-  element._setMarks(true)
-  for (let i = 0; i < 200 && /Marking renamed lines…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
-  const shown = renderText(element.render())
-  assert.doesNotMatch(shown, /diff-row (?:del|add|change) renamed/u, 'no block marked')
-  assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {
