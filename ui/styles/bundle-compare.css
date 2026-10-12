@@ -969,6 +969,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
     color: var(--muted);
     font-size: .66rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
     & span { font-weight: 500; letter-spacing: 0; text-transform: none; }
+    /* How many call for a look, by what (npm-dependency-checks.js). */
+    & .bundle-compare-code-deps-flagged { color: color-mix(in srgb, var(--high) 60%, var(--text)); }
   }
   & ul { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0; padding: 0; list-style: none; }
 }
@@ -988,7 +990,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }
   &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  & .npm-dependency-kind { align-self: center; }
+  & :is(.npm-dependency-kind, .npm-dependency-flag) { align-self: center; }
 }
 .bundle-compare-code-dep-range {
   color: var(--muted);

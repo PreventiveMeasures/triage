@@ -3222,12 +3222,18 @@ body.report-fullscreen {
 
 /* npm package Overview (view/npm-package.js). Its Dependencies column lists
    rows as Files does, each opening in the viewer at its latest version. Its
-   rows share their columns, the name, its kind and its range, so kinds and
-   ranges line up down the list, a range cut short past a width. */
+   rows share their columns, the name with its flags, its kind and its
+   range, so kinds and ranges line up down the list, a range cut short past
+   a width, and first, before a name is. */
 .bundles-sources-list.npm-dependency-list {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, max-content); column-gap: .5rem;
+  display: grid; grid-template-columns: minmax(min(11rem, 100%), 1fr) auto minmax(0, max-content); column-gap: .5rem;
 
   & > li, & .npm-dependency-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; }
+  & .npm-dependency-name {
+    display: flex; align-items: center; gap: .35rem; min-width: 0;
+
+    & .bundles-source-path { flex: 0 1 auto; }
+  }
   & .npm-dependency-kind { grid-column: 2; justify-self: end; }
   & .bundles-source-size {
     grid-column: 3; max-width: 12rem;
@@ -3236,11 +3242,21 @@ body.report-fullscreen {
 }
 /* A small tag after a row's name: a dependency's kind, a file's category, and
    what a file is beyond it (file-readability.js npmFileFlagTags). */
-:is(.npm-dependency-kind, .npm-encoding-tag, .npm-flag-tag) {
+:is(.npm-dependency-kind, .npm-dependency-flag, .npm-encoding-tag, .npm-flag-tag) {
   flex-shrink: 0; padding: 0 .3rem;
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
 }
+/* What calls for a look at a dependency (view/npm-dependency-checks.js): from
+   elsewhere than npm's registry, or imported by nothing; a warning's, as an
+   install script's. */
+.npm-dependency-flag {
+  color: var(--text);
+  background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border-color: var(--high);
+}
+/* Beside how many dependencies a version has, a chip for each of those. */
+.npm-dependencies-fact { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }
 .bundles-detail-meta .npm-deprecated { color: var(--critical); }
 /* Published too recently to trust yet (npm-package.js npmRecentRelease), as
    the version pickers flag its date. */
@@ -3694,7 +3710,8 @@ a.npm-compare-publisher {
    scripts'), reads in the text's own color. Each npm account a publisher's
    chip names, there and in its tooltip, green where it is known to publish,
    else orange. */
-:is(.npm-compare-account.is-unknown, .npm-extension.npm-compare-published, .npm-compare-install .npm-extension-count) {
+:is(.npm-compare-account.is-unknown, .npm-extension.npm-compare-published,
+  :is(.npm-compare-install, .npm-compare-registry, .npm-compare-unimported, .npm-dependency-check) .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
 .npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
@@ -3747,8 +3764,9 @@ a.npm-compare-publisher {
    said of it, whole. */
 .compare-tip-rows.is-files { grid-template-columns: minmax(0, max-content) max-content; }
 .compare-tip-path { overflow-wrap: anywhere; }
-/* A version's install scripts, one a line, those added or changed bold. */
-.compare-tip-scripts {
+/* A version's install scripts, or dependencies' specs, one a line, those
+   added or changed bold. */
+:is(.compare-tip-scripts, .compare-tip-specs) {
   display: flex; flex-direction: column; gap: .15rem;
 
   & code { font-size: .68rem; overflow-wrap: anywhere; }

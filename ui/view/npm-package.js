@@ -22,6 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { installScripts } from './install-scripts.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
+import { npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
 
 export { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import './bundle-selector.js'
@@ -269,8 +270,9 @@ export function npmCompareSource(entry) {
     choices,
     name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
     load: async id => (await loadNpmVersion(name, id)).details,
-    // In place of Packages, which a single package has no use for.
-    dependencies: (base, other) => npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest),
+    // In place of Packages, which a single package has no use for, each the
+    // open version adds or changes flagged where it calls for a look.
+    dependencies: (base, other) => npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other),
     openDependency,
     // A swap or a pick on this side opens `base`, compared with `target`.
     open: (base, target, mode) => {
@@ -435,14 +437,16 @@ const DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], 
 // A version's dependencies, each `{ name, range, kind, opens }`, in name
 // order: `kind` null for a plain dependency, else 'peer' or 'optional';
 // `opens` the package the viewer opens for it, the one an `npm:` alias
-// names, or null when it names none.
+// names, or null when it names none, or where npm fetches it from
+// elsewhere than its registry (npm-dependency-checks.js), whose package of
+// that name isn't what it installs.
 export function npmDependencies(manifest) {
   const rows = []
   for (const [field, kind] of DEPENDENCY_KINDS) {
     for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
       const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
       const opens = alias ?? name
-      rows.push({ name, range, kind, opens: isNpmPackageName(opens) ? opens : null })
+      rows.push({ name, range, kind, opens: isNpmPackageName(opens) && !npmDependencySource(range) ? opens : null })
     }
   }
   return rows.toSorted((a, b) => a.name.localeCompare(b.name) || (a.kind ?? '').localeCompare(b.kind ?? ''))
@@ -482,18 +486,36 @@ function openDependency({ opens, from, to }) {
 
 // The Overview's Dependencies column, in place of the Packages one a single
 // package has no use for, where it has any (npmOverviewExtras says where it
-// has none). Each dependency opens in the viewer, at its latest.
-export function npmDependenciesColumn(entry) {
+// has none). Each dependency opens in the viewer, at its latest, flagged
+// where it calls for a look, nothing of the version importing it once its
+// files (`details`) are read.
+export function npmDependenciesColumn(entry, details = null) {
   const rows = npmDependencies(entry.npm.manifest)
   if (rows.length === 0) return nothing
-  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list npm-dependency-list">${rows.map(({ name, range, kind, opens }) => {
-      const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
+  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list npm-dependency-list">${rows.map(row => {
+      const { name, range, kind, opens } = row
+      const flags = npmDependencyFlags(details, row)
+      const content = html`<span class="npm-dependency-name"><span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>${npmDependencyFlagTags(flags)}</span>
         ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
         <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
       return html`<li>${opens
-        ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
-        : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
+        ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${content}</button>`
+        : html`<div class="bundles-source-row npm-dependency-row is-resource">${content}</div>`}</li>`
     })}</ul>` })
+}
+
+// The checks a version's dependencies are flagged by (npm-dependency-checks.js),
+// as the Overview counts them.
+const DEPENDENCY_CHECKS = [['source', 'Non-registry', () => 'From elsewhere than npm\'s registry'], ['unimported', 'Unimported', version => `Imported by nothing of ${version}`]]
+
+// Beside how many dependencies a version has, a chip for each check any of
+// them is flagged by (npmDependencyFlags), counting them, which in its
+// tooltip.
+function dependencyChecks({ version, manifest }, details) {
+  const flagged = npmDependencies(manifest).flatMap(row => npmDependencyFlags(details, row).map(({ check }) => [check, row]))
+  return DEPENDENCY_CHECKS.map(([check, label, note]) => [label, note(version), flagged.filter(([found]) => found === check).map(([, row]) => row)]).filter(([, , rows]) => rows.length > 0)
+    .map(([label, note, rows]) => html`<span class="npm-extension is-warn npm-dependency-check" data-tooltip=${`${note}: ${rows.map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
+      <span>${label}</span><span class="npm-extension-count">${rows.length}</span></span>`)
 }
 
 // The tags pointing to a version's publish commit, after it as a bundle's
@@ -595,8 +617,9 @@ const scriptCommand = (command, files) => command.split(/(\s+)/u).map(word => {
 // The package's entry points, each with its file's icon, Main and Module in
 // one row where they name the same file; its kind of module, bins, engines,
 // install scripts, each with its command, and how many dependencies it has,
-// sized as its files are.
-export function npmOverviewExtras(entry, files = null) {
+// sized as its files are, with a chip for what calls for a look at them
+// (dependencyChecks), once its files (`details`) are read for imports.
+export function npmOverviewExtras(entry, files = null, details = null) {
   const { manifest } = entry.npm
   const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
     .map(field => ({ label: `${field[0].toUpperCase()}${field.slice(1)}`, path: manifest[field], file: npmEntryFile(manifest[field], files) ?? npmEntryPath(manifest[field]) }))
@@ -615,7 +638,7 @@ export function npmOverviewExtras(entry, files = null) {
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="npm-install-scripts">${scripts.length === 0 ? 'Yes'
       : scripts.map(([script, command]) => html`<div class="npm-install-script"><span class="npm-install-script-name">${script}</span><code>${scriptCommand(command, files)}</code></div>`)}</dd>` : nothing}
-    <dt>Dependencies</dt><dd>${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}</dd>`
+    <dt>Dependencies</dt><dd class="npm-dependencies-fact">${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}${dependencyChecks(entry.npm, details)}</dd>`
 }
 
 // The version shown, in the header, with the package's other versions to

@@ -382,8 +382,8 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
   const shared = { base, other, baseName: 'a', otherName: 'b', resolutions: [],
     files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files,
     dependencies: { removed: [{ key: '\0gone', name: 'gone', kind: null, range: '1.0.0', opens: 'gone' }],
-      added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh' }],
-      changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept' }] },
+      added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh', flags: [] }],
+      changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept', flags: [] }] },
     openDependency: row => opened.push(row.name) }
   const element = Object.assign(new CompareCode(), shared)
   element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
@@ -395,6 +395,17 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
   assert.deepEqual(chips, [['is-added', 'New: fresh', 'freshpeer2.0.0'], ['is-changed', 'Updated: kept', 'kept^1.0.0 → ^1.1.0'], ['is-removed', 'Removed: gone', 'gone1.0.0']],
     'new, updated and removed, each its range beside its name, a peer dependency marked')
   assert.doesNotMatch(render('lib/package.json'), /bundle-compare-code-deps/u, 'only over the package\'s own')
+  // Each flagged where it calls for a look (npm-dependency-checks.js), the head counting them.
+  const source = { check: 'source', label: 'non-registry', tooltip: 'From GitHub, not npm\'s registry: github:a/kept' }
+  const unimported = { check: 'unimported', label: 'unimported', tooltip: 'New in b, and nothing of it imports it' }
+  element.dependencies = { removed: [], added: [{ ...shared.dependencies.added[0], kind: null, flags: [unimported] }],
+    changed: [{ ...shared.dependencies.changed[0], to: 'github:a/kept', flags: [source] }, { key: '\0other', name: 'other', kind: null, from: '1', to: 'github:a/other', opens: null, flags: [source] }] }
+  const flagged = render('package.json')
+  assert.match(flagged, /<h4>Dependencies <span>1 new · 2 updated<\/span><span class="bundle-compare-code-deps-flagged">1 unimported<\/span><span class="bundle-compare-code-deps-flagged">2 non-registry<\/span><\/h4>/u)
+  assert.match(flagged, /aria-label=New: fresh[^]*>fresh<\/span><span class="bundle-compare-code-dep-range">2\.0\.0<\/span><span class=npm-dependency-flag is-unimported data-tooltip=New in b, and nothing of it imports it>unimported<\/span>/u)
+  assert.match(flagged, /aria-label=Updated: kept[^]*<b>github:a\/kept<\/b><\/span><span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm's registry: github:a\/kept>non-registry</u)
+  assert.match(flagged, /<span class=bundle-compare-code-dep is-changed aria-label=Updated: other>[^]*non-registry<\/span><\/span>/u, 'one opening nothing')
+  element.dependencies = shared.dependencies
   // Each opens as the Overview's rows do.
   const handlers = value => Array.isArray(value) ? value.flatMap(handlers) : value?.values ? value.values.flatMap(handlers) : typeof value === 'function' ? [value] : []
   for (const click of handlers(element._dependencyChanges('package.json'))) click()

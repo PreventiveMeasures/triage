@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmDeprecation, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependenciesColumn, npmDependencyChanges, npmDeprecation, npmEntryFile, npmInstallScripts, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -54,21 +54,42 @@ test('package input takes a name, a version or tag, or an npmjs.com link', () =>
   for (const bad of ['', '@babel', 'lodash@^4', 'a b', '../x', 'https://example.com/package/lodash', null]) assert.equal(parseNpmPackageInput(bad), null, String(bad))
 })
 
-test('Dependencies list every kind by name, and an alias opens the package it names', () => {
+test('Dependencies list every kind by name, and an alias opens the package it names; one from elsewhere than the registry, none', () => {
   assert.deepEqual(npmDependencies({
-    dependencies: { zod: '^3.0.0', alias: 'npm:@scope/real@^1.0.0', bare: 'npm:other', local: 'file:../x' },
+    dependencies: { zod: '^3.0.0', alias: 'npm:@scope/real@^1.0.0', bare: 'npm:other', local: 'file:../x', abi: 'git+https://github.com/ethereumjs/ethereumjs-abi.git' },
     peerDependencies: { react: '>=18', zod: '^3.0.0' },
-    optionalDependencies: { fsevents: '^2.0.0' },
+    optionalDependencies: { fsevents: '^2.0.0', ws: 'github:web3-js/WebSocket-Node#polyfill/globalThis' },
   }), [
+    { name: 'abi', range: 'git+https://github.com/ethereumjs/ethereumjs-abi.git', kind: null, opens: null },
     { name: 'alias', range: 'npm:@scope/real@^1.0.0', kind: null, opens: '@scope/real' },
     { name: 'bare', range: 'npm:other', kind: null, opens: 'other' },
     { name: 'fsevents', range: '^2.0.0', kind: 'optional', opens: 'fsevents' },
     { name: 'local', range: 'file:../x', kind: null, opens: 'local' },
     { name: 'react', range: '>=18', kind: 'peer', opens: 'react' },
+    { name: 'ws', range: 'github:web3-js/WebSocket-Node#polyfill/globalThis', kind: 'optional', opens: null },
     { name: 'zod', range: '^3.0.0', kind: null, opens: 'zod' },
     { name: 'zod', range: '^3.0.0', kind: 'peer', opens: 'zod' },
   ])
   assert.deepEqual(npmDependencies({}), [])
+})
+
+test('the Overview flags a dependency from elsewhere than the registry, and one nothing of the version imports, in its column and beside its count', () => {
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const manifest = { dependencies: { 'ethereumjs-abi': 'git+https://github.com/ethereumjs/ethereumjs-abi.git', 'ethereumjs-util': '^5.1.1', touch: '^3.1.0' },
+    peerDependencies: { react: '>=18' } }
+  const entry = npmPackageEntry({ ...data, name: 'eth-sig-util', version: '1.4.2', manifest })
+  const details = npmPackageDetails(entry, { ...data, files: [['index.js', 60, 'const abi = require(\'ethereumjs-abi\')\nconst util = require(\'ethereumjs-util\')']] })
+  const rows = text(npmDependenciesColumn(entry, details)).split('<li>').slice(1)
+  assert.match(rows[0], /^<div class="bundles-source-row npm-dependency-row is-resource"><span class="npm-dependency-name"><span class="bundles-source-path"[^>]*>ethereumjs-abi<\/span><span class=npm-dependency-flag is-source data-tooltip=From a git repository, not npm's registry: git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>non-registry<\/span><\/span>/u,
+    'its flag after its name, opening nothing')
+  assert.doesNotMatch(rows[1], /npm-dependency-flag/u, 'ethereumjs-util')
+  assert.match(rows[2], /data-npm-dependency=react[^]*>react<\/span><\/span>\s*<span class="npm-dependency-kind">peer</u, 'a peer one isn\'t asked about')
+  assert.match(rows[3], /data-npm-dependency=touch[^]*>touch<\/span><span class=npm-dependency-flag is-unimported data-tooltip=Nothing of 1\.4\.2 imports it[^>]*>unimported</u)
+  assert.doesNotMatch(text(npmDependenciesColumn(entry)), /is-unimported/u, 'not until its files are read')
+  const fact = /<dt>Dependencies<\/dt>([^]*)$/u.exec(text(npmOverviewExtras(entry, null, details)))[1]
+  assert.match(fact, /npm-sized is-medium>4<\/span><span class="npm-extension is-warn npm-dependency-check" data-tooltip=From elsewhere than npm's registry: ethereumjs-abi git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>\s*<span>Non-registry<\/span><span class="npm-extension-count">1<\/span>/u)
+  assert.match(fact, /data-tooltip=Imported by nothing of 1\.4\.2: touch \^3\.1\.0>\s*<span>Unimported<\/span><span class="npm-extension-count">1</u)
+  assert.doesNotMatch(text(npmOverviewExtras(npmPackageEntry({ ...data, manifest: { dependencies: { zod: '^3.0.0' } } }))), /npm-dependency-check/u)
 })
 
 test('two versions differ in the dependencies they name and the ranges they ask for', () => {

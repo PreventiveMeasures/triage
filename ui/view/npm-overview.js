@@ -9,7 +9,8 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDependencies, npmDependencyChanges, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -456,9 +457,10 @@ export const npmCompareFiles = {
 // (`other`), each side's details, and `files` the comparison's
 // (computeBundleDiff's): an open version npm says is deprecated,
 // a publisher that changed, provenance lost, install scripts added or
-// changed, the files it adds or changes that call for one (fileBadges), an
-// open version under two weeks old (npmRecentRelease), the
-// advisories that affect either,
+// changed, dependencies it takes from elsewhere than npm's registry anew and
+// new ones nothing of it imports, the files it adds or changes that call
+// for one (fileBadges), an open version under two weeks old
+// (npmRecentRelease), the advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
@@ -467,7 +469,7 @@ export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...fileBadges(base, other, files),
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files),
     recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
@@ -595,6 +597,44 @@ function fileBadge(kind, label, rows, said, note) {
       <div class="compare-tip-note">${note}</div>
     </div>`}>
     <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
+}
+
+// A chip's names: the first two, then how many more.
+const someNames = names => names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ')
+
+// The dependencies the open version takes from elsewhere than npm's
+// registry, where the one compared with didn't, or by another spec, each
+// with where from; and those it adds that nothing of it imports, which npm
+// installs all the same, its install scripts and all, as a dependency added
+// to run them would be (npm-dependency-checks.js npmFlagDependencyChanges,
+// as Compare's package.json flags each). Their specs in their tooltips:
+// each version's, for those from elsewhere.
+function dependencyBadges(base, other) {
+  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
+  const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
+  // Those from elsewhere by name, each with its spec now; and before.
+  const now = new Map(flagged('source').map(row => [row.name, row.to ?? row.range])), unimported = flagged('unimported')
+  const chips = []
+  if (now.size > 0) {
+    const was = new Map(npmDependencies(base.npm.manifest).map(({ name, range }) => [name, range]))
+    const said = (specs, marked) => html`<span class="compare-tip-specs">${[...now.keys()].map(name => specs.has(name)
+      ? html`<span class=${marked ? 'is-flagged' : nothing}>${name}: <code>${specs.get(name)}</code></span>` : html`<span class="compare-tip-none">${name}: none</span>`)}</span>`
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
+      data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
+      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
+      <span>${now.size === 1 ? 'Non-registry dependency' : 'Non-registry dependencies'}</span><span class="npm-extension-count">${someNames([...now].map(([name, spec]) =>
+        `${name} (${npmDependencySource(spec)})`))}</span></span></li>`)
+  }
+  if (unimported.length > 0) {
+    const { version } = other.npm
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
+      data-tooltip=${`New in ${version}, imported by nothing of it: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}`}
+      .tooltipContent=${compareTip(unimported.length === 1 ? 'New, and nothing imports it' : 'New, and nothing imports them', [other.npm],
+        [html`<span class="compare-tip-specs">${unimported.map(({ name, range, kind }) => html`<span class="is-flagged">${name}: <code>${range}</code>${kind ? ` (${kind})` : ''}</span>`)}</span>`],
+        `No code file of ${version} names ${unimported.length === 1 ? 'it' : 'them'} as an import would, nor does an install script; npm installs ${unimported.length === 1 ? 'it' : 'them'} all the same, running ${unimported.length === 1 ? 'its' : 'their'} install scripts`)}>
+      <span>${unimported.length === 1 ? 'Unimported dependency' : 'Unimported dependencies'}</span><span class="npm-extension-count">${someNames([...new Set(unimported.map(({ name }) => name))])}</span></span></li>`)
+  }
+  return chips
 }
 
 // The open version, where it is too recent to trust yet: how long ago it
