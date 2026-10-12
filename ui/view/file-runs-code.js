@@ -294,8 +294,9 @@ export function npmFoundAdded(found, was) {
 }
 
 // The kinds any of `founds` holds, as their tags name them, in their order,
-// a tag kinds share once: `eval, child_process`.
-export const npmRunsCodeKinds = founds => [...new Set([...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag))].join(', ')
+// a tag kinds share once, those `except` names aside: `eval, child_process`.
+export const npmRunsCodeKinds = (founds, except = new Set()) => [...new Set([...RUNS_CODE]
+  .filter(([kind, { tag }]) => !except.has(tag) && founds.some(found => found.has(kind))).map(([, { tag }]) => tag))].join(', ')
 
 // The kinds a file holds, each named with its lines, by its own name where
 // kinds share a tag: `eval (line 3), Function (line 5)`.
