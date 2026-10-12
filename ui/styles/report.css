@@ -3431,8 +3431,10 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 /* Read out by screen readers, out of sight. */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Under the figures' card: the version's pages elsewhere, then the
-   tarball's download at the right. */
+   tarball's download at the right; under those, what calls for a look at
+   the version (npm-overview.js npmOverviewBadges), as Compare's chips. */
 .npm-figures-actions { display: flex; align-items: center; gap: .75rem; margin-top: .5rem; }
+.npm-overview-badges { margin-top: .9rem; }
 .npm-package-links { display: flex; flex-wrap: wrap; align-self: center; gap: .3rem .9rem; margin-right: auto; }
 .npm-package-link {
   display: inline-flex; align-items: center; gap: .25rem;
@@ -3700,7 +3702,7 @@ a.npm-compare-publisher {
    chip names, there and in its tooltip, green where it is known to publish,
    else orange. */
 :is(.npm-compare-account.is-unknown, .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported),
-  :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts, .npm-compare-kept-runs) .npm-extension-count) {
+  :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts, .npm-compare-kept-runs, .npm-held-file) .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
 .npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
