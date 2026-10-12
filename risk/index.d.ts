@@ -83,6 +83,9 @@ export interface DependencyRisk {
   // Its last whole month's downloads, by what its tier goes by: none where
   // npm counts none of them.
   month?: { total: number; from: string }
+  // Whether npm counts none of its downloads, as of a package published
+  // the day before; unpopular all the same.
+  uncounted?: true
   created?: string
   gap?: number
 }

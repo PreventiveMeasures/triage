@@ -101,8 +101,8 @@ const MAX_TOLD_DEPENDENCIES = 100
 // Each dependency `added` that npm installs from its registry, up to
 // MAX_TOLD_DEPENDENCIES of them, with what risk tells of its package
 // (new-dependency.js npmAddedDependency): its tier, its last whole month's
-// downloads by what its tier goes by (`month`, `{ total, from }`, none where
-// npm counts none), and `created` and `gap`
+// downloads by what its tier goes by where it has one (`month`, `{ total,
+// from }`), `uncounted` where npm counts none of them, and `created` and `gap`
 // where it is new since the version compared with (`published`, when that
 // and the open version were); four asked at a time, none more once one
 // fails.
@@ -117,8 +117,9 @@ async function addedDependencies(added, published, context) {
       const listed = await npmPublicFacts(row.opens, context)
       facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published }, context.now)
     }
-    const month = npmDownloadMonths(npmSettledDownloads(downloads, context.now)).at(-1)
-    return { ...row, ...facts.tier === null ? {} : { ...tierOf(facts.tier), ...month && { month: { total: month.total, from: month.from.toISOString().slice(0, 10) } } },
+    const settled = npmSettledDownloads(downloads, context.now)
+    const month = npmDownloadMonths(settled).at(-1)
+    return { ...row, ...facts.tier === null ? {} : { ...tierOf(facts.tier), ...settled ? month && { month: { total: month.total, from: month.from.toISOString().slice(0, 10) } } : { uncounted: true } },
       ...facts.created ? { created: facts.created, gap: facts.gap } : {} }
   }
   await Promise.all(Array.from({ length: 4 }, async () => {

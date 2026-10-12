@@ -379,9 +379,9 @@ function readabilityCounts(readabilities) {
 // risk arrives (file-risk.js npmFilesRisk): their `paths`, each one's readability
 // (npmFileReadabilityOf) where it is known, extension and size by path, how
 // many files each category has and how many can be hard to review by reading
-// them (readabilityCounts), the `binaries`, sorted, its file types
-// (npmFileTypes), and its `content`: its text files, their lines of code and
-// all its files' bytes (`unpacked`), the package's own files
+// them (readabilityCounts), the `binaries`, those with no text, sorted, its
+// file types (npmFileTypes), and its `content`: its text files, their lines
+// of code and all its files' bytes (`unpacked`), the package's own files
 // (isNpmPackageFile) left out, as every package has them.
 const readabilities = new WeakMap()
 export function npmFilesRead(details) {
@@ -390,17 +390,18 @@ export function npmFilesRead(details) {
   if (known?.of !== of) {
     const { sources, sourcesContent } = details.json
     const byPath = new Map(sources.map((path, i) => [path, npmFileReadabilityOf(details, path, sourcesContent[i])]).filter(([, read]) => read))
+    const binaries = new Set(sources.filter((_, i) => typeof sourcesContent[i] !== 'string'))
     const { counts, marks, unreadable } = readabilityCounts(byPath.values())
     const lines = bundleLineCounts(details), sizes = bundleFileSizes(details)
     const content = { files: 0, lines: 0, unpacked: 0 }
     for (const path of sources.filter(source => !isNpmPackageFile(source))) {
-      if (byPath.get(path)?.category !== 'binary') content.files++
+      if (!binaries.has(path)) content.files++
       content.lines += lines.get(path) ?? 0
       content.unpacked += sizes.get(path) ?? 0
     }
     known = {
       of, paths: new Set(sources), byPath, counts, marks, unreadable, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
-      binaries: new Set(sources.filter(path => byPath.get(path)?.category === 'binary').toSorted((a, b) => a.localeCompare(b))),
+      binaries: new Set([...binaries].toSorted((a, b) => a.localeCompare(b))),
       types: npmFileTypes(sources, sizes, lines), content,
     }
     readabilities.set(details, known)
@@ -891,8 +892,8 @@ function newPackageTag({ compared }, { created, gap }) {
 export function npmDependencyTags(row, kind) {
   const flags = npmDependencyFlagTags(row.flags)
   if (kind !== 'added' || !row.level) return [flags, nothing]
-  return [flags, row.month ? tierTag(row, npmMonthSaid({ total: row.month.total, from: new Date(row.month.from) })) : UNCOUNTED_TAG,
-    row.compared ? newPackageTag(row, row) : nothing]
+  const month = row.month ? npmMonthSaid({ total: row.month.total, from: new Date(row.month.from) }) : null
+  return [flags, row.uncounted ? UNCOUNTED_TAG : tierTag(row, month), row.compared ? newPackageTag(row, row) : nothing]
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.

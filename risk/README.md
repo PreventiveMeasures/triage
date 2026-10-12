@@ -66,7 +66,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - what its code runs beyond itself (eval and its kin, child_process, credentials, the whole environment, publishing)
   - the exfiltration hosts it names
   - the hosts its code calls
-- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
+- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
 
 Severities, the most first: `critical` (red), `high` (orange), `moderate` (yellow), `low`, `notice`.
 

@@ -26,7 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
     { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0 } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { npmFileFlagTags, npmFileReadabilityOf, npmObfuscationFound, npmReadabilityFlags } = await import('../ui/view/file-readability.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityLabels } = await import('../risk/files/readability.js')
 const { npmTextEncoding } = await import('../risk/files/characters.js')
@@ -614,10 +614,12 @@ test('a dependency Compare lists new is tagged as the server\'s risk tells of it
     /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u, 'the package it opens')
   assert.match(tags({ name: 'new-top', opens: 'new-top', tier: 2000, level: 'is-top', month: month(1.2e8, '2026-08-01') }), /npm-downloads-tier is-top[^]*>top 2,000</u, 'green ones too')
   assert.match(tags({ name: 'new-spiked', opens: 'new-spiked', tier: null, level: 'is-unpopular', month: month(3100, '2026-08-01') }), /npm-downloads-tier is-unpopular[^]*>unpopular</u)
+  assert.match(tags({ name: 'unmonthed', opens: 'unmonthed', tier: 50_000, level: 'is-low' }), /^<span class=npm-downloads-tier is-low data-tooltip=\s+\.tooltipContent=>top 50,000<\/span>$/u,
+    'counted, no whole month yet: its tier, its month untold')
   // npm counts none of its downloads: unpopular, saying so; new since the
   // version compared with, how old it was when the open one was published.
   const axios = [{ name: 'axios', version: '1.14.0' }, { name: 'axios', version: '1.14.1' }]
-  const uncounted = tags({ name: 'crypto', opens: 'crypto', tier: null, level: 'is-unpopular', created: '2026-03-30T05:57:32.867Z', gap: 66_265_133, compared: axios })
+  const uncounted = tags({ name: 'crypto', opens: 'crypto', tier: null, level: 'is-unpopular', uncounted: true, created: '2026-03-30T05:57:32.867Z', gap: 66_265_133, compared: axios })
   assert.match(uncounted, /<span class="npm-downloads-tier is-unpopular"\s+data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular<\/span>/u)
   assert.match(uncounted, /<span class="npm-dependency-flag is-new" data-tooltip=First published on Mar 30, 2026 · 18 hours before 1\.14\.1 was · npm had no package by its name when 1\.14\.0 was published\s+\.tooltipContent=<div class="compare-tip"><div class="compare-tip-head">New package<\/div><div>First published on Mar 30, 2026<\/div><div>18 hours before 1\.14\.1 was<\/div><div class="compare-tip-note">npm had no package by its name when 1\.14\.0 was published<\/div><\/div>\s+>18 hours old<\/span>$/u,
     'a line each in its tooltip')
@@ -747,6 +749,16 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="(npm-[\w-]+)" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, kind, note, tag]) => `${kind}:${tag} ${note}`)
   assert.deepEqual(tags('lib/api.js'), ['npm-exfiltration:Exfiltration Names a host malicious packages send what they take to: webhook.site (line 2)'])
   assert.deepEqual(tags('lib/old.js'), [])
+})
+
+test('a version\'s files with no text are its binaries, counted apart from its text files, before its risk arrives too', async () => {
+  const version = held({ integrity: 'binaries@1.0.0', kind: 'sourcemap', npm: { name: 'binaries', version: '1.0.0' },
+    json: { version: 3, sources: ['logo.png', 'lib/a.js', 'package.json'], sourcesContent: [null, 'module.exports = 1\n', '{}'] } })
+  const read = () => { const { binaries, content } = npmFilesRead(version); return [[...binaries], content.files] }
+  assert.deepEqual(read(), [['logo.png'], 1], 'before: the package\'s own files aside')
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.deepEqual(read(), [['logo.png'], 1], 'once it arrives')
+  assert.equal(npmFilesRead(version).byPath.get('logo.png').category, 'binary')
 })
 
 test('the Files list\'s tags on one line open the file at it, the code viewer scrolled there; Compare\'s open none', async () => {

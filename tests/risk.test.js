@@ -84,8 +84,8 @@ test('against the version before: what it adds and changes, its publisher and pr
   const [added] = assessment.dependencies.added
   assert.equal(added.name, 'crypto-like')
   assert.deepEqual(added.flags.map(({ check }) => check), ['unimported'])
-  assert.deepEqual([added.tier, added.level, added.created, added.gap], [null, 'is-unpopular', ago(20.5), 0.5 * DAY],
-    'npm counts none of its downloads: unpopular, first published half a day before the open version')
+  assert.deepEqual([added.tier, added.level, added.uncounted, added.month, added.created, added.gap], [null, 'is-unpopular', true, undefined, ago(20.5), 0.5 * DAY],
+    'npm counts none of its downloads: unpopular, saying so, first published half a day before the open version')
 })
 
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
