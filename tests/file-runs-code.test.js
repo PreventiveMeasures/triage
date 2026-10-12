@@ -72,6 +72,8 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     + 'fetch(\'https://registry.npmjs.org/-/whoami\', { headers })\nconst { publish } = require(\'libnpmpublish\')\n'), { publish: [1, 2, 3, 4, 5] })
   assert.deepEqual(found('a.js', 'const registry = \'https://registry.npmjs.org/\'\nfetch(registry + name, { method: \'PUT\', body })\naxios.put(url, body)\noptions.method = "put"\n'),
     { publish: [2, 3, 4] }, 'a PUT, the registry named in the file')
+  assert.deepEqual(found('a.js', 'spawn(\'npm\', [/* explain */ \'publish\'])\nexecFile("pnpm", // why\n  ["publish"])\nspawn(\'npm\', [run, \'publish\'])\n'), { publish: [1, 3] },
+    'comments between its program and arguments, not another argument')
   assert.equal(found('a.js', 'fetch(url, { method: \'PUT\' })\naxios.put(url, body)\nbus.publish(\'topic\')\nconst commands = [\'publish\']\n'), null,
     'a PUT where the file names no registry, and publish not run by npm')
   assert.equal(found('a.js', 'const methods = [\'GET\', \'PUT\']\nconst registry = \'https://registry.npmjs.org/\'\nfetch(registry + \'-/v1/search\')\n'), null,

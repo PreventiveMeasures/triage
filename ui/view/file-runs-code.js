@@ -34,7 +34,8 @@ const NODE_HASHBANG = /^#!.*\bnode\b/u
 export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
 // What may come between a call's parts: blanks and comments
 // (`Function/* note */(…)`), each comment ending at its first `*/`.
-const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n)*`
+const COMMENT = String.raw`/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n`
+const GAP = String.raw`(?:\s|${COMMENT})*`
 // Function called: as it is, optionally (`Function?.(…)`), or by its call or
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
@@ -98,6 +99,7 @@ const MODULES = [
 // 'PUT' }`, `options.method = 'put'`).
 const PROGRAM = /^(["'\u0060])(?:npm|pnpm|yarn)\1$/u
 const PUBLISH = /^(["'\u0060])publish\1$/u
+const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
 const PUT = /^(["'\u0060])put\1$/iu
 const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 // What comes before a module's name where code loads it: `require(` (or
@@ -178,7 +180,7 @@ function read(code, base, at) {
     const text = inner.length === 0 ? string : textOf(string, inner)
     if (HOLDS_ANY.test(text)) for (const [kind, holds] of HOLDS) for (const { index: within } of text.matchAll(holds)) at(kind, base + index + within)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
-    if (PUBLISH.test(string) && PROGRAM.test(previous) && /^[\s,[]*$/u.test(code.slice(end, index))) at('publish', base + index)
+    if (PUBLISH.test(string) && PROGRAM.test(previous) && ARGUMENTS_BETWEEN.test(code.slice(end, index))) at('publish', base + index)
     if (PUT.test(string) && METHOD.test(code.slice(Math.max(0, index - 300), index))) at('put', base + index)
     end = index + token.length
     previous = string
