@@ -458,11 +458,12 @@ class BundleCompare extends LitElement {
   }
 
   // A file's row; a source's `files` (see `source`) give it its type's icon,
-  // and a file in the open one its tag.
-  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined) {
+  // read from each side under that side's own path, and a file in the open
+  // one its tag.
+  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined, basePath = path) {
     const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path, [this.details, this._otherDetails]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
+      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
     </button></li>`
   }
 
@@ -528,8 +529,8 @@ class BundleCompare extends LitElement {
     const sorted = sort === 'flags' ? byFlags(rows, flagsOf, r => r.path)
       : rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
-    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta)
-      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta)
+    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta, r.basePath ?? r.path)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta, r.basePath ?? r.path)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file', flagged, sort), { lanes })
   }
 

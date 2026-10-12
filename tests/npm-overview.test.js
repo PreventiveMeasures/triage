@@ -942,7 +942,8 @@ test('the Overview flags what calls for a look at the version on its own, as Com
 test('a file the server found binary wears no license icon, whatever its name', () => {
   const types = template => [...rendered(template).matchAll(/data-file-type="?([\w-]+)/gu)].map(m => m[1])
   const binary = { npmBinaries: new Map([['package/LICENSE', { size: 4, digest: 'sha512-x' }]]) }
-  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [{}, binary])), ['generic'], 'binary on either side of Compare')
-  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [{}, null])), ['license'], 'text on both')
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [[{}, 'package/LICENSE'], [binary, 'package/LICENSE']])), ['generic'], 'binary on either side of Compare')
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [[{}, 'package/LICENSE'], [null, 'package/LICENSE']])), ['license'], 'text on both')
+  assert.deepEqual(types(npmCompareFiles.icon('src/package/LICENSE', [[binary, 'package/LICENSE'], [{}, 'src/package/LICENSE']])), ['generic'], 'the base side read under its own path')
   assert.deepEqual(types(npmBinaryColumn(new Set(['package/LICENSE', 'package/logo.png']), new Map())), ['generic', 'generic'])
 })
