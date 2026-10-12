@@ -1418,8 +1418,9 @@ for without a token: a private package's name never leaves for it. `GET
 npm's provenance for the version, `{ repository, commit, workflow, ref,
 builder, run, logIndex }` (its source repository and the run as https URLs,
 each part null where the statement doesn't say), read from the SLSA
-statement npm's registry keeps beside it (v1, or v0.2, whose run is made
-GitHub's URL), only where the statement names this version's tarball by its
+statement npm's registry keeps beside it (v1, or v0.2, whose run, given as
+`<run id>-<attempt>`, is made GitHub's URL; GitLab's, as npm writes it, names
+its project with no ref and its job's URL as its run), only where the statement names this version's tarball by its
 name, version and sha512 digest; its signature isn't checked here, as npm
 checks it when the version is published. null where npm keeps none, and for
 a private package; asked only where the version's manifest says npm keeps

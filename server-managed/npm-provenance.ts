@@ -33,10 +33,11 @@ const https = (value: unknown) => {
   const url = text(value)
   try { return url && new URL(url).protocol === 'https:' ? url : null } catch { return null }
 }
-// `git+https://github.com/org/repo@refs/heads/main` → the repository and ref.
+// `git+https://github.com/org/repo@refs/heads/main` → the repository and
+// ref; GitLab's names no ref (`git+https://gitlab.com/group/project`).
 function sourceOf(uri: unknown) {
-  const match = /^git\+(https:\/\/[^@\s]+?)(?:\.git)?@(.+)$/u.exec(text(uri) ?? '')
-  return match ? { repository: https(match[1]), ref: match[2]! } : { repository: null, ref: null }
+  const match = /^git\+(https:\/\/[^@\s]+?)(?:\.git)?(?:@(.+))?$/u.exec(text(uri) ?? '')
+  return match ? { repository: https(match[1]), ref: match[2] ?? null } : { repository: null, ref: null }
 }
 // What `keys` lead to in `value`, through objects and arrays.
 const field = (value: unknown, ...keys: string[]): unknown =>
@@ -61,13 +62,14 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
   const { repository, ref } = sourceOf(field(config, 'uri'))
   if (!repository) return null
   const commit = text(field(config, 'digest', 'sha1'))
-  // Its run, as `<run id>-<attempt>`, is GitHub's to link.
-  const run = /^(\d+)-(\d+)$/u.exec(text(field(predicate, 'metadata', 'buildInvocationId')) ?? '')
+  // Its run: GitLab's job URL, or GitHub's as `<run id>-<attempt>`.
+  const invocation = field(predicate, 'metadata', 'buildInvocationId')
+  const run = /^(\d+)-(\d+)$/u.exec(text(invocation) ?? '')
   const github = GITHUB_REPOSITORY.exec(repository)?.[1]
   return {
     repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
-    builder: https(field(predicate, 'builder', 'id')), run: run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null,
-    logIndex: null,
+    builder: https(field(predicate, 'builder', 'id')),
+    run: https(invocation) ?? (run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null), logIndex: null,
   }
 }
 

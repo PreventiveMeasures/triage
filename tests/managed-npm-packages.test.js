@@ -729,10 +729,11 @@ test('npm\'s provenance for a public version: where it was built, read only from
   withToken(t)
   const attested = extra => ({ dist: { ...extra.dist, attestations: { url: 'https://registry.npmjs.org/-/npm/v1/attestations/x', provenance: { predicateType: 'https://slsa.dev/provenance/v1' } } } })
   const version = (name, files, extra = {}) => { const pkg = packageOf(name, '1.0.0', files, extra); Object.assign(pkg.doc, attested(pkg.doc)); return pkg }
-  const forged = version('forged', { 'index.js': '3' }), old = version('attested-v02', { 'index.js': '2' }), pkg = version('attested', { 'index.js': '1' })
+  const forged = version('forged', { 'index.js': '3' }), lab = version('attested-gitlab', { 'index.js': '6' }), old = version('attested-v02', { 'index.js': '2' })
+  const pkg = version('attested', { 'index.js': '1' })
   const bare = packageOf('unattested', '1.0.0', { 'index.js': '4' })
   const secret = { ...version('@acme/attested', { 'index.js': '5' }), private: true }
-  registry(t, [pkg, old, forged, bare, secret])
+  registry(t, [pkg, old, lab, forged, bare, secret])
   const hex = doc => Buffer.from(doc.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
   const envelope = (doc, predicateType, predicate, digest = hex(doc)) => ({ attestations: [
     { predicateType: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1', bundle: {} },
@@ -744,9 +745,14 @@ test('npm\'s provenance for a public version: where it was built, read only from
     runDetails: { builder: { id: 'https://github.com/actions/runner/github-hosted' }, metadata: { invocationId: 'https://github.com/org/repo/actions/runs/7/attempts/1' } } }
   const v02 = { builder: { id: 'https://github.com/actions/runner' }, invocation: { configSource: { uri: 'git+https://github.com/org/repo@refs/heads/main', digest: { sha1: 'c'.repeat(40) },
     entryPoint: '.github/workflows/publish.yml' } }, metadata: { buildInvocationId: '9-2' } }
+  // As npm writes GitLab's: its project with no ref, its job's URL as its run.
+  const v02GitLab = { builder: { id: 'https://gitlab.com/group/project/-/runners/12345' },
+    invocation: { configSource: { uri: 'git+https://gitlab.com/group/project', digest: { sha1: 'd'.repeat(40) }, entryPoint: 'publish' } },
+    metadata: { buildInvocationId: 'https://gitlab.com/group/project/-/jobs/678' } }
   const asked = insights(t, { provenance: {
     'attested@1.0.0': envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1),
     'attested-v02@1.0.0': envelope(old.doc, 'https://slsa.dev/provenance/v0.2', v02),
+    'attested-gitlab@1.0.0': envelope(lab.doc, 'https://slsa.dev/provenance/v0.2', v02GitLab),
     'forged@1.0.0': envelope(forged.doc, 'https://slsa.dev/provenance/v1', v1, '00'.repeat(64)),
     '@acme/attested@1.0.0': envelope(secret.doc, 'https://slsa.dev/provenance/v1', v1),
   } })
@@ -759,12 +765,15 @@ test('npm\'s provenance for a public version: where it was built, read only from
   assert.deepEqual((await provenanceOf('attested-v02')).provenance, { repository: 'https://github.com/org/repo', commit: 'c'.repeat(40),
     workflow: '.github/workflows/publish.yml', ref: 'refs/heads/main', builder: 'https://github.com/actions/runner',
     run: 'https://github.com/org/repo/actions/runs/9/attempts/2', logIndex: 42 }, 'as SLSA v0.2 says it, its run GitHub\'s')
+  assert.deepEqual((await provenanceOf('attested-gitlab')).provenance, { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40),
+    workflow: 'publish', ref: null, builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: 42 },
+  'as npm writes GitLab\'s: no ref, its job\'s URL its run')
   assert.equal((await provenanceOf('forged')).provenance, null, 'a statement naming another tarball is not read')
   assert.equal((await provenanceOf('unattested')).provenance, null)
   assert.equal((await provenanceOf('@acme/attested', 'admin')).provenance, null, 'none for a private package')
   await provenanceOf('attested')
   const provenanceAsked = asked.filter(([what]) => what === 'provenance')
-  assert.deepEqual(provenanceAsked.map(([, id]) => id).toSorted(), ['attested-v02@1.0.0', 'attested@1.0.0', 'forged@1.0.0'],
+  assert.deepEqual(provenanceAsked.map(([, id]) => id).toSorted(), ['attested-gitlab@1.0.0', 'attested-v02@1.0.0', 'attested@1.0.0', 'forged@1.0.0'],
     'asked once each, kept; not about a version npm keeps none for, nor a private one')
   assert.ok(provenanceAsked.every(([, , auth]) => auth === null), 'asked without credentials')
 })

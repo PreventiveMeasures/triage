@@ -382,6 +382,12 @@ test('the Overview\'s provenance: what built the version, from which commit, by 
   const moved = await fact(entry('moved', { provenance: true, github: { github: 'org/other' } }))
   assert.match(moved, /GitHub Actions, self-hosted runner/u)
   assert.match(moved, /npm-provenance-warning" data-tooltip=The package names org\/other>Not the repository it names</u, 'built from another repository than it names')
+  answers.provenance['lab@1.0.0'] = { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40), workflow: 'publish', ref: null,
+    builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: null }
+  const lab = await fact(entry('lab', { provenance: true }))
+  assert.match(lab, /<span>GitLab CI<\/span>/u)
+  assert.match(lab, new RegExp(`href=https://gitlab\\.com/group/project/-/commit/${'d'.repeat(40)} [^>]*><span>gitlab\\.com/group/project@ddddddd<`, 'u'), 'its commit, as GitLab links one')
+  assert.match(lab, /data-tooltip=publish>publish</u, 'its job, by name')
   assert.equal(text(npmProvenanceFact(entry('unbuilt', {}))), '<span class="npm-commit-missing">None</span>')
   // Listed in its manifest, but no statement the server reads (as one naming
   // another tarball): never shown as attested, nor while it's asked for.

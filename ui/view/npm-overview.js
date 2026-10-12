@@ -209,7 +209,8 @@ function builderName(builder) {
   if (!builder) return null
   if (/^https:\/\/github\.com\/actions\/runner(?:\/github-hosted)?$/u.test(builder)) return 'GitHub Actions'
   if (builder.startsWith('https://github.com/actions/runner/')) return 'GitHub Actions, self-hosted runner'
-  return builder.startsWith('https://gitlab.com/') ? 'GitLab CI' : new URL(builder).host
+  // GitLab names the runner in its project, `<project>/-/runners/<id>`.
+  return builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/') ? 'GitLab CI' : new URL(builder).host
 }
 
 // npm's provenance for the version, in the Overview's facts, for a public
@@ -233,6 +234,7 @@ export function npmProvenanceFact(entry) {
   const { repository, commit, workflow, ref, builder, run, logIndex } = data.provenance
   const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
+  const gitlab = builderName(builder) === 'GitLab CI'
   const shown = github ?? repository.replace(/^https:\/\//u, '')
   const named = manifest.github?.github
   const elsewhere = named && named.toLowerCase() !== github?.toLowerCase()
@@ -244,7 +246,8 @@ export function npmProvenanceFact(entry) {
   return html`<span class="npm-provenance">
     ${builderName(builder) ? html`<span>${builderName(builder)}</span>` : nothing}
     <span class="npm-provenance-line"><span class="npm-provenance-sep">from</span>
-      ${commit ? link(github ? `${repository}/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`, `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
+      ${commit ? link(github ? `${repository}/commit/${commit}` : gitlab ? `${repository}/-/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`,
+        `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
       ${elsewhere ? html`<span class="npm-provenance-warning" data-tooltip=${`The package names ${named}`}>Not the repository it names</span>` : nothing}</span>
     ${line([workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow)
       : html`<span class="mono" data-tooltip=${workflow}>${file}</span>`) : nothing,
