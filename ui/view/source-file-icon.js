@@ -32,6 +32,8 @@ const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><pat
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
+  // LICENSE, LICENSE-MIT, LICENSE.md, LICENCE.txt; a license.js module stays code.
+  if ((lang === null || lang === 'markdown') && /^licen[cs]e(?:[-.]|$)/iu.test(path.split('/').at(-1))) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown'].includes(lang)) return lang
@@ -41,6 +43,9 @@ export function sourceFileType(path, format) {
 
 // A source map's: a map folded in three.
 const mapMark = svg`<path d="M1.5 3.4 5.3 2l5.4 1.6 3.8-1.4v10.4l-3.8 1.4-5.4-1.6-3.8 1.4Z" fill="#3fa59a" fill-opacity=".22" stroke="#3fa59a" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.3 2v10.4m5.4-8.8V14" stroke="#3fa59a" stroke-width="1.1"/>`
+
+// A license's: the scales of justice.
+const licenseMark = svg`<circle cx="8" cy="2.6" r="1" fill="currentColor"/><path d="M8 3.6v9.9m-3.5 0h7M3 4.6h10M3 4.6 1.2 9.2M3 4.6l1.8 4.6M13 4.6l-1.8 4.6M13 4.6l1.8 4.6" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 9.2h4a2 2 0 0 1-4 0Zm10 0h4a2 2 0 0 1-4 0Z" fill="currentColor"/>`
 
 // Markdown's: the M and its down arrow, unframed, in the theme's green.
 const markdownMark = svg`<path d="M1 11.5v-7h2l1.7 2.3 1.7-2.3h2v7h-2V7.8L4.7 10 3 7.8v3.7Zm10.2-7h2V8H15l-2.8 3.5L9.4 8h1.8Z" fill="var(--green, #3fb950)"/>`
@@ -61,6 +66,8 @@ export function sourceFileIcon(path, format) {
               ? mapMark
             : type === 'markdown'
               ? markdownMark
+            : type === 'license'
+              ? licenseMark
             : type === 'json'
               ? svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`
               : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`

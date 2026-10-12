@@ -49,3 +49,13 @@ test('a .map file is JSON when its text is an object, whitespace aside', () => {
   assert.equal(langForPath('dist/index.map.js', undefined, '{}'), 'javascript', 'only the last extension counts')
   assert.equal(langForPath('dist/index.js.map', 'commonjs', '{}'), 'javascript', 'a recorded format still wins')
 })
+
+test('license files wear the license icon by name, unless their extension is code', () => {
+  for (const path of ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE.BSD', 'license', 'Licence', 'node_modules/pkg/LICENSE-MIT']) {
+    assert.equal(sourceFileType(path), 'license', path)
+  }
+  for (const [path, icon] of [['lib/license.js', 'js'], ['license.ts', 'ts'], ['LICENSE.json', 'json'], ['licensed.txt', 'generic'], ['LICENSES/MIT.txt', 'generic'], ['LICENSES', 'generic'], ['my-license', 'generic']]) {
+    assert.equal(sourceFileType(path), icon, path)
+  }
+  assert.equal(sourceFileType('LICENSE', 'commonjs'), 'js', 'a recorded format still wins')
+})
