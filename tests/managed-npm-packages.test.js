@@ -970,6 +970,16 @@ test('a homepage that leads only where the repository does is left out of the ma
   assert.equal(homepage({ homepage: 'https://example.com/' }), 'https://example.com/', 'no repository')
 })
 
+test('a GitLab project a package names as its repository is kept, in any form npm takes, for its provenance to be matched with', () => {
+  const gitlab = repository => npmManifest({ repository }).gitlab ?? null
+  for (const [repository, project] of [
+    ['gitlab:group/project', 'group/project'], ['git@gitlab.com:group/sub/project.git', 'group/sub/project'],
+    ['git+https://gitlab.com/group/project.git', 'group/project'], [{ type: 'git', url: 'git+ssh://git@gitlab.com/Group/Project.git' }, 'Group/Project'],
+    ['https://gitlab.com/group/project/-/tree/main/packages/x', 'group/project'],
+    ['https://github.com/org/repo', null], ['https://gitlab.com/group', null], ['https://gitlab.com/../x', null], ['https://gitlab.example.com/a/b', null], [3, null],
+  ]) assert.equal(gitlab(repository), project, JSON.stringify(repository))
+})
+
 test('an author is named, with their npm account where the publisher or a maintainer is them, and no email kept', () => {
   const people = json => { const { author, authorAccount, publisher } = npmManifest(json); return { author, authorAccount, publisher } }
   const maintainers = [{ name: 'substack', email: 'mail@substack.net' }, { name: 'maxogden', email: 'max@example.com' }]

@@ -139,6 +139,18 @@ function npmPerson(value: unknown): NpmPerson | null {
   return parts ? { name: text(parts[1]), email: text(parts[2]) } : { name: text(value), email: null }
 }
 
+// The GitLab project (`group/project`, subgroups and all) a package names as
+// its repository, in any of the forms npm takes (`gitlab:group/project`,
+// `git@gitlab.com:…`, `git+https://gitlab.com/….git`); null for another.
+// GitLab's are only on gitlab.com, as npm's provenance has them.
+function gitlabProject(repository: unknown): string | null {
+  const url = typeof repository === 'string' ? repository : plainObject(repository) && typeof repository['url'] === 'string' ? repository['url'] : ''
+  if (url.length > 2048) return null
+  const project = /^(?:gitlab:|git@gitlab\.com:|(?:git\+)?(?:https|ssh|git):\/\/(?:git@)?gitlab\.com\/)([\w.-]+(?:\/[\w.-]+)+)\/?$/u
+    .exec(url.split('/-/')[0]!)?.[1]?.replace(/\.git$/u, '')
+  return project && !project.split('/').some(part => /^\.+$/u.test(part)) ? project : null
+}
+
 // The fields the Overview shows, in the shapes package.json gives them; each
 // left out where the document has none, or has another shape. A homepage that
 // leads only where its repository does (the repository, its directory there,
@@ -176,6 +188,10 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
   const scripts = stringRecord(json['scripts'])
   const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
+  // A GitLab project it names, as its provenance's source is matched with
+  // the repository it names, GitHub's below.
+  const gitlab = gitlabProject(json['repository'])
+  if (gitlab) pick['gitlab'] = gitlab
   try {
     const repo = getRepo(json)
     if (repo.github) {

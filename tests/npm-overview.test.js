@@ -388,6 +388,13 @@ test('the Overview\'s provenance: what built the version, from which commit, by 
   assert.match(lab, /<span>GitLab CI<\/span>/u)
   assert.match(lab, new RegExp(`href=https://gitlab\\.com/group/project/-/commit/${'d'.repeat(40)} [^>]*><span>gitlab\\.com/group/project@ddddddd<`, 'u'), 'its commit, as GitLab links one')
   assert.match(lab, /data-tooltip=publish>publish</u, 'its job, by name')
+  assert.doesNotMatch(await fact(entry('lab', { provenance: true, gitlab: 'Group/Project' })), /npm-provenance-warning/u, 'the GitLab project it names')
+  answers.provenance['lab-moved@1.0.0'] = answers.provenance['lab@1.0.0']
+  assert.match(await fact(entry('lab-moved', { provenance: true, gitlab: 'group/other' })), /data-tooltip=The package names gitlab\.com\/group\/other>Not the repository it names</u,
+    'another GitLab project')
+  answers.provenance['lab-github@1.0.0'] = answers.provenance['lab@1.0.0']
+  assert.match(await fact(entry('lab-github', { provenance: true, github: { github: 'org/repo' } })), /data-tooltip=The package names org\/repo>Not the repository it names</u,
+    'a GitHub repository, built on GitLab')
   assert.equal(text(npmProvenanceFact(entry('unbuilt', {}))), '<span class="npm-commit-missing">None</span>')
   // Listed in its manifest, but no statement the server reads (as one naming
   // another tarball): never shown as attested, nor while it's asked for.

@@ -1166,7 +1166,8 @@ control. A version shows in the bundle view with four tabs:
   the tags that point to it, provenance for a public package (npm's SLSA
   statement, v1 or the v0.2 it first wrote: what built it, as GitHub Actions on
   GitHub's runners or the publisher's own; from which repository at which
-  commit, flagged where that isn't the repository the package names; and
+  commit, flagged where that isn't the repository the package names, on
+  GitHub or GitLab; and
   how: its workflow, at that commit, its run and its Sigstore transparency
   log entry; None where npm keeps none, and flagged where npm lists
   provenance but no statement naming the tarball can be read, never shown
@@ -1349,7 +1350,8 @@ for then.
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, published, manifest, files, known }`, the manifest's `publisher` the npm
 account that published it (never its email), its `provenance` true where npm
-keeps a provenance statement for it, and each file row `[path,
+keeps a provenance statement for it, its `gitlab` the GitLab project its
+`repository` names (`group/project`, as `github` names a GitHub one), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `published` is when the
 version was published (ISO), null until a read of the package's whole

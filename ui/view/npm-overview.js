@@ -236,8 +236,10 @@ export function npmProvenanceFact(entry) {
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
   const gitlab = builderName(builder) === 'GitLab CI'
   const shown = github ?? repository.replace(/^https:\/\//u, '')
-  const named = manifest.github?.github
-  const elsewhere = named && named.toLowerCase() !== github?.toLowerCase()
+  // The repository the package names, GitHub's or GitLab's, as its source
+  // reads.
+  const named = manifest.github?.github ?? (manifest.gitlab ? `gitlab.com/${manifest.gitlab}` : null)
+  const elsewhere = named && named.toLowerCase() !== shown.toLowerCase()
   // What built it, from where, then how: its workflow, by its file's name,
   // its whole path in its tooltip, its run and its log entry, a line each.
   const line = (items, classes = '') => html`<span class=${`npm-provenance-line${classes}`}>${items.filter(item => item !== nothing)
