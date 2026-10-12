@@ -134,6 +134,17 @@ test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its 
   assert.equal(assessment.dependencies.added[0].level, 'is-unpopular', 'its document read: public, none of its downloads counted')
 })
 
+test('npm asked of at most 100 dependencies added, the rest left unknown; npm unreachable said so', async t => {
+  const dependencies = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`dep-${String(i).padStart(3, '0')}`, '^1.0.0']))
+  const asked = npm(t, [{ name: 'many', versions: [version('many', '1.0.0', { 'package.json': '{}' }, { dependencies }, ago(30))] }])
+  const { added } = (await assessNpm('many', '1.0.0', { now: NOW })).dependencies
+  assert.equal(added.length, 120)
+  const downloads = asked.filter(url => url.startsWith('https://api.npmjs.org/downloads/range/')).map(url => url.split('/').at(-1)).filter(name => name !== 'many')
+  assert.deepEqual(downloads.toSorted(), Object.keys(dependencies).slice(0, 100))
+  t.mock.method(globalThis, 'fetch', () => Promise.reject(new TypeError('fetch failed')))
+  await assert.rejects(assessNpm('many', '1.0.0', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable')
+})
+
 test('a tarball read as npm installs it, and two versions\' files paired as Compare pairs them', async () => {
   const { tgz } = packageOf('read', '1.0.0', { 'package.json': '{}', 'b.js': 'b', 'a/c.js': 'c', 'bin/tool': '\0\u0001' })
   const read = await npmTarballVersion(tgz)

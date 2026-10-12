@@ -52,15 +52,22 @@ async function lasting(name, version, oldVersion, facts, context) {
   return kept
 }
 
-// Each dependency `added` that npm installs from its registry, with what risk
-// tells of its package (new-dependency.js npmAddedDependency): its tier, and
-// `created` and `gap` where it is new since the version compared with
-// (`published`, when that and the open version were); four asked at a time.
+// How many dependencies added are told of at most, however many a version
+// adds, as each costs npm a request or two: the rest are left as they are,
+// their packages unknown.
+const MAX_TOLD_DEPENDENCIES = 100
+
+// Each dependency `added` that npm installs from its registry, up to
+// MAX_TOLD_DEPENDENCIES of them, with what risk tells of its package
+// (new-dependency.js npmAddedDependency): its tier, and `created` and `gap`
+// where it is new since the version compared with (`published`, when that
+// and the open version were); four asked at a time, none more once one
+// fails.
 async function addedDependencies(added, published, context) {
-  const told = Array.from({ length: added.length })
+  const told = [...added]
+  const asked = told.flatMap((row, at) => row.opens ? [at] : []).slice(0, MAX_TOLD_DEPENDENCIES)
   let next = 0
   const tell = async row => {
-    if (!row.opens) return row
     const downloads = await npmDownloads(row.opens, context)
     let facts = npmAddedDependency({ downloads, published }, context.now)
     if (facts.wanted) {
@@ -70,7 +77,10 @@ async function addedDependencies(added, published, context) {
     return { ...row, ...facts.tier === null ? {} : tierOf(facts.tier), ...facts.created ? { created: facts.created, gap: facts.gap } : {} }
   }
   await Promise.all(Array.from({ length: 4 }, async () => {
-    while (next < added.length) { const at = next++; told[at] = await tell(added[at]) }
+    while (next < asked.length) {
+      const at = asked[next++]
+      try { told[at] = await tell(told[at]) } catch (error) { next = asked.length; throw error }
+    }
   }))
   return told
 }

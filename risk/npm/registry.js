@@ -22,8 +22,9 @@
 // dependencies' public facts and downloads with none. A caller may ask for
 // packages' documents itself (`packument`), as the managed server does,
 // within the bounds it holds every read of npm to. What risk asks npm itself
-// is read no further than its bounds, `upstream-too-large` past them, as is a
-// tarball unpacking past tarball.js's, `package-too-large`.
+// is given up on after 30 seconds, and read no further than its bounds,
+// `upstream-too-large` past them, as is a tarball unpacking past tarball.js's,
+// `package-too-large`.
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
 import { npmTarballVersion } from './tarball.js'
@@ -37,6 +38,9 @@ const PACKAGE_MS = 60 * 60_000
 // months' downloads a day.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const DOWNLOADS_BYTES = 1024 * 1024
+// How long npm is waited on for an answer, as the managed server waits on its
+// upstreams (server-managed/npm-packages.ts askUpstream).
+const REQUEST_MS = 30_000
 
 export class NpmRiskError extends Error {
   constructor(code, message = code) { super(message); this.code = code }
@@ -72,15 +76,28 @@ async function jsonOf(res, limit, what) {
   try { return JSON.parse(await new Blob(chunks).text()) } catch { throw new NpmRiskError('upstream-invalid', `npm's answer for ${what} isn't JSON`) }
 }
 
+// What npm answers `url` as JSON (jsonOf), null where it answers 404; given up
+// on after REQUEST_MS, or once the caller's `signal` aborts, its abort
+// rethrown as it is. `upstream-unavailable` where npm can't be asked or
+// answers otherwise.
+async function askNpm(url, headers, limit, what, { signal }) {
+  try {
+    const res = await fetch(url, { headers: { accept: 'application/json', ...headers }, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(REQUEST_MS), ...signal ? [signal] : []]) })
+    if (res.status === 404) { await res.body?.cancel(); return null }
+    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm answered ${res.status} for ${what}`) }
+    return await jsonOf(res, limit, what)
+  } catch (error) {
+    if (error instanceof NpmRiskError || signal?.aborted) throw error
+    throw new NpmRiskError('upstream-unavailable', `npm couldn't be asked for ${what}: ${error.message}`)
+  }
+}
+
 // A package's whole document, null where npm has none for this asker: the
 // caller's (`packument`) where it gives one, else risk's own.
-async function packageDocument(name, { packument, signal }, authorized) {
-  if (packument) return packument(name, { authorized, signal })
+function packageDocument(name, context, authorized) {
+  if (context.packument) return context.packument(name, { authorized, signal: context.signal })
   const secret = authorized && name.startsWith('@') ? token() : null
-  const res = await fetch(`${REGISTRY}/${name}`, { headers: { accept: 'application/json', ...secret && { authorization: `Bearer ${secret}` } }, redirect: 'error', signal })
-  if (res.status === 404) { await res.body?.cancel(); return null }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm answered ${res.status} for ${name}`) }
-  return jsonOf(res, PACKUMENT_BYTES, name)
+  return askNpm(`${REGISTRY}/${name}`, secret ? { authorization: `Bearer ${secret}` } : {}, PACKUMENT_BYTES, name, context)
 }
 
 // When a document says its package's first version was published, one since
@@ -147,10 +164,8 @@ function rangeAt(now) {
 export async function npmDownloads(name, context) {
   const range = rangeAt(context.now)
   const answer = await kept(context, 'risk/npm/downloads', `${name}@${range}`, async () => {
-    const res = await fetch(`${DOWNLOADS}/${range}/${encoded(name)}`, { headers: { accept: 'application/json' }, redirect: 'error', signal: context.signal })
-    if (res.status === 404) { await res.body?.cancel(); return { none: true } }
-    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm's downloads answered ${res.status} for ${name}`) }
-    const json = await jsonOf(res, DOWNLOADS_BYTES, `${name}'s downloads`)
+    const json = await askNpm(`${DOWNLOADS}/${range}/${encoded(name)}`, {}, DOWNLOADS_BYTES, `${name}'s downloads`, context)
+    if (json === null) return { none: true }
     const start = Date.parse(json.start)
     const length = Math.round((Date.parse(json.end) - start) / DAY_MS) + 1
     const days = Array.from({ length: Number.isSafeInteger(length) && length > 0 && length <= 400 ? length : 0 }, () => 0)
