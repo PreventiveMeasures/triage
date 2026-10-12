@@ -1657,8 +1657,10 @@ merged here, their ranges joined with `||`. Where GitHub refuses the listing (it
 limit, say), or can't say whether the repository is public, the listing last
 kept for it is taken instead, however old: read where audits keep listings,
 on disk or in `managed_upstream_cache`, never written, and checked by upstream
-as its own are, `keptAt` saying when it was kept. Only where none is kept is
-`repository` false, leaving npm's alone. A repository GitHub says isn't public
+as its own are, `keptAt` saying when it was kept. GitHub is asked nothing for
+it, and an audit that fails with it is npm's failing, not asked a third time.
+Only where none is kept, or upstream won't take it, is `repository` false,
+leaving npm's alone. A repository GitHub says isn't public
 never has its kept listing taken. Such a list, kept or npm's alone, is asked
 again on the next request. `GET
 /api/npm/socket?name=&version=` returns `{ name, version, socket }`: Socket's

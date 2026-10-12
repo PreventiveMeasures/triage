@@ -12,7 +12,7 @@
 // the package is checked on every request before any of it is answered
 // (http.ts handleNpm).
 import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
-import { HttpError, createClient } from '@preventive/upstream/github.js'
+import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { kept } from './kept.ts'
@@ -328,29 +328,36 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     named = await repo()
     github = named === null ? null : (await publicRepo(named, await githubToken()))?.json.full_name ?? null
   } catch { repository = false }
-  // With the advisories `listed` publishes, where it isn't null.
-  const ask = (listed: string | null, token: string | null, store: (signal: AbortSignal) => CacheStore | undefined) => {
+  // With the advisories `listed` publishes, where it isn't null, GitHub asked
+  // with the reader's token or by a client of the caller's.
+  const ask = (listed: string | null, store: (signal: AbortSignal) => CacheStore | undefined, client: { githubToken: string | null } | { github: Client }) => {
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
     const packages = [{ ecosystem: 'npm' as const, name, versions: asked, ...listed !== null && { github: listed } }]
-    return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories: listed !== null, details: true, githubToken: token, cache: store(signal) })
+    return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories: listed !== null, details: true, ...client, cache: store(signal) })
   }
-  let result = repository ? await ask(github, github === null ? null : await githubToken(), cache) : null
+  let result = repository ? await ask(github, cache, { githubToken: github === null ? null : await githubToken() }) : null
   // Where GitHub can't say whether it is public, or refuses its listing, its
   // listing as last kept is taken instead, however old (lastListing), as
   // audits take a kept listing for any reader: only public repositories
-  // publish advisories (upstream-cache.ts). Where none is kept, npm's are
-  // alone. Neither list is kept, so GitHub is asked again next time.
+  // publish advisories (upstream-cache.ts). GitHub is asked nothing for it:
+  // upstream asks for a listing only once npm has answered, and where it
+  // won't take the kept one, which leaves npm's alone, as where none is kept.
+  // An audit failing otherwise is npm's, not asked a third time. Neither list
+  // is kept, so GitHub is asked again next time.
   let keptAt: string | undefined
   if (result === null || (result.status !== 200 && github !== null)) {
     const unreached = github ?? named
     const last = unreached === null ? null : await lastListing(unreached)
-    const listed = last && await ask(unreached, null, () => last.cache)
+    let untaken = false
+    const offline: Client = { ...createClient({ token: null, userAgent: 'deepview-triage' }),
+      listRepoAdvisories: () => { untaken = true; return Promise.reject(new Error('GitHub can\'t be reached')) } }
+    const listed = last && await ask(unreached, () => last.cache, { github: offline })
     if (last && listed?.status === 200) {
       result = listed
       repository = true
       keptAt = new Date(last.at).toISOString()
     } else {
-      result = await ask(null, null, cache)
+      result = listed && !untaken ? listed : await ask(null, cache, { githubToken: null })
       repository = false
     }
   }

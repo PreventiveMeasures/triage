@@ -977,6 +977,36 @@ test('where GitHub refuses the listing, or can\'t say whether the repository is 
   assert.equal(listings(), 3)
 })
 
+test('a kept listing asks GitHub nothing: where npm\'s audit fails, it isn\'t asked a third time, and where upstream won\'t take the listing, npm\'s are alone', async t => {
+  const h = await setup(t)
+  const names = { unaudited: 'org/unaudited', outdated: 'org/outdated' }
+  registry(t, Object.entries(names).map(([name, repo]) => packageOf(name, '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: `git+https://github.com/${repo}.git` } })))
+  const at = Date.now() - 3 * 60 * 60_000
+  // Kept as upstream keeps a listing, but for `outdated` one kept differently, which upstream won't take.
+  for (const [name, repo] of Object.entries(names)) {
+    await h.db.setUpstreamCacheEntry(`github/advisories/${repo}`, JSON.stringify({ at, name: repo, v: name === 'outdated' ? 1 : 2, advisories: [] }), at)
+  }
+  const refused = () => Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } })
+  const repoAdvisories = {}
+  const asked = insights(t, { repos: Object.fromEntries(Object.values(names).map(repo => [repo, { full_name: repo, private: false, visibility: 'public' }])), repoAdvisories,
+    advisories: { outdated: [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] } })
+  const audits = []
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => {
+    if (String(input) !== `${REGISTRY}/-/npm/v1/security/advisories/bulk`) return fetch(input, init)
+    const [name] = Object.keys(JSON.parse(init.body))
+    audits.push(name)
+    return name === 'unaudited' ? Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 })) : fetch(input, init)
+  })(globalThis.fetch))
+  repoAdvisories['org/unaudited'] = refused()
+  assert.equal((await h.send('/api/npm/advisories?name=unaudited')).status, 502)
+  assert.deepEqual(audits, ['unaudited', 'unaudited'], 'with its repository\'s, then with the kept listing, and no more')
+  repoAdvisories['org/outdated'] = refused()
+  const alone = (await h.send('/api/npm/advisories?name=outdated')).json()
+  assert.deepEqual([alone.repository, alone.keptAt, alone.advisories.map(row => row.id)], [false, undefined, ['GHSA-aaaa-bbbb-cccc']])
+  assert.deepEqual(audits.slice(2), ['outdated', 'outdated', 'outdated'], 'its kept listing not taken, npm\'s are asked for alone')
+  assert.deepEqual(asked.filter(([what]) => what === 'repository').map(([, repo]) => repo), ['org/outdated'], 'GitHub asked for a listing only once npm answered, and only by the reader\'s audit')
+})
+
 test('advisories of a repository that isn\'t public, an internal one included, are not asked for, nor where GitHub can\'t say', async t => {
   const h = await setup(t)
   const reviewed = [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }]
