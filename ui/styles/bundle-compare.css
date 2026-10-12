@@ -494,6 +494,12 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
    scrolls past. */
 bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-all-title { flex-shrink: 0; font-size: .78rem; font-weight: 600; }
+/* How a file reads, in its head: as it reads now, after how it read where
+   that differs. */
+.bundle-compare-code-readability {
+  display: inline-flex; flex-shrink: 0; align-items: center; gap: .25rem;
+  color: var(--muted); font-size: .7rem;
+}
 .bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
 .bundle-compare-all-file-head { position: sticky; top: 0; z-index: 3; border-top: 1px solid var(--border); }
 .bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }

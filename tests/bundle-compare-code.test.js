@@ -323,6 +323,17 @@ test('the one-list Code lists a file whose only change is a repointed import by 
     combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
 })
 
+test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs', () => {
+  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n' }, { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n' }]
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(renderText(view(path, files).render()))[1]
+  const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
+  assert.deepEqual(tags(head('src/ctl.js')), ['ASCII', 'Controls'])
+  assert.match(head('src/ctl.js'), /bundle-compare-code-readability/u)
+  assert.deepEqual(tags(head('src/same.js')), ['ASCII'], 'once where it reads alike')
+  assert.deepEqual(tags(head('src/new.js')), ['UTF-8'], 'an added file as it reads now')
+  assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]

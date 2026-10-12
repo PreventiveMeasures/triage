@@ -17,7 +17,9 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact } from './npm-downloads-chart.js'
-import { NPM_LONG_LINE, npmFileReadability } from './file-readability.js'
+import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
+
+export { npmReadabilityTag } from './file-readability.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -211,19 +213,6 @@ export function npmAdvisoriesColumn(entry) {
 }
 
 
-// Each category: its name, its tag in the Files list, and how it is marked,
-// `warn` for what to look into, `notice` for what can't be reviewed by
-// reading it either way.
-const READABILITY = new Map([
-  ['binary', { name: 'Not UTF-8', tag: 'Not UTF-8', mark: 'warn' }],
-  ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
-  ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
-  ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
-  ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
-  ['inline-map', { name: 'Inline source maps', tag: 'Inline map', mark: 'notice' }],
-  ['utf8', { name: 'UTF-8', tag: 'UTF-8', mark: null }],
-  ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
-])
 // Those that can't be reviewed by reading, the warning's, and those that can.
 const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
@@ -257,33 +246,6 @@ export function npmFilesRead(details) {
     readabilities.set(details, known)
   }
   return known
-}
-
-function controlsNote(controls) {
-  const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
-  const named = found.slice(0, 6).map(([point, times]) => `U+${point.toString(16).toUpperCase().padStart(4, '0')} ×${times.toLocaleString('en')}`)
-  return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
-}
-
-function readabilityNote({ average, category, controls, longLines, longest, inlineMap }) {
-  const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
-  switch (category) {
-    case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
-    case 'controls': return controlsNote(controls)
-    case 'map': return 'A source map'
-    case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
-    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
-    case 'long': return `${lines()}, among readable ones`
-    default: return nothing
-  }
-}
-
-// A file's tag in the Files list, marked where it can't be read as it is,
-// saying why.
-export function npmReadabilityTag(readability) {
-  if (!readability) return nothing
-  const { tag, mark } = READABILITY.get(readability.category)
-  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
 }
 
 // What the Files list is narrowed to, for the version shown: the chip last

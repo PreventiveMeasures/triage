@@ -29,7 +29,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { npmFileReadability } from './file-readability.js'
+import { npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
@@ -69,15 +69,17 @@ export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 export const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
-// Whether a text was minified (file-readability.js), by bundle and path: its
-// short names then a minifier's, not its author's.
-const minifiedTexts = new WeakMap()
-function minified(details, path, text) {
-  let files = minifiedTexts.get(details)
-  if (!files) minifiedTexts.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, npmFileReadability(path, text).category === 'minified')
+// How a text reads (file-readability.js), by bundle and path: as the npm
+// Overview tags a file, and whether it was minified, its short names then a
+// minifier's, not its author's.
+const readTexts = new WeakMap()
+function readability(details, path, text) {
+  let files = readTexts.get(details)
+  if (!files) readTexts.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, npmFileReadability(path, text))
   return files.get(path)
 }
+const minified = (details, path, text) => readability(details, path, text).category === 'minified'
 
 // Why the server left a file's old names as they were (rename-map.js).
 const RENAME_REASONS = {
@@ -560,12 +562,25 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  // A file's kind, icon and path, `prefix` left off.
+  // A file's kind, icon and path, `prefix` left off, and how it reads.
   _fileName(path, entry, prefix) {
     const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
-      <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>`
+      <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
+      ${this._readability(path, entry)}`
+  }
+
+  // How a file reads on the sides it has (file-readability.js), tagged as the
+  // npm Overview tags a file (ASCII, UTF-8, Minified, Controls, ...): as it
+  // reads now, after how it read where that differs.
+  _readability(path, entry) {
+    const { kind, basePath = path } = entry
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    const was = kind === 'added' || before === undefined ? null : readability(this.base, basePath, before)
+    const now = kind === 'removed' || after === undefined ? null : readability(this.other, path, after)
+    if (!was || !now || was.category === now.category) return npmReadabilityTag(now ?? was)
+    return html`<span class="bundle-compare-code-readability">${npmReadabilityTag(was)}<span aria-hidden="true">→</span>${npmReadabilityTag(now)}</span>`
   }
 
   // A file's lines added and removed, and its sizes.

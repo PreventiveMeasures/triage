@@ -213,7 +213,9 @@ order: picking a file in the tree scrolls the list to it, and the file at
 the list's top is marked there as it scrolls; a file whose only change is a
 repointed import lists those imports alone. Past that, Code shows a file at
 a time, its Previous and Next file buttons stepping through them in the
-tree's order. A link naming the older Diff mode opens Code. Lines always
+tree's order. A link naming the older Diff mode opens Code. Each file's
+head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
+Controls, Minified, ...), after how it read where that differs. Lines always
 wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to

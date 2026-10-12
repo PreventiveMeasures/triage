@@ -1,6 +1,9 @@
 // How a file's text reads, for a reviewer: the npm Overview's tags and
-// warnings (npm-overview.js), and which files the Code tab offers
+// warnings (npm-overview.js), Compare's tags in a file's head
+// (bundle-compare-code.js), and which files the Code tab offers
 // pretty-printed (pretty-source.js).
+import { html, nothing } from 'lit'
+import { formatBytes } from '../scan/metrics.js'
 
 // What a text holds beyond printing characters and its line breaks: the C0
 // controls other than tab, line feed and carriage return, DEL, the C1
@@ -127,4 +130,44 @@ export function npmFileReadability(path, text) {
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
+}
+
+// Each category: its name, its tag in a list of files or a file's head, and how it is marked,
+// `warn` for what to look into, `notice` for what can't be reviewed by
+// reading it either way.
+export const READABILITY = new Map([
+  ['binary', { name: 'Not UTF-8', tag: 'Not UTF-8', mark: 'warn' }],
+  ['controls', { name: 'Control characters', tag: 'Controls', mark: 'warn' }],
+  ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
+  ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
+  ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
+  ['inline-map', { name: 'Inline source maps', tag: 'Inline map', mark: 'notice' }],
+  ['utf8', { name: 'UTF-8', tag: 'UTF-8', mark: null }],
+  ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
+])
+
+function controlsNote(controls) {
+  const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
+  const named = found.slice(0, 6).map(([point, times]) => `U+${point.toString(16).toUpperCase().padStart(4, '0')} ×${times.toLocaleString('en')}`)
+  return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
+}
+
+function readabilityNote({ average, category, controls, longLines, longest, inlineMap }) {
+  const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
+  switch (category) {
+    case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
+    case 'controls': return controlsNote(controls)
+    case 'map': return 'A source map'
+    case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
+    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
+    case 'long': return `${lines()}, among readable ones`
+    default: return nothing
+  }
+}
+
+// A file's tag, marked where it can't be read as it is, saying why.
+export function npmReadabilityTag(readability) {
+  if (!readability) return nothing
+  const { tag, mark } = READABILITY.get(readability.category)
+  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
 }
