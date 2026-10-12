@@ -191,9 +191,9 @@ const isTag = code => code >= 0xe0020 && code <= 0xe007f
 // a newline is part of the line end, as is one that ends `text` where
 // `lineEnd` says a newline follows it. A joiner between two emoji joins them
 // into one, a black flag's tags, up to the cancel tag, name its region, and
-// the text or emoji presentation selector after a pictograph, or between a
-// keycap's digit, # or * and its mark, draws it; after a letter or a digit
-// alone it is another name.
+// the text or emoji presentation selector after a pictograph, or the emoji
+// one between a keycap's digit, # or * and its mark, draws it; after a letter
+// or a digit alone it is another name.
 function shown(text, lineEnd) {
   const found = []
   CANDIDATES.lastIndex = 0
@@ -202,7 +202,8 @@ function shown(text, lineEnd) {
     const code = match[0].codePointAt(0)
     if (code === 0x0d && (text[at + 1] === '\n' || lineEnd && at + 1 === text.length)) continue
     if (code === 0x200d && EMOJI_BEFORE.test(text.slice(Math.max(0, at - 4), at)) && EMOJI_AFTER.test(text.slice(at + 1, at + 3))) continue
-    if ((code === 0xfe0e || code === 0xfe0f) && (PICTOGRAPH_BEFORE.test(text.slice(Math.max(0, at - 2), at)) || KEYCAP_BASE.test(text[at - 1] ?? '') && text[at + 1] === '\u20E3')) continue
+    if ((code === 0xfe0e || code === 0xfe0f) && PICTOGRAPH_BEFORE.test(text.slice(Math.max(0, at - 2), at))) continue
+    if (code === 0xfe0f && KEYCAP_BASE.test(text[at - 1] ?? '') && text[at + 1] === '\u20E3') continue
     if (isTag(code) && !isTag(text.codePointAt(at - 2))) {
       let end = at
       while (isTag(text.codePointAt(end))) end += 2
