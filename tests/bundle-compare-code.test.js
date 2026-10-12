@@ -463,17 +463,19 @@ test('Hide whitespace changes is offered only where it hides one, while they sho
   // The Diff view's bar, for any file it lists.
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const CompareAll = customElements.get('bundle-compare-all')
-  const bar = extra => {
+  const bar = (extra, query = '') => {
     const code = view(null, extra)
     const all = new CompareAll()
     for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
     all.models = combinedDiffRows(code.base, code.other, code.files).models
     all.willUpdate(new Map([['base'], ['other'], ['files']]))
+    all._query = query
     const markup = renderText(all.render())
     return markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   }
   assert.ok(!offered(bar()), 'none of its files hides one')
   assert.ok(offered(bar(files)))
+  assert.match(bar(files, 'spaces'), /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'there to turn off where it hides every change listed')
 })
 
 test('with renamed names hidden, Hide whitespace changes is offered where the server\'s diff hides one', async t => {
