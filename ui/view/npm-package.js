@@ -151,7 +151,7 @@ export async function loadNpmVersion(name, spec, options) {
 // answer then gives way.
 function keepKnown({ name, version, known }) {
   if (!known || typeof known !== 'object') return
-  const keys = { stats: name, advisories: name, tags: `${name}@${version}`, socket: `${name}@${version}` }
+  const keys = { stats: name, advisories: name, tags: `${name}@${version}`, socket: `${name}@${version}`, provenance: `${name}@${version}` }
   for (const [kind, of] of Object.entries(keys)) {
     const key = `${kind}\0${of}`
     if (known[kind] && packageData.get(key)?.status !== 'ready') packageData.set(key, { status: 'known', data: known[kind] })
@@ -500,7 +500,7 @@ const npmAccount = (account, label) => html`<a class="bundle-origin-link" href=$
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
 // are the package's file paths, once read.
-export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, files = null } = {}) {
+export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, provenance = nothing, files = null } = {}) {
   const { manifest } = entry.npm
   const github = manifest.github?.github
   // Its repository, at the commit it was published from where npm recorded
@@ -530,6 +530,7 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
       ? html`<a class="bundle-origin-link bundle-commit-link" href=${origin.commit.href} data-tooltip=${origin.commit.hash} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${origin.commit.text}</span></a>
         ${npmCommitTags(entry, github)}`
       : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
+    ${provenance === nothing ? nothing : html`<dt>Provenance</dt><dd class="bundle-origin-row">${provenance}</dd>`}
     ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
     <dt>Integrity</dt><dd class="mono bundle-integrity" data-tooltip-truncated data-tooltip=${entry.integrity}>${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

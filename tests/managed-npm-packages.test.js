@@ -430,7 +430,7 @@ test('a read no reader waits on leaves room for two version lists of readers\' o
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {}, badges = {} }) {
+function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {}, badges = {}, provenance = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
@@ -438,6 +438,12 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
     if (record) {
       asked.push(['osv', record[1], auth])
       return Promise.resolve(osv[record[1]] ? Response.json({ id: record[1], details: osv[record[1]] }) : Response.json({ message: 'Not Found' }, { status: 404 }))
+    }
+    const attested = url.match(/^https:\/\/registry\.npmjs\.org\/-\/npm\/v1\/attestations\/(.+)$/u)
+    if (attested) {
+      const id = decodeURIComponent(attested[1])
+      asked.push(['provenance', id, auth])
+      return Promise.resolve(provenance[id] ? Response.json(provenance[id]) : Response.json({ error: 'Not found' }, { status: 404 }))
     }
     const badge = url.match(/^https:\/\/badge\.socket\.dev\/npm\/package\/(.+)$/u)
     if (badge) {
@@ -712,9 +718,67 @@ test('a version carries what is kept about its package, each part as its own rou
   assert.deepEqual(await knownOf('known-pkg', '1.0.0'), { stats, advisories }, 'Socket\'s report is on the version')
   gate = Promise.withResolvers()
   assert.deepEqual(await knownOf('known-bare', '1.0.0'), { tags: { name: 'known-bare', version: '1.0.0', tags: [] } }, 'a version naming no repository has no tags to ask for')
-  assert.deepEqual(await knownOf('@acme/known', '1.0.0', 'admin'), { socket: { name: '@acme/known', version: '1.0.0', socket: null } }, 'nor a private package a report')
+  assert.deepEqual(await knownOf('@acme/known', '1.0.0', 'admin'), { socket: { name: '@acme/known', version: '1.0.0', socket: null },
+    provenance: { name: '@acme/known', version: '1.0.0', provenance: null } }, 'nor a private package a report, nor provenance')
   assert.ok(!requested.some(url => url.includes('socket.dev') && url.includes('acme')), 'Socket is never asked about it')
   gate.resolve()
+})
+
+test('npm\'s provenance for a public version: where it was built, read only from a statement naming its tarball, never asked for a private one', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const attested = extra => ({ dist: { ...extra.dist, attestations: { url: 'https://registry.npmjs.org/-/npm/v1/attestations/x', provenance: { predicateType: 'https://slsa.dev/provenance/v1' } } } })
+  const version = (name, files, extra = {}) => { const pkg = packageOf(name, '1.0.0', files, extra); Object.assign(pkg.doc, attested(pkg.doc)); return pkg }
+  const forged = version('forged', { 'index.js': '3' }), lab = version('attested-gitlab', { 'index.js': '6' }), old = version('attested-v02', { 'index.js': '2' })
+  const pkg = version('attested', { 'index.js': '1' })
+  const bare = packageOf('unattested', '1.0.0', { 'index.js': '4' })
+  const secret = { ...version('@acme/attested', { 'index.js': '5' }), private: true }
+  registry(t, [pkg, old, lab, forged, bare, secret])
+  const hex = doc => Buffer.from(doc.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
+  const envelope = (doc, predicateType, predicate, digest = hex(doc)) => ({ attestations: [
+    { predicateType: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1', bundle: {} },
+    { predicateType, bundle: { verificationMaterial: { tlogEntries: [{ logIndex: '42' }] }, dsseEnvelope: { payload: Buffer.from(JSON.stringify({
+      subject: [{ name: `pkg:npm/${doc.name.replace(/^@/u, '%40')}@${doc.version}`, digest: { sha512: digest } }], predicate })).toString('base64') } } },
+  ] })
+  // Its build's parameters long enough that the statement passes 2,048 characters, as one may.
+  const v1 = { buildDefinition: { externalParameters: { workflow: { repository: 'https://github.com/org/repo', path: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0' } },
+    internalParameters: { github: { event_name: 'push', repository_id: '1'.repeat(2000) } },
+    resolvedDependencies: [{ uri: 'git+https://github.com/org/repo@refs/tags/v1.0.0', digest: { gitCommit: 'b'.repeat(40) } }] },
+    runDetails: { builder: { id: 'https://github.com/actions/runner/github-hosted' }, metadata: { invocationId: 'https://github.com/org/repo/actions/runs/7/attempts/1' } } }
+  const v02 = { builder: { id: 'https://github.com/actions/runner' }, invocation: { configSource: { uri: 'git+https://github.com/org/repo@refs/heads/main', digest: { sha1: 'c'.repeat(40) },
+    entryPoint: '.github/workflows/publish.yml' } }, metadata: { buildInvocationId: '9-2' } }
+  // As npm writes GitLab's: its project with no ref, its job's URL as its run.
+  const v02GitLab = { builder: { id: 'https://gitlab.com/group/project/-/runners/12345' },
+    invocation: { configSource: { uri: 'git+https://gitlab.com/group/project', digest: { sha1: 'd'.repeat(40) }, entryPoint: 'publish' } },
+    metadata: { buildInvocationId: 'https://gitlab.com/group/project/-/jobs/678' } }
+  const asked = insights(t, { provenance: {
+    'attested@1.0.0': envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1),
+    'attested-v02@1.0.0': envelope(old.doc, 'https://slsa.dev/provenance/v0.2', v02),
+    'attested-gitlab@1.0.0': envelope(lab.doc, 'https://slsa.dev/provenance/v0.2', v02GitLab),
+    'forged@1.0.0': envelope(forged.doc, 'https://slsa.dev/provenance/v1', v1, '00'.repeat(64)),
+    '@acme/attested@1.0.0': envelope(secret.doc, 'https://slsa.dev/provenance/v1', v1),
+  } })
+  const provenanceOf = async (name, who) => (await h.send(`/api/npm/provenance?name=${encodeURIComponent(name)}&version=1.0.0`, who)).json()
+  assert.equal((await h.send(packagePath('attested', '1.0.0'))).json().manifest.provenance, true, 'its manifest says npm keeps provenance for it')
+  assert.equal((await h.send(packagePath('unattested', '1.0.0'))).json().manifest.provenance, undefined)
+  assert.ok(envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1).attestations[1].bundle.dsseEnvelope.payload.length > 2048)
+  assert.deepEqual(await provenanceOf('attested'), { name: 'attested', version: '1.0.0', provenance: {
+    repository: 'https://github.com/org/repo', commit: 'b'.repeat(40), workflow: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0',
+    builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42 } })
+  assert.deepEqual((await provenanceOf('attested-v02')).provenance, { repository: 'https://github.com/org/repo', commit: 'c'.repeat(40),
+    workflow: '.github/workflows/publish.yml', ref: 'refs/heads/main', builder: 'https://github.com/actions/runner',
+    run: 'https://github.com/org/repo/actions/runs/9/attempts/2', logIndex: 42 }, 'as SLSA v0.2 says it, its run GitHub\'s')
+  assert.deepEqual((await provenanceOf('attested-gitlab')).provenance, { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40),
+    workflow: 'publish', ref: null, builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: 42 },
+  'as npm writes GitLab\'s: no ref, its job\'s URL its run')
+  assert.equal((await provenanceOf('forged')).provenance, null, 'a statement naming another tarball is not read')
+  assert.equal((await provenanceOf('unattested')).provenance, null)
+  assert.equal((await provenanceOf('@acme/attested', 'admin')).provenance, null, 'none for a private package')
+  await provenanceOf('attested')
+  const provenanceAsked = asked.filter(([what]) => what === 'provenance')
+  assert.deepEqual(provenanceAsked.map(([, id]) => id).toSorted(), ['attested-gitlab@1.0.0', 'attested-v02@1.0.0', 'attested@1.0.0', 'forged@1.0.0'],
+    'asked once each, kept; not about a version npm keeps none for, nor a private one')
+  assert.ok(provenanceAsked.every(([, , auth]) => auth === null), 'asked without credentials')
 })
 
 test('Socket is never asked about a private package, whoever reads it', async t => {
@@ -904,6 +968,16 @@ test('a homepage that leads only where the repository does is left out of the ma
   assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-parser' }),
     'https://github.com/babel/babel/tree/main/packages/babel-parser', 'another package\'s directory')
   assert.equal(homepage({ homepage: 'https://example.com/' }), 'https://example.com/', 'no repository')
+})
+
+test('a GitLab project a package names as its repository is kept, in any form npm takes, for its provenance to be matched with', () => {
+  const gitlab = repository => npmManifest({ repository }).gitlab ?? null
+  for (const [repository, project] of [
+    ['gitlab:group/project', 'group/project'], ['git@gitlab.com:group/sub/project.git', 'group/sub/project'],
+    ['git+https://gitlab.com/group/project.git', 'group/project'], [{ type: 'git', url: 'git+ssh://git@gitlab.com/Group/Project.git' }, 'Group/Project'],
+    ['https://gitlab.com/group/project/-/tree/main/packages/x', 'group/project'],
+    ['https://github.com/org/repo', null], ['https://gitlab.com/group', null], ['https://gitlab.com/../x', null], ['https://gitlab.example.com/a/b', null], [3, null],
+  ]) assert.equal(gitlab(repository), project, JSON.stringify(repository))
 })
 
 test('an author is named, with their npm account where the publisher or a maintainer is them, and no email kept', () => {

@@ -8,7 +8,7 @@ import { bundleFileSizes } from '../../common/bundle-sources.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
-import { fetchNpmAdvisories, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
+import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, factFile, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
@@ -203,6 +203,61 @@ export function npmGithubFigures(entry) {
     ${github.archived ? html`<span class="npm-github-archived">Archived</span>` : nothing}`
 }
 
+// What built a version, as its provenance names its builder: GitHub Actions,
+// on a runner GitHub hosts or one of the publisher's own, or GitLab CI.
+function builderName(builder) {
+  if (!builder) return null
+  if (/^https:\/\/github\.com\/actions\/runner(?:\/github-hosted)?$/u.test(builder)) return 'GitHub Actions'
+  if (builder.startsWith('https://github.com/actions/runner/')) return 'GitHub Actions, self-hosted runner'
+  // GitLab names the runner in its project, `<project>/-/runners/<id>`.
+  return builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/') ? 'GitLab CI' : new URL(builder).host
+}
+
+// npm's provenance for the version, in the Overview's facts, for a public
+// package (npm-provenance.ts): what built it, from which repository at
+// which commit, by which workflow, in which run, and its transparency log
+// entry, flagged where it was built from another repository than the one
+// the package names. A version npm keeps none for says so; one npm lists
+// it for but whose statement the server doesn't read (as when it names
+// another tarball) is flagged, as nothing vouches for it; nothing for a
+// private package, which can't have any.
+export function npmProvenanceFact(entry) {
+  const { name, version, manifest } = entry.npm
+  if (entry.npm.private) return nothing
+  if (!manifest.provenance) return html`<span class="npm-commit-missing">None</span>`
+  const data = npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
+  if (data.status === 'loading') return html`<span class="npm-commit-missing">Checking…</span>`
+  if (data.status === 'error') return html`<span class="npm-commit-missing">Couldn't be read</span>`
+  if (!data.provenance) {
+    return html`<span class="npm-provenance-warning" data-tooltip="npm lists provenance for this version, but no statement naming its tarball could be read">Listed, but none for this tarball</span>`
+  }
+  const { repository, commit, workflow, ref, builder, run, logIndex } = data.provenance
+  const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
+  const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
+  const gitlab = builderName(builder) === 'GitLab CI'
+  const shown = github ?? repository.replace(/^https:\/\//u, '')
+  // The repository the package names, GitHub's or GitLab's, as its source
+  // reads.
+  const named = manifest.github?.github ?? (manifest.gitlab ? `gitlab.com/${manifest.gitlab}` : null)
+  const elsewhere = named && named.toLowerCase() !== shown.toLowerCase()
+  // What built it, from where, then how: its workflow, by its file's name,
+  // its whole path in its tooltip, its run and its log entry, a line each.
+  const line = (items, classes = '') => html`<span class=${`npm-provenance-line${classes}`}>${items.filter(item => item !== nothing)
+    .map((item, i) => i === 0 ? item : html`<span class="npm-provenance-sep" aria-hidden="true">·</span>${item}`)}</span>`
+  const file = workflow?.split('/').at(-1)
+  return html`<span class="npm-provenance">
+    ${builderName(builder) ? html`<span>${builderName(builder)}</span>` : nothing}
+    <span class="npm-provenance-line"><span class="npm-provenance-sep">from</span>
+      ${commit ? link(github ? `${repository}/commit/${commit}` : gitlab ? `${repository}/-/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`,
+        `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
+      ${elsewhere ? html`<span class="npm-provenance-warning" data-tooltip=${`The package names ${named}`}>Not the repository it names</span>` : nothing}</span>
+    ${line([workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow)
+      : html`<span class="mono" data-tooltip=${workflow}>${file}</span>`) : nothing,
+    run ? link(run, 'Run', 'The run that built it') : nothing,
+    logIndex === null ? nothing : link(`https://search.sigstore.dev/?logIndex=${logIndex}`, 'Transparency log', `Sigstore's log entry ${logIndex}`)], ' is-how')}
+  </span>`
+}
+
 // How an advisory stands for the version shown: it `affects` it; it is
 // `fixed` in it, covering only older versions; or it covers `later` ones,
 // whether or not older ones too (its ranges can leave the version shown
@@ -366,8 +421,8 @@ export const npmCompareFiles = {
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: a publisher that changed, the advisories
-// that affect either,
+// (`other`), each side's details: a publisher that changed, provenance
+// lost, the advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES), and the
 // package's tier by downloads where it is orange or red. Each once it
 // arrives.
@@ -375,7 +430,7 @@ export function npmCompareBadges(base, other) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [publisherBadge(sides), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
+  const chips = [publisherBadge(sides), provenanceBadge(sides), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -408,6 +463,17 @@ function publisherBadge([from, to]) {
     data-tooltip=${`Published by ~${was} (${from.version}), then ~${now} (${to.version})`}
     .tooltipContent=${compareTip('Published by', [from, to], [`~${was}`, `~${now}`], 'A different npm account published the open version')}>
     <span>Publisher</span><span class="npm-extension-count">~${was} → ~${now}</span></a></li>`
+}
+
+// Provenance the one compared with has and the open version hasn't (npm's
+// manifests say; npm-packages.ts npmManifest), as a version published by
+// hand, with a token taken from its maintainers, wouldn't.
+function provenanceBadge([from, to]) {
+  if (!from.manifest?.provenance || to.manifest?.provenance) return nothing
+  return html`<li><span class="npm-extension npm-compare-provenance"
+    data-tooltip=${`npm lists provenance for ${from.version}, none for ${to.version}`}
+    .tooltipContent=${compareTip('npm provenance', [from, to], ['Listed by npm', html`<span class="compare-tip-none">None</span>`],
+      'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
 }
 
 // The advisories affecting each version, tinted by the worst still affecting

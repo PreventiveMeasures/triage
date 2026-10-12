@@ -15,6 +15,8 @@ import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
+import { kept } from './kept.ts'
+import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
 import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
@@ -24,37 +26,10 @@ const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 const SOCKET_API = 'https://firewall-api.socket.dev/purl'
 const SOCKET_BADGE = 'https://badge.socket.dev/npm/package'
 const BADGE_BYTES = 16 * 1024
-const KEPT_MS = 60 * 60_000
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
 const DAY_MS = 24 * 60 * 60_000
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 }
-
-// Answers kept for an hour by what they answer, at most `max` of them, the
-// oldest asked going first; one still being asked for is shared, and one that
-// failed, or that `whole` says is partial, is dropped once it is answered.
-// `peek` gives one already answered, asking for nothing; undefined where none is.
-function kept<T>(max: number, whole: (value: T) => boolean = () => true) {
-  const answers = new Map<string, { at: number; value: Promise<T>; answered?: { value: T } }>()
-  const get = (key: string, ask: () => Promise<T>): Promise<T> => {
-    const now = Date.now()
-    const hit = answers.get(key)
-    if (hit && now - hit.at < KEPT_MS) return hit.value
-    const value = ask()
-    const entry: { at: number; value: Promise<T>; answered?: { value: T } } = { at: now, value }
-    answers.delete(key)
-    answers.set(key, entry)
-    while (answers.size > max) answers.delete(answers.keys().next().value!)
-    const drop = () => { if (answers.get(key) === entry) answers.delete(key) }
-    value.then(answer => { if (whole(answer)) entry.answered = { value: answer }; else drop(); return answer }, drop)
-    return value
-  }
-  const peek = (key: string): T | undefined => {
-    const hit = answers.get(key)
-    return hit?.answered && Date.now() - hit.at < KEPT_MS ? hit.answered.value : undefined
-  }
-  return Object.assign(get, { peek })
-}
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const isDay = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value) && !Number.isNaN(Date.parse(value))
@@ -411,15 +386,17 @@ export function npmAdvisories(name: string, versions: string[], options: NpmAdvi
 // it (http.ts handleNpm), for the version's response to carry: its figures,
 // where those of the repository its latest version names are kept too; its
 // advisories, where kept for a version list that has this version; the tags
-// of its publish commit (`sha`, in `repo`, the repository it names); and
-// Socket's report on it. Nothing is asked for: what isn't kept is left out,
-// for the viewer to ask for. A private package's name never leaves for
-// Socket, so its report is none.
+// of its publish commit (`sha`, in `repo`, the repository it names);
+// Socket's report on it; and npm's provenance for it (npm-provenance.ts).
+// Nothing is asked for: what isn't kept is left out, for the viewer to ask
+// for. A private package's name never leaves for Socket, so its report is
+// none, nor is it asked for provenance.
 export interface NpmKnown {
   stats?: { name: string; downloads: NpmDownloads | null; github: NpmGithubStats | null }
   advisories?: { name: string } & NpmAdvisoryList
   tags?: { name: string; version: string; tags: string[] }
   socket?: { name: string; version: string; socket: NpmSocketReport | null }
+  provenance?: { name: string; version: string; provenance: NpmProvenance | null }
 }
 
 export function npmKnown(name: string, version: string, isPrivate: boolean, repo: string | null, sha: string | null): NpmKnown {
@@ -434,5 +411,7 @@ export function npmKnown(name: string, version: string, isPrivate: boolean, repo
   if (tags) known.tags = { name, version, tags }
   const socket = isPrivate ? null : socketReports.peek(`${name}@${version}`)
   if (socket !== undefined) known.socket = { name, version, socket }
+  const provenance = isPrivate ? null : keptNpmProvenance(name, version)
+  if (provenance !== undefined) known.provenance = { name, version, provenance }
   return known
 }

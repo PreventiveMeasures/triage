@@ -77,6 +77,10 @@ export async function fetchNpmSocket(name, version, options) {
   return (await loadManagedBundle()).fetchNpmSocket(name, version, options)
 }
 
+export async function fetchNpmProvenance(name, version, options) {
+  return (await loadManagedBundle()).fetchNpmProvenance(name, version, options)
+}
+
 export async function fetchPrettyBundleFile(id, path, hash, options) {
   return (await loadManagedBundle()).fetchPrettyBundleFile(id, path, hash, options)
 }
