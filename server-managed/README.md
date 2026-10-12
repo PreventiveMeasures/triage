@@ -1243,7 +1243,8 @@ control. A version shows in the bundle view with four tabs:
   install and postinstall, each with its
   name marked as a warning's and its command, a file it names opening it, in the order npm runs them, and
   `node-gyp rebuild` where a `binding.gyp` has no install script of its own),
-  how many dependencies it has, and its files with the lines of code they add
+  how many dependencies it has, with a chip for each check below any of them
+  is flagged by, counting them, which in its tooltip, and its files with the lines of code they add
   up to, its tarball's size and what it unpacks to, each but the tarball's
   size tinted by how big it is: tiny, small, medium, large or gigantic, files,
   lines and bytes counted without the files every package has (package.json,
@@ -1289,7 +1290,28 @@ control. A version shows in the bundle view with four tabs:
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
   their latest version (an `npm:` alias at the package it names), their kinds
-  and ranges lined up;
+  and ranges lined up, each tagged after its name where it calls for a look:
+  non-registry where npm fetches it from elsewhere than its registry, as
+  npm-package-arg resolves a dependency's spec, hosted-git-info reading a
+  repository's host for it: a repository on GitHub, GitLab, Bitbucket, Gist
+  or SourceHut in any form npm takes (`github:owner/repo`, GitHub's
+  `owner/repo` shorthand, `git@github.com:owner/repo`,
+  `ssh://`, `git+https://` or `https://github.com/owner/repo`), named for
+  it, another `git:`, `git+https:` or `git+ssh:` repository, or an `http:`
+  or `https:` tarball; not a `file:` path, nor what npm doesn't install
+  (`workspace:`, `ssh:` to another host) or reads as a path
+  (`git@example.com:org/repo`), its
+  spec in its tooltip, and opening nothing, as the registry's package of
+  that name isn't what npm installs; and unimported where nothing of the
+  version imports it: no code file names it as an import would (quoted,
+  alone or before a path in it, `'name'` or `"name/sub"`, after webpack's
+  `~` too, or built from a part of its name up to a `-` or `/`, as a
+  package picks its platform's build, `` `@rollup/rollup-${platform}` ``
+  or `"@typescript/" + name`; prose, source maps, lockfiles and its own
+  package.json aside), nor does an install script npm runs, though npm
+  installs it all the same and runs its install scripts, as a dependency
+  added for those alone would be; not a peer one, which whoever installs the
+  package provides, nor one of DefinitelyTyped's `@types/`;
   Advisories, across every published version, one row each, its head
   counting those that affect the version shown, those first and marked,
   those fixed in it (affecting only older versions) struck through, and
@@ -1353,7 +1375,15 @@ control. A version shows in the bundle view with four tabs:
   compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
   each counting them where there are several, its tooltip alone listing
   them, each with its size, its longest line before and now, or what its
-  fingerprint holds; an open version under two weeks old, as on
+  fingerprint holds;
+  `Non-registry deps`, dependencies the open version takes from
+  elsewhere than npm's registry, as the Overview tags them, where the one
+  compared with didn't, or by another spec, their names and each version's
+  spec in its tooltip; `Unused deps`, new dependencies
+  nothing of the open version imports, as the Overview tells
+  (`plain-crypto-js`, which axios 1.14.1 added to run its postinstall), their
+  names and ranges in its tooltip, one that was another kind of dependency
+  before not new; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
@@ -1378,7 +1408,8 @@ control. A version shows in the bundle view with four tabs:
   20,000), its last complete month's downloads in its tooltip. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
-  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
+  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those, each
+  the open version adds or changes tagged as its chips flag it.
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them.
@@ -1392,7 +1423,8 @@ control. A version shows in the bundle view with four tabs:
   one head counting them, each a chip with its range beside its name,
   tinted as the Dependencies section's groups are: those the open version
   adds, those whose range it changes (`~1.3.8 → ^2.0.0`) and those it drops,
-  struck through, each opening as there: with the pretty-print toggle
+  struck through, each opening as there and tagged as there, the head
+  counting those tagged by each tag (`1 non-registry`): with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
   without JSX) minified on both sides, its names a minifier's, with the old

@@ -9,7 +9,8 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { npmDependencySpecs } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -456,9 +457,10 @@ export const npmCompareFiles = {
 // (`other`), each side's details, and `files` the comparison's
 // (computeBundleDiff's): an open version npm says is deprecated,
 // a publisher that changed, provenance lost, install scripts added or
-// changed, the files it adds or changes that call for one (fileBadges), an
-// open version under two weeks old (npmRecentRelease), the
-// advisories that affect either,
+// changed, dependencies it takes from elsewhere than npm's registry anew and
+// new ones nothing of it imports, the files it adds or changes that call
+// for one (fileBadges), an open version under two weeks old
+// (npmRecentRelease), the advisories that affect either,
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE), and the
 // package's tier by downloads where it is orange or red. Each once it
@@ -467,7 +469,7 @@ export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...fileBadges(base, other, files),
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files),
     recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
@@ -541,8 +543,7 @@ function installScriptsBadge(base, other) {
   const was = scripts(base)
   const flagged = [...now].filter(([script, command]) => was.get(script) !== command).map(([script]) => script)
   if (flagged.length === 0) return nothing
-  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>`
-    : html`<span class="compare-tip-scripts">${[...list].map(([script, command]) => html`<span class=${marked.includes(script) ? 'is-flagged' : nothing}>${script}: <code>${command}</code></span>`)}</span>`
+  const said = (list, marked) => list.size === 0 ? html`<span class="compare-tip-none">None</span>` : tipLines([...list].map(([script, command]) => [script, command, marked.includes(script)]))
   const summary = flagged.map(script => `${script} ${was.has(script) ? 'changed' : 'added'}`).join(', ')
   return html`<li><span class="npm-extension is-warn npm-compare-install"
     data-tooltip=${[base, other].map(({ npm }, i) => `${npm.version}: ${[...[was, now][i]].map(([script, command]) => `${script}: ${command}`).join('; ') || 'none'}`).join(' · ')}
@@ -597,6 +598,40 @@ function fileBadge(kind, label, rows, said, note) {
     <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
 
+// As `Non-registry deps`, the dependencies the open version takes from
+// elsewhere than npm's registry, where the one compared with didn't, or by
+// another spec; and, as `Unused deps`, those it adds that nothing of it
+// imports, which npm installs all the same, its install scripts and all, as
+// a dependency added to run them would be (npm-dependency-checks.js
+// npmFlagDependencyChanges, as Compare's package.json flags each). Their
+// names and specs in their tooltips, each version's for those from
+// elsewhere.
+function dependencyBadges(base, other) {
+  const { added, changed } = npmFlaggedDependencyChanges(base, other)
+  const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
+  // Those from elsewhere by name, each with its spec now; and before.
+  const now = new Map(flagged('source').map(row => [row.name, row.to ?? row.range])), unimported = flagged('unimported')
+  const chips = []
+  if (now.size > 0) {
+    const was = npmDependencySpecs(base.npm.manifest)
+    const said = (specs, marked) => tipLines([...now.keys()].map(name => [name, specs.get(name), marked]))
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-registry"
+      data-tooltip=${[[base, was], [other, now]].map(([{ npm }, specs]) => `${npm.version}: ${[...now.keys()].map(name => `${name} ${specs.get(name) ?? 'none'}`).join('; ')}`).join(' · ')}
+      .tooltipContent=${compareTip('From elsewhere than npm\'s registry', [base.npm, other.npm], [said(was, false), said(now, true)])}>
+      Non-registry deps</span></li>`)
+  }
+  if (unimported.length > 0) {
+    const { version } = other.npm
+    const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
+    chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
+      data-tooltip=${`New in ${version}, imported by nothing of it: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}`}
+      .tooltipContent=${compareTip(`New, and nothing imports ${it}`, [other.npm], [tipLines(unimported.map(({ name, range, kind }) => [kind ? `${name} (${kind})` : name, range, true]))],
+        `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
+      Unused deps</span></li>`)
+  }
+  return chips
+}
+
 // The open version, where it is too recent to trust yet: how long ago it
 // was published, the day in its tooltip.
 function recentBadge({ name, version, published }) {
@@ -626,6 +661,12 @@ function advisoriesBadge(sides, affecting) {
     @click=${() => openCompareAdvisories(sides, affecting)}>
     <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
 }
+
+// A tooltip's lines, `[name, value, flagged]` each, `name: value` one to a
+// line, its value as code, bold where flagged; `name: none`, muted, where it
+// has no value.
+const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([name, value, flagged]) => value == null
+  ? html`<span class="compare-tip-none">${name}: none</span>` : html`<span class=${flagged ? 'is-flagged' : nothing}>${name}: <code>${value}</code></span>`)}</span>`
 
 // A badge's styled tooltip: its `head`, a row for each side's version and
 // what is said of it, and a `note` under them.

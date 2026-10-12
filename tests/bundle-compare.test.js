@@ -271,6 +271,19 @@ test('packages list Removed | Added | Changed, each package once with its versio
   assert.deepEqual(changedOrder(), ['Own source', 'axios', 'lodash', 'react'], 'the largest change first, name breaking ties')
 })
 
+test('a source\'s dependencies list in place of Packages, each tagged with what calls for a look at it', () => {
+  const view = compare()
+  const flag = (check, label) => ({ check, label, tooltip: `${label}, as said` })
+  const rows = { removed: [{ key: '\0gone', name: 'gone', kind: null, range: 'github:a/gone' }],
+    added: [{ key: '\0plain-crypto-js', name: 'plain-crypto-js', kind: null, range: '^4.2.1', flags: [flag('unimported', 'unimported')] }],
+    changed: [{ key: 'optional\0websocket', name: 'websocket', kind: 'optional', from: '^1.0.29', to: 'github:a/websocket', flags: [flag('source', 'non-registry')] }] }
+  const markup = renderText(view._renderDependencies(rows, 'Before', 'After', ['removed', 'added', 'changed']))
+  assert.match(markup, /data-tooltip=plain-crypto-js>plain-crypto-js<\/span>\s*<span class=npm-dependency-flag is-unimported data-tooltip=unimported, as said>unimported<\/span>\s*<span class="bundle-compare-dep-ver"/u)
+  assert.match(markup, /data-tooltip=websocket>websocket<\/span>\s*<span class=npm-dependency-flag is-source data-tooltip=non-registry, as said>non-registry<\/span><span class="npm-dependency-kind">optional<\/span>/u,
+    'before its kind')
+  assert.doesNotMatch(markup.slice(0, markup.indexOf('bundle-compare-group bundle-compare-added')), /npm-dependency-flag/u, 'none on one removed')
+})
+
 test('a package installed under an npm alias keeps one row, its versions joined to its sizes', () => {
   const side = (integrity, version, code) => ({ integrity, kind: 'stasis', bundle: new Bundle({
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app' } }],

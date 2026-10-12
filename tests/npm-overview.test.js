@@ -469,6 +469,30 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.doesNotMatch(await badges(scripted('dropped', '1.0.0', { postinstall: 'node a.js' }), scripted('dropped', '1.1.0', undefined)), /npm-compare-install/u, 'not one it drops')
   assert.doesNotMatch(await badges(scripted('kept', '1.0.0', { postinstall: 'node a.js' }), scripted('kept', '1.1.0', { postinstall: 'node a.js' })), /npm-compare-install/u)
 
+  // Dependencies the open version takes from elsewhere than the registry
+  // anew, each version's spec in the tooltip; new ones nothing of it
+  // imports, as axios 1.14.1's plain-crypto-js, which ran its own
+  // postinstall; after install scripts.
+  const depending = (name, version, dependencies, files = {}) => ({ npm: { name, version, manifest: { dependencies } },
+    json: { sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const fetched = await badges(depending('fetched', '1.2.0', { websocket: '^1.0.29' }),
+    depending('fetched', '1.2.1', { websocket: 'github:web3-js/WebSocket-Node#polyfill/globalThis' }, { 'src/index.js': 'require("websocket")' }))
+  assert.match(fetched, /<li><span class="npm-extension is-warn npm-compare-registry"\s+data-tooltip=1\.2\.0: websocket \^1\.0\.29 · 1\.2\.1: websocket github:web3-js\/WebSocket-Node#polyfill\/globalThis[^]*compare-tip-head">From elsewhere than npm's registry<[^]*compare-tip-version">1\.2\.0<[^]*<span class=>websocket: <code>\^1\.0\.29<\/code>[^]*compare-tip-version">1\.2\.1<[^]*class=is-flagged>websocket: <code>github:web3-js\/WebSocket-Node#polyfill\/globalThis<\/code><[^]*>\s*Non-registry deps<\/span><\/li><\/ul>$/u)
+  assert.doesNotMatch(fetched, /npm-compare-unimported/u, 'imported')
+  const compromised = await badges(depending('compromised', '1.14.0', { 'follow-redirects': '^1.15.6' }, { 'lib/axios.js': 'require("follow-redirects")' }),
+    depending('compromised', '1.14.1', { 'follow-redirects': '^1.15.6', 'plain-crypto-js': '^4.2.1' }, { 'lib/axios.js': 'require("follow-redirects")' }))
+  assert.match(compromised, /<li><span class="npm-extension is-warn npm-compare-unimported"\s+data-tooltip=New in 1\.14\.1, imported by nothing of it: plain-crypto-js \^4\.2\.1[^]*compare-tip-head">New, and nothing imports it<[^]*compare-tip-version">1\.14\.1<[^]*class=is-flagged>plain-crypto-js: <code>\^4\.2\.1<\/code><[^]*compare-tip-note">No code file of 1\.14\.1 names it as an import would, nor does an install script; npm installs it all the same, running its install scripts<[^]*>\s*Unused deps<\/span><\/li>/u)
+  assert.doesNotMatch(compromised, /npm-compare-registry/u)
+  const many = await badges(depending('many', '1.0.0', { kept: 'github:a/kept' }),
+    depending('many', '1.1.0', { kept: 'github:a/kept', a: '1', b: '1', c: 'https://example.com/c.tgz', d: 'git+ssh://git@example.com:d.git' }))
+  assert.match(many, /data-tooltip=1\.0\.0: c none; d none · 1\.1\.0: c https:\/\/example\.com\/c\.tgz; d git\+ssh:\/\/git@example\.com:d\.git\s[^]*>\s*Non-registry deps<\/span><\/li>[^]*>\s*Unused deps<\/span><\/li>/u,
+    'each named in its tooltip; not one fetched from elsewhere by the same spec before')
+  assert.match(many, /data-tooltip=New in 1\.1\.0, imported by nothing of it: a 1, b 1, c https:\/\/example\.com\/c\.tgz, d git\+ssh:\/\/git@example\.com:d\.git[^]*compare-tip-head">New, and nothing imports them</u,
+    'the unused ones named in its tooltip alone')
+  assert.match(await badges(scripted('first', '1.0.0', undefined), { ...scripted('first', '1.1.0', { postinstall: 'node x.js' }), npm: { name: 'first', version: '1.1.0', manifest: { installScripts: { postinstall: 'node x.js' }, dependencies: { y: '1' } } } }),
+    /npm-compare-install[^]*npm-compare-unimported/u, 'after install scripts')
+  assert.doesNotMatch(await badges(depending('dropping', '1.0.0', { gone: 'github:a/gone' }), depending('dropping', '1.1.0', {})), /npm-compare-(?:registry|unimported)/u, 'not one it drops')
+
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
   const ago = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()
