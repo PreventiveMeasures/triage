@@ -69,10 +69,11 @@ const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
 // none of its own), and Function called; Module's _compile, called
 // (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
-// = …`); a token's name; the environment read out whole; and a PUT request's
+// = …`), not named in a type (`typeof Module.prototype._compile`); a token's
+// name; the environment read out whole; and a PUT request's
 // call (`axios.put(…)`).
 const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`
-  + String.raw`|(?<compile>\.${GAP}_compile(?![\p{ID_Continue}$]))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
+  + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
 // `.sshd`), or a token's name; a command publishing (`npm publish`, `pnpm
@@ -170,8 +171,12 @@ function read(code, base, at) {
       continue
     }
     if (string[0] === '/') continue
-    if (string[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
-    if (HOLDS_ANY.test(string)) for (const [kind, holds] of HOLDS) for (const { index: within } of string.matchAll(holds)) at(kind, base + index + within)
+    const inner = string[0] === '`' && SAYS_ANY.test(string) ? substitutions(string) : []
+    for (const [from, to] of inner) read(string.slice(from, to), base + index + from, at)
+    // What a string holds, a template's text alone, its substitutions' code
+    // read as code, its comments and regular expressions aside.
+    const text = inner.length === 0 ? string : textOf(string, inner)
+    if (HOLDS_ANY.test(text)) for (const [kind, holds] of HOLDS) for (const { index: within } of text.matchAll(holds)) at(kind, base + index + within)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
     if (PUBLISH.test(string) && PROGRAM.test(previous) && /^[\s,[]*$/u.test(code.slice(end, index))) at('publish', base + index)
     if (PUT.test(string) && METHOD.test(code.slice(Math.max(0, index - 300), index))) at('put', base + index)
@@ -187,6 +192,18 @@ const CODE_KINDS = ['eval', 'function', 'compile', 'credentials', 'env', 'put']
 function loaded(code, index) {
   const before = code.slice(Math.max(0, index - 300), index)
   return LOADS.test(before) && !TYPE_ONLY.test(before)
+}
+
+// A template literal with its substitutions' code blanked, its text in place.
+function textOf(template, inner) {
+  const parts = []
+  let from = 0
+  for (const [start, end] of inner) {
+    parts.push(template.slice(from, start), ' '.repeat(end - start))
+    from = end
+  }
+  parts.push(template.slice(from))
+  return parts.join('')
 }
 
 // Where each of a template literal's substitutions' code starts and ends, in

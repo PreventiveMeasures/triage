@@ -42,6 +42,8 @@ test('vm loaded, and Module\'s _compile called or hooked, run a string as code',
   assert.deepEqual(found('a.js', 'const vm = require(\'vm\')\nimport { runInNewContext } from \'node:vm\'\nmodule._compile(source, filename)\nModule.prototype._compile = function () {}\nm . _compile(s)\n'),
     { vm: [1, 2], compile: [3, 4, 5] })
   assert.equal(found('a.js', 'const name = \'vm\'\nobj.vm\nx._compiled\n// require(\'vm\')\nconst _compile = 1\n'), null, 'a module named, not loaded, and other names')
+  assert.deepEqual(found('a.ts', 'type Compile = typeof Module.prototype._compile\nconst original = Module.prototype._compile\nif (m._compile === f) g()\noriginal.call(this, s)\nm._compile.call(m, s, f)\n'),
+    { compile: [5] }, 'not named in a type, kept or compared, only called or hooked')
 })
 
 test('credentials: a credential file\'s path, a token\'s name; and the environment read out whole', () => {
@@ -59,6 +61,10 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     { env: [1, 2] }, 'not where they are turned or looped over')
   assert.equal(found('a.js', '// export NPM_TOKEN=…\nconst s = \'project.npmrc s3.amazonaws.com MY_NPM_TOKEN .sshd\'\nconst re = /\\.npmrc$/u\n'), null,
     'in a comment, or a name or path of another')
+  assert.equal(found('a.js', 'const x = `${/* NPM_TOKEN */ value}`\nconst y = `a ${/npm publish/.test(s)} b`\n'), null,
+    'in a template\'s substitution\'s comment or regular expression, its code read as code')
+  assert.deepEqual(found('a.js', 'const p = `${home}/.npmrc`\nconst q = `${f(\'~/.ssh\')} and ${x}`\nconst t = `\n${y}\nnpm publish`\n'), { credentials: [1, 2], publish: [5] },
+    'in a template\'s text, and in a string in its substitution, on its own line')
 })
 
 test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry', () => {
