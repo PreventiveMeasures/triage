@@ -3362,8 +3362,10 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   &.is-how { font-size: .72rem; }
 }
 .npm-provenance-sep { color: var(--muted); }
-/* A version built from another repository than the one its package names. */
-.npm-provenance-elsewhere {
+/* What its provenance doesn't vouch for: a version built from another
+   repository than the one its package names, or one npm lists provenance
+   for with no statement naming its tarball. */
+.npm-provenance-warning {
   padding: 0 .35rem;
   color: var(--text);
   background: color-mix(in srgb, var(--high) 18%, var(--bg)); border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);

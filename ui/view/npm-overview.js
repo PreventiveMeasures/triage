@@ -216,16 +216,21 @@ function builderName(builder) {
 // package (npm-provenance.ts): what built it, from which repository at
 // which commit, by which workflow, in which run, and its transparency log
 // entry, flagged where it was built from another repository than the one
-// the package names. A version npm keeps none for says so; nothing for a
+// the package names. A version npm keeps none for says so; one npm lists
+// it for but whose statement the server doesn't read (as when it names
+// another tarball) is flagged, as nothing vouches for it; nothing for a
 // private package, which can't have any.
 export function npmProvenanceFact(entry) {
   const { name, version, manifest } = entry.npm
   if (entry.npm.private) return nothing
   if (!manifest.provenance) return html`<span class="npm-commit-missing">None</span>`
   const data = npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
-  const provenance = data.status === 'ready' ? data.provenance : null
-  if (!provenance) return html`<span>Attested${data.status === 'loading' ? '…' : ''}</span>`
-  const { repository, commit, workflow, ref, builder, run, logIndex } = provenance
+  if (data.status === 'loading') return html`<span class="npm-commit-missing">Checking…</span>`
+  if (data.status === 'error') return html`<span class="npm-commit-missing">Couldn't be read</span>`
+  if (!data.provenance) {
+    return html`<span class="npm-provenance-warning" data-tooltip="npm lists provenance for this version, but no statement naming its tarball could be read">Listed, but none for this tarball</span>`
+  }
+  const { repository, commit, workflow, ref, builder, run, logIndex } = data.provenance
   const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
   const shown = github ?? repository.replace(/^https:\/\//u, '')
@@ -240,7 +245,7 @@ export function npmProvenanceFact(entry) {
     ${builderName(builder) ? html`<span>${builderName(builder)}</span>` : nothing}
     <span class="npm-provenance-line"><span class="npm-provenance-sep">from</span>
       ${commit ? link(github ? `${repository}/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`, `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
-      ${elsewhere ? html`<span class="npm-provenance-elsewhere" data-tooltip=${`The package names ${named}`}>Not the repository it names</span>` : nothing}</span>
+      ${elsewhere ? html`<span class="npm-provenance-warning" data-tooltip=${`The package names ${named}`}>Not the repository it names</span>` : nothing}</span>
     ${line([workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow)
       : html`<span class="mono" data-tooltip=${workflow}>${file}</span>`) : nothing,
     run ? link(run, 'Run', 'The run that built it') : nothing,
@@ -461,8 +466,8 @@ function publisherBadge([from, to]) {
 function provenanceBadge([from, to]) {
   if (!from.manifest?.provenance || to.manifest?.provenance) return nothing
   return html`<li><span class="npm-extension npm-compare-provenance"
-    data-tooltip=${`${from.version} has npm provenance; ${to.version} has none`}
-    .tooltipContent=${compareTip('npm provenance', [from, to], ['Attested', html`<span class="compare-tip-none">None</span>`],
+    data-tooltip=${`npm lists provenance for ${from.version}, none for ${to.version}`}
+    .tooltipContent=${compareTip('npm provenance', [from, to], ['Listed by npm', html`<span class="compare-tip-none">None</span>`],
       'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
 }
 

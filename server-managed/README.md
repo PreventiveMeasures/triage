@@ -1168,7 +1168,9 @@ control. A version shows in the bundle view with four tabs:
   GitHub's runners or the publisher's own; from which repository at which
   commit, flagged where that isn't the repository the package names; and
   how: its workflow, at that commit, its run and its Sigstore transparency
-  log entry; None where npm keeps none), homepage (left out where it only leads to its
+  log entry; None where npm keeps none, and flagged where npm lists
+  provenance but no statement naming the tarball can be read, never shown
+  as attested while it's asked for or where asking fails), homepage (left out where it only leads to its
   GitHub repository, or its directory or readme there, as npm's default
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
@@ -1259,8 +1261,8 @@ control. A version shows in the bundle view with four tabs:
   calls for a look: a publisher that changed, where npm names the account
   that published each version and they differ (`~alice → ~bob`, as when a
   package changes hands, or is taken over), linking to the new one's
-  profile; provenance lost, where the one compared with has npm provenance
-  and the open one hasn't, as a version published by hand with a token taken
+  profile; provenance lost, where npm lists provenance for the one compared
+  with and none for the open one, as a version published by hand with a token taken
   from its maintainers wouldn't; the advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where

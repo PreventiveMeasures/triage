@@ -355,7 +355,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   // Provenance the open version lost.
   const attested = provenance => ({ manifest: { provenance } })
   const lost = await badges(side('lost', '1.0.0', attested(true)), side('lost', '1.1.0', attested(undefined)))
-  assert.match(lost, /<li><span class="npm-extension npm-compare-provenance"[^]*compare-tip-head">npm provenance<[^]*>Attested<[^]*compare-tip-none">None<[^]*>Provenance lost<\/span><\/li>/u)
+  assert.match(lost, /<li><span class="npm-extension npm-compare-provenance"[^]*compare-tip-head">npm provenance<[^]*>Listed by npm<[^]*compare-tip-none">None<[^]*>Provenance lost<\/span><\/li>/u)
   assert.doesNotMatch(await badges(side('gained', '1.0.0', attested(undefined)), side('gained', '1.1.0', attested(true))), /npm-compare-provenance/u, 'not one it gained')
   assert.doesNotMatch(await badges(side('kept-attested', '1.0.0', attested(true)), side('kept-attested', '1.1.0', attested(true))), /npm-compare-provenance/u)
 
@@ -377,11 +377,17 @@ test('the Overview\'s provenance: what built the version, from which commit, by 
     'its workflow, at that commit, by its file\'s name')
   assert.match(built, /href=https:\/\/github\.com\/org\/repo\/actions\/runs\/7\/attempts\/1 [^>]*><span>Run</u)
   assert.match(built, /href=https:\/\/search\.sigstore\.dev\/\?logIndex=42 [^>]*><span>Transparency log</u)
-  assert.doesNotMatch(built, /npm-provenance-elsewhere/u)
+  assert.doesNotMatch(built, /npm-provenance-warning/u)
   answers.provenance['moved@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: 'https://github.com/actions/runner/self-hosted' }
   const moved = await fact(entry('moved', { provenance: true, github: { github: 'org/other' } }))
   assert.match(moved, /GitHub Actions, self-hosted runner/u)
-  assert.match(moved, /npm-provenance-elsewhere" data-tooltip=The package names org\/other>Not the repository it names</u, 'built from another repository than it names')
+  assert.match(moved, /npm-provenance-warning" data-tooltip=The package names org\/other>Not the repository it names</u, 'built from another repository than it names')
   assert.equal(text(npmProvenanceFact(entry('unbuilt', {}))), '<span class="npm-commit-missing">None</span>')
+  // Listed in its manifest, but no statement the server reads (as one naming
+  // another tarball): never shown as attested, nor while it's asked for.
+  const rejected = entry('rejected', { provenance: true })
+  assert.equal(text(npmProvenanceFact(rejected)), '<span class="npm-commit-missing">Checking…</span>')
+  assert.match(await fact(rejected), /npm-provenance-warning[^>]*>Listed, but none for this tarball</u)
+  assert.doesNotMatch(await fact(rejected), /Attested/u)
   assert.equal(text(npmProvenanceFact(entry('secret', { provenance: true }, { private: true }))), '', 'nothing for a private package')
 })
