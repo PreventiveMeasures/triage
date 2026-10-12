@@ -5,6 +5,7 @@ import { npmCompareSource } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { NEXT_ICON } from './lit-icons.js'
 import { renderCompareStats } from './bundle-compare-stats.js'
+import { comparePickerStyle } from './bundle-compare-picker.js'
 import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
@@ -32,14 +33,13 @@ function reviewActions(page) {
 
 function reviewHeader(page) {
   const source = page.source ?? npmCompareSource(page.entry)
-  const chars = Math.max('Choose a version…'.length, (source.widest?.name.length ?? 0) + (source.widest?.detail.length ?? 0) * .87 + 1)
   const choices = [{ value: '(empty)', label: 'Empty package', displayLabel: 'Empty package' }, ...source.options.map(row => ({
     value: `${page.entry.npm.name}@${row.id}`, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail,
   }))]
   if (!choices.some(row => row.value === page._target)) choices.push({ value: page._target, label: page._target })
   const versions = source.choices.map(row => ({ value: row.id, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail }))
   if (!versions.some(row => row.value === page.entry.npm.version)) versions.push({ value: page.entry.npm.version, label: page.entry.npm.version })
-  return html`<header class="bundle-compare-head npm-review-head"><div class="bundle-compare-picker is-versions" style=${`--compare-select-chars: ${Math.ceil(chars)}`}>
+  return html`<header class="bundle-compare-head npm-review-head"><div class="bundle-compare-picker is-versions" style=${comparePickerStyle(source)}>
     <div class="bundle-compare-select-wrap"><span class="bundle-compare-select-hint">Review</span>
       <bundle-selector .options=${choices} .value=${page._target} noun="version" versions label="Review base" ?disabled=${busy(page) || page._unsaved}
         @bundle-change=${event => { event.stopPropagation(); if (!busy(page) && !page._unsaved) page._navigate(event.detail.value) }}></bundle-selector></div>

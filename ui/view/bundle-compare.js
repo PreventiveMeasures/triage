@@ -56,6 +56,7 @@ import { layoutPackageDirs, rootLabel, treeLayout } from '@preventive/compare'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { dirClass, formatDelta, renderCompareStats } from './bundle-compare-stats.js'
+import { comparePickerStyle } from './bundle-compare-picker.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
@@ -753,15 +754,7 @@ class BundleCompare extends LitElement {
   _renderPicker(others, hasTarget, scopeSelector, badges) {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-    // A source's: both selects one width, at least its `widest` (a name and
-    // its tag, the tag at its smaller size) or the placeholder from the
-    // start, so most don't move as its choices arrive, then wide enough for
-    // any of those, each whole with its tags (as many as fit TAGS_FIT). The
-    // menu keeps its own width.
-    const fit = ({ name, detail }) => name.length + Math.min(detail?.length ?? 0, TAGS_FIT) * .87 + 1
-    const chars = this.source
-      ? (this.source.choices ?? []).reduce((most, choice) => Math.max(most, fit(choice)), Math.max(`Choose a ${noun}…`.length, fit(this.source.widest))) : null
-    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}
+    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${comparePickerStyle(this.source)}
       @compare-open-line=${event => this._openLine(event.detail)}>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare</span>
