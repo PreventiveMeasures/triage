@@ -183,15 +183,27 @@ function commandNames(command, name) {
   return false
 }
 
+// DefinitelyTyped's stub of a package's types, once the package has types
+// of its own (`@types/mkdirp` 2.0.0), depending on that package, the
+// registry's by its name (`spec`, no `npm:` alias of another, no repository,
+// URL or path): named as DefinitelyTyped publishes the package's types
+// (`@types/name`, a scoped one's `@types/scope__name`), with nothing but
+// prose beside its package.json, no declarations of its own.
+const typesOf = name => `@types/${name.startsWith('@') ? name.slice(1).replace('/', '__') : name}`
+const typesStubOf = ({ json, npm }, name, spec) => npm?.name === typesOf(name) && npmRegistrySpec(spec) && (npmAlias(spec)?.name ?? name) === name
+  && (json.sources ?? []).every(path => path === 'package.json' || (NPM_PROSE.test(path) && !MDX.test(path)))
+
 // Whether nothing of a version (`details`, its files and manifest) imports
-// a dependency it names (`{ name, kind }`, npm-package.js npmDependencies):
-// no code file names it as an import would, whole or by a part of it, nor
-// does an install script npm runs (importsOf); never where its files aren't
-// read. Not a peer dependency, which the package expects whoever installs it
-// to provide, nor types from DefinitelyTyped (`@types/`), imported by
-// another name, where no one else publishes.
-export function npmDependencyUnimported(details, { name, kind }) {
-  if (!details?.json || kind === 'peer' || name.startsWith('@types/')) return false
+// a dependency it names (`{ name, kind, range }`, or a changed one's `to`,
+// npm-package.js npmDependencies): no code file names it as an import
+// would, whole or by a part of it, nor does an install script npm runs
+// (importsOf); never where its files aren't read. Not a peer dependency,
+// which the package expects whoever installs it to provide, nor types from
+// DefinitelyTyped (`@types/`), imported by another name, where no one else
+// publishes; nor the package a stub of DefinitelyTyped's types of it
+// depends on (typesStubOf), with no code to import it.
+export function npmDependencyUnimported(details, { name, kind, range, to }) {
+  if (!details?.json || kind === 'peer' || name.startsWith('@types/') || typesStubOf(details, name, to ?? range)) return false
   const { whole, parts, commands } = importsOf(details)
   return !whole.has(name) && ![...name.slice(1).matchAll(/[-/]/gu)].some(({ index }) => parts.has(name.slice(0, index + 2)))
     && !commands.some(command => commandNames(command, name))
