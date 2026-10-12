@@ -1293,8 +1293,10 @@ control. A version shows in the bundle view with four tabs:
   and ranges lined up, each tagged after its name where it calls for a look:
   non-registry where npm fetches it from elsewhere than its registry (an
   `http:` or `https:` URL, a `git:`, `git+https:`, `git+ssh:`, `ssh:` or
-  `git@host:path` repository, `github:`, `gitlab:`, `bitbucket:` or
-  `gist:`, or GitHub's `owner/repo` shorthand; not a `file:` path), its
+  `git@host:path` repository, `github:`, `gitlab:`, `bitbucket:`, `gist:`
+  or `sourcehut:`, or GitHub's `owner/repo` shorthand, each as npm reads a
+  spec; not a `file:` path, nor a scheme npm doesn't install, as
+  `workspace:`), its
   spec in its tooltip, and opening nothing, as the registry's package of
   that name isn't what npm installs; and unimported where nothing of the
   version imports it: no code file names it as an import would (quoted,

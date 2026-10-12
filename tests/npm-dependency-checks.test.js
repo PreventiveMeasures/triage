@@ -14,10 +14,11 @@ test('a dependency npm fetches from elsewhere than its registry is told by its s
     ['https:example.com/pkg.tgz', 'URL'], ['HTTP:example.com/pkg.tgz', 'URL'],
     ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'git'], ['git://github.com/a/b.git#v1', 'git'], ['git+ssh://git@github.com:a/b.git', 'git'], ['ssh://git@github.com/org/repo.git', 'git'],
     ['git@github.com:a/b.git', 'git'], ['github:web3-js/WebSocket-Node#polyfill/globalThis', 'GitHub'], ['GitHub:a/b', 'GitHub'], ['gitlab:a/b', 'GitLab'],
-    ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'], ['a/b', 'GitHub'],
+    ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['sourcehut:~user/repo', 'SourceHut'], ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'],
+    ['a/b', 'GitHub'], ['a/b#feat/x:y', 'GitHub'], ['user@git.example.com:path/repo.git', 'git'], ['git+rsync://example.com/x.git', 'git'],
   ]) assert.equal(npmDependencySource(spec), source, spec)
   for (const spec of ['^1.2.3', '1.x', '>=1.0.0 <2', '1.0.0 || 2.0.0', '*', '', 'latest', 'npm:@scope/real@^1.0.0', 'npm:other', 'file:../x', 'link:../x',
-    './x', '../x', '~/x', '/x', 'workspace:*', '@scope/name']) assert.equal(npmDependencySource(spec), null, spec)
+    './x', '../x', '~/x', '/x', 'c:\\x', 'workspace:*', 'catalog:', '@scope/name', 'a/b/c', 'a/', 'a b/c']) assert.equal(npmDependencySource(spec), null, spec)
 })
 
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {

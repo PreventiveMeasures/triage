@@ -9,28 +9,35 @@ import { html } from 'lit'
 import { npmProse } from './file-readability.js'
 import { installScripts } from './install-scripts.js'
 
-// The hosts npm takes a repository on by name (`github:owner/repo`).
-const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist']])
+// The hosts npm takes a repository on by name (`github:owner/repo`), as
+// hosted-git-info, which reads them for it, has them.
+const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist'], ['sourcehut', 'SourceHut']])
+
 // GitHub's `owner/repo` shorthand, at a commit, branch or tag (`#v1.0.0`) or
-// not, as npm reads it: not a path (`./x`, `~/x`, `/x`) nor a scope's name.
-const GITHUB_SHORTHAND = /^[^@%/\s.~-][^:@%/\s]*\/[^:@%/\s]+(?:#.*)?$/u
+// not, as hosted-git-info tells it: one slash, neither first nor last, and
+// no space, `@`, `:` or second slash, before any `#`.
+function githubShorthand(spec) {
+  const head = spec.split('#', 1)[0], slash = head.indexOf('/')
+  return slash > 0 && !head.endsWith('/') && head.indexOf('/', slash + 1) === -1 && !/[\s@:]/u.test(head)
+}
 
 // Where a dependency's spec has npm fetch it from, where that isn't its
-// registry, as npm reads a spec: `URL`, a tarball's (`https:`, `http:`,
-// with its `//` or without, as npm takes it too);
-// `git`, a repository's (`git:`, `git+https:`, `git+ssh:`, `ssh:`,
-// `git@host:path`);
-// or a host npm takes one on by name (`github:`, `gitlab:`, `bitbucket:`,
-// `gist:`), GitHub for its `owner/repo` shorthand. Null for the registry's
-// ranges, tags and `npm:` aliases, and for a path (`file:`), which fetches
-// nothing.
+// registry, as npm reads a spec (npm-package-arg), in its order: not a path
+// (`./x`, `~/x`, `/x`, `c:\x`, `file:`), nor an `npm:` alias of a registry
+// package; a host npm takes a repository on by name (`github:`, `gitlab:`,
+// `bitbucket:`, `gist:`, `sourcehut:`); `git`, a repository's (`git:`,
+// `git+https:`, `git+ssh:`, `ssh:`, `git@host:path`); `URL`, a tarball's
+// (`https:`, `http:`, with its `//` or without); GitHub, for its
+// `owner/repo` shorthand. Null for the registry's ranges and tags, and for
+// any other scheme (`workspace:`), which npm doesn't install.
 export function npmDependencySource(spec) {
   const value = String(spec ?? '').trim()
-  if (/^https?:/iu.test(value)) return 'URL'
-  if (/^(?:git(?:\+[a-z]+)?|ssh):/iu.test(value) || /^[\w.-]+@[\w.-]+:/u.test(value)) return 'git'
-  const scheme = /^([a-z]+):/iu.exec(value)?.[1]
-  if (scheme) return HOSTS.get(scheme.toLowerCase()) ?? null
-  return GITHUB_SHORTHAND.test(value) ? 'GitHub' : null
+  if (/^(?:[.]|~\/|\/|[a-z]:|file:|npm:)/iu.test(value)) return null
+  const scheme = /^(git\+)?([a-z]+):/iu.exec(value)
+  if (scheme && !scheme[1] && HOSTS.has(scheme[2].toLowerCase())) return HOSTS.get(scheme[2].toLowerCase())
+  if (scheme?.[1] || /^(?:git|ssh):/iu.test(value) || /^[^@]+@[^:.]+\.[^:]+:.+$/iu.test(value)) return 'git'
+  if (scheme) return /^https?$/iu.test(scheme[2]) ? 'URL' : null
+  return githubShorthand(value) ? 'GitHub' : null
 }
 
 // Files no import is read from: prose (file-readability.js), source maps,
