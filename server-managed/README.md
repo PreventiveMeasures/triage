@@ -1163,7 +1163,9 @@ control. A version shows in the bundle view with four tabs:
   named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
   file), author (with their npm account, linking its profile, where the
   publisher's or a maintainer's email or name is theirs), the publisher's
-  account where it is someone else's, when the version was published and
+  account where it is someone else's (each account green where it is known
+  to publish one of npm's most downloaded packages, as
+  `@preventive/publishers` lists them, else yellow), when the version was published and
   how long ago (in the warning color under two weeks old, as a compromised
   release is mostly found and pulled within days; a version of a scope any
   visible team lists is its team's own and isn't flagged, nor is any until
@@ -1173,11 +1175,12 @@ control. A version shows in the bundle view with four tabs:
   list of them, and where that fails they show together), publish commit with
   the tags that point to it, provenance for a public package (npm's SLSA
   statement, v1 or the v0.2 it first wrote: what built it, as GitHub Actions on
-  GitHub's runners or the publisher's own; from which repository at which
-  commit, flagged where that isn't the repository the package names, on
-  GitHub or GitLab; and
-  how: its workflow, at that commit, its run and its Sigstore transparency
-  log entry; None where npm keeps none, and flagged where npm lists
+  GitHub's runners or the publisher's own, or GitLab CI, green on GitHub's or
+  GitLab's own runners; from which repository at which commit, flagged
+  (and not green) where that isn't the repository the package names, on
+  GitHub or GitLab; and, beside it where that fits whole, else on the next
+  line, how: its workflow, at that commit, its run and its Sigstore
+  transparency log entry; None where npm keeps none, and flagged where npm lists
   provenance but no statement naming the tarball can be read, never shown
   as attested while it's asked for or where asking fails), homepage (left out where it only leads to its
   GitHub repository, or its directory or readme there, as npm's default
@@ -1359,7 +1362,8 @@ for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, published, manifest, files, known }`, the manifest's `publisher` the npm
-account that published it (never its email), its `provenance` true where npm
+account that published it (never its email), its `knownAccounts` those of
+its publisher and author known to publish (`@preventive/publishers`), its `provenance` true where npm
 keeps a provenance statement for it, its `gitlab` the GitLab project its
 `repository` names (`group/project`, as `github` names a GitHub one), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,

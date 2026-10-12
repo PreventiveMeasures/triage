@@ -983,6 +983,15 @@ test('a GitLab project a package names as its repository is kept, in any form np
   ]) assert.equal(gitlab(repository), project, JSON.stringify(repository))
 })
 
+test('the accounts known to publish one of npm\'s most downloaded packages are named so, whatever their case', () => {
+  const known = json => npmManifest(json).knownAccounts ?? []
+  assert.deepEqual(known({ author: 'Sindre <s@example.com>', _npmUser: { name: 'sindresorhus', email: 's@example.com' } }), ['sindresorhus'], 'once, both author and publisher')
+  assert.deepEqual(known({ _npmUser: { name: 'LJHarb', email: 'l@example.com' } }), ['LJHarb'])
+  assert.deepEqual(known({ _npmUser: { name: 'someone-new-0000', email: 'n@example.com' } }), [])
+  assert.deepEqual(known({ author: 'Sindre <s@example.com>', _npmUser: { name: 'someone-new-0000', email: 'n@example.com' },
+    maintainers: [{ name: 'sindresorhus', email: 's@example.com' }] }), ['sindresorhus'], 'its author\'s account alone, published by another')
+})
+
 test('an author is named, with their npm account where the publisher or a maintainer is them, and no email kept', () => {
   const people = json => { const { author, authorAccount, publisher } = npmManifest(json); return { author, authorAccount, publisher } }
   const maintainers = [{ name: 'substack', email: 'mail@substack.net' }, { name: 'maxogden', email: 'max@example.com' }]

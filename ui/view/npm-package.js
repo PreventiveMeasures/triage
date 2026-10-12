@@ -520,8 +520,15 @@ export function factFile(path, files, label = path) {
 
 
 // An npm account, linking to its profile on npmjs.com.
-const npmAccount = (account, label) => html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(account)}`}
-  target="_blank" rel="noopener noreferrer"><span>${label}</span></a>`
+// An npm account, linking its profile: green where it's known to publish
+// one of npm's most downloaded packages (npm-packages.ts npmManifest's
+// `knownAccounts`), else yellow.
+function npmAccount(manifest, account, label) {
+  const known = manifest.knownAccounts?.includes(account)
+  return html`<a class=${`bundle-origin-link npm-account ${known ? 'is-known' : 'is-unknown'}`} href=${`https://www.npmjs.com/~${encodeURIComponent(account)}`}
+    data-tooltip=${known ? 'Publishes one of npm\'s most downloaded packages' : 'Publishes none of npm\'s most downloaded packages'}
+    target="_blank" rel="noopener noreferrer"><span>${label}</span></a>`
+}
 
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
@@ -545,10 +552,10 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
     ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
     ${manifest.author ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.authorAccount
-      ? html`${npmAccount(manifest.authorAccount, manifest.author)}${manifest.author === manifest.authorAccount ? nothing : html`<span class="npm-publisher">~${manifest.authorAccount}</span>`}`
+      ? html`${npmAccount(manifest, manifest.authorAccount, manifest.author)}${manifest.author === manifest.authorAccount ? nothing : html`<span class="npm-publisher">~${manifest.authorAccount}</span>`}`
       : manifest.author}</dd>` : nothing}
     ${manifest.publisher && manifest.publisher !== manifest.authorAccount
-      ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest.publisher, `~${manifest.publisher}`)}</dd>` : nothing}
+      ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest, manifest.publisher, `~${manifest.publisher}`)}</dd>` : nothing}
     ${published ? html`<dt>Published</dt><dd>${npmRecentRelease(list, published)
       ? html`<span class="npm-recent">${npmPublished(published)}</span>` : npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
