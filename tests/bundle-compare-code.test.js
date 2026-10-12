@@ -334,6 +334,39 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
 })
 
+test('over the package\'s package.json, the dependencies the open version adds and updates, each opening as the Overview\'s do, in either Code', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const { compareDependencyRow } = await import('../ui/view/compare-dependency-row.js')
+  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = version('a', { 'package.json': '{"dependencies":{"kept":"^1.0.0","gone":"1.0.0"}}\n', 'lib/package.json': '{}\n' })
+  const other = version('b', { 'package.json': '{"dependencies":{"kept":"^1.1.0"},"peerDependencies":{"fresh":"2.0.0"}}\n', 'lib/package.json': '{"a":1}\n' })
+  const opened = []
+  const shared = { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files,
+    dependencies: { removed: [{ key: '\0gone', name: 'gone', kind: null, range: '1.0.0', opens: 'gone' }],
+      added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh' }],
+      changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept' }] },
+    openDependency: row => opened.push(row.name) }
+  const element = Object.assign(new CompareCode(), shared)
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  const pkg = render('package.json')
+  assert.match(pkg, /class="bundle-compare-code-deps"[^]*New dependencies[^]*>fresh<[^]*npm-dependency-kind">peer[^]*>2\.0\.0<[^]*Updated dependencies[^]*>kept<[^]*\^1\.0\.0[^]*→[^]*\^1\.1\.0[^]*class=bundle-compare-diff-table/u,
+    'over its diff, a peer dependency among them')
+  assert.doesNotMatch(/class="bundle-compare-code-deps">([^]*?)<\/section><\/div>/u.exec(pkg)[1], /gone/u, 'not those it drops')
+  assert.match(pkg, /<button type="button" class="bundle-compare-row bundle-compare-row-link"/u)
+  assert.doesNotMatch(render('lib/package.json'), /bundle-compare-code-deps/u, 'only over the package\'s own')
+  compareDependencyRow(shared.dependencies.changed[0], shared.openDependency).values.find(value => typeof value === 'function')()
+  assert.deepEqual(opened, ['kept'], 'a row opens as the Overview\'s does')
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), shared)
+  all.models = combinedDiffRows(base, other, shared.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const sections = Object.fromEntries(renderText(all.render()).split('<section class="bundle-compare-all-file" aria-label=').slice(1)
+    .map(part => [part.slice(0, part.indexOf(' ')), part]))
+  assert.match(sections['package.json'], /class="bundle-compare-code-deps"[^]*New dependencies[^]*Updated dependencies/u, 'in the one-list Code too')
+  assert.doesNotMatch(sections['lib/package.json'], /bundle-compare-code-deps/u)
+})
+
 test('a file is labelled where a package starts from it, a package.json with its install scripts, and the tree tags what can\'t be read', () => {
   const version = (integrity, files, manifest) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'pkg', version: integrity, manifest } })

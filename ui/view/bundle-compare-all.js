@@ -125,12 +125,13 @@ class BundleCompareAll extends BundleCompareCode {
   }
 
   // A file's repointed imports, over its diff where its text changed too:
-  // one whose only change they are lists them alone, without its source.
+  // one whose only change they are lists them alone, without its source;
+  // over the package's package.json, its dependency changes.
   _fileBody(path, entry, file) {
     const repointed = entry.repointed
       ? this._renderRepointed(path, entry.repointed, [file.after, file.before].find(text => typeof text === 'string' && text !== '') ?? null, false) : nothing
     const sourceOnly = entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !(file.model?.blocks.length > 0))
-    return html`${repointed}${sourceOnly ? nothing : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}`
+    return html`${this._dependencyChanges(path)}${repointed}${sourceOnly ? nothing : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}`
   }
 
   render() {
