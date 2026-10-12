@@ -107,6 +107,18 @@ export function npmDependencySource(spec) {
   return /^(?:git|git\+(?:https?|rsync|ftp|file|ssh)):$/u.test(protocol) ? 'git' : /^https?:$/u.test(protocol) ? 'URL' : null
 }
 
+// Whether npm installs a dependency's spec from its registry, as
+// npm-package-arg's resolve reads a spec: an `npm:` alias's, a version, a
+// range or a tag, none of which holds a `/` or starts with a scheme. Not a
+// path (`./x`, `~/x`, `file:`, a tarball's name, `x.tgz`), a repository
+// (`owner/repo`, `github:`) or a URL (npmDependencySource), nor a scheme npm
+// doesn't install (`workspace:`): the registry's package of that name isn't
+// what npm installs for any.
+export function npmRegistrySpec(spec) {
+  const value = String(spec ?? '').trim()
+  return /^npm:/iu.test(value) || !/^[.]|^(?:git\+)?[a-z]+:|\/|[.](?:tgz|tar\.gz|tar)$/iu.test(value)
+}
+
 // Files no import is read from: prose, by its extension (Markdown, text) or
 // its name alone (`LICENSE-MIT`, `CHANGES`; not code named alike, as
 // `lib/history.js`), source maps, which quote whatever their sources import,

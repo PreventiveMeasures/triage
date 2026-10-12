@@ -61,6 +61,12 @@ async function askRange(range: string, name: string): Promise<NpmDownloads | nul
   let json: unknown
   try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) }
   catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  return readDownloads(json)
+}
+
+// One package's downloads as npm's range API gives them (alone, or one of
+// many in bulk: npm-download-counts.ts).
+export function readDownloads(json: unknown): NpmDownloads {
   if (!plainObject(json) || !isDay(json['start']) || !isDay(json['end']) || !Array.isArray(json['downloads'])) throw new NpmPackageError(502, 'upstream-invalid')
   const start = Date.parse(json['start'])
   const length = (Date.parse(json['end']) - start) / DAY_MS + 1
@@ -85,6 +91,9 @@ export const npmLatestRepo = (name: string, repo: string | null): void => void l
 export function npmDownloads(name: string): Promise<NpmDownloads | null> {
   return downloads(name, () => askDownloads(name))
 }
+
+// A package's year kept, asking for nothing; undefined where none is.
+export const keptNpmDownloads = (name: string) => downloads.peek(name)
 
 export const SOCKET_SCORES = ['overall', 'supplyChain', 'vulnerability', 'quality', 'maintenance', 'license'] as const
 const SOCKET_SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, middle: 2, low: 3 }

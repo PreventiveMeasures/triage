@@ -43,8 +43,9 @@
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
 // `from` and `to` in place of `range`, an added or changed one with its
 // `flags`, `{ check, label, tooltip }`, what calls for a look at it
-// (npm-dependency-checks.js). `badges` is what calls for a look at the two,
-// at the picker row's end, `files` the comparison's file lists
+// (npm-dependency-checks.js), and `dependencyTags(row, kind)` what to tag
+// one with, where it has anything. `badges` is what calls for a look at the
+// two, at the picker row's end, `files` the comparison's file lists
 // (computeBundleDiff), and `widest` the `{ name, detail }` its selects are
 // sized to hold.
 import { LitElement, html, nothing } from 'lit'
@@ -62,7 +63,6 @@ import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { bundleFileMeta, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
-import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
@@ -543,11 +543,11 @@ class BundleCompare extends LitElement {
 
   // A source's dependencies (see `source`): the range each requires, or for
   // Changed the one it moved from and to; `kind` marks peer and optional, and
-  // its `flags` what calls for a look at it (npm-dependency-checks.js).
+  // the source's `dependencyTags` what else it tags one with.
   _depGroup(title, rows, kind, lanes) {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
     const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
-      ${npmDependencyFlagTags(r.flags)}${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
+      ${this.source?.dependencyTags?.(r, kind) ?? nothing}${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
       ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
           <span class="bundle-compare-ver-from">${r.from}</span>
           <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
@@ -892,11 +892,13 @@ class BundleCompare extends LitElement {
       ${mode === 'code' && this._diffFits ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
+          .dependencyTags=${this.source?.dependencyTags ?? null}
           .models=${this._combinedFor().models} .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
         : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
+          .dependencyTags=${this.source?.dependencyTags ?? null}
           .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
         : html`<div class="bundle-compare-body">${body}</div>`}

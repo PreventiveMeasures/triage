@@ -34,7 +34,6 @@ import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLo
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
-import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
@@ -256,9 +255,11 @@ export class BundleCompareCode extends LitElement {
     alertTags: { attribute: false },
     // A source's dependency changes, `{ removed, added, changed }`
     // (npm-package.js npmDependencyChanges, with npm-dependency-checks.js's
-    // `flags`), and what opens one.
+    // `flags`), what opens one, and what tags one (npm-overview.js
+    // npmDependencyTags).
     dependencies: { attribute: false },
     openDependency: { attribute: false },
+    dependencyTags: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -952,8 +953,9 @@ export class BundleCompareCode extends LitElement {
   // ones aren't listed), under one head counting them, each a chip with its
   // range beside its name, those the open version adds, those whose range
   // it changes and those it drops, struck through, each opening as the
-  // Overview's Dependencies rows do, and tagged with its `flags` where it
-  // calls for a look (npm-dependency-checks.js), the head counting those too.
+  // Overview's Dependencies rows do, and tagged as the source tags it
+  // (`dependencyTags`), the head counting its `flags`, what calls for a look
+  // at it (npm-dependency-checks.js), too.
   _dependencyChanges(path) {
     if (path !== 'package.json' || !this.dependencies) return nothing
     const { added, changed, removed } = this.dependencies
@@ -968,7 +970,7 @@ export class BundleCompareCode extends LitElement {
         const range = kind === 'changed'
           ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
           : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
-        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${npmDependencyFlagTags(row.flags)}`
+        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTags?.(row, kind) ?? nothing}`
         const label = `${{ added: 'New', changed: 'Updated', removed: 'Removed' }[kind]}: ${row.name}`
         return html`<li>${open && row.opens
           ? html`<button type="button" class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label} @click=${() => open(row)}>${content}</button>`

@@ -12,7 +12,8 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
-import { npmCommitTags } from '../server-managed/npm-insights.ts'
+import { npmCommitTags, npmDownloads } from '../server-managed/npm-insights.ts'
+import { npmDownloadCounts } from '../server-managed/npm-download-counts.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
@@ -787,6 +788,101 @@ test('npm\'s provenance for a public version: where it was built, read only from
   assert.deepEqual(provenanceAsked.map(([, id]) => id).toSorted(), ['attested-gitlab@1.0.0', 'attested-v02@1.0.0', 'attested@1.0.0', 'forged@1.0.0'],
     'asked once each, kept; not about a version npm keeps none for, nor a private one')
   assert.ok(provenanceAsked.every(([, , auth]) => auth === null), 'asked without credentials')
+})
+
+test('many packages\' recent downloads at once: unscoped ones in bulk, a scoped one alone, each kept, a kept year answering for its own', async t => {
+  const now = Date.parse('2026-10-12T06:00:00Z'), range = '2026-08-01:2026-10-11'
+  const series = (start, end, count) => ({ start, end, downloads: [{ day: start, downloads: count }, { day: end, downloads: count }] })
+  const asked = []
+  let failing = false
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = String(input)
+    asked.push(url.replace('https://api.npmjs.org/downloads/range/', ''))
+    if (failing) return Promise.resolve(new Response('', { status: 503 }))
+    if (url.endsWith(`/${range}/bulk-a,bulk-b,bulk-unknown`)) return Promise.resolve(Response.json({ 'bulk-a': series('2026-08-01', '2026-10-11', 5), 'bulk-b': series('2026-08-01', '2026-10-11', 7), 'bulk-unknown': null }))
+    if (url.endsWith(`/${range}/@bulk%2fscoped`)) return Promise.resolve(Response.json({ ...series('2026-08-01', '2026-10-11', 9), package: '@bulk/scoped' }))
+    if (url.endsWith('/last-year/bulk-year')) return Promise.resolve(Response.json(series('2025-10-01', '2026-10-11', 3)))
+    return Promise.resolve(Response.json({ error: 'not found' }, { status: 404 }))
+  })
+  const counts = await npmDownloadCounts(['bulk-a', '@bulk/scoped', 'bulk-b', 'bulk-unknown'], now)
+  assert.deepEqual(asked, [`${range}/bulk-a,bulk-b,bulk-unknown`, `${range}/@bulk%2fscoped`], 'the unscoped ones in one request, from the first of the month before last to yesterday')
+  assert.deepEqual(Object.keys(counts), ['bulk-a', '@bulk/scoped', 'bulk-b', 'bulk-unknown'])
+  assert.equal(counts['bulk-a'].days.length, 72)
+  assert.deepEqual([counts['bulk-a'].days[0], counts['bulk-b'].days.at(-1), counts['@bulk/scoped'].days[0]], [5, 7, 9])
+  assert.equal(counts['bulk-unknown'], null, 'null where npm has none')
+  asked.length = 0
+  assert.deepEqual(await npmDownloadCounts(['bulk-b', 'bulk-a'], now), { 'bulk-b': counts['bulk-b'], 'bulk-a': counts['bulk-a'] }, 'kept')
+  assert.deepEqual(asked, [])
+  // Kept two weeks, as a newer answer would add only days the viewer leaves out.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 13 * 24 * 60 * 60_000 })
+  await npmDownloadCounts(['bulk-a'], now)
+  assert.deepEqual(asked, [], 'thirteen days on')
+  t.mock.timers.tick(2 * 24 * 60 * 60_000)
+  await npmDownloadCounts(['bulk-a', 'bulk-b', 'bulk-unknown'], now)
+  assert.deepEqual(asked, [`${range}/bulk-a,bulk-b,bulk-unknown`], 'asked again past two weeks')
+  t.mock.timers.reset()
+  asked.length = 0
+  // A package's year, kept for its Overview, answers for it.
+  await npmDownloads('bulk-year')
+  asked.length = 0
+  assert.equal((await npmDownloadCounts(['bulk-year'], now))['bulk-year'].start, '2025-10-01')
+  assert.deepEqual(asked, [])
+  // One npm couldn't be asked about is left out, and asked again next time.
+  failing = true
+  assert.deepEqual(await npmDownloadCounts(['bulk-down', 'bulk-a'], now), { 'bulk-a': counts['bulk-a'] })
+  failing = false
+  assert.deepEqual(await npmDownloadCounts(['bulk-down'], now), { 'bulk-down': null }, 'asked again')
+})
+
+test('many packages\' recent downloads: those npm hasn\'t answered for by the deadline are left out, and what is being asked about is shared', async t => {
+  const now = Date.parse('2026-10-12T06:00:00Z'), range = '2026-08-01:2026-10-11'
+  const asked = []
+  let late
+  t.mock.method(globalThis, 'fetch', (input, init) => {
+    const url = String(input).replace('https://api.npmjs.org/downloads/range/', '')
+    asked.push(url)
+    // A scoped one stalls until it's given up on, or until it's let answer;
+    // the others answer.
+    if (url.startsWith(`${range}/@stall`)) {
+      return init.signal.aborted ? Promise.reject(init.signal.reason) : new Promise((resolve, reject) => { init.signal.addEventListener('abort', () => reject(init.signal.reason)) })
+    }
+    if (url.startsWith(`${range}/@late`)) return new Promise(resolve => { late = () => resolve(Response.json(null, { status: 404 })) })
+    return Promise.resolve(Response.json({ 'leave-a': null, 'leave-b': null }))
+  })
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  let deadline = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', ms => ms === 60_000 ? deadline.signal : timeout(ms))
+  const counts = npmDownloadCounts(['leave-a', 'leave-b', ...Array.from({ length: 9 }, (_, i) => `@stall/p${i}`)], now)
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(asked.filter(url => url.includes('@stall')).length, 4, 'four scoped ones at a time')
+  deadline.abort()
+  assert.deepEqual(await counts, { 'leave-a': null, 'leave-b': null }, 'the stalled ones left out')
+  assert.equal(asked.filter(url => url.includes('@stall')).length, 9, 'the rest given up on at once')
+  // A second request for a name being asked about waits for that asking,
+  // asking npm nothing more; its own deadline doesn't stop it either.
+  asked.length = 0
+  deadline = new AbortController()
+  const first = npmDownloadCounts(['@late/x'], now)
+  deadline = new AbortController()
+  const second = npmDownloadCounts(['@late/x'], now)
+  deadline.abort()
+  await new Promise(resolve => { setImmediate(resolve) })
+  late()
+  assert.deepEqual([await first, await second], [{ '@late/x': null }, { '@late/x': null }])
+  assert.deepEqual(asked, [`${range}/@late%2fx`], 'asked once')
+})
+
+test('the viewer asks for many packages\' recent downloads in one request, as a reader, about valid names alone', async t => {
+  const h = await setup(t)
+  t.mock.method(globalThis, 'fetch', input => Promise.resolve(String(input).includes('/route-a,route-b')
+    ? Response.json({ 'route-a': null, 'route-b': null }) : Response.json({ error: 'not found' }, { status: 404 })))
+  const res = await h.send('/api/npm/download-counts?names=route-a,route-b,route-a')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), { downloads: { 'route-a': null, 'route-b': null } }, 'each name once')
+  assert.equal((await h.send('/api/npm/download-counts?names=route-a,..bad')).status, 400)
+  assert.equal((await h.send('/api/npm/download-counts?names=')).status, 400)
+  assert.equal((await h.send(`/api/npm/download-counts?names=${Array.from({ length: 513 }, (_, i) => `p${i}`).join(',')}`)).status, 400, 'at most 512')
+  assert.equal((await h.send('/api/npm/download-counts?names=route-a', 'nobody')).status, 401)
 })
 
 test('Socket is never asked about a private package, whoever reads it', async t => {

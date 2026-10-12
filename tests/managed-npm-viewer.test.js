@@ -54,7 +54,7 @@ test('package input takes a name, a version or tag, or an npmjs.com link', () =>
   for (const bad of ['', '@babel', 'lodash@^4', 'a b', '../x', 'https://example.com/package/lodash', null]) assert.equal(parseNpmPackageInput(bad), null, String(bad))
 })
 
-test('Dependencies list every kind by name, and an alias opens the package it names; one from elsewhere than the registry, none', () => {
+test('Dependencies list every kind by name, and an alias opens the package it names; one npm doesn\'t install from the registry, none', () => {
   assert.deepEqual(npmDependencies({
     dependencies: { zod: '^3.0.0', alias: 'npm:@scope/real@^1.0.0', bare: 'npm:other', local: 'file:../x', abi: 'git+https://github.com/ethereumjs/ethereumjs-abi.git' },
     peerDependencies: { react: '>=18', zod: '^3.0.0' },
@@ -64,7 +64,7 @@ test('Dependencies list every kind by name, and an alias opens the package it na
     { name: 'alias', range: 'npm:@scope/real@^1.0.0', kind: null, opens: '@scope/real' },
     { name: 'bare', range: 'npm:other', kind: null, opens: 'other' },
     { name: 'fsevents', range: '^2.0.0', kind: 'optional', opens: 'fsevents' },
-    { name: 'local', range: 'file:../x', kind: null, opens: 'local' },
+    { name: 'local', range: 'file:../x', kind: null, opens: null },
     { name: 'react', range: '>=18', kind: 'peer', opens: 'react' },
     { name: 'ws', range: 'github:web3-js/WebSocket-Node#polyfill/globalThis', kind: 'optional', opens: null },
     { name: 'zod', range: '^3.0.0', kind: null, opens: 'zod' },

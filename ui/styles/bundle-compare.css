@@ -991,7 +991,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }
   &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  & :is(.npm-dependency-kind, .npm-dependency-flag) { align-self: center; }
+  & :is(.npm-dependency-kind, .npm-dependency-flag, span.npm-downloads-tier) { align-self: center; }
+  /* A new one's tier by downloads, as small as the tags beside it. */
+  & span.npm-downloads-tier { font-size: .6rem; line-height: 1.35; }
 }
 .bundle-compare-code-dep-range {
   color: var(--muted);

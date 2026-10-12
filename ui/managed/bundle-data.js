@@ -110,6 +110,12 @@ export function fetchNpmStats(name, { signal } = {}) {
   return requestNpm('stats', { name }, signal)
 }
 
+// Its commas as they are, not `%2C`: the request line is what a long list
+// is bound by (npm-overview.js askDownloadCounts).
+export function fetchNpmDownloadCounts(names, { signal } = {}) {
+  return request(`/api/npm/download-counts?names=${names.map(encodeURIComponent).join(',')}`, NPM_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmAdvisories(name, { signal } = {}) {
   return requestNpm('advisories', { name }, signal)
 }

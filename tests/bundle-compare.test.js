@@ -20,6 +20,7 @@ mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 await import('../ui/view/bundle-compare.js')
+const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 const Compare = customElements.get('bundle-compare')
 const { state: compareState } = await import('../client/index.js')
 
@@ -271,8 +272,9 @@ test('packages list Removed | Added | Changed, each package once with its versio
   assert.deepEqual(changedOrder(), ['Own source', 'axios', 'lodash', 'react'], 'the largest change first, name breaking ties')
 })
 
-test('a source\'s dependencies list in place of Packages, each tagged with what calls for a look at it', () => {
+test('a source\'s dependencies list in place of Packages, each tagged as the source tags it, with what calls for a look at it', () => {
   const view = compare()
+  view.source = { dependencyTags: row => npmDependencyFlagTags(row.flags) }
   const flag = (check, label) => ({ check, label, tooltip: `${label}, as said` })
   const rows = { removed: [{ key: '\0gone', name: 'gone', kind: null, range: 'github:a/gone' }],
     added: [{ key: '\0plain-crypto-js', name: 'plain-crypto-js', kind: null, range: '^4.2.1', flags: [flag('unimported', 'unimported')] }],
@@ -446,6 +448,8 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
   assert.doesNotMatch(diff, />Packages</u)
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
+  view.source = { ...view.source, dependencyTags: (row, kind) => `[${kind} ${row.name}]` }
+  assert.match(renderText(view._renderDiff()), /\[added dep\]<span class="npm-dependency-kind">peer<\/span>/u, 'what the source tags one with, before its kind')
 })
 
 test('a source\'s badges are given the one compared with, the open one, and the comparison\'s files', async () => {

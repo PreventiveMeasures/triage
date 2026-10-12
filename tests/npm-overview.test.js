@@ -14,13 +14,15 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
-const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {} }
-const socketAsked = []
+const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, counts: {} }
+// Each request for many packages' recent downloads, by its names.
+const countsAsked = [], socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
+  fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -513,6 +515,56 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
+})
+
+test('a dependency Compare lists new is tagged with its package\'s tier by downloads but its latest two weeks\', whatever it is, once they arrive, asked with the others\'', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
+  // 500 a day: 3,500 a week, among the top 100,000; 4M a day, 28M a week, among the top 2,000.
+  answers.counts['new-low'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 500) }
+  answers.counts['new-top'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 4e6) }
+  const settle = () => new Promise(resolve => { setImmediate(resolve) })
+  // Asked for in one pass, as a Compare's are: one request for all.
+  countsAsked.length = 0
+  npmDependencyTags({ name: 'new-low', opens: 'new-low' }, 'added')
+  npmDependencyTags({ name: 'new-top', opens: 'new-top' }, 'added')
+  npmDependencyTags({ name: 'unlisted', opens: 'unlisted' }, 'added')
+  await settle()
+  assert.deepEqual(countsAsked, [['new-low', 'new-top', 'unlisted']])
+  assert.equal(rendered(npmDependencyTags({ name: 'unlisted', opens: 'unlisted' }, 'added')), '', 'nothing for one not answered')
+  // Shown one after another, each package's downloads asked for once a
+  // session: 1 depending on A and B, 2 on B and C, 3 on all three.
+  for (const name of ['dep-a', 'dep-b', 'dep-c']) answers.counts[name] = answers.counts['new-low']
+  const show = async (...names) => { countsAsked.length = 0; for (const name of names) npmDependencyTags({ name, opens: name }, 'added'); await settle(); return countsAsked }
+  assert.deepEqual(await show('dep-a', 'dep-b'), [['dep-a', 'dep-b']])
+  assert.deepEqual(await show('dep-b', 'dep-c'), [['dep-c']], 'only the one not had')
+  assert.deepEqual(await show('dep-a', 'dep-b', 'dep-c'), [], 'none, all had')
+  // As many as fit a request line: a long list in more than one request.
+  const many = Array.from({ length: 300 }, (_, i) => `a-dependency-with-a-rather-long-name-${String(i).padStart(3, '0')}`)
+  const split = await show(...many)
+  assert.ok(split.length > 1 && split.every(names => names.map(encodeURIComponent).join(',').length <= 8000), `${split.length} requests`)
+  assert.deepEqual(split.flat(), many, 'each once, in order')
+  // One whose own figures the session has (as its Overview read them) isn't asked for again.
+  answers.stats['dep-figured'] = { downloads: answers.counts['new-top'] }
+  npmCompareBadges({ npm: { name: 'dep-figured', version: '1.0.0' } }, { npm: { name: 'dep-figured', version: '1.1.0' } })
+  await settle()
+  assert.deepEqual(await show('dep-figured'), [])
+  assert.match(rendered(npmDependencyTags({ name: 'dep-figured', opens: 'dep-figured' }, 'added')), />top 2,000</u)
+  const tag = async (row, kind = 'added') => { npmDependencyTags(row, kind); await settle(); return rendered(npmDependencyTags(row, kind)) }
+  assert.match(await tag({ name: 'alias', range: 'npm:new-low@^1.0.0', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
+    'the package it opens, an alias\'s too, to Sep 27: its last whole month August')
+  // A package just pulled in, its latest two weeks' downloads 1M a day, but
+  // 100 a day before them: unpopular, as it was.
+  answers.counts['new-spiked'] = { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, (_, i) => i < 58 ? 100 : 1e6) }
+  assert.match(await tag({ name: 'new-spiked', opens: 'new-spiked' }), /npm-downloads-tier is-unpopular[^]*>unpopular</u, 'not by its latest two weeks')
+  assert.deepEqual(npmSettledDownloads(answers.counts['new-spiked'], Date.parse('2026-10-12T12:00:00Z')),
+    { start: '2026-08-01', end: '2026-09-27', days: Array.from({ length: 58 }, () => 100) }, 'to the day before the latest two weeks, Sep 28 to Oct 11')
+  assert.match(await tag({ name: 'new-top', opens: 'new-top' }), /npm-downloads-tier is-top[^]*>top 2,000</u, 'green ones too')
+  assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'changed'), '', 'not one the version compared with had')
+  assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'removed'), '')
+  assert.equal(await tag({ name: 'local', opens: null }), '', 'nor one that opens no package, as npm doesn\'t install it from the registry')
+  // What calls for a look at one, flagged, whatever its kind.
+  const source = { check: 'source', label: 'non-registry', tooltip: 'From GitHub, not npm\'s registry: github:a/b' }
+  assert.equal(await tag({ name: 'b', opens: null, flags: [source] }, 'changed'), '<span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm\'s registry: github:a/b>non-registry</span>')
 })
 
 test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, one newly obfuscated', async () => {

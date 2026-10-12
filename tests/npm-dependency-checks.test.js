@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges } from '../ui/view/npm-dependency-checks.js'
+import { npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges, npmRegistrySpec } from '../ui/view/npm-dependency-checks.js'
 
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
 // A version's details: its files, by path, and its manifest.
@@ -31,6 +31,22 @@ test('a dependency npm fetches from elsewhere than its registry is told by its s
     'git+foo://example.com/x.git', 'ssh://git@example.com/org/repo.git', 'ssh://git@git.sr.ht/~u/repo', 'git@example.com:org/repo.git', 'user@host.example.com:path/repo.git',
     'SSH://git@github.com/a/b.git', 'git@GITHUB.COM:a/b', 'git@github.com:a',
   ]) assert.equal(npmDependencySource(spec), null, spec)
+})
+
+test('a dependency npm installs from its registry is told by its spec, as npm-package-arg reads it', () => {
+  for (const spec of ['^1.2.3', '1.x', '>=1.0.0 <2', '1.0.0 || 2.0.0', '1.2.3 - 2', '*', '', 'latest', ' ^1.0.0 ', 'npm:@scope/real@^1.0.0', 'npm:other', 'NPM:other']) {
+    assert.equal(npmRegistrySpec(spec), true, spec)
+  }
+  // Not a path (`file:`, `./x`, any with a `/`, a tarball's name), a
+  // repository, a URL, nor what npm doesn't install: the registry's package
+  // of that name isn't what npm installs for any.
+  for (const spec of ['file:../x', 'FILE:x', './x', '../x', '.x', '~/x', '/x', 'c:/x', 'a/b/c', 'a/', '@scope/name', 'x.tgz', 'x.tar.gz', 'x.TAR',
+    'github:a/b', 'a/b', 'a/b#v1', 'git@github.com:a/b.git', 'git+ssh://git@example.com:a/b.git', 'git://example.com/a/b.git', 'https://example.com/x.tgz', 'https:example.com/x.tgz',
+    'workspace:*', 'link:../x', 'catalog:', 'jsr:@std/path', 'portal:../x']) {
+    assert.equal(npmRegistrySpec(spec), false, spec)
+  }
+  // Every one npm fetches from elsewhere (npmDependencySource) among them.
+  for (const spec of ['github:a/b', 'a/b', 'git@github.com:a/b.git', 'git+ssh://git@example.com:a/b.git', 'https://example.com/x.tgz', 'https:example.com/x.tgz']) assert.ok(npmDependencySource(spec), spec)
 })
 
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {

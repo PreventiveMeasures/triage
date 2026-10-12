@@ -1300,7 +1300,10 @@ control. A version shows in the bundle view with four tabs:
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
-  their latest version (an `npm:` alias at the package it names), their kinds
+  their latest version (an `npm:` alias at the package it names) where npm
+  installs them from its registry (not a path, `file:` or `./x`, a
+  repository, a URL, nor what npm doesn't install, `workspace:`, as the
+  registry's package of that name isn't what npm installs), their kinds
   and ranges lined up, each tagged after its name where it calls for a look:
   non-registry where npm fetches it from elsewhere than its registry, as
   npm-package-arg resolves a dependency's spec, hosted-git-info reading a
@@ -1312,8 +1315,7 @@ control. A version shows in the bundle view with four tabs:
   or `https:` tarball; not a `file:` path, nor what npm doesn't install
   (`workspace:`, `ssh:` to another host) or reads as a path
   (`git@example.com:org/repo`), its
-  spec in its tooltip, and opening nothing, as the registry's package of
-  that name isn't what npm installs; and unimported where nothing of the
+  spec in its tooltip; and unimported where nothing of the
   version imports it: no code file names it as an import would (quoted,
   alone or before a path in it, `'name'` or `"name/sub"`, after webpack's
   `~` too, or built from a part of its name up to a `-` or `/`, as a
@@ -1420,7 +1422,14 @@ control. A version shows in the bundle view with four tabs:
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those, each
-  the open version adds or changes tagged as its chips flag it.
+  the open version adds or changes tagged as its chips flag it; one it adds
+  that opens a package is tagged with that package's tier by downloads,
+  whatever it is, tinted as the package's own is, by its downloads to the
+  day before its latest two weeks (which a package a release just pulled in
+  could owe to that release alone), the downloads of new ones the session
+  hasn't any of asked for in one request (`/api/npm/download-counts`)
+  (a version-specific check, as of a version's age or publisher, would have
+  to cover every version its range takes).
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them.
@@ -1431,7 +1440,8 @@ control. A version shows in the bundle view with four tabs:
   one, and picking the other side's swaps them. Code
   reviews the changes as for bundles, over the package's package.json its
   dependencies' changes (plain, peer and optional ones, not dev ones) under
-  one head counting them, each a chip with its range beside its name,
+  one head counting them, each a chip with its range beside its name (a new
+  one's tier by downloads after it),
   tinted as the Dependencies section's groups are: those the open version
   adds, those whose range it changes (`~1.3.8 → ^2.0.0`) and those it drops,
   struck through, each opening as there and tagged as there, the head
@@ -1520,7 +1530,22 @@ archived, pushedAt }` for the repository the latest version's manifest names,
 `openIssues` taking in the open pull requests `openPulls` counts apart (from
 the last page of their list, one a page; null where GitHub didn't say); either
 is null where it can't be had, `github` for a repository GitHub does not
-say is public. `GET /api/npm/tags?name=&version=` returns `{ name, version,
+say is public. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
+many packages' recent downloads at once by name (`{ start, end, days }`,
+from the first of the month before last to yesterday; null where npm has
+none; one npm couldn't be asked about left out), up to 512 names: npm's
+range API is asked for up to 128 unscoped ones in one request and a scoped
+one alone, four at a time, without credentials, as it answers anyone; what
+it hasn't answered within a minute is given up on and left out. A request
+for names already being asked about waits for that asking, which a reader
+leaving doesn't stop. The viewer tags a dependency by them but its latest
+two weeks', so each is kept for two weeks, by package, a newer answer
+adding only days it leaves out;
+a package's year, where kept for its Overview, answers for it. The viewer
+keeps each package's for the session as well, its figures or its downloads
+alone, and asks only for those it hasn't any of, as many in one request as
+fit 8,000 characters of names, its commas as they are.
+`GET /api/npm/tags?name=&version=` returns `{ name, version,
 tags }`: the tags of its GitHub repository that point to its publish commit
 (`gitHead`), among those whose names hold the version (`v1.2.3`,
 `pkg@1.2.3`), which the Overview shows after the commit. GitHub's GraphQL API

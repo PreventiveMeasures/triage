@@ -22,7 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { installScripts } from './install-scripts.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { NPM_DEPENDENCY_KINDS, npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmFlagDependencyChanges } from './npm-dependency-checks.js'
+import { NPM_DEPENDENCY_KINDS, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
 
 export { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import './bundle-selector.js'
@@ -189,10 +189,27 @@ export function npmPackageData(kind, name, ask, shape) {
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
     if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait)
-    render()
+    repaint()
     return null
   }).catch(() => {})
   return loading
+}
+
+// Whether the session has asked about a package, or has its answer, not
+// failed: what it has needn't be asked for another way.
+export function npmPackageAsked(kind, name) {
+  sessionKept()
+  const kept = packageData.get(`${kind}\0${name}`)
+  return kept !== undefined && kept.status !== 'error'
+}
+
+// One repaint for answers arriving together, as those of one request for
+// many packages do.
+let repaintQueued = false
+function repaint() {
+  if (repaintQueued) return
+  repaintQueued = true
+  queueMicrotask(() => { repaintQueued = false; render() })
 }
 
 // A package's versions, newest first, and dist-tags, and whether a team
@@ -434,16 +451,16 @@ export function renderNpmLookup() {
 // A version's dependencies, each `{ name, range, kind, opens }`, in name
 // order: `kind` null for a plain dependency, else 'peer' or 'optional';
 // `opens` the package the viewer opens for it, the one an `npm:` alias
-// names, or null when it names none, or where npm fetches it from
-// elsewhere than its registry (npm-dependency-checks.js), whose package of
-// that name isn't what it installs.
+// names, or null when it names none, or where npm doesn't install it from
+// its registry (npm-dependency-checks.js npmRegistrySpec: a path, a
+// repository, a URL), whose package of that name isn't what it installs.
 export function npmDependencies(manifest) {
   const rows = []
   for (const [field, kind] of NPM_DEPENDENCY_KINDS) {
     for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
       const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
       const opens = alias ?? name
-      rows.push({ name, range, kind, opens: isNpmPackageName(opens) && !npmDependencySource(range) ? opens : null })
+      rows.push({ name, range, kind, opens: isNpmPackageName(opens) && npmRegistrySpec(range) ? opens : null })
     }
   }
   return rows.toSorted((a, b) => a.name.localeCompare(b.name) || (a.kind ?? '').localeCompare(b.kind ?? ''))
