@@ -3643,16 +3643,6 @@ button.npm-category {
   &.sev-low      { background: var(--low); color: var(--badge-low-text); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
-/* What a file's code can run beyond itself (file-runs-code.js: eval,
-   Function, child_process), marked to look into as install scripts are,
-   beside the file wherever it is listed. */
-.npm-runs-code {
-  flex: none; padding: 0 .3rem;
-  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
-  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45; white-space: nowrap;
-  .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
-}
 .npm-socket-scores { gap: .25rem; }
 a.npm-socket-score {
   align-items: center; gap: .25rem;

@@ -31,7 +31,7 @@ import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLongLinesTag } from './file-readability.js'
-import { npmRunsCode, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -99,14 +99,6 @@ function readability(details, path, text) {
   return files.get(path)
 }
 const minified = (details, path, text) => readability(details, path, text).category === 'minified'
-// What a script can run beyond itself (file-runs-code.js), by bundle and path.
-const runTexts = new WeakMap()
-function runsCode(details, path, text) {
-  let files = runTexts.get(details)
-  if (!files) runTexts.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, npmRunsCode(path, text))
-  return files.get(path)
-}
 
 // The files a bundle or package version starts from, by path, each with what
 // names it: a Stasis bundle's entries, an npm version's main, module, types
@@ -758,11 +750,8 @@ export class BundleCompareCode extends LitElement {
   // it was, for one removed), each kind the one compared with didn't hold
   // saying so, all of an added file's.
   _runsTags(path, entry) {
-    const { kind, basePath = path } = entry
-    const { before, after } = fileContents(this.base, this.other, path, entry)
-    const was = kind === 'added' ? null : before === undefined ? undefined : runsCode(this.base, basePath, before)
-    if (kind === 'removed') return npmRunsCodeTags(was)
-    return npmRunsCodeTags(after === undefined ? null : runsCode(this.other, path, after), was)
+    const { was, now } = this._reads(path, entry, npmFileRunsCode)
+    return entry.kind === 'removed' ? npmRunsCodeTags(was) : npmRunsCodeTags(now, was)
   }
 
   // A file the open bundle or version starts from (for one removed, the one
@@ -798,14 +787,15 @@ export class BundleCompareCode extends LitElement {
     return tags
   }
 
-  // How a file reads (file-readability.js) on the sides it has: `was`, as
-  // the bundle compared with has it, and `now`; null for a side without it.
-  _reads(path, entry) {
+  // How a file reads (file-readability.js), or what it runs (`of`), on the
+  // sides it has: `was`, as the bundle compared with has it, and `now`; null
+  // for a side without it, `was` undefined where its contents are unknown.
+  _reads(path, entry, of = readability) {
     const { kind, basePath = path } = entry
     const { before, after } = fileContents(this.base, this.other, path, entry)
     return {
-      was: kind === 'added' || before === undefined ? null : readability(this.base, basePath, before),
-      now: kind === 'removed' || after === undefined ? null : readability(this.other, path, after),
+      was: kind === 'added' ? null : before === undefined ? undefined : of(this.base, basePath, before),
+      now: kind === 'removed' || after === undefined ? null : of(this.other, path, after),
     }
   }
 

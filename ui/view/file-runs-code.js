@@ -7,9 +7,9 @@
 // `import … from 'node:child_process'`); a declaration file (.d.ts) read as
 // TypeScript, as node runs it (stripping its types, `declare function
 // eval(…)` among them, a function named, not called). A call written not to
-// read as one (`window['ev' + 'al']`) goes unseen, as does one in a template literal in another's substitution
-// (`${`${eval(x)}`}`), whose backtick ends the outer one as the regular
-// expression telling strings reads it.
+// read as one (`window['ev' + 'al']`) goes unseen, as does one in a template
+// literal in another's substitution (`${`${eval(x)}`}`), whose backtick ends
+// the outer one as the regular expression telling strings reads it.
 //
 // Labels to assist a reviewer, making the plain cases less likely to be
 // missed, not a check to rely on: code can come to eval, Function or
@@ -31,18 +31,22 @@ const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n)*`
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
 const FUNCTION_CALLED = String.raw`(?:${GAP}\??\.${GAP}(?:call|apply))?${GAP}(?:\?\.${GAP})?\(`
-// Told before anything is set aside: most files say none of it at all.
+// Any of RUNS_CODE, as a text may say it.
 const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u')
 
 // A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
 // `...eval` aside) or part of another's (`evaluate`), or as the global
 // object's (`window.eval`, `globalThis?.eval`); looked back on only where the
 // name or the global object's starts, so a long run of blanks reads in one go.
-const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:globalThis|window|global|self)${GAP}\??\.${GAP})?${name}`
-const AFTER = String.raw`(?![\p{ID_Continue}$])`
-
-// Each kind, in the order its tags show: its tag, what it does, and how its
-// code reads, or for a module, its name.
+const GLOBAL = 'globalThis|window|global|self'
+const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:${GLOBAL})${GAP}\??\.${GAP})?${name}`
+// A script's strings, regular expressions and comments, as file-readability.js
+// tells them, each taking its own text, and its calls in none of them: eval,
+// not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
+// none of its own), and Function.
+const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`, 'gmu')
+// A string naming child_process.
+const CHILD_PROCESS = /^(["'\u0060])(?:node:)?child_process\1$/u
 // What comes before a module's name where code loads it: `require(`, a
 // bundler's `__require(` or `__non_webpack_require__(`, `import(`, `import`
 // and `from`, comments allowed between (`import(/* webpackIgnore: true */ …)`);
@@ -52,64 +56,55 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 // a default named type).
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*|\bimport)${GAP}\(|\b(?:from|import))${GAP}$`, 'u')
 const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
-export const RUNS_CODE = new Map([
-  // Not a property TypeScript types as optional (`eval?: T`), JavaScript's
-  // `?:` none of its own.
-  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}(?!\\s*\\?:)`, 'gu') }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
-  ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)', module: /^(?:node:)?child_process$/u }],
+
+// Each kind, in the order its tags show: its tag and what it does.
+const RUNS_CODE = new Map([
+  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)' }],
+  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)' }],
+  ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)' }],
 ])
 
 // The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
 // order; null for none, or for a file that is no script.
 export function npmRunsCode(path, text) {
-  if (typeof text !== 'string' || !(SCRIPT.test(path) || NODE_HASHBANG.test(text)) || !SAYS_ANY.test(text)) return null
+  if (typeof text !== 'string' || !(SCRIPT.test(path) || NODE_HASHBANG.test(text))) return null
   const found = new Map()
-  read(text, 0, (kind, offset) => found.set(kind, [...found.get(kind) ?? [], offset]))
+  read(text, 0, (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset]))
   if (found.size === 0) return null
-  // Each offset's line, its line breaks counted up to the last.
-  const lines = new Map()
-  let from = 0, line = 1
-  for (const offset of [...new Set([...found.values()].flat())].toSorted((a, b) => a - b)) {
-    for (let next = text.indexOf('\n', from); next !== -1 && next < offset; next = text.indexOf('\n', from)) {
-      line++
-      from = next + 1
-    }
-    lines.set(offset, line)
-  }
-  return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(offset => lines.get(offset)))].toSorted((a, b) => a - b)]))
+  // Each offset's line, one more than the line breaks before it.
+  const breaks = [...text.matchAll(/\n/gu)].map(({ index }) => index)
+  return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(offset => below(breaks, offset) + 1))].toSorted((a, b) => a - b)]))
+}
+
+// npmRunsCode of a bundle's file, by bundle and path, read once for the npm
+// Overview's Files list and Compare.
+const readFiles = new WeakMap()
+export function npmFileRunsCode(details, path, text) {
+  let files = readFiles.get(details)
+  if (!files) readFiles.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, npmRunsCode(path, text))
+  return files.get(path)
 }
 
 // Where code (a file's, or a template literal's substitution's, at `base` in
-// the file) runs a kind, as at(kind, offset): where each of its strings,
-// regular expressions and comments starts and ends, in order, and where a
-// string names a module; then its calls, those in none of them, and those in
-// a template literal's substitutions (`${eval(x)}`), code again, read as its
-// own. Spans alone, not a copy of the text with them blanked, which takes
-// four times as long on a large one.
+// the file) runs a kind, as at(kind, offset), in order: its calls, a string
+// naming a module where it is loaded, and what a template literal's
+// substitutions (`${eval(x)}`) run, code again, read as its own. Most code
+// says none of it at all, told before anything is read.
 function read(code, base, at) {
-  const ends = [], starts = []
-  for (const { 0: match, 1: string, index } of code.matchAll(JS_STRING_OR_COMMENT)) {
-    starts.push(index)
-    ends.push(index + match.length)
+  if (!SAYS_ANY.test(code)) return
+  for (const { 1: string, groups, index } of code.matchAll(READS)) {
+    if (groups.eval || groups.function) at(groups.eval ? 'eval' : 'function', base + index)
     if (string?.[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
-    if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
-    for (const [kind, { module }] of RUNS_CODE) {
-      if (!module?.test(string.slice(1, -1))) continue
+    if (CHILD_PROCESS.test(string)) {
       const before = code.slice(Math.max(0, index - 300), index)
-      if (LOADS.test(before) && !TYPE_ONLY.test(before)) at(kind, base + index)
+      if (LOADS.test(before) && !TYPE_ONLY.test(before)) at('child-process', base + index)
     }
   }
-  const inside = (offset) => {
-    const span = below(starts, offset + 1) - 1
-    return span >= 0 && offset < ends[span]
-  }
-  for (const [kind, { code: reads }] of RUNS_CODE) if (reads) for (const { index } of code.matchAll(reads)) if (!inside(index)) at(kind, base + index)
 }
 
 // Where each of a template literal's substitutions' code starts and ends, in
-// it, for those that say any of RUNS_CODE: from its `${` to the `}` that
-// closes it.
+// it: from its `${` to the `}` that closes it.
 function substitutions(template) {
   const found = []
   for (let i = template.indexOf('${'); i !== -1; i = template.indexOf('${', i)) {
@@ -121,7 +116,7 @@ function substitutions(template) {
       continue
     }
     const end = closing(template, i + 2)
-    if (SAYS_ANY.test(template.slice(i + 2, end))) found.push([i + 2, end])
+    found.push([i + 2, end])
     i = end
   }
   return found

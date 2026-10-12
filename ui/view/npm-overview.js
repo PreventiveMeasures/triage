@@ -4,7 +4,7 @@
 // file extensions, and its binary files in a column of their own.
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
-import { bundleFileSizes } from '../../common/bundle-sources.js'
+import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
@@ -19,7 +19,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscationFound, npmReadabilityTag } from './file-readability.js'
-import { npmRunsCode, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -343,11 +343,10 @@ const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([
 
 // What the Overview reads of a version's files, once a version: their
 // `paths`, each one's readability (npmFileReadability), extension and size by
-// path, what a script can run beyond itself (`runs`, npmRunsCode, by path, for
-// those that run any), how many files each category has, the `binaries`,
-// sorted, its file types (npmFileTypes), and its `content`: its text files,
-// their lines of code and all its files' bytes (`unpacked`), the package's
-// own files (isNpmPackageFile) left out, as every package has them.
+// path, how many files each category has, the `binaries`, sorted, its file types
+// (npmFileTypes), and its `content`: its text files, their lines of code and
+// all its files' bytes (`unpacked`), the package's own files
+// (isNpmPackageFile) left out, as every package has them.
 const readabilities = new WeakMap()
 export function npmFilesRead(details) {
   let known = readabilities.get(details)
@@ -365,7 +364,6 @@ export function npmFilesRead(details) {
     }
     known = {
       paths: new Set(sources), byPath, counts, sizes, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
-      runs: new Map(sources.map((path, i) => [path, npmRunsCode(path, sourcesContent[i])]).filter(([, found]) => found)),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
       types: npmFileTypes(sources, sizes, lines), content,
     }
@@ -426,8 +424,8 @@ export function npmReadabilityWarning(entry, details) {
 // A file's tags in the Files list and Compare's: what it can run beyond itself
 // (npmRunsCode), its flags (npmFileFlagTags), then how it reads.
 export function npmFileTags(details, path) {
-  const { byPath, runs, sizes } = npmFilesRead(details)
-  return html`${npmRunsCodeTags(runs.get(path))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
+  const { byPath, sizes } = npmFilesRead(details)
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each

@@ -85,4 +85,6 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`"${'\\"'.repeat(5e5)}\neval(1)\n`, { eval: [2] }],
     [`\`${'\\`'.repeat(5e5)}\neval(1)\n`, null],
   ]) assert.deepEqual(found('a.js', text), runs)
+  // A minute, when each hit copied those before it.
+  assert.equal(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval').length, 1e5, 'as many hits as lines')
 })
