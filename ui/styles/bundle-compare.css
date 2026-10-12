@@ -155,7 +155,7 @@
 }
 .bundle-compare-chip.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
 .bundle-compare-chip.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-.bundle-compare-chip.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+.bundle-compare-chip.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
 .bundle-compare-chip.unchanged { color: var(--muted); background: rgb(from var(--muted) r g b / .14); }
 
 /* Scrolling body — caption + package/file diff sections. */
@@ -183,6 +183,8 @@
 /* A source's warning on the files the open one adds or changes, spaced as a
    section over Files. */
 .bundle-compare-body > .npm-readability-warning { margin-bottom: 1rem; }
+/* The last block ends at the pane's own inset, no section's margin under it. */
+.bundle-compare-body > :last-child { margin-bottom: 0; }
 .bundle-compare-section-head {
   margin: 0 0 .4rem;
   font-size: .7rem;
@@ -212,14 +214,16 @@
   .bundle-compare-cols[data-lanes='3'] { grid-template-columns: var(--compare-lanes); }
   .bundle-compare-cols[data-lanes='3'] > .bundle-compare-changed { grid-column: var(--compare-lane); }
 }
-/* Every row one fixed line high, and each list stops halfway through a
-   row, so the cut-off row says the list scrolls. Files' lists in their last
-   row, with nothing under Files, run on to the pane's foot where it leaves
-   them more room (`--compare-rest`, which the component measures). */
+/* Every row one fixed line high, and each list stops halfway through the
+   last row it has room for, so the cut-off row says the list scrolls.
+   Files' lists in their last row, with nothing under Files, run on to the
+   pane's foot where it leaves them more room (`--compare-rest`, which the
+   component measures). */
 .bundle-compare-rows--scroll {
   --compare-row: 1.375rem;
 
-  max-height: max(15.5 * var(--compare-row), round(down, var(--compare-rest, 0px), var(--compare-row)) - var(--compare-row) / 2);
+  max-height: max(15.5 * var(--compare-row),
+    round(down, var(--compare-rest, 0px) - var(--compare-row) / 2, var(--compare-row)) + var(--compare-row) / 2);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -234,7 +238,7 @@
    component measures what sits around them (`--compare-fill-around`). */
 .bundle-compare-rows--fill {
   max-height: max(5.5 * var(--compare-row),
-    round(down, 100cqh - var(--compare-fill-around, 8.25rem), var(--compare-row)) - var(--compare-row) / 2);
+    round(down, 100cqh - var(--compare-fill-around, 8.25rem) - var(--compare-row) / 2, var(--compare-row)) + var(--compare-row) / 2);
 }
 /* Sections that open on demand (Files, Import resolutions), the heading
    the disclosure. */
@@ -321,7 +325,7 @@
 .bundle-compare-changed .bundle-compare-dot { background: var(--medium); }
 .bundle-compare-added .bundle-compare-group-title { color: var(--green); }
 .bundle-compare-removed .bundle-compare-group-title { color: var(--critical); }
-.bundle-compare-changed .bundle-compare-group-title { color: var(--medium); }
+.bundle-compare-changed .bundle-compare-group-title { color: var(--yellow); }
 
 .bundle-compare-rows {
   margin: 0;
@@ -446,7 +450,7 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-ver-to.down,
 .bundle-compare-ver-dir.down { color: var(--critical); }
 .bundle-compare-ver-to.changed,
-.bundle-compare-ver-dir.changed { color: var(--medium); }
+.bundle-compare-ver-dir.changed { color: var(--yellow); }
 /* Version label on an added / removed dependency row, as wide as its
    group's longest (`--compare-version-width`) so the column lines up. */
 .bundle-compare-dep-ver {
@@ -584,7 +588,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed { color: var(--info); background: rgb(from var(--info) r g b / .16); }
   &[aria-pressed='false'] {
     color: var(--muted);
@@ -604,7 +608,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); }
   &.removed { color: var(--critical); }
-  &.changed, &.renamed { color: var(--medium); }
+  &.changed, &.renamed { color: var(--yellow); }
   /* A rename with its contents as they were. */
   &.renamed.pure { color: var(--info); }
 }
@@ -671,7 +675,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed, &.renamed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed.pure { color: var(--info); background: rgb(from var(--info) r g b / .16); }
 }
 .bundle-compare-code-counts {
@@ -988,7 +992,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   font: inherit; font-size: .72rem; line-height: 1.45;
 
   &.is-added { --dep: var(--green); }
-  &.is-changed { --dep: var(--medium); }
+  &.is-changed { --dep: var(--yellow); }
   &.is-removed { --dep: var(--critical); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }

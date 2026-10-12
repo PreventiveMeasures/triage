@@ -49,7 +49,8 @@
      painted as a badge FILL and the pale themes tune it for black
      text on it; this one is TEXT, so it darkens on a pale surface the
      way --warning above does. Kept clear of --warning's orange so the
-     two stamps don't read as one. */
+     two stamps don't read as one. So it is --medium's hue wherever that
+     is text, as Compare's changed chips and labels are. */
   --yellow: #d29922;
   /* Triage marker palette — single source for the four colors
      surfaced by the per-finding marker UI. Cross the shadow
