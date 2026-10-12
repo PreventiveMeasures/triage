@@ -1315,7 +1315,7 @@ control. A version shows in the bundle view with four tabs:
   do beyond itself (`eval`, `child_process`, `credentials`, `whole env`,
   `publish`), and a file with Exfiltration where it names a host malicious
   packages send what they take to, as Compare labels them, its lines in the
-  tooltip. Under the facts, its languages, then its readable files
+  tooltip, one on a single line opening the file's code there when clicked. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its

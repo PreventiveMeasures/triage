@@ -2670,7 +2670,7 @@ function renderNpmPackageOverview(entry, details) {
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
-    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
+    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path, true)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
     fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }

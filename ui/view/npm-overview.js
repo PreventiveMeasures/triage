@@ -483,11 +483,12 @@ export function npmReadabilityWarning(entry, details) {
 
 // A file's tags in the Files list and Compare's: what it can run beyond itself
 // (npmRunsCode), an exfiltration host it names (npmExfiltration), its flags
-// (npmFileFlagTags), then how it reads.
-export function npmFileTags(details, path) {
+// (npmFileFlagTags), then how it reads; with `opens`, for the Files list,
+// whose rows open a file's code, the first two on one line opening it there.
+export function npmFileTags(details, path, opens = false) {
   const { byPath, sizes } = npmFilesRead(details)
-  const text = bundleFilesAsMap(details).get(path)
-  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, text))}${npmExfiltrationTag(npmFileExfiltration(details, path, text))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
+  const at = opens ? path : undefined, text = bundleFilesAsMap(details).get(path)
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, text), undefined, at)}${npmExfiltrationTag(npmFileExfiltration(details, path, text), undefined, at)}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on

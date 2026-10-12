@@ -902,6 +902,9 @@ report.addEventListener('click', (e) => {
     const findingIdx = findingIdxAttr === undefined ? null : parseInt(findingIdxAttr, 10)
     const lineAttr = sourceOpen.dataset.bundleViewLine
     const line = lineAttr ? parseInt(lineAttr, 10) : null
+    // A line is the file's as published, not a pretty-printed copy's
+    // (pretty-source.js), so following one shows the file as published.
+    if (Number.isFinite(line)) state.bundleSourcePretty = false
     const pathChanged = state.bundleSourceFile !== path
     selectBundleSourceFile(path)
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx

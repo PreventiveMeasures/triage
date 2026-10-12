@@ -12,7 +12,7 @@
 // labels is not one that sends nothing.
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT, NPM_PROSE } from './file-readability.js'
-import { cachedPerFile, lineOf, linesNote, npmIsScript } from './file-runs-code.js'
+import { cachedPerFile, lineOf, linesNote, npmIsScript, onlyLine, opensAt } from './file-runs-code.js'
 
 // A URL's host: a name whose last label is letters (an internationalized
 // one's too, as written or as punycode), or an IPv4 address, after its
@@ -105,8 +105,11 @@ export const npmExfiltrationSaid = (found, was) => [...found].map(([service, lin
 // A file's Exfiltration tag where it names any of the services, in orange as
 // what it runs is (file-runs-code.js), naming them and their lines in its
 // tooltip; with `was`, the services it named as the version compared with has
-// it (null for none), one it didn't saying so.
-export function npmExfiltrationTag(found, was) {
+// it (null for none), one it didn't saying so; with `path`, for a list whose
+// rows open the file, one on one line opening it there.
+export function npmExfiltrationTag(found, was, path) {
   if (!found) return nothing
-  return html`<span class="npm-exfiltration" data-tooltip=${`Names a host malicious packages send what they take to: ${npmExfiltrationSaid(found, was)}`}>Exfiltration</span>`
+  const at = opensAt(path, path === undefined ? undefined : onlyLine([...found.values()]))
+  return html`<span data-bundle-view-source=${at.path} data-bundle-view-line=${at.line}
+    class="npm-exfiltration" data-tooltip=${`Names a host malicious packages send what they take to: ${npmExfiltrationSaid(found, was)}`}>Exfiltration</span>`
 }
