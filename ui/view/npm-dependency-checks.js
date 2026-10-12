@@ -17,7 +17,8 @@ const GITHUB_SHORTHAND = /^[^@%/\s.~-][^:@%/\s]*\/[^:@%/\s]+(?:#.*)?$/u
 
 // Where a dependency's spec has npm fetch it from, where that isn't its
 // registry, as npm reads a spec: `URL`, a tarball's (`https:`, `http:`);
-// `git`, a repository's (`git:`, `git+https:`, `git+ssh:`, `git@host:path`);
+// `git`, a repository's (`git:`, `git+https:`, `git+ssh:`, `ssh:`,
+// `git@host:path`);
 // or a host npm takes one on by name (`github:`, `gitlab:`, `bitbucket:`,
 // `gist:`), GitHub for its `owner/repo` shorthand. Null for the registry's
 // ranges, tags and `npm:` aliases, and for a path (`file:`), which fetches
@@ -25,7 +26,7 @@ const GITHUB_SHORTHAND = /^[^@%/\s.~-][^:@%/\s]*\/[^:@%/\s]+(?:#.*)?$/u
 export function npmDependencySource(spec) {
   const value = String(spec ?? '').trim()
   if (/^https?:\/\//iu.test(value)) return 'URL'
-  if (/^git(?:\+[a-z]+)?:/iu.test(value) || /^[\w.-]+@[\w.-]+:/u.test(value)) return 'git'
+  if (/^(?:git(?:\+[a-z]+)?|ssh):/iu.test(value) || /^[\w.-]+@[\w.-]+:/u.test(value)) return 'git'
   const scheme = /^([a-z]+):/iu.exec(value)?.[1]
   if (scheme) return HOSTS.get(scheme.toLowerCase()) ?? null
   return GITHUB_SHORTHAND.test(value) ? 'GitHub' : null

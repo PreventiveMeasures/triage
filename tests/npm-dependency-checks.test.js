@@ -11,7 +11,7 @@ const version = (files, manifest = {}, number = '1.1.0') => ({
 test('a dependency npm fetches from elsewhere than its registry is told by its spec', () => {
   for (const [spec, source] of [
     ['https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz', 'URL'], ['http://github.com/component/bind/archive/0.0.1.tar.gz', 'URL'],
-    ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'git'], ['git://github.com/a/b.git#v1', 'git'], ['git+ssh://git@github.com:a/b.git', 'git'],
+    ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'git'], ['git://github.com/a/b.git#v1', 'git'], ['git+ssh://git@github.com:a/b.git', 'git'], ['ssh://git@github.com/org/repo.git', 'git'],
     ['git@github.com:a/b.git', 'git'], ['github:web3-js/WebSocket-Node#polyfill/globalThis', 'GitHub'], ['GitHub:a/b', 'GitHub'], ['gitlab:a/b', 'GitLab'],
     ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'], ['a/b', 'GitHub'],
   ]) assert.equal(npmDependencySource(spec), source, spec)
