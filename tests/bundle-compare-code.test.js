@@ -503,6 +503,17 @@ test('a file is labelled with what its code can run beyond itself, in its head a
   assert.deepEqual(tags(rows['plain.js']), [])
 })
 
+test('a file naming an exfiltration host is tagged so in its head and the tree, a service new to it saying so', () => {
+  const base = version('a', { 'lib/send.js': 'post("https://webhook.site/x")\n', 'lib/gone.js': 'bot("https://api.telegram.org/bot")\n' })
+  const other = version('b', { 'lib/send.js': 'post("https://webhook.site/x")\nbot("https://api.telegram.org/bot")\n' })
+  const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
+  const tags = markup => [...markup.matchAll(/class="npm-exfiltration" data-tooltip=([^>]*)>Exfiltration</gu)].map(m => m[1])
+  assert.deepEqual(tags(head('lib/send.js')), ['Names a host malicious packages send what they take to: webhook.site (line 1), Telegram (line 2, new)'])
+  assert.deepEqual(tags(head('lib/gone.js')), ['Names a host malicious packages send what they take to: Telegram (line 1)'], 'a removed file as it was')
+  const row = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](render('lib/send.js')).find(markup => markup.includes('data-tooltip=lib/send.js>'))
+  assert.equal(tags(row).length, 1, 'in the tree too')
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]

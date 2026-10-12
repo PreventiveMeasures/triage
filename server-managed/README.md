@@ -239,7 +239,15 @@ one the version compared with didn't hold (all of an added file's) saying
 so. A quick read, not a parse: its strings, regular expressions and comments
 set aside, `child_process` told by the string naming the module where code
 loads it (`require(…)`, `import`, `from`), and a declaration file (.d.ts)
-read as any TypeScript, as node runs it.
+read as any TypeScript, as node runs it. A file naming a host malicious
+packages send what they take to is labelled Exfiltration, in its head and in
+the tree, as what it runs is: request catchers (webhook.site, Pipedream),
+out-of-band testing hosts (interactsh's `interact.sh` and `oast.*`, Burp
+Collaborator's), Telegram's bot API, Discord and Slack webhooks, Pastebin,
+ipinfo, and Bun's install script (`bun.sh/install`, now `bun.com/install`),
+which a worm ran its payload with; each with its lines, one the version
+compared with didn't name saying so. Any text but prose and a source map is
+read for them, comments and all.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
 `module`, `commonjs` and the rest, run as code, as is a file it records no
@@ -1293,8 +1301,9 @@ control. A version shows in the bundle view with four tabs:
   files every package has. A file an alert names is labelled with it, in
   its severity's color, in the Files list and in Compare's file heads and
   tree, each version by its own report; and a script with what its code can
-  run beyond itself (`eval`, `Function`, `child_process`), as
-  Compare labels it, its lines in the tooltip. Under the facts, its languages, then its readable files
+  run beyond itself (`eval`, `Function`, `child_process`), and a file with
+  Exfiltration where it names a host malicious packages send what they take
+  to, as Compare labels them, its lines in the tooltip. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
@@ -1350,7 +1359,8 @@ control. A version shows in the bundle view with four tabs:
   loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
   source map, which holds the names of the code it maps), ordered by name or
   size, or, where any file listed is flagged (Socket's alerts on it, what
-  it runs beyond itself, a warning's or a notice's tag), by its flags: the
+  it runs beyond itself, an exfiltration host it names, a warning's or a
+  notice's tag), by its flags: the
   most severe first (a critical alert, then a warning's or a high alert,
   then a moderate and a low alert, then a notice), then the most flags, then
   their names, then its path, files with none last; and, where the
@@ -1398,16 +1408,26 @@ control. A version shows in the bundle view with four tabs:
   alone or warn of it in orange, code that runs beyond itself new to a file
   the open version adds or changes (`Runs code`, the kinds named: eval,
   Function, child_process, as the file's tags say them), its tooltip listing
-  each file with its new kinds and their lines; a code file of 256 KiB or
-  more the open version adds (not one renamed), a file it changes that had
-  no line over 200 characters and now has one over 2,000 (prose, source maps
-  and an inline map's line aside, as its Long lines or Minified tag says of
-  it), and a file
+  each file with its new kinds and their lines; an exfiltration host new to
+  a file the open version adds or changes (`Exfiltration`, the services
+  named: `webhook.site, Telegram`), its tooltip listing each file with its
+  new services and their lines; a code file of 256 KiB or more the open
+  version adds (not one renamed), a file it changes that had no line over
+  200 characters and now has one over 2,000 (prose, source maps and an
+  inline map's line aside, as its Long lines or Minified tag says of it),
+  and a file
   it adds or changes with an obfuscator's fingerprint where the version
   compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
   each counting them where there are several, its tooltip alone listing
   them, each with its size, its longest line before and now, or what its
-  fingerprint holds;
+  fingerprint holds; in orange, as install scripts are, the hosts the open
+  version's code names that the one compared with's named in none of its
+  (`New hosts`, the host where it is one, else how many): a URL's in a
+  script's strings, regular expressions and template literals, its comments
+  aside, not a host built as the code runs, nor this machine's, the names
+  kept for examples and tests, a local network's, or W3C's, whose URLs name
+  XML namespaces, its tooltip listing each with the file it is first named
+  in and its line;
   `Non-registry deps`, dependencies the open version takes from
   elsewhere than npm's registry, as the Overview tags them, where the one
   compared with didn't, or by another spec, their names and each version's
