@@ -523,6 +523,12 @@ export function factFile(path, files, label = path) {
 const npmAccount = (account, label) => html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(account)}`}
   target="_blank" rel="noopener noreferrer"><span>${label}</span></a>`
 
+// npm's placeholder deprecation message: past its first sentence it only
+// sends readers to npm's support page, so that much is left off. Any other
+// message reads as written.
+const NPM_DEFAULT_DEPRECATION = /^\s*(Package no longer supported\.)\s+Contact Support at https:\/\/www\.npmjs\.com\/support for more info\.\s*$/u
+export const npmDeprecation = message => message.replace(NPM_DEFAULT_DEPRECATION, '$1')
+
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
 // are the package's file paths, once read.
@@ -541,7 +547,7 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
   // to switch to there too.
   return html`<dl class="bundles-detail-meta npm-facts">
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
-    ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
+    ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${npmDeprecation(manifest.deprecated)}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
     ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
     ${manifest.author ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.authorAccount
