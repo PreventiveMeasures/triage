@@ -8,11 +8,12 @@ const found = (path, text) => {
 }
 
 test('a script is read for eval, Function and child_process, each with the lines it is on', () => {
-  assert.deepEqual(found('a.js', 'const y = (0, eval)(code)\nwindow.eval(a)\nglobalThis . eval(b)\n'), { eval: [1, 2, 3] })
+  assert.deepEqual(found('a.js', 'const y = (0, eval)(code)\nwindow.eval(a)\nglobalThis . eval(b)\nglobalThis?.eval(c)\n'), { eval: [1, 2, 3, 4] })
   assert.deepEqual(found('a.js', 'new Function("return this")()\nconst f = Function("a", "b")\nnew window.Function(c)\n'),
     { function: [1, 2, 3] }, 'with new or without, as the global object\'s too')
   assert.deepEqual(found('a.js', 'Function?.("return payload")()\nglobalThis.Function?.("x")()\nFunction.call(null, "y")\nFunction.apply(null, ["z"])\neval?.(w)\n'),
     { eval: [5], function: [1, 2, 3, 4] }, 'called optionally, or by its call or apply')
+  assert.deepEqual(found('a.js', 'window?.Function("x")()\nself?.Function?.("y")()\n'), { function: [1, 2] }, 'the global object\'s, reached optionally')
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
     { 'child-process': [1, 2, 3] }, 'a module named by the string that names it, required or imported')
   assert.deepEqual(found('a.ts', 'eval(x)\nimport cp from "child_process"\n'), { eval: [1], 'child-process': [2] }, 'in RUNS_CODE\'s order')

@@ -30,8 +30,8 @@ const FUNCTION_CALL = String.raw`Function(?:\s*\??\.\s*(?:call|apply))?\s*(?:\?\
 const SAYS_ANY = new RegExp(`eval|${FUNCTION_CALL}|child_process`, 'u')
 
 // A name read as one, not as a property's (`vm.eval`) or part of another's
-// (`evaluate`), or as the global object's (`window.eval`).
-const BEFORE = String.raw`(?<![\p{ID_Continue}$.#])(?:(?:globalThis|window|global|self)\s*\.\s*)?`
+// (`evaluate`), or as the global object's (`window.eval`, `globalThis?.eval`).
+const BEFORE = String.raw`(?<![\p{ID_Continue}$.#])(?:(?:globalThis|window|global|self)\s*\??\.\s*)?`
 const AFTER = String.raw`(?![\p{ID_Continue}$])`
 
 // Each kind, in the order its tags show: its tag, what it does, and how its
