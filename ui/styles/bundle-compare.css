@@ -508,7 +508,14 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   color: var(--muted); font-size: .7rem;
 }
 .bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
-.bundle-compare-all-file-head { position: sticky; top: 0; z-index: 3; border-top: 1px solid var(--border); }
+/* A file's head stays over its diff as it scrolls: glass, as the app's other
+   chrome over moving content, so the code passing under the translucent
+   surface blurs rather than reading through it. */
+.bundle-compare-all-file-head {
+  position: sticky; top: 0; z-index: 3;
+  border-top: 1px solid var(--border);
+  backdrop-filter: var(--glass-blur);
+}
 .bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }
 
 /* ── Code mode ─────────────────────────────────────────────────────
