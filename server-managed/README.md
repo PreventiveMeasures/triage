@@ -1333,7 +1333,10 @@ control. A version shows in the bundle view with four tabs:
   package.json aside), nor does an install script npm runs, though npm
   installs it all the same and runs its install scripts, as a dependency
   added for those alone would be; not a peer one, which whoever installs the
-  package provides, nor one of DefinitelyTyped's `@types/`;
+  package provides, nor one of DefinitelyTyped's `@types/`, nor, for
+  DefinitelyTyped's types of a package, that package, which a stub of them
+  depends on once it has types of its own (`@types/mkdirp` 2.0.0 on
+  mkdirp), with no code to import it;
   Advisories, across every published version, one row each, its head
   counting those that affect the version shown, those first and marked,
   those fixed in it (affecting only older versions) struck through, and

@@ -183,15 +183,22 @@ function commandNames(command, name) {
   return false
 }
 
+// The name DefinitelyTyped publishes a package's types by: `@types/name`,
+// a scoped one's `@types/scope__name`.
+const typesOf = name => `@types/${name.startsWith('@') ? name.slice(1).replace('/', '__') : name}`
+
 // Whether nothing of a version (`details`, its files and manifest) imports
 // a dependency it names (`{ name, kind }`, npm-package.js npmDependencies):
 // no code file names it as an import would, whole or by a part of it, nor
 // does an install script npm runs (importsOf); never where its files aren't
 // read. Not a peer dependency, which the package expects whoever installs it
 // to provide, nor types from DefinitelyTyped (`@types/`), imported by
-// another name, where no one else publishes.
+// another name, where no one else publishes; nor, for DefinitelyTyped's
+// types of a package, that package, which a stub of them depends on once it
+// has types of its own (`@types/mkdirp` 2.0.0 on mkdirp), with no code to
+// import it.
 export function npmDependencyUnimported(details, { name, kind }) {
-  if (!details?.json || kind === 'peer' || name.startsWith('@types/')) return false
+  if (!details?.json || kind === 'peer' || name.startsWith('@types/') || details.npm?.name === typesOf(name)) return false
   const { whole, parts, commands } = importsOf(details)
   return !whole.has(name) && ![...name.slice(1).matchAll(/[-/]/gu)].some(({ index }) => parts.has(name.slice(0, index + 2)))
     && !commands.some(command => commandNames(command, name))

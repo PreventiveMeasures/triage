@@ -94,6 +94,13 @@ test('a dependency nothing of a version imports is one no code file names as an 
   assert.equal(unimported({ 'index.js': null }, 'dep'), true, 'a file that isn\'t text')
   assert.equal(unimported({ 'index.js': '' }, 'react-dom', {}, 'peer'), false, 'not a peer dependency')
   assert.equal(unimported({ 'index.js': '' }, '@types/node'), false, 'nor types')
+  // DefinitelyTyped's stub, once a package has types of its own, depending
+  // on it with no code: not that package, nor another.
+  const stub = types => ({ ...version({ 'README.md': '', LICENSE: '' }), npm: { name: types, version: '2.0.0', manifest: {} } })
+  assert.equal(npmDependencyUnimported(stub('@types/mkdirp'), { name: 'mkdirp', kind: null }), false)
+  assert.equal(npmDependencyUnimported(stub('@types/babel__core'), { name: '@babel/core', kind: null }), false, 'a scope\'s, by DefinitelyTyped\'s name for it')
+  assert.equal(npmDependencyUnimported(stub('@types/mkdirp'), { name: 'plain-crypto-js', kind: null }), true, 'another')
+  assert.equal(npmDependencyUnimported(stub('mkdirp-types'), { name: 'mkdirp', kind: null }), true, 'not a package named otherwise')
   assert.equal(npmDependencyUnimported({ npm: {} }, { name: 'dep', kind: null }), false, 'nor where its files aren\'t read')
 })
 
