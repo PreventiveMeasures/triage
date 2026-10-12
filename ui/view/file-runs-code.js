@@ -1,9 +1,13 @@
-// What a file's code can run beyond itself, for a reviewer: a string run as
-// code (eval, and Function with new or without) and other programs
-// (child_process), as the npm Overview's Files list and Compare label a file.
+// What a file's code can do beyond itself, for a reviewer: run a string as
+// code (eval, Function with new or without, node:vm, Module's _compile) or
+// other programs (child_process), reach for credentials (a credential file's
+// path, a token's name) or the whole environment, and publish to npm (`npm
+// publish`, `/-/whoami`, a registry PUT), as the npm Overview's Files list and
+// Compare label a file.
 // A quick read, not a parse: a script's code with its strings, regular
-// expressions and comments set aside as file-readability.js tells them, a
-// module by the string naming it where it is loaded (`require('child_process')`,
+// expressions and comments set aside as file-readability.js tells them, its
+// strings read for the paths, names and commands they hold, a module by the
+// string naming it where it is loaded (`require('child_process')`,
 // `import … from 'node:child_process'`); a declaration file (.d.ts) read as
 // TypeScript, as node runs it (stripping its types, `declare function
 // eval(…)` among them, a function named, not called). A call written not to
@@ -12,10 +16,12 @@
 // the outer one as the regular expression telling strings reads it.
 //
 // Labels to assist a reviewer, making the plain cases less likely to be
-// missed, not a check to rely on: code can come to eval, Function or
-// child_process in more ways than any reading of its text tells (a name built
-// as it runs, `(…).constructor('…')`, node:vm, a module required by a name
-// computed), so a file without a label is not one without them.
+// missed, not a check to rely on: code can come to eval, Function,
+// child_process, credentials or the registry in more ways than any reading of
+// its text tells (a name built as it runs, `(…).constructor('…')`, a module
+// required by a name computed, a path or URL put together, the
+// registry's host read from config), so a file without a label is not one
+// without them.
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT } from './file-readability.js'
 
@@ -28,13 +34,29 @@ const NODE_HASHBANG = /^#!.*\bnode\b/u
 export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
 // What may come between a call's parts: blanks and comments
 // (`Function/* note */(…)`), each comment ending at its first `*/`.
-const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n)*`
+const COMMENT = String.raw`/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n`
+const GAP = String.raw`(?:\s|${COMMENT})*`
 // Function called: as it is, optionally (`Function?.(…)`), or by its call or
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
 const FUNCTION_CALLED = String.raw`(?:${GAP}\??\.${GAP}(?:call|apply))?${GAP}(?:\?\.${GAP})?\(`
+// The environment, whole: not one variable of it (`process.env.HOME`,
+// `process.env[name]`).
+const ENV = String.raw`process${GAP}\.${GAP}env(?![\p{ID_Continue}$])(?!${GAP}(?:\??\.|\[))`
+// Its values read out whole (`JSON.stringify(process.env)`,
+// `Object.entries(process.env)`, `new URLSearchParams(process.env)`), or a
+// copy of them (`JSON.stringify({ ...process.env })`), not as a program is
+// handed it (`{ env: process.env }`, `{ ...process.env }`), nor its
+// names listed (`Object.keys(process.env)`, as debug picks its DEBUG_ ones),
+// nor one variable asked for (`'HOME' in process.env`), nor its entries or
+// values picked among as they are read (`Object.entries(process.env)
+// .reduce(…)`, as npm's agent finds its proxy's, `.filter(…)`, `.find(…)`).
+const PICKED = String.raw`${GAP}\)${GAP}\??\.${GAP}(?:filter|find|findLast|some|every|reduce)(?![\p{ID_Continue}$])`
+const COPY = String.raw`(?:\{${GAP}\.\.\.${GAP})?`
+const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${COPY}${ENV}`
+  + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${COPY}${ENV}(?!${PICKED})`
 // Any of RUNS_CODE, as a text may say it.
-const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u')
+const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
 
 // A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
 // `...eval` aside) or part of another's (`evaluate`), or as the global
@@ -42,13 +64,49 @@ const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u'
 // name or the global object's starts, so a long run of blanks reads in one go.
 const GLOBAL = 'globalThis|window|global|self'
 const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:${GLOBAL})${GAP}\??\.${GAP})?${name}`
+// A token's name, as a name or in a string (`process.env.NPM_TOKEN`,
+// `process.env['GITHUB_TOKEN']`).
+const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB)_TOKEN(?![\p{ID_Continue}$])`
 // A script's strings, regular expressions and comments, as file-readability.js
-// tells them, each taking its own text, and its calls in none of them: eval,
+// tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
-// none of its own), and Function.
-const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`, 'gmu')
-// A string naming child_process.
-const CHILD_PROCESS = /^(["'\u0060])(?:node:)?child_process\1$/u
+// none of its own), and Function called; Module's _compile, called
+// (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
+// = …`), not named in a type (`typeof Module.prototype._compile`); a token's
+// name; the environment read out whole; and a PUT request's
+// call (`axios.put(…)`).
+const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`
+  + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
+// What a string holds that a kind is: a credential file's path, npm's, SSH's
+// or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
+// `.sshd`), or a token's name; a command publishing (`npm publish`, `pnpm
+// publish …`, options before it as npm takes them, `npm --tag next publish`)
+// or the registry's who-am-I, a publisher's first step with a token. And the
+// registry's host, where a PUT request is one publishing.
+// Told first of a string by what any of them says.
+const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
+const HOLDS = [
+  ['credentials', new RegExp(String.raw`(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])|${TOKEN_NAME}`, 'gu')],
+  ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
+  ['registry', /registry\.(?:npmjs\.org|yarnpkg\.com)/gu],
+]
+// A module a kind loads: vm, child_process, and libnpmpublish, npm's own
+// publishing.
+const MODULES = [
+  ['vm', /^(["'\u0060])(?:node:)?vm\1$/u],
+  ['child-process', /^(["'\u0060])(?:node:)?child_process\1$/u],
+  ['publish', /^(["'\u0060])libnpmpublish\1$/u],
+]
+// A string a program is run with publishing (`spawn('npm', ['publish'])`),
+// after the one naming it, its options and their values between
+// (`['--tag', 'next', 'publish']`), and a request's method set to PUT
+// (`{ method: 'PUT' }`, `options.method = 'put'`).
+const PROGRAM = /^(["'\u0060])(?:npm|pnpm|yarn)\1$/u
+const PUBLISH = /^(["'\u0060])publish\1$/u
+const OPTION = /^(["'\u0060])-/u
+const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
+const PUT = /^(["'\u0060])put\1$/iu
+const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 // What comes before a module's name where code loads it: `require(` (or
 // `require?.(`), a bundler's `__require(` or `__non_webpack_require__(`,
 // `import(`, `import` and `from`, comments allowed between
@@ -60,11 +118,20 @@ const CHILD_PROCESS = /^(["'\u0060])(?:node:)?child_process\1$/u
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*${GAP}(?:\?\.${GAP})?|\bimport${GAP})\(|\b(?:from|import))${GAP}$`, 'u')
 const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}(?:from\b|=))[^;'"\x60]*(?:\bfrom|=${GAP}require${GAP}\()${GAP}$`, 'u')
 
-// Each kind, in the order its tags show: its tag and what it does.
+// Each kind, in the order its tags show: its tag, what it does, for a tag
+// kinds share its name in the tag's tooltip (a string run as code by any way,
+// `eval`'s), and for one marked as worse than the others' warning, `critical`:
+// the whole environment read out, and publishing.
+const AS_CODE = { tag: 'eval', note: 'Runs a string as code' }
 const RUNS_CODE = new Map([
-  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)' }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)' }],
+  ['eval', { ...AS_CODE, name: 'eval' }],
+  ['function', { ...AS_CODE, name: 'Function' }],
+  ['vm', { ...AS_CODE, name: 'vm' }],
+  ['compile', { ...AS_CODE, name: 'Module._compile' }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)' }],
+  ['credentials', { tag: 'credentials', note: 'Reaches for credentials (.npmrc, .ssh, .aws, NPM_TOKEN, GITHUB_TOKEN)' }],
+  ['env', { tag: 'whole env', note: 'Reads out the whole environment (process.env by JSON.stringify, Object.entries or values, URLSearchParams)', mark: 'critical' }],
+  ['publish', { tag: 'publish', note: 'Publishes to npm (npm publish, /-/whoami, a registry PUT)', mark: 'critical' }],
 ])
 
 // The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
@@ -72,8 +139,11 @@ const RUNS_CODE = new Map([
 export function npmRunsCode(path, text) {
   if (!npmIsScript(path, text)) return null
   const found = new Map()
-  read(text, 0, (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset]))
-  if (found.size === 0) return null
+  const at = (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset])
+  read(text, 0, at)
+  // A PUT request publishing where the file names the registry.
+  if (found.has('registry')) for (const offset of found.get('put') ?? []) at('publish', offset)
+  if (![...RUNS_CODE.keys()].some(kind => found.has(kind))) return null
   const line = lineOf(text)
   return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(line))].toSorted((a, b) => a - b)]))
 }
@@ -92,20 +162,61 @@ export function cachedPerFile(scan) {
 export const npmFileRunsCode = cachedPerFile(npmRunsCode)
 
 // Where code (a file's, or a template literal's substitution's, at `base` in
-// the file) runs a kind, as at(kind, offset), in order: its calls, a string
-// naming a module where it is loaded, and what a template literal's
-// substitutions (`${eval(x)}`) run, code again, read as its own. Most code
-// says none of it at all, told before anything is read.
+// the file) does a kind, as at(kind, offset), in order: its code's, what its
+// strings hold, a string naming a module where it is loaded, and what a
+// template literal's substitutions (`${eval(x)}`) do, code again, read as its
+// own; a PUT request (`put`) and the registry's host (`registry`) as their
+// own, for the file to pair. Most code says none of it at all, told before
+// anything is read.
 function read(code, base, at) {
   if (!SAYS_ANY.test(code)) return
-  for (const { 1: string, groups, index } of code.matchAll(READS)) {
-    if (groups.eval || groups.function) at(groups.eval ? 'eval' : 'function', base + index)
-    if (string?.[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
-    if (CHILD_PROCESS.test(string)) {
-      const before = code.slice(Math.max(0, index - 300), index)
-      if (LOADS.test(before) && !TYPE_ONLY.test(before)) at('child-process', base + index)
+  // Where the string before ends; whether the strings since a program's name
+  // are its arguments, an option or its value each, and whether the last is
+  // an option.
+  let end = 0, option = false, program = false
+  for (const { 0: token, 1: string, groups, index } of code.matchAll(READS)) {
+    if (string === undefined) {
+      for (const kind of CODE_KINDS) if (groups[kind]) at(kind, base + index)
+      continue
     }
+    if (string[0] === '/') continue
+    const inner = string[0] === '`' && SAYS_ANY.test(string) ? substitutions(string) : []
+    for (const [from, to] of inner) read(string.slice(from, to), base + index + from, at)
+    // What a string holds, a template's text alone, its substitutions' code
+    // read as code, its comments and regular expressions aside.
+    const text = inner.length === 0 ? string : textOf(string, inner)
+    if (HOLDS_ANY.test(text)) for (const [kind, holds] of HOLDS) for (const { index: within } of text.matchAll(holds)) at(kind, base + index + within)
+    for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
+    if (program && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
+      if (PUBLISH.test(string)) at('publish', base + index)
+      program = OPTION.test(string) || option
+      option = OPTION.test(string)
+    } else program = false
+    if (PROGRAM.test(string)) [program, option] = [true, false]
+    if (PUT.test(string) && METHOD.test(code.slice(Math.max(0, index - 300), index))) at('put', base + index)
+    end = index + token.length
   }
+}
+
+// The kinds code itself does, by READS' groups.
+const CODE_KINDS = ['eval', 'function', 'compile', 'credentials', 'env', 'put']
+
+// Whether the string at `index` in code names a module where it is loaded.
+function loaded(code, index) {
+  const before = code.slice(Math.max(0, index - 300), index)
+  return LOADS.test(before) && !TYPE_ONLY.test(before)
+}
+
+// A template literal with its substitutions' code blanked, its text in place.
+function textOf(template, inner) {
+  const parts = []
+  let from = 0
+  for (const [start, end] of inner) {
+    parts.push(template.slice(from, start), ' '.repeat(end - start))
+    from = end
+  }
+  parts.push(template.slice(from))
+  return parts.join('')
 }
 
 // Where each of a template literal's substitutions' code starts and ends, in
@@ -182,24 +293,31 @@ export function npmFoundAdded(found, was) {
   return added.size > 0 ? added : null
 }
 
-// The kinds any of `founds` holds, as their tags name them, in their order:
-// `eval, child_process`.
-export const npmRunsCodeKinds = founds => [...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag).join(', ')
+// The kinds any of `founds` holds, as their tags name them, in their order,
+// a tag kinds share once: `eval, child_process`.
+export const npmRunsCodeKinds = founds => [...new Set([...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag))].join(', ')
 
-// The kinds a file holds, each named with its lines: `eval (line 3)`.
-export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUNS_CODE.get(kind).tag} (${linesNote(lines)})`).join(', ')
+// The kinds a file holds, each named with its lines, by its own name where
+// kinds share a tag: `eval (line 3), Function (line 5)`.
+export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUNS_CODE.get(kind).name ?? RUNS_CODE.get(kind).tag} (${linesNote(lines)})`).join(', ')
 
-// A file's tags, one a kind it holds (npmRunsCode), its lines in its tooltip;
-// with `was`, the kinds the file held as the version compared with has it
-// (null for none), one it didn't hold saying so.
-// Their tags' texts, in their order: none for none.
-export const npmRunsCodeNames = found => found ? [...found.keys()].map(kind => RUNS_CODE.get(kind).tag) : []
+// Its tags as a file's flags (file-flags.js), in their order, each once: a
+// warning's (`high`), or for one marked worse, `critical`; none for none.
+export const npmRunsCodeFlags = found => [...new Map([...found?.keys() ?? []].map(kind => RUNS_CODE.get(kind))
+  .map(({ tag, mark }) => [tag, { name: tag, severity: mark ?? 'high' }])).values()]
 
+// A file's tags, one for the kinds it holds (npmRunsCode) that share it, their
+// lines in its tooltip, each by its name where kinds share it; with `was`,
+// the kinds the file held as the version compared with has it (null for
+// none), one it didn't hold saying so.
 export function npmRunsCodeTags(found, was) {
   if (!found) return nothing
-  return [...found].map(([kind, lines]) => {
-    const { tag, note } = RUNS_CODE.get(kind)
-    const fresh = was !== undefined && !was?.has(kind)
-    return html`<span class="npm-runs-code" data-tooltip=${`${note}: ${linesNote(lines)}${fresh ? ', new' : ''}`}>${tag}</span>`
+  return [...Map.groupBy(found, ([kind]) => RUNS_CODE.get(kind).tag)].map(([tag, kinds]) => {
+    const parts = kinds.map(([kind, lines]) => {
+      const { name } = RUNS_CODE.get(kind)
+      return `${name ? `${name}, ` : ''}${linesNote(lines)}${was !== undefined && !was?.has(kind) ? ', new' : ''}`
+    })
+    const { note, mark } = RUNS_CODE.get(kinds[0][0])
+    return html`<span class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${`${note}: ${parts.join('; ')}`}>${tag}</span>`
   })
 }
