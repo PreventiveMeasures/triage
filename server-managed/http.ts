@@ -55,7 +55,6 @@
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/429/502
-//   GET  /api/npm/download-counts?names=a,b → many packages' recent downloads, for their tiers | 400/401
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/429/502
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404/429/502
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404/429/502
@@ -131,7 +130,6 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { MAX_DOWNLOAD_COUNTS, npmDownloadCounts } from './npm-download-counts.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk } from './npm-risk.ts'
@@ -183,7 +181,6 @@ const NPM_PACKAGE_PATH = '/api/npm/package'
 const NPM_VERSIONS_PATH = '/api/npm/versions'
 const NPM_DOWNLOAD_PATH = '/api/npm/download'
 const NPM_STATS_PATH = '/api/npm/stats'
-const NPM_DOWNLOAD_COUNTS_PATH = '/api/npm/download-counts'
 const NPM_ADVISORIES_PATH = '/api/npm/advisories'
 const NPM_TAGS_PATH = '/api/npm/tags'
 const NPM_SOCKET_PATH = '/api/npm/socket'
@@ -2438,19 +2435,6 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true, scopes: (await deps.db.listTeamNpmScopes())[teamId] ?? [] })
 }
 
-// GET /api/npm/download-counts?names=a,b — many packages' recent downloads
-// at once (npm-download-counts.ts), as npm answers anyone for them: by
-// name, null where npm has none, one npm couldn't be asked about left out.
-// For a reader of npm packages, about any packages.
-async function handleNpmDownloadCounts(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
-  if (req.method !== 'GET') { send405(res, 'GET'); return }
-  const names = [...new Set((params.get('names') ?? '').split(','))]
-  if (names.length > MAX_DOWNLOAD_COUNTS || !names.every(isNpmPackageName)) { sendJson(res, 400, { error: 'bad-package' }); return }
-  if (await npmReader(deps, cookie) == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const downloads = await npmDownloadCounts(names)
-  if (!res.destroyed) sendJson(res, 200, { downloads })
-}
-
 // Who reads npm packages now: a session with workspace access, its role and
 // the npm scopes of its visible teams. Null for none.
 async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
@@ -3011,7 +2995,6 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
     }
-    if (path === NPM_DOWNLOAD_COUNTS_PATH) { await handleNpmDownloadCounts(req, res, deps, cookie, url.searchParams); return }
     if (NPM_PATHS.has(path)) {
       await handleNpm(req, res, deps, cookie, path, url.searchParams); return
     }

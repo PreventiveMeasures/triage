@@ -1497,22 +1497,20 @@ control. A version shows in the bundle view with four tabs:
   that opens a package is tagged with that package's tier by downloads,
   whatever it is, tinted as the package's own is, by its downloads to the
   day before its latest two weeks (which a package a release just pulled in
-  could owe to that release alone), the downloads of new ones the session
-  hasn't any of asked for in one request (`/api/npm/download-counts`)
-  (a version-specific check, as of a version's age or publisher, would have
+  could owe to that release alone), as the server's risk tells it
+  (`/api/npm/risk`) (a version-specific check, as of a version's age or publisher, would have
   to cover every version its range takes); unpopular where npm counts none
   of its downloads, as it counts none of a package's until the day after it
   was first published (axios 1.14.1, 21 minutes past midnight, named
-  plain-crypto-js, first published the morning before), and its version
-  list says it's public: none for a private one, whose downloads npm's API
-  tells no one, nor one the reader can't open. One below the top
+  plain-crypto-js, first published the morning before), and npm has it for
+  anyone: none for a private one, whose downloads npm's API tells no one. One below the top
   20,000 whose package didn't exist when the version compared with was
   published (its first version, one since unpublished among them, published
   after it) is tagged with how old it was when the open version was
   (`18 hours old`), or `published later` where it came after that, as a
   name someone took once a release named it would, the day in its tooltip;
-  its version list is asked for only then, as a package many install isn't
-  one to doubt for being new.
+  its whole document is asked for only then, as a package many install
+  isn't one to doubt for being new.
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them;
@@ -1637,21 +1635,7 @@ say is public. A repository renamed or transferred since, which GitHub
 answers with a redirect to it by its id (`https://api.github.com/repositories/<id>`),
 is followed there once by upstream (`getRepo`'s `followRedirect`), with the
 same token, `repo` then its name now; a redirect anywhere else, or a second,
-is no repository to show. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
-many packages' recent downloads at once by name (`{ start, end, days }`,
-from the first of the month before last to yesterday; null where npm has
-none; one npm couldn't be asked about left out), up to 512 names: npm's
-range API is asked for up to 128 unscoped ones in one request and a scoped
-one alone, four at a time, without credentials, as it answers anyone; what
-it hasn't answered within a minute is given up on and left out. A request
-for names already being asked about waits for that asking, which a reader
-leaving doesn't stop. The viewer tags a dependency by them but its latest
-two weeks', so each is kept for two weeks, by package, a newer answer
-adding only days it leaves out;
-a package's year, where kept for its Overview, answers for it. The viewer
-keeps each package's for the session as well, its figures or its downloads
-alone, and asks only for those it hasn't any of, as many in one request as
-fit 8,000 characters of names, its commas as they are.
+is no repository to show.
 `GET /api/npm/tags?name=&version=` returns `{ name, version,
 tags }`: the tags of its GitHub repository that point to its publish commit
 (`gitHead`), among those whose names hold the version (`v1.2.3`,

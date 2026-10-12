@@ -1,5 +1,5 @@
 // Answers kept for `ms`, an hour unless said, by what they answer
-// (npm-insights.ts, npm-provenance.ts, npm-download-counts.ts), at most
+// (npm-insights.ts, npm-provenance.ts), at most
 // `max` of them, the oldest asked going first; one still being asked for is
 // shared, and one that failed, or that `whole` says is partial, is dropped
 // once it is answered. `peek` gives one already answered, asking for
