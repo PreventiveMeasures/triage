@@ -710,16 +710,18 @@ export class BundleCompareCode extends LitElement {
     const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
     const offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text).length, 0) + solid(raw[line]?.slice(0, at) ?? '').length
     const needle = solid(query).toLowerCase()
-    // Where each match starts in a text's characters other than whitespace,
-    // case folded as the search matches.
-    const starts = lines => {
+    // The first match in a text's characters other than whitespace, case
+    // folded as the search matches, that `found(index, start)` takes, its
+    // `{ index, start }`: scanned no further, however common the query.
+    const first = (lines, found) => {
       const text = lines.map(solid).join('').toLowerCase()
-      const found = []
-      for (let i = needle ? text.indexOf(needle) : -1; i !== -1; i = text.indexOf(needle, i + needle.length)) found.push(i)
-      return found
+      for (let i = needle ? text.indexOf(needle) : -1, index = 0; i !== -1; i = text.indexOf(needle, i + needle.length), index++) {
+        if (found(index, i)) return { index, start: i }
+      }
+      return null
     }
-    const ordinal = starts(raw).findIndex(start => start >= offset)
-    let target = ordinal === -1 ? offset : starts(model[side])[ordinal] ?? offset
+    const hit = first(raw, (_, start) => start >= offset)
+    let target = (hit && first(model[side], index => index === hit.index)?.start) ?? offset
     for (let i = 0; i < model[side].length; i++) {
       target -= solid(model[side][i]).length
       if (target < 0) return { side, line: i }

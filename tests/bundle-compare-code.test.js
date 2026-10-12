@@ -558,6 +558,31 @@ test('a hit opens at the same match pretty-printed where the printer respaced an
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">1<\/span>[^]*var x = /u, 'the expression\'s line, not the string\'s')
 })
 
+test('a hit opened pretty-printed is found in the copy reading its matches no further than its own', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);'.repeat(5000)}\n` }, { 'dist/common.min.js': `var X=1;${'x(1);'.repeat(5000)}\n` }])
+  element.base.managedId = 'b27'
+  element.other.managedId = 'b28'
+  pretty.set('b27:dist/common.min.js', `var Y = 1;\n${'x(1);\n'.repeat(5000)}`)
+  pretty.set('b28:dist/common.min.js', `var X = 1;\n${'x(1);\n'.repeat(5000)}`)
+  state.bundleSourcePretty = true
+  element.path = 'dist/common.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const { pretty: copies, model } = element._fileState('dist/common.min.js', element._entries.get('dist/common.min.js'))
+  const read = side => {
+    element._sought = { path: 'dist/common.min.js', side, line: 0, at: 18, query: 'x(1)' }
+    const indexOf = t.mock.method(String.prototype, 'indexOf')
+    try {
+      return { at: element._soughtLine('dist/common.min.js', element._entries.get('dist/common.min.js'), copies, model), scans: indexOf.mock.calls.filter(call => call.arguments[0] === 'x(1)').length }
+    } finally {
+      indexOf.mock.restore()
+    }
+  }
+  // Its third match, after `var X=1;x(1);x(1);`: the copy's line 3.
+  assert.deepEqual(read('b'), { at: { side: 'b', line: 3 }, scans: 6 })
+  element._sought = null
+})
+
 test('a file whose printed copy failed shows, and is searched, as published', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view(null, [{ 'dist/failed.min.js': `var Y=1;${'q(Y);'.repeat(250)}fetch(1);\n` }, { 'dist/failed.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
