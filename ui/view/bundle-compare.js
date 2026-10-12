@@ -708,7 +708,12 @@ class BundleCompare extends LitElement {
   _renderPicker(others, hasTarget, scopeSelector) {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-    return html`<div class="bundle-compare-picker">
+    // A source's versions: each select as wide as the longest it lists, its
+    // tags beside it (at their smaller size), or its placeholder; the menu
+    // keeps its own width.
+    const chars = this.source ? Math.max(`Choose a ${noun}…`.length,
+      ...[...others, ...this._baseOptions()].map(option => option.filename.length + (option.detail ? option.detail.length * .87 + 1 : 0))) : null
+    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare</span>
         <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}

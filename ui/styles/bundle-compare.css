@@ -54,6 +54,13 @@
   color: var(--muted);
 }
 .bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; }
+/* A package's versions: each select fits the longest it lists (its
+   characters at the select's size, with room for its icon and chevron), not
+   the row. */
+.bundle-compare-picker.is-versions {
+  & .bundle-compare-select-wrap { flex: 0 1 auto; }
+  & bundle-selector { flex: 0 1 auto; width: calc(var(--compare-select-chars) * .43rem + 4rem); }
+}
 /* Scope selector — at the right end of the picker row. */
 .bundle-compare-picker > bundle-scope-selector { margin-left: auto; }
 /* Clear button — a square as tall as the swap button, the glyph centered
@@ -595,12 +602,15 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-rename-to { color: var(--green); }
 /* A renamed file's old name, as much of it as changed, after the new. */
 .bundle-compare-code-name.renamed { flex: 0 1 auto; }
-/* A file a bundle or package starts from, labelled in its head. */
+/* A file a bundle or package starts from, labelled in its head; a license
+   file, in grey. */
 .bundle-compare-code-entry {
   flex: none; padding: 0 .3rem;
   color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border)); border-radius: var(--ui-radius, 3px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+
+  &.is-license { background: color-mix(in srgb, var(--muted) 14%, var(--bg)); border-color: var(--border); }
 }
 /* A package.json's install scripts, in its head and in the tree: marked as
    the npm Overview marks them, one no longer named struck through. */

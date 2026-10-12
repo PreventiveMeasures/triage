@@ -218,9 +218,12 @@ head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
 Controls, Minified, ...), after how it read where that differs, and the tree
 tags a file the same way where it can be hard to review by reading it. A file a
 bundle or package starts from is labelled in blue in its head (a Stasis
-bundle's entry, an npm version's main, module, types or bin), and a
-package.json's install scripts (preinstall, install, postinstall, prepare,
-and `node-gyp rebuild` beside a binding.gyp) are marked in its head and in
+bundle's entry, an npm version's main, module, types or bin), a license
+file as license in grey (an npm version's at its root, its tooltip naming the
+licenses its manifest's expression opens it for, and a bundle's packages'), and a
+package.json's install scripts (preinstall, install and postinstall, which
+npm runs installing it from the registry, not prepare, which it runs only for
+a local or git install, and `node-gyp rebuild` beside a binding.gyp) are marked in its head and in
 the tree, each with its command, one new or changed saying so, and in its
 head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
@@ -1164,7 +1167,8 @@ control. A version shows in the bundle view with four tabs:
   GitHub repository, or its directory or readme there, as npm's default
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
-  where they name the same file, engines, install scripts (each with its
+  where they name the same file, engines, install scripts (preinstall,
+  install and postinstall, each with its
   name marked as a warning's and its command, a file it names opening it, in the order npm runs them, and
   `node-gyp rebuild` where a `binding.gyp` has no install script of its own),
   how many dependencies it has, and its files with the lines of code they add

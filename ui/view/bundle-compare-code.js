@@ -31,7 +31,7 @@ import { EXPAND_STEP, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted,
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
-import { npmEntryFile } from './npm-entries.js'
+import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
@@ -85,7 +85,10 @@ const minified = (details, path, text) => readability(details, path, text).categ
 
 // The files a bundle or package version starts from, by path, each with what
 // names it: a Stasis bundle's entries, an npm version's main, module, types
-// and bins, found as its Overview finds them (npm-entries.js).
+// and bins, found as its Overview finds them (npm-entries.js); and its
+// license files, named as its Overview's do (an npm version's at its root,
+// with the licenses its manifest names them for; a bundle's packages').
+const LICENSE_NOTE = 'A license file'
 const entryNames = new WeakMap()
 function entryPoints(details) {
   let found = entryNames.get(details)
@@ -100,6 +103,12 @@ function entryPoints(details) {
       if (typeof manifest[field] === 'string') add(npmEntryFile(manifest[field], files), field, `package.json "${field}": ${manifest[field]}`)
     }
     for (const [name, file] of Object.entries(manifest.bin ?? {})) if (typeof file === 'string') add(npmEntryFile(file, files), 'bin', `package.json "bin" ${name}: ${file}`)
+    const licenses = Map.groupBy(typeof manifest.license === 'string' ? npmLicenseParts(manifest.license, [...files]).filter(part => part.file) : [], part => part.file)
+    for (const path of files) {
+      if (NPM_LICENSE_FILE.test(path)) add(path, 'license', licenses.has(path) ? `License: ${licenses.get(path).map(part => part.text).join(', ')}` : LICENSE_NOTE)
+    }
+  } else {
+    for (const path of bundleFilesAsMap(details).keys()) if (NPM_LICENSE_FILE.test(path.slice(path.lastIndexOf('/') + 1))) add(path, 'license', LICENSE_NOTE)
   }
   entryNames.set(details, found)
   return found
@@ -624,11 +633,12 @@ export class BundleCompareCode extends LitElement {
 
   // A file the open bundle or version starts from (for one removed, the one
   // compared with), labelled with what names it: main, module, types, bin,
-  // or a bundle's entry.
+  // or a bundle's entry; and a license file, as license.
   _entryTags(path, { kind, basePath = path }) {
     const names = entryPoints(kind === 'removed' ? this.base : this.other).get(kind === 'removed' ? basePath : path) ?? []
     const labels = Map.groupBy(names, ({ label }) => label)
-    return [...labels].map(([label, rows]) => html`<span class="bundle-compare-code-entry" data-tooltip=${rows.map(({ note }) => note).join(' · ')}>${label}</span>`)
+    return [...labels].map(([label, rows]) => html`<span class=${`bundle-compare-code-entry${label === 'license' ? ' is-license' : ''}`}
+      data-tooltip=${rows.map(({ note }) => note).join(' · ')}>${label}</span>`)
   }
 
   // A package.json's install scripts, as warnings, each with its command:

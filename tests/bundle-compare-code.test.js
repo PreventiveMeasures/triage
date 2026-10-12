@@ -337,21 +337,24 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
 test('a file is labelled where a package starts from it, a package.json with its install scripts, and the tree tags what can\'t be read', () => {
   const version = (integrity, files, manifest) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'pkg', version: integrity, manifest } })
-  const base = version('a', { 'index.js': 'module.exports = 1\n', 'package.json': '{"scripts":{"prepare":"tsc","postinstall":"node a.js"}}\n', 'bin/cli.js': '1\n' }, { main: 'index.js' })
-  const other = version('b', { 'index.js': 'module.exports = 2\n', 'package.json': '{"scripts":{"postinstall":"node setup.js","test":"t"}}\n', 'bin/cli.js': '2\n',
-    'dist/app.min.js': `${'var a=1;'.repeat(200)}\n` }, { main: './index', bin: { tool: './bin/cli.js' } })
+  const base = version('a', { 'index.js': 'module.exports = 1\n', 'package.json': '{"scripts":{"preinstall":"x","prepare":"tsc","postinstall":"node a.js"}}\n', 'bin/cli.js': '1\n',
+    'LICENSE-MIT': 'MIT\n' }, { main: 'index.js', license: 'MIT' })
+  const other = version('b', { 'index.js': 'module.exports = 2\n', 'package.json': '{"scripts":{"postinstall":"node setup.js","prepare":"tsc -b","test":"t"}}\n', 'bin/cli.js': '2\n',
+    'dist/app.min.js': `${'var a=1;'.repeat(200)}\n`, 'LICENSE-MIT': 'MIT License\n' }, { main: './index', bin: { tool: './bin/cli.js' }, license: 'MIT' })
   const element = new CompareCode()
   Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
     files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
   element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
   const render = path => { element.path = path; return renderText(element.render()) }
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
-  const labels = (markup, kind) => [...markup.matchAll(new RegExp(`class="bundle-compare-code-${kind}[^"]*"[^>]*>([^<]+)<`, 'gu'))].map(m => m[1])
+  const labels = (markup, kind) => [...markup.matchAll(new RegExp(`class="?bundle-compare-code-${kind}[^>]*>([^<]+)<`, 'gu'))].map(m => m[1])
   assert.deepEqual(labels(head('index.js'), 'entry'), ['main'], 'as require finds it')
   assert.deepEqual(labels(head('bin/cli.js'), 'entry'), ['bin'])
   assert.deepEqual(labels(head('package.json'), 'entry'), [])
   const pkg = head('package.json')
-  assert.deepEqual(labels(pkg, 'install'), ['postinstall', 'prepare'], 'what runs on install now, then what no longer does')
+  assert.deepEqual(labels(pkg, 'install'), ['postinstall', 'preinstall'], 'what runs on install now, then what no longer does; not prepare, run only for a local or git install')
+  assert.deepEqual(labels(head('LICENSE-MIT'), 'entry'), ['license'])
+  assert.match(head('LICENSE-MIT'), /bundle-compare-code-entry is-license[^]*?data-tooltip=License: MIT>license/u)
   assert.match(pkg, /data-tooltip=npm runs it on install: node setup\.js, was: node a\.js>postinstall/u)
   assert.match(pkg, /bundle-compare-code-install is-dropped/u)
   const rows = Object.fromEntries([...render('index.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]

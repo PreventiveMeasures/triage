@@ -169,8 +169,10 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
     if (record && Object.keys(record).length > 0) pick[key] = record
   }
   if (json['hasInstallScript'] === true) pick['hasInstallScript'] = true
+  // The scripts npm runs installing it from the registry; not `prepare`,
+  // which runs only for a local or git install.
   const scripts = stringRecord(json['scripts'])
-  const install = scripts ? ['preinstall', 'install', 'postinstall', 'prepare'].filter(script => script in scripts) : []
+  const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
   try {
     const repo = getRepo(json)
