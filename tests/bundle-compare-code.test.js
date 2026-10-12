@@ -271,6 +271,50 @@ test('the Diff view pretty-prints no more minified files together than it keeps 
   assert.doesNotMatch(markup, /is-loading/u, 'none asked for')
 })
 
+test('the Diff view draws its files 40 at a time, more on asking or as one past them opens, counting them all', async () => {
+  await import('../ui/view/bundle-compare-all.js')
+  const source = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const names = Array.from({ length: 95 }, (_, i) => `lib/f${String(i).padStart(2, '0')}.js`)
+  const base = source('a', Object.fromEntries(names.map(path => [path, 'a\n']))), other = source('b', Object.fromEntries(names.map(path => [path, 'b\n'])))
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const drawn = () => {
+    const markup = renderText(all.render())
+    return { files: [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+)/gu)].map(match => match[1]),
+      more: /Show more files \(([\d,]+) remaining\)/u.exec(markup)?.[1] ?? null, title: /bundle-compare-all-title">([^<]+)</u.exec(markup)?.[1] }
+  }
+  assert.deepEqual(drawn(), { files: names.slice(0, 40), more: '55', title: '95 files changed' }, 'the first 40, in the tree\'s order, the head counting all')
+  all._more()
+  assert.deepEqual(drawn().files.length, 80)
+  assert.equal(drawn().more, '15')
+  // What updated() does once it's drawn, its pane and the sections drawn stood in for.
+  const pane = { scrollTop: 0 }, scrolled = []
+  all.querySelector = selector => selector === '.bundle-compare-diff' ? pane : null
+  all.querySelectorAll = () => drawn().files.map(path => ({ dataset: { path }, scrollIntoView: () => scrolled.push(path) }))
+  const afterDraw = () => { pane.scrollTop = 900; all.updated() }
+  all._current = 'lib/f75.js'
+  all.willUpdate(new Map([['files']]))
+  assert.equal(drawn().files.length, 40, 'a comparison anew from 40, not from the file the last one was at')
+  assert.equal(all._current, 'lib/f00.js', 'its first file the rail\'s')
+  afterDraw()
+  assert.equal(pane.scrollTop, 0, 'and the list from its top, however far it was scrolled')
+  all.path = 'lib/f85.js'
+  all.willUpdate(new Map([['path']]))
+  assert.deepEqual(drawn(), { files: names, more: null, title: '95 files changed' }, 'the batches up to a file opened past them')
+  afterDraw()
+  assert.deepEqual([scrolled.at(-1), pane.scrollTop], ['lib/f85.js', 900], 'scrolled to')
+  all.willUpdate(new Map([['files']]))
+  assert.deepEqual([drawn().files.length, all._current], [95, 'lib/f85.js'], 'the file last picked reopened in a new comparison, as Code reopens it')
+  afterDraw()
+  assert.deepEqual([scrolled.length, pane.scrollTop], [2, 900], 'scrolled to it, not to the top')
+  all.path = 'lib/gone.js'
+  all.willUpdate(new Map([['files']]))
+  assert.deepEqual([drawn().files.length, all._current], [40, 'lib/f00.js'], 'one the new comparison lacks not')
+  afterDraw()
+  assert.deepEqual([scrolled.length, pane.scrollTop], [2, 0], 'its list from its top')
+})
+
 test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   await import('../ui/view/bundle-compare-all.js')

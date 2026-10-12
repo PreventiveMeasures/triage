@@ -8,7 +8,9 @@
 // marked; an import that resolves elsewhere is listed over its importer's
 // diff, a file with no other change listing those alone. Compare shows it
 // for a comparison it can list in fewer than COMBINED_DIFF_MAX rows
-// (combinedDiffRows), and a file at a time beside the tree otherwise.
+// (combinedDiffRows), and a file at a time beside the tree otherwise. Its
+// files are drawn FILE_BATCH at a time, more as the list nears its end, or
+// as one past them is opened.
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
@@ -18,6 +20,8 @@ export const COMBINED_DIFF_MAX = 25_000
 // Minified files pretty-printed together, both sides of each among the
 // copies pretty-source.js keeps: more would ask for as many copies at once.
 const COMBINED_PRETTY_MAX = 4
+// Files drawn at a time, as Review's whole diff draws them.
+const FILE_BATCH = 40
 
 // The files the Diff view lists, by path: each one added, removed, changed
 // or renamed (fileEntries). A file whose only change is an import resolving
@@ -64,23 +68,38 @@ class BundleCompareAll extends BundleCompareCode {
     super()
     this.models = null
     this._modelCap = Infinity
+    this._fileLimit = FILE_BATCH
   }
 
   willUpdate(changed) {
     super.willUpdate(changed)
     if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
-    // A file opened from elsewhere (the Overview, a link) is scrolled to.
-    if (changed.has('path') && this.path && this.path !== this._current) this._goTo = this.path
+    // A new comparison starts from its first files, not from the file the
+    // last one was scrolled to.
+    if (changed.has('files')) {
+      this._fileLimit = FILE_BATCH
+      this._current = this._picked = null
+    }
+    // A file opened from elsewhere (the Overview, a link), or picked before
+    // the comparison changed (another scope), is scrolled to, as Code opens it;
+    // else a new comparison shows from its top, as it was scrolled however far.
+    if ((changed.has('path') || changed.has('files')) && this.path && this.path !== this._current) this._goTo = this.path
+    if (changed.has('files')) this._toTop = true
   }
 
   // The rail's file at the top of the list, kept in view in the rail.
   updated() {
-    if (this._goTo) {
-      const path = this._goTo
-      this._goTo = null
-      this._picked = path
-      this._section(path)?.scrollIntoView({ block: 'start' })
+    const opened = this._goTo && this._section(this._goTo)
+    if (opened) {
+      this._picked = this._goTo
+      opened.scrollIntoView({ block: 'start' })
+    } else if (this._toTop) {
+      // A new comparison without it shows from its top.
+      const body = this.querySelector('.bundle-compare-diff')
+      if (body) body.scrollTop = 0
     }
+    this._goTo = null
+    this._toTop = false
     if (this._current !== this._shownPath) {
       this._shownPath = this._current
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
@@ -98,18 +117,25 @@ class BundleCompareAll extends BundleCompareCode {
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
   }
 
+  _more() {
+    this._fileLimit += FILE_BATCH
+    this.requestUpdate()
+  }
+
   _section(path) {
     return [...this.querySelectorAll('.bundle-compare-all-file')].find(section => section.dataset.path === path) ?? null
   }
 
   // As the list scrolls, the file whose diff is at its top is the rail's,
-  // a frame at a time.
+  // a frame at a time; and within a screen of its end, the next files are
+  // drawn.
   _spy() {
     if (this._spying) return
     this._spying = requestAnimationFrame(() => {
       this._spying = 0
       const body = this.querySelector('.bundle-compare-diff')
       if (!body) return
+      if (this._fileLimit < this._order.length && body.scrollTop + 2 * body.clientHeight >= body.scrollHeight) this._more()
       const { top, bottom } = body.getBoundingClientRect()
       const picked = this._picked && this._section(this._picked)?.getBoundingClientRect()
       if (picked && picked.bottom > top && picked.top < bottom) return
@@ -145,6 +171,9 @@ class BundleCompareAll extends BundleCompareCode {
     if (this._goTo && order.includes(this._goTo)) this._current = this._goTo
     if (!order.includes(this._current)) this._current = order[0] ?? null
     if (this._current) this._reveal(this._current, prefix)
+    // A file opened past those drawn draws the batches up to it.
+    const at = order.indexOf(this._current)
+    if (at >= this._fileLimit) this._fileLimit = Math.ceil((at + 1) / FILE_BATCH) * FILE_BATCH
     const entries = order.map(path => [path, this._entries.get(path)])
     const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
@@ -166,7 +195,7 @@ class BundleCompareAll extends BundleCompareCode {
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
-            : repeat(shown, ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path} data-path=${path}>
+            : repeat(shown.slice(0, this._fileLimit), ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path} data-path=${path}>
               <header class="bundle-code-main-bar bundle-compare-all-file-head">
                 ${this._fileName(path, entry, prefix)}
                 <span class="bundle-code-main-spacer"></span>
@@ -175,6 +204,7 @@ class BundleCompareAll extends BundleCompareCode {
               </header>
               ${this._fileBody(path, entry, file)}
             </section>`)}
+          ${shown.length > this._fileLimit ? html`<button type="button" class="bundle-compare-code-action bundle-compare-all-more" @click=${() => this._more()}>Show more files (${(shown.length - this._fileLimit).toLocaleString()} remaining)</button>` : nothing}
         </div>
       </div>
     </div>`
