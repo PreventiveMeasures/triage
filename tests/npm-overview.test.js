@@ -25,13 +25,22 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
 const rendered = value => Array.isArray(value) ? value.map(rendered).join('') : value?.strings ? value.strings.map((part, i) => part + rendered(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
 // Code an obfuscator wrote, with `count` names of its own, from `from` on.
 const obfuscated = (count, from = 0x1a2b) => Array.from({ length: count }, (_, i) => `var _0x${(from + i).toString(16)}=_0x${from.toString(16)}[${i}];`).join('')
+
+test('a file\'s readability is read once a version and path, and again for another text', () => {
+  const code = 'export const a = 1\n', details = {}
+  const read = npmFileReadabilityOf(details, 'index.js', code)
+  assert.deepEqual(read, npmFileReadability('index.js', code))
+  assert.equal(npmFileReadabilityOf(details, 'index.js', code), read, 'kept')
+  assert.equal(npmFileReadabilityOf({}, 'index.js', code) === read, false, 'by version')
+  assert.equal(npmFileReadabilityOf(details, 'index.js', null).category, 'binary', 'another text read anew')
+})
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [

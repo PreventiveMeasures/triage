@@ -30,7 +30,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmReadabilityFlags } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
@@ -88,17 +88,9 @@ const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bu
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 export const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
-// How a text reads (file-readability.js), by bundle and path: as the npm
-// Overview tags a file, and whether it was minified, its short names then a
+// Whether a text was minified (file-readability.js), its short names then a
 // minifier's, not its author's.
-const readTexts = new WeakMap()
-function readability(details, path, text) {
-  let files = readTexts.get(details)
-  if (!files) readTexts.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, npmFileReadability(path, text))
-  return files.get(path)
-}
-const minified = (details, path, text) => readability(details, path, text).category === 'minified'
+const minified = (details, path, text) => npmFileReadabilityOf(details, path, text).category === 'minified'
 
 // The files a bundle or package version starts from, by path, each with what
 // names it: a Stasis bundle's entries, an npm version's main, module, types
@@ -793,7 +785,7 @@ export class BundleCompareCode extends LitElement {
   // How a file reads (file-readability.js), or what it runs (`of`), on the
   // sides it has: `was`, as the bundle compared with has it, and `now`; null
   // for a side without it, `was` undefined where its contents are unknown.
-  _reads(path, entry, of = readability) {
+  _reads(path, entry, of = npmFileReadabilityOf) {
     const { kind, basePath = path } = entry
     const { before, after } = fileContents(this.base, this.other, path, entry)
     return {

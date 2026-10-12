@@ -227,6 +227,21 @@ export function npmReadabilityLabels(readability) {
 // minified code, as minified code is; any other as its category is.
 export const npmLabelMark = (readability, label) => label === 'long' && readability.category !== 'long' ? 'notice' : READABILITY.get(label).mark
 
+// A file's readability (npmFileReadability), read once a version (`details`)
+// and path, whoever asks: the Overview's lists, Compare's tags and whether a
+// file can be pretty-printed alike. Read again for another text, as Compare
+// gives one side's for both where an importer was captured on one.
+const readByVersion = new WeakMap()
+export function npmFileReadabilityOf(details, path, text) {
+  let files = readByVersion.get(details)
+  if (!files) readByVersion.set(details, files = new Map())
+  const kept = files.get(path)
+  if (kept?.text === text) return kept.read
+  const read = npmFileReadability(path, text)
+  files.set(path, { text, read })
+  return read
+}
+
 // Each category: its name, its tag in a list of files or a file's head, and how it is marked,
 // `warn` for what to look into, `notice` for what can be hard to review by
 // reading it either way.

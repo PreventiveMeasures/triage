@@ -21,7 +21,7 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
@@ -398,7 +398,7 @@ function readabilityCounts(readabilities) {
 }
 
 // What the Overview reads of a version's files, once a version: their
-// `paths`, each one's readability (npmFileReadability), extension and size by
+// `paths`, each one's readability (npmFileReadabilityOf), extension and size by
 // path, how many files each category has and how many can be hard to review
 // by reading them (readabilityCounts), the `binaries`, sorted, its file types
 // (npmFileTypes), and its `content`: its text files, their lines of code and
@@ -409,7 +409,7 @@ export function npmFilesRead(details) {
   let known = readabilities.get(details)
   if (!known) {
     const { sources, sourcesContent } = details.json
-    const byPath = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
+    const byPath = new Map(sources.map((path, i) => [path, npmFileReadabilityOf(details, path, sourcesContent[i])]))
     const { counts, marks, unreadable } = readabilityCounts(byPath.values())
     const lines = bundleLineCounts(details), sizes = bundleFileSizes(details)
     const content = { files: 0, lines: 0, unpacked: 0 }
