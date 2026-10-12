@@ -2628,6 +2628,18 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
   } finally { res.off('close', onClose) }
 }
 
+const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
+
+function npmAdvisoryOptions(deps: ManagedHttpDeps, githubToken: NpmAdvisoryOptions['githubToken'], latestDoc: () => Promise<NpmVersionDocument | null>): NpmAdvisoryOptions {
+  return {
+    githubToken,
+    repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
+    cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+    lastListing: repo => lastListing(deps.config.upstreamCacheDir, deps.db, repo, deps.config.debug),
+    debug: deps.config.debug,
+  }
+}
+
 // Read the same target-version evidence as the viewer. Missing upstream
 // reports impose no extra verdict restriction; detected findings do.
 async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReader, doc: NpmVersionDocument, signal: AbortSignal) {
@@ -2636,15 +2648,9 @@ async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReade
   const advisories = async () => {
     const versions = await readNpmVersions(doc.name, privileged, signal)
     if (!versions) return null
-    return npmAdvisories(doc.name, versions.versions, {
-      githubToken: () => ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
-      repo: async () => {
-        const latest = await readNpmVersion(doc.name, 'latest', privileged, signal)
-        return (latest?.manifest['github'] as { github?: string } | undefined)?.github ?? null
-      },
-      cache: cacheSignal => auditCache(deps.config.upstreamCacheDir, deps.db, cacheSignal, deps.config.debug),
-      debug: deps.config.debug,
-    })
+    return npmAdvisories(doc.name, versions.versions, npmAdvisoryOptions(deps,
+      () => ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
+      () => readNpmVersion(doc.name, 'latest', privileged, signal)))
   }
   const [list, socket] = await Promise.all([advisories().catch(() => null), doc.private ? null : npmSocketReport(doc.name, doc.version).catch(() => null)])
   return npmReviewVerdictLimit(doc, list, socket)
@@ -2804,19 +2810,12 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // shows: asked for once, and only where an answer isn't kept (npm-insights.ts).
   let token: Promise<string | null> | undefined
   const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
-  const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
   const privileged = canReadPrivateNpm(reader, name)
   // The latest version, read once a request: the package's figures and
   // advisories go by the repository it names.
   let latest: Promise<NpmVersionDocument | null> | undefined
   const latestDoc = () => latest ??= readNpmVersion(name, 'latest', privileged, controller.signal)
-  const advisoryOptions: NpmAdvisoryOptions = {
-    githubToken,
-    repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
-    cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
-    lastListing: repo => lastListing(deps.config.upstreamCacheDir, deps.db, repo, deps.config.debug),
-    debug: deps.config.debug,
-  }
+  const advisoryOptions = npmAdvisoryOptions(deps, githubToken, latestDoc)
   // The figures of the repository the latest version names, noted as its
   // repository for npmKnown; null where it names none, or they can't be had.
   const githubFigures = (doc: NpmVersionDocument) => {

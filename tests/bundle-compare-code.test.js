@@ -1819,16 +1819,19 @@ test('a long tree counts its lines a little at a time, so it paints at once and 
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const update = t.mock.method(element, 'requestUpdate', () => {})
   renderText(element.render())
-  assert.equal(element._lineCounter.counts.size, 1, 'the first file is counted, then the budget is spent')
+  assert.equal(element._counted.size, 1, 'the first file is counted, then the budget is spent')
   t.mock.timers.tick(0)
   assert.equal(update.mock.callCount(), 1, 'another render is asked for, once')
   for (let i = 0; i < 20; i++) renderText(element.render())
   assert.deepEqual(rowCounts(renderText(element.render())), all, 'filled in, as counted at once')
-  element._lineCounter.reset()
+  element._counted.clear()
   renderText(element.render())
   element.disconnectedCallback()
   t.mock.timers.tick(0)
   assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving the viewer')
+  renderText(element.render())
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 2, 'a reused viewer resumes counting')
 })
 
 test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
@@ -2289,38 +2292,19 @@ test('a file whose names the server could not give the new side\'s says why, its
 })
 
 
-test('review keeps file navigation without removed change navigation or a second file tree', () => {
-  const code = view('src/api.js'), selected = [], viewer = new CompareCode()
-  for (const name of ['base', 'other', 'files', 'baseName', 'otherName', 'path']) viewer[name] = code[name]
-  viewer.extensions = { fullPaths: true, filterContent: false }
-  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
-  const markup = renderText(viewer.render())
-  assert.doesNotMatch(markup, /Previous change|Next change|Wrap lines/u)
-  assert.match(markup, /aria-label="Previous file"/u)
-  assert.match(markup, /aria-label="Next file"/u)
-  assert.deepEqual(viewer._order, viewer._railState().allOrder)
-  assert.equal((markup.match(/class="bundle-code-rail"/gu) ?? []).length, 1)
-  viewer.dispatchEvent = event => selected.push(event.detail.path)
-  viewer._select('src/legacy.js')
-  assert.deepEqual(selected, ['src/legacy.js'])
-})
-
-test('review whole diff uses the shared tree and keeps actions outside the sticky file content', async () => {
+test('review whole diff keeps actions outside the sticky file content', async () => {
   const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
   const code = view(), viewer = new BundleCompareAll()
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) viewer[name] = code[name]
   viewer.extensions = { fileActions: () => 'REVIEW_ACTIONS', filterContent: false }
   viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
   const markup = renderText(viewer.render())
-  assert.equal((markup.match(/class="bundle-code-rail"/gu) ?? []).length, 1)
-  assert.match(markup, /bundle-code-splitter/u)
   const sections = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)]
-  assert.deepEqual(sections.map(([, path]) => path), viewer._railState().order)
+  assert.equal(sections.length, viewer._entries.size)
   for (const [, , body] of sections) {
     assert.match(body, /<div class="bundle-compare-file-content"><header class="bundle-code-main-bar bundle-compare-all-file-head">/u)
     assert.match(body, /<\/div>\s*REVIEW_ACTIONS\s*$/u, 'actions follow the wrapper that bounds the sticky header')
   }
-  assert.match(markup, /Binary file changed/u)
 })
 
 test('review verdict decorations keep file icons and chips in both viewers', async () => {

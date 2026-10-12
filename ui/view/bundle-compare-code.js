@@ -53,8 +53,17 @@ import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
-import { FileLineCounter, KIND, KINDS, renderFileChange, renderFileLineCounts } from './bundle-compare-tree.js'
-export { KIND } from './bundle-compare-tree.js'
+const KINDS = [
+  { kind: 'changed', label: 'Modified', letter: 'M' },
+  // Moved or re-extensioned (computeBundleDiff's renames); one whose contents changed
+  // too shows under Modified as well.
+  { kind: 'renamed', label: 'Renamed', letter: '→' },
+  { kind: 'added', label: 'Added', letter: 'A' },
+  { kind: 'removed', label: 'Removed', letter: 'D' },
+  // Same contents, but some of its imports resolve elsewhere.
+  { kind: 'repointed', label: 'Repointed', letter: 'R' },
+]
+export const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
 
 // Rows a diff renders before asking to show more; each ask adds as many.
 const ROW_LIMIT = 2000
@@ -322,7 +331,8 @@ export class BundleCompareCode extends LitElement {
     this._open = new Map()
     this._models = new Map()
     this._modelCap = MODEL_CACHE
-    this._lineCounter = new FileLineCounter(() => this.requestUpdate())
+    // Path → the tree's line counts for it (_lineCounts), for these entries.
+    this._counted = new Map()
     // What diff -b would hide in the texts a file shows (_whitespaceHidden).
     this._spaced = new Map()
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
@@ -377,7 +387,7 @@ export class BundleCompareCode extends LitElement {
     }
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); this._lineCounter.begin() }
+  disconnectedCallback() { super.disconnectedCallback(); clearTimeout(this._countLater); this._countLater = null }
 
   updated() {
     // A newly shown file starts at its top, with its tree row in view.
@@ -849,8 +859,9 @@ export class BundleCompareCode extends LitElement {
           ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
           ${this._fileTags(full, this._entries.get(full), true)}
           ${this._treeCounts(full, this._entries.get(full))}
-          ${repointed && kind !== 'repointed' ? renderFileChange({ kind: 'repointed' }, imports) : nothing}
-          ${renderFileChange({ kind, modified }, kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label)}
+          ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
+          <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
+            data-tooltip=${kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label}>${KIND[kind].letter}</span>
         </button>
       </li>`
       return [{ key: full, content }]
@@ -863,7 +874,38 @@ export class BundleCompareCode extends LitElement {
   }
 
   _treeCounts(path, entry) {
-    return entry.kind === 'repointed' ? nothing : renderFileLineCounts(this._lineCounter.get(path, () => fileContents(this.base, this.other, path, entry)), entry.kind, entry.modified)
+    if (entry.kind === 'repointed') return nothing
+    const counts = this._lineCounts(path, entry)
+    if (!counts) return nothing
+    const { additions, deletions } = counts
+    const renamed = entry.kind === 'renamed'
+    // A file renamed, or recorded otherwise, as it was.
+    if ((renamed || entry.modified === false) && additions === 0 && deletions === 0) {
+      return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
+    }
+    return html`<span class="bundle-compare-code-line-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
+      <span class=${classMap({ add: true, empty: renamed && additions === 0 })}>+${additions.toLocaleString()}</span>
+      <span class=${classMap({ del: true, empty: entry.kind === 'added' || (renamed && deletions === 0) })}>−${deletions.toLocaleString()}</span>
+    </span>`
+  }
+
+  // A file's lines added and removed between its sides as they are
+  // (fileLineCounts), kept for these entries. A long tree is counted a little
+  // at a time: a render counts from its first file until its budget is spent
+  // and asks for another to count the rest, so the tree paints at once and
+  // fills in.
+  _lineCounts(path, entry) {
+    if (this._counted.has(path)) return this._counted.get(path)
+    const now = performance.now()
+    this._countUntil ??= now + COUNT_BUDGET_MS
+    if (now > this._countUntil) {
+      this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
+      return null
+    }
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    const counts = fileLineCounts(before, after)
+    this._counted.set(path, counts)
+    return counts
   }
 
   // ── The selected file ────────────────────────────────────────────

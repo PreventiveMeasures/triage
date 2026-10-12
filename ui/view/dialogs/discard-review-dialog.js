@@ -5,19 +5,6 @@ import { ConfirmationDialog } from './confirmation-dialog.js'
 class DiscardReviewDialog extends ConfirmationDialog {
   static properties = { reviewTitle: { type: String } }
 
-  firstUpdated() {
-    if (this.signal?.aborted) { this._onCancel(); return }
-    this.signal?.addEventListener('abort', this._onCancel, { once: true })
-    super.firstUpdated()
-  }
-
-  disconnectedCallback() {
-    this.signal?.removeEventListener('abort', this._onCancel)
-    super.disconnectedCallback()
-  }
-
-  confirmationResult(confirmed) { return { confirmed: confirmed && !this.signal?.aborted } }
-
   render() {
     return html`<dialog aria-labelledby="discard-review-title" @close=${this._onClose}>
       <header><h3 id="discard-review-title">Discard unpublished review?</h3></header>

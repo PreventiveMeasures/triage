@@ -25,17 +25,6 @@ class TriageComparisonDialog extends ConfirmationDialog {
     this.comparison = { matched: 0, localFindings: 0, findings: [], skipped: [] }
   }
 
-  firstUpdated() {
-    if (this.signal?.aborted) { this._onCancel(); return }
-    this.signal?.addEventListener('abort', this._onCancel, { once: true })
-    super.firstUpdated()
-  }
-
-  disconnectedCallback() {
-    this.signal?.removeEventListener('abort', this._onCancel)
-    super.disconnectedCallback()
-  }
-
   render() {
     const { matched, localFindings, findings, skipped } = this.comparison
     const counts = { 'managed-only': 0, 'local-only': 0, mismatch: 0 }
