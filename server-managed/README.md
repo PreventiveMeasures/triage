@@ -229,7 +229,8 @@ head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
-`module`, `commonjs` and the rest, run as code), its execute bit, and its
+`module`, `commonjs` and the rest, run as code, as is a file it records no
+format for, shown as `none`), its execute bit, and its
 being an entry point of the bundle. A file whose record changed is changed,
 its bytes the same or not, and says how in its row of the Overview's Files,
 its head and its tree row (`resource → module`, `+x`, `new entry`; what it
@@ -240,7 +241,7 @@ and format characters (bidirectional and zero-width among them), Unicode's
 other spaces (no-break, en and em, thin, ideographic), the default-ignorable
 characters (Hangul fillers, variation selectors, the grapheme joiner, each a
 different name in code from the one it looks like) and the Braille blank;
-an emoji's own joiners, tags and presentation selectors excepted.
+an emoji's own joiners, tags, presentation selectors and keycaps excepted.
 Lines always wrap. Code can hide whitespace changes as
 `diff -b` does: a line re-indented, or with blanks added to a run of them or
 at its end, reads as unchanged, while blanks put between other characters or

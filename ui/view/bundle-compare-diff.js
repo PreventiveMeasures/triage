@@ -82,13 +82,11 @@ export function bundleFileMeta(details) {
 
 // How a file's record changed from one stasis bundle to the other, as
 // `{ field, from, to }` (bundleFileMeta's fields): none where either side
-// records nothing, nor in a format either leaves unsaid.
+// records nothing. A format left unsaid is one too: stasis runs such a
+// file as code, so a resource whose format is dropped runs.
 function metaChanges(before, after) {
   if (!before || !after) return []
-  const changes = []
-  if (before.format !== undefined && after.format !== undefined && before.format !== after.format) changes.push({ field: 'format', from: before.format, to: after.format })
-  for (const field of ['executable', 'entry']) if (before[field] !== after[field]) changes.push({ field, from: before[field], to: after[field] })
-  return changes
+  return ['format', 'executable', 'entry'].filter(field => before[field] !== after[field]).map(field => ({ field, from: before[field], to: after[field] }))
 }
 
 // Comparator: largest absolute delta first, then path/label ascending

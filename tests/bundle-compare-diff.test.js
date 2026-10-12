@@ -58,8 +58,12 @@ describe('computeBundleDiff', () => {
     assert.equal(rows['a/same.js'], undefined, 'one recorded alike is unchanged')
     assert.equal(diff.totals.unchangedFiles, 1)
     assert.equal(diff.totals.identical, false)
-    // Unsaid on a side, or another kind of bundle: nothing to compare.
-    assert.equal(computeBundleDiff(m({ 'a/x.js': 'x' }), m({ 'a/x.js': 'x' }), firstSeg, undefined, [stasis({}), stasis({ 'a/x.js': 'module' })]).totals.identical, true, 'a format one side leaves unsaid')
+    // A format a side leaves unsaid is one too: stasis runs the file as code.
+    const unsaid = (before, after) => computeBundleDiff(m({ 'a/x.js': 'x' }), m({ 'a/x.js': 'x' }), firstSeg, undefined, [stasis(before), stasis(after)]).files.changed[0]?.meta
+    assert.deepEqual(unsaid({ 'a/x.js': 'resource' }, {}), [{ field: 'format', from: 'resource', to: undefined }], 'a resource whose format is dropped, run now')
+    assert.deepEqual(unsaid({}, { 'a/x.js': 'module' }), [{ field: 'format', from: undefined, to: 'module' }])
+    assert.equal(unsaid({}, {}), undefined, 'unsaid on both sides')
+    // Another kind of bundle: nothing to compare.
     assert.equal(computeBundleDiff(m({ 'a/x.js': 'x' }), m({ 'a/x.js': 'x' }), firstSeg, undefined, [null, stasis({}, ['a/x.js'])]).totals.identical, true, 'a side that is no stasis bundle')
     assert.equal(bundleFileMeta({ kind: 'sourcemap' }), null)
     // A renamed file's record, from its old path to its new one.

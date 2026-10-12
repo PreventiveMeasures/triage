@@ -600,11 +600,12 @@ test('in a stasis bundle, whether whitespace may be hidden is told by the format
 })
 
 test('a file whose bytes are the same, its record in the stasis bundle changed, is listed, saying how', () => {
-  const same = { 'src/data.js': 'export const data = 1\n', 'bin/run': 'echo run\n', 'src/main.js': 'export default 1\n' }
+  const same = { 'src/data.js': 'export const data = 1\n', 'bin/run': 'echo run\n', 'src/main.js': 'export default 1\n', 'src/asset.js': 'export {}\n' }
   const recorded = path => {
     const element = view(path, [same, same])
     const { base, other } = element
     base.bundle.formats.set('src/data.js', 'resource')
+    base.bundle.formats.set('src/asset.js', 'resource')
     other.bundle.formats.set('src/data.js', 'module')
     other.bundle.executable.add('bin/run')
     other.bundle.entries.add('src/main.js')
@@ -615,7 +616,7 @@ test('a file whose bytes are the same, its record in the stasis bundle changed, 
   }
   const data = recorded('src/data.js')
   const marks = fileMarks(data)
-  for (const path of ['src/data.js', 'bin/run', 'src/main.js']) assert.deepEqual(marks[path], ['changed'], `${path}: listed as changed`)
+  for (const path of ['src/data.js', 'bin/run', 'src/main.js', 'src/asset.js']) assert.deepEqual(marks[path], ['changed'], `${path}: listed as changed`)
   assert.match(data, /bundle-compare-code-meta"? data-tooltip=The bundle loads it as module, as resource before, carried as data before, run as code now>resource → module</u, 'in its head')
   assert.match(data, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
   assert.match(data, /bundle-code-tree-link[^]*?bundle-compare-code-meta"? [^>]*>format<\/span>\s*<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u,
@@ -624,6 +625,10 @@ test('a file whose bytes are the same, its record in the stasis bundle changed, 
   assert.match(recorded('bin/run'), /bundle-compare-code-meta"? data-tooltip=Now executable: the bundle sets its execute bit>\+x</u)
   assert.match(recorded('src/main.js'), /bundle-compare-code-meta"? data-tooltip=Now an entry point of the bundle>new entry</u)
   assert.match(recorded('src/main.js'), /It is now an entry point of the bundle\./u)
+  // A resource whose format is dropped: stasis runs a file with none as code.
+  const dropped = recorded('src/asset.js')
+  assert.match(dropped, /bundle-compare-code-meta"? data-tooltip=The bundle records no format for it now, resource before, carried as data before, run as code now>resource → none</u)
+  assert.match(dropped, /The contents are the same\. The bundle records no format for it now, resource before, carried as data before, run as code now\./u)
 })
 
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
