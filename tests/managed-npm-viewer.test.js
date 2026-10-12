@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRangeVersion, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmPackageRoute, npmPublished, npmRangeVersion, NPM_RECENT_TIP, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -327,4 +327,30 @@ test('a version\'s publish date reads with how long ago it was: days, then month
   assert.equal(npmPublished('2026-10-03T12:00:00Z', now), 'Oct 3, 2026 · 7 days ago')
   assert.equal(npmPublished('2026-04-02T21:01:20Z', now), 'Apr 2, 2026 · 6 months ago')
   assert.equal(npmPublished('2021-02-20T15:42:16Z', now), 'Feb 20, 2021 · 5 years ago')
+})
+
+test('a version under two weeks old is flagged where its date shows, unless a team lists its scope', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  // 11 days old, then just over 14.
+  const times = { '1.2.3': '2026-10-01T00:00:00Z', '1.2.2': '2026-09-28T11:00:00Z', '1.0.0': '2020-01-31T00:00:00Z' }
+  versionsAnswer = name => Promise.resolve({ versions: ['1.2.3', '1.2.2', '1.0.0'], distTags: { latest: '1.2.3' }, times, teamScoped: name === '@team/pkg' })
+  const entry = npmPackageEntry({ ...data, published: times['1.2.3'] })
+  assert.doesNotMatch(text(npmOverviewMeta(entry)), /npm-recent/u, 'nothing flagged until the list says whether a team lists its scope')
+  await setImmediate()
+  assert.match(text(npmOverviewMeta(entry)), /<dt>Published<\/dt><dd><span class="npm-recent" data-tooltip=Under two weeks old: compromised releases are mostly found and pulled within days .tooltipContent=<div><strong>Under two weeks old<\/strong><\/div><div class="compare-tip-note">[^<]*<\/div>>Oct 1, 2026 · 11 days ago<\/span>/u)
+  const source = npmCompareSource(entry)
+  assert.deepEqual(source.choices.map(choice => [choice.id, choice.dateWarning ?? null]), [['1.2.3', NPM_RECENT_TIP], ['1.2.2', null], ['1.0.0', null]], 'the pickers flag its date')
+  const select = new (customElements.get('npm-version-select'))()
+  Object.assign(select, { name: '@scope/pkg', version: '1.0.0', list: npmVersionList('@scope/pkg') })
+  const options = select.render().values.find(value => Array.isArray(value))
+  assert.deepEqual(options.map(option => [option.value, option.secondary, Boolean(option.secondaryWarning)]),
+    [['1.2.3', '2026-10-01', true], ['1.2.2', '2026-09-28', false], ['1.0.0', '2020-01-31', false]], 'as the header\'s does')
+
+  const team = npmPackageEntry({ ...data, name: '@team/pkg', published: times['1.2.3'] })
+  npmVersionList('@team/pkg')
+  await setImmediate()
+  assert.doesNotMatch(text(npmOverviewMeta(team)), /npm-recent/u, 'a team\'s own release')
+  assert.ok(npmCompareSource(team).choices.every(choice => !choice.dateWarning))
+  assert.equal(npmRecentRelease({ status: 'error' }, times['1.2.3']), false, 'nor where the list can\'t be had')
 })

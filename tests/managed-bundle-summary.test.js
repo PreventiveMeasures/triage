@@ -60,4 +60,10 @@ test('managed scan selectors show cached counts before opening bundles and prese
   const loaded = { ...source.bundles[0], files: [{ lines: 7 }] }
   assert.equal(bundleOptions([loaded])[0].secondary, '2.0 KiB · 1 files · 7 LoC', 'loaded/scoped inventory takes precedence')
   assert.equal(bundleOptions([{ filename: 'local.map' }])[0].secondary, '', 'local/e2e options still wait for their local inventory')
+  const versions = bundleOptions([{ id: '1.1.0', filename: 'pkg@1.1.0', format: 'npm', date: '2026-10-01', dateWarning: 'Too new' }, { id: '1.0.0', filename: 'pkg@1.0.0', format: 'npm', date: '2020-01-31' }])
+  assert.deepEqual(versions.map(option => [option.secondary, option.secondaryWarning]), [['2026-10-01', 'Too new'], ['2020-01-31', undefined]], 'a version\'s date flagged where it says why')
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+  const selector = new (customElements.get('bundle-selector'))()
+  assert.match(text(selector._option(versions[0], false, null)), /<span class=secondary is-warning \?data-tooltip-truncated=false data-tooltip=2026-10-01 \.tooltipContent=Too new>2026-10-01</u, 'saying why whether or not it fits')
+  assert.match(text(selector._option(versions[1], false, null)), /<span class=secondary \?data-tooltip-truncated=true data-tooltip=2020-01-31 \.tooltipContent=>2020-01-31</u)
 })

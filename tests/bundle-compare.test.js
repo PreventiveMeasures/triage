@@ -405,6 +405,10 @@ function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1
 test('a source\'s options, names and loads stand in for the bundles on hand', async () => {
   const { view, calls } = sourced()
   assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', displayLabel: '1.0.0', size: '—', summary: null }])
+  const listed = view.source
+  view.source = { ...listed, options: [{ ...listed.options[0], date: '2026-10-01', dateWarning: 'Too new' }] }
+  assert.deepEqual(view._otherOptions().map(option => [option.date, option.dateWarning]), [['2026-10-01', 'Too new']], 'a date flagged where the source says why')
+  view.source = listed
   view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'code' }
   view.willUpdate(new Map([['request', null]]))
   assert.equal(view._targetIntegrity, '1.0.0')

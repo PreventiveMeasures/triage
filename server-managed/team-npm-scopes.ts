@@ -20,6 +20,9 @@ export interface TeamNpmScopeStore {
   setTeamNpmScopes(sessionId: string, teamId: string, scopes: unknown): Promise<{ added: string[]; removed: string[] } | null>
   // The scopes a user's visible teams list.
   listUserNpmScopes(userId: string): Promise<string[]>
+  // Whether any visible team lists the scope: whoever reads its packages,
+  // they are the instance's own, whose new releases aren't flagged (http.ts).
+  hasTeamNpmScope(scope: string): Promise<boolean>
 }
 
 // Each distinct scope, normalized; a list with one npm could not publish
@@ -64,6 +67,11 @@ export function teamNpmScopeMethods(db: ManagedSql): TeamNpmScopeStore {
         JOIN managed_team_npm_scope ns ON ns.team_id = tu.team_id
         WHERE tu.user_id = ? ORDER BY ns.scope`).all(userId) as { scope: string }[]
       return rows.map(row => row.scope)
+    },
+    async hasTeamNpmScope(scope) {
+      return !!await db.prepare(`SELECT 1 AS listed FROM managed_team_npm_scope ns
+        JOIN managed_team t ON t.id = ns.team_id AND t.hidden = 0
+        WHERE ns.scope = ? LIMIT 1`).get(scope)
     },
   }
 }

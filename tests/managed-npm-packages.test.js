@@ -148,8 +148,8 @@ test('anyone with workspace access opens a public version, asked of the registry
     assert.equal(calls[0].auth, null, 'the version document is asked for anonymously')
   }
   const versions = await h.send('/api/npm/versions?name=%40pub%2Fpkg')
-  assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' } },
-    'tags of unlisted versions are left out; when each was published, from the whole document')
+  assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' },
+    teamScoped: false }, 'tags of unlisted versions are left out; when each was published, from the whole document')
   assert.equal((await h.send(packagePath('@pub/pkg', '1.2.3'))).json().published, '2025-01-01T00:00:00.000Z', 'kept, once a whole document said it, for the version to carry')
   const download = await h.send('/api/npm/download?name=%40pub%2Fpkg&version=1.2.3')
   assert.equal(download.status, 200)
@@ -208,8 +208,11 @@ test('a team listing the scope lets its members read it, while the team is visib
     assert.equal(res.json().private, true)
     assert.equal((await h.send(packagePath('@other/secret', '1.0.0'), who)).status, 404, 'another scope stays closed')
   }
+  // Its releases are the team's own, whoever reads them.
+  for (const who of ['view', 'admin']) assert.equal((await h.send('/api/npm/versions?name=%40acme%2Fsecret', who)).json().teamScoped, true, who)
   await h.db.setTeamHidden('team', true, Date.now())
   assert.equal((await h.send(packagePath('@acme/secret', '2.0.0'))).status, 404, 'a hidden team grants nothing')
+  assert.equal((await h.send('/api/npm/versions?name=%40acme%2Fsecret', 'admin')).json().teamScoped, false, 'nor lists its scope')
   await h.db.setTeamHidden('team', false, Date.now())
   assert.equal((await set([])).status, 200)
   assert.equal((await h.send(packagePath('@acme/secret', '2.0.0'))).status, 404)

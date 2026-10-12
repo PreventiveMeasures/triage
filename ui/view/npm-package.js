@@ -194,9 +194,11 @@ export function npmPackageData(kind, name, ask, shape) {
   return loading
 }
 
-// A package's versions, newest first, and dist-tags.
+// A package's versions, newest first, and dist-tags, and whether a team
+// lists its scope (`teamScoped`).
 export function npmVersionList(name) {
-  return npmPackageData('versions', name, () => fetchNpmVersions(name), data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {} }))
+  return npmPackageData('versions', name, () => fetchNpmVersions(name),
+    data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, teamScoped: data.teamScoped === true }))
 }
 
 function tagsByVersion(distTags = {}) {
@@ -206,13 +208,27 @@ function tagsByVersion(distTags = {}) {
 }
 
 // A package's versions to pick from, newest first, `version` among them
-// though the list has not (or not yet) got it: `{ id, detail, date }`, its
-// dist-tags as its detail, and the day it was published.
-function versionChoices(list, version) {
+// though the list has not (or not yet) got it: `{ id, detail, date, recent }`,
+// its dist-tags as its detail, the day it was published, and whether that
+// was too recently to trust yet (npmRecentRelease).
+function versionChoices(list, version, now = Date.now()) {
   const tags = tagsByVersion(list.distTags)
   const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
-  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '', ...list.times?.[id] && { date: list.times[id].slice(0, 10) } }))
+  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '',
+    ...list.times?.[id] && { date: list.times[id].slice(0, 10), recent: npmRecentRelease(list, list.times[id], now) } }))
 }
+
+// Under two weeks old: a compromised release is mostly found and pulled
+// within days, so one this new hasn't yet had the time to be. Those of a
+// scope a team lists are its own, and aren't flagged; nor is any until the
+// version list says whether it is one.
+const RECENT_MS = 14 * 24 * 60 * 60_000
+export function npmRecentRelease(list, time, now = Date.now()) {
+  return list.status === 'ready' && !list.teamScoped && now - Date.parse(time) < RECENT_MS
+}
+// What a flagged date says on hover, as text and styled.
+const RECENT_NOTE = 'Under two weeks old: compromised releases are mostly found and pulled within days'
+export const NPM_RECENT_TIP = html`<div><strong>Under two weeks old</strong></div><div class="compare-tip-note">Compromised releases are mostly found and pulled within days</div>`
 
 const publishedDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 const ago = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
@@ -231,7 +247,8 @@ export function npmPublished(time, now = Date.now()) {
 export function npmCompareSource(entry) {
   const { name, version } = entry.npm
   const list = npmVersionList(name)
-  const choices = versionChoices(list, version).map(({ id, detail, date }) => ({ id, name: `${name}@${id}`, displayLabel: id, format: 'npm', detail, ...date && { date } }))
+  const choices = versionChoices(list, version).map(({ id, detail, date, recent }) => ({ id, name: `${name}@${id}`, displayLabel: id, format: 'npm', detail,
+    ...date && { date }, ...recent && { dateWarning: NPM_RECENT_TIP } }))
   return {
     noun: 'version',
     base: version,
@@ -507,8 +524,10 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
   // one, and in the directory its repository names, as a bundle's links.
   const origin = github ? bundleOriginLinks({ repo: { github, directory: manifest.github.directory ?? '', commit: manifest.gitHead } })[0] : null
   // When it was published: as it came with the version, else once the
-  // package's versions arrive.
-  const published = entry.npm.published ?? npmVersionList(entry.npm.name).times?.[entry.npm.version]
+  // package's versions arrive, which say too whether it's recent enough to
+  // flag.
+  const list = npmVersionList(entry.npm.name)
+  const published = entry.npm.published ?? list.times?.[entry.npm.version]
   // Its name and version are the header's (render-bundle.js), the version
   // to switch to there too.
   return html`<dl class="bundles-detail-meta npm-facts">
@@ -521,7 +540,8 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
       : manifest.author}</dd>` : nothing}
     ${manifest.publisher && manifest.publisher !== manifest.authorAccount
       ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest.publisher, `~${manifest.publisher}`)}</dd>` : nothing}
-    ${published ? html`<dt>Published</dt><dd>${npmPublished(published)}</dd>` : nothing}
+    ${published ? html`<dt>Published</dt><dd>${npmRecentRelease(list, published)
+      ? html`<span class="npm-recent" data-tooltip=${RECENT_NOTE} .tooltipContent=${NPM_RECENT_TIP}>${npmPublished(published)}</span>` : npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
       ${githubFigures}
@@ -594,7 +614,8 @@ class NpmVersionSelect extends LitElement {
 
   render() {
     const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
-    const options = versionChoices(list, this.version).map(({ id, detail, date }) => ({ value: id, label: id, detail, secondary: date }))
+    const options = versionChoices(list, this.version).map(({ id, detail, date, recent }) => ({ value: id, label: id, detail, secondary: date,
+      ...recent && { secondaryWarning: NPM_RECENT_TIP } }))
     return html`<bundle-selector .options=${options} .value=${this.version} noun="version" versions
       label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${options.length <= 1}
       aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}

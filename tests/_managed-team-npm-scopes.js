@@ -16,6 +16,8 @@ export async function checkTeamNpmScopes(db) {
   await db.setTeamNpmScopes(sid, 'team-b', ['@other'])
   assert.deepEqual(await db.listTeamNpmScopes(), { 'team-a': ['@acme', '@tools'], 'team-b': ['@other'] })
   assert.deepEqual(await db.listUserNpmScopes(member.userId), ['@acme', '@tools'], 'only the teams a user is a member of')
+  assert.equal(await db.hasTeamNpmScope('@other'), true, 'whichever team lists it')
+  assert.equal(await db.hasTeamNpmScope('@unlisted'), false)
   assert.deepEqual(await db.setTeamNpmScopes(sid, 'team-a', ['@tools', '@new']), { added: ['@new'], removed: ['@acme'] })
   assert.deepEqual(await db.setTeamNpmScopes(sid, 'team-a', ['@new', '@tools']), { added: [], removed: [] })
   assert.equal(await db.setTeamNpmScopes(sid, 'missing', ['@acme']), null)
@@ -27,6 +29,7 @@ export async function checkTeamNpmScopes(db) {
   // Hidden teams grant nothing; restoring one grants its scopes again.
   await db.setTeamHidden('team-a', true, Date.now())
   assert.deepEqual(await db.listUserNpmScopes(member.userId), [])
+  assert.equal(await db.hasTeamNpmScope('@tools'), false)
   await db.setTeamHidden('team-a', false, Date.now())
   await db.removeTeamMember('team-a', member.userId)
   assert.deepEqual(await db.listUserNpmScopes(member.userId), [])
