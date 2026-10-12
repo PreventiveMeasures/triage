@@ -17,7 +17,11 @@ test('a script names the hosts of the URLs in its strings, each with the line it
   assert.deepEqual(hosts('lib/a.js', 'get("http://45.12.3.9:8080/p")\nget("https://user:pw@evil.co/x")\nget("ftp://files.host.net/x")\nget("https://EVIL.co/again")\n'),
     { '45.12.3.9': 1, 'evil.co': 2, 'files.host.net': 3 }, 'an address, a user\'s name and port aside; each host once')
   assert.deepEqual(hosts('bin/cli', '#!/usr/bin/env node\nget("https://registry.example.dev/x")\n'), { 'registry.example.dev': 2 }, 'a script node runs by its hashbang')
-  assert.deepEqual(hosts('lib/a.js', 'if (/^https:\\/\\/api\\.evil\\.co\\//.test(url)) send(url)\n'), { 'api.evil.co': 1 }, 'a regular expression\'s, its slashes and dots escaped')
+  assert.deepEqual(hosts('lib/a.js', 'if (/^https:\\/\\/api\\.evil\\.co\\//.test(url)) send(url)\nif (/^https?:\\/\\/other\\.co/.test(url)) send(url)\n'),
+    { 'api.evil.co': 1, 'other.co': 2 }, 'a regular expression\'s, its slashes and dots escaped, its `s` optional')
+  assert.deepEqual(hosts('lib/a.js', 'fetch("https:\\/\\/api.evil.com\\/x")\n'), { 'api.evil.com': 1 }, 'a string\'s, its slashes escaped as JSON can write them')
+  assert.deepEqual(hosts('lib/a.js', 'get("https://пример.рф/x")\nget("https://api.evil.com.рф/x")\nget("https://xn--e1afmkfd.xn--p1ai/x")\n'),
+    { 'пример.рф': 1, 'api.evil.com.рф': 2, 'xn--e1afmkfd.xn--p1ai': 3 }, 'an internationalized name, whole, as written or as punycode')
 })
 
 test('a host named in a comment, built as the code runs, local, reserved or a namespace, is none', () => {
@@ -45,7 +49,8 @@ test('a file names the hosts malicious packages send what they take to, wherever
   for (const lookalike of ['go("notwebhook.site")', 'go("https://webhook.sites")', 'go("https://discord.com/channels/1")', 'go("https://bun.sh/docs")',
     'go("https://slack.com/api/chat.postMessage")', 'go("https://telegram.org")', 'go("https://bun.sh/installer")',
     'go("https://webhook.site.evil.example/x")', 'go("https://api.telegram.org.attacker.com/bot")', 'go("ipinfo.io.cn")',
-    'go("https://bun.sh/install.sh")', 'go("https://discord.com/api/webhooks.json")', 'go("https://hooks.slack.com/services.example")']) {
+    'go("https://bun.sh/install.sh")', 'go("https://discord.com/api/webhooks.json")', 'go("https://hooks.slack.com/services.example")',
+    'go("https://webhook.site.рф/x")', 'go("пwebhook.site")']) {
     assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
   }
   for (const path of ['README.md', 'docs/exfil.md', 'CHANGELOG', 'dist/a.js.map']) assert.equal(exfiltration(path, text), null, path)

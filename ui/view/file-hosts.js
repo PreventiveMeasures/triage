@@ -14,11 +14,14 @@ import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT, NPM_PROSE } from './file-readability.js'
 import { npmIsScript } from './file-runs-code.js'
 
-// A URL's host: a name whose last label is letters, or an IPv4 address, after
-// its scheme and any user, its case aside; whole, not the start of one built
-// as the code runs (`api.service.com.${tld}`).
-const URL_HOST = /\b(?:https?|wss?|ftp):\/\/(?:[^\s/@'"`]*@)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)(?![a-z0-9-]|\.[\w$-])/giu
-const NAMED = /\.[a-z]{2,}$/u
+// A URL's host: a name whose last label is letters (an internationalized
+// one's too, as written or as punycode), or an IPv4 address, after its
+// scheme, as a regular expression may leave its `s` optional (`https?://`),
+// and any user, its case aside; whole, not the start of one built as the code
+// runs (`api.service.com.${tld}`).
+const LABEL = String.raw`[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?`
+const URL_HOST = new RegExp(String.raw`\b(?:https?|wss?|ftp)\??:\/\/(?:[^\s/@'"\x60]*@)?(${LABEL}(?:\.${LABEL})+)(?![\p{L}\p{N}-]|\.[\p{L}\p{N}_$-])`, 'giu')
+const NAMED = /\.(?:\p{L}{2,}|xn--[a-z0-9-]+)$/u
 const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/u
 // Hosts no code calls out to: this machine, the names kept for examples and
 // tests (RFC 2606, RFC 6761) and local networks, and W3C's, whose URLs name
@@ -41,7 +44,8 @@ function lineOf(text) {
 }
 
 // What a regular expression escapes in a URL, its slashes and dots
-// (`/https:\/\/api\.example\.com/`), read as written in a string.
+// (`/https:\/\/api\.example\.com/`), as a string may its slashes
+// (`"https:\/\/api.example.com"`, as JSON can be written), read unescaped.
 const ESCAPED = /\\([/.])/gu
 
 // The hosts a script's strings name, each with the line it is first named on,
@@ -50,8 +54,9 @@ export function npmHosts(path, text) {
   if (!npmIsScript(path, text) || !(text.includes('://') || text.includes(':\\/\\/'))) return null
   const hosts = new Map(), line = lineOf(text)
   for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
-    // A regular expression's escapes read as a string's, its offsets as near.
-    const string = token?.[0] === '/' ? token.replaceAll(ESCAPED, '$1') : token
+    // Read unescaped, its offsets as near: on the same line but in a template
+    // across lines.
+    const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
     if (!string?.includes('://')) continue
     for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
@@ -64,10 +69,11 @@ export function npmHosts(path, text) {
 // A host as it is written, under another or not (`m.webhook.site`), then a
 // path on it where only that path is the service (`/api/webhooks`), on its
 // own: not part of a longer name (`notwebhook.site`, `webhook.sites`), a
-// name under another domain (`webhook.site.evil.example`), nor another path
-// (`/install.sh`, `/api/webhooks.json`), though a sentence may end after it.
-// Its name first, so a text is searched for that alone.
-const host = (name, path = '') => new RegExp(String.raw`(?<![\w-])${name}${path}(?!\.?[\w-])`, 'giu')
+// name under another domain (`webhook.site.evil.example`, `webhook.site.рф`),
+// nor another path (`/install.sh`, `/api/webhooks.json`), though a sentence
+// may end after it. Its name first, so a text is searched for that alone.
+const NAME_CHAR = String.raw`[\p{L}\p{N}_-]`
+const host = (name, path = '') => new RegExp(String.raw`(?<!${NAME_CHAR})${name}${path}(?!\.?${NAME_CHAR})`, 'giu')
 // Services malicious packages send what they take to, or fetch what they run
 // from: request catchers, out-of-band testing hosts (interactsh's, Burp
 // Collaborator's), bot and webhook APIs, a paste site, an IP lookup, and the
