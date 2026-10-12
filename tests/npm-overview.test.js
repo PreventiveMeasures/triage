@@ -20,8 +20,14 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LONG_LINE, npmFileReadability, npmReadabilityTag, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+// Template text, its values spelled out, `nothing` as none.
+const rendered = value => Array.isArray(value) ? value.map(rendered).join('') : value?.strings ? value.strings.map((part, i) => part + rendered(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
+// Code an obfuscator wrote, with `count` names of its own, from `from` on.
+const obfuscated = (count, from = 0x1a2b) => Array.from({ length: count }, (_, i) => `var _0x${(from + i).toString(16)}=_0x${from.toString(16)}[${i}];`).join('')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -82,7 +88,7 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
   assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
-  const note = text => npmReadabilityTag(npmFileReadability('lib/a.js', text)).values[1]
+  const note = text => npmEncodingTag(npmFileReadability('lib/a.js', text)).values[1]
   assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
   assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
   assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
@@ -197,6 +203,61 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('src/d.css', `${Array.from({ length: 6 }, (_, i) => `.list .item-${i}`).join(', ')} { color: red; margin: 0 auto; }\n`), 'ascii')
   assert.equal(category('src/About.jsx', `export const About = () => <p>${'We build tools that make reviewing code a little easier for everyone '.repeat(8)}</p>\n`), 'ascii',
     'nor what minifiers never write, as JSX')
+})
+
+test('an obfuscator\'s fingerprint is 20 of its _0x names or more, or the loop it turns its strings with', () => {
+  assert.deepEqual(npmObfuscation(obfuscated(20)), { names: 20, loop: false })
+  assert.deepEqual(npmObfuscation(`${obfuscated(5000)}while(!![]){}`), { names: 1000, loop: true }, 'counted to 1,000, the loop found past them')
+  assert.equal(npmObfuscationFound({ names: 1000, loop: false }), '1,000 or more names such as _0x1a2b')
+  assert.equal(npmObfuscationFound({ names: 999, loop: true }), '999 names such as _0x1a2b, and while(!![])')
+  assert.equal(npmObfuscation(obfuscated(19)), null, 'fewer')
+  assert.equal(npmObfuscation(`${obfuscated(10)}${obfuscated(10)}`), null, 'a name used again counts once')
+  assert.deepEqual(npmObfuscation('(function(){while(!![]){try{break}catch(e){}}})()'), { names: 0, loop: true })
+  assert.deepEqual(npmObfuscation('while (!![]) {\n  break\n}'), { names: 0, loop: true }, 'pretty-printed')
+  const lookalikes = Array.from({ length: 30 }, (_, i) => {
+    const hex = (0x1000 + i).toString(16)
+    return `a_0x${hex} _0x${hex}0000 _0X${hex} _0x${hex.slice(0, 3)} $x._0x${hex}z`
+  }).join('\n')
+  assert.equal(npmObfuscation(lookalikes), null, 'not inside another name, past six digits, with a capital X, under four digits')
+  assert.equal(npmObfuscation('while(!![].length){}'), null)
+  assert.deepEqual(npmFileReadability('dist/a.js', obfuscated(25)).obfuscation, { names: 25, loop: false }, 'as a file reads')
+  assert.equal(npmFileReadability('lib/a.js', 'const a = 1\n').obfuscation, null)
+  assert.equal(npmFileReadability('lib/a.png', null).obfuscation, null)
+  for (const path of ['dist/a.js.map', 'README.md', 'docs/deobfuscate.md', 'CHANGELOG']) {
+    assert.equal(npmFileReadability(path, `${obfuscated(25)}while(!![]){}`).obfuscation, null, `${path}: no code that runs`)
+  }
+})
+
+test('a large code file is JavaScript or TypeScript of 256 KiB or more, not a declaration file', () => {
+  assert.equal(NPM_LARGE_CODE, 256 * 1024)
+  for (const path of ['dist/a.js', 'a.mjs', 'a.cjs', 'a.jsx', 'a.ts', 'a.mts', 'a.cts', 'a.tsx', 'LIB/A.JS']) assert.equal(npmLargeCode(path, NPM_LARGE_CODE), true, path)
+  assert.equal(npmLargeCode('dist/a.js', NPM_LARGE_CODE - 1), false, 'smaller')
+  for (const path of ['a.d.ts', 'a.d.mts', 'a.json', 'a.js.map', 'a.css', 'a.wasm', 'README.md', 'bin/cli']) assert.equal(npmLargeCode(path, 10 * NPM_LARGE_CODE), false, path)
+  assert.equal(npmLargeCode('dist/a.js', undefined), false, 'no size')
+})
+
+test('a file becomes unreadable with no line over 200 characters before and one over 2,000 now, prose, maps and inline maps aside', () => {
+  const became = (path, before, after) => npmBecameUnreadable(path, npmFileReadability(path, before), npmFileReadability(path, after))
+  const short = `const a = '${'x'.repeat(188)}'\n`
+  const long = `const a = '${'y'.repeat(2001)}'\n`
+  assert.equal(short.length - 1, 200)
+  assert.equal(became('lib/a.js', short, long), true)
+  assert.equal(became('lib/a.js', `${short}x${short}`, long), false, 'one line over 200 before')
+  assert.equal(became('lib/a.js', short, `const a = '${'y'.repeat(1988)}'\n`), false, 'none over 2,000 now')
+  assert.equal(became('package.json', '{\n  "a": 1\n}\n', `{"a":"${'z'.repeat(2001)}"}`), true, 'any text')
+  for (const path of ['README.md', 'CHANGELOG', 'lib/a.js.map']) assert.equal(became(path, short, long), false, path)
+  assert.equal(became('lib/a.js', short, `${short}//# sourceMappingURL=data:application/json;base64,${'A'.repeat(4000)}\n`), false, 'its inline map\'s line counts for none')
+  assert.equal(became('lib/a.js', null, long), false, 'not text before')
+  assert.equal(npmBecameUnreadable('lib/a.js', null, npmFileReadability('lib/a.js', long)), false, 'no side before')
+})
+
+test('a file is tagged Large, a code file of 256 KiB or more, as a notice, and Obfuscated, as a warning', () => {
+  const tags = rendered(npmFileFlagTags('dist/a.js', npmFileReadability('dist/a.js', `${obfuscated(25)}while(!![]){}`), NPM_LARGE_CODE))
+  assert.equal(tags, '<span class="npm-flag-tag is-notice" data-tooltip=A code file of 256.0 KiB, 256 KiB or more>Large</span>'
+    + '<span class="npm-flag-tag is-warn" data-tooltip=An obfuscator\'s fingerprint: 25 names such as _0x1a2b, and while(!![])>Obfuscated</span>')
+  assert.match(rendered(npmFileFlagTags('dist/b.js', npmFileReadability('dist/b.js', 'while(!![]){}'), 10)), /^<span class="npm-flag-tag is-warn" data-tooltip=An obfuscator's fingerprint: while\(!!\[\]\)>Obfuscated<\/span>$/u)
+  assert.equal(typeof npmFileFlagTags('lib/a.js', npmFileReadability('lib/a.js', 'const a = 1\n'), 20), 'symbol', 'nothing for neither')
+  assert.equal(typeof npmFileFlagTags('lib/a.d.ts', null, NPM_LARGE_CODE), 'symbol')
 })
 
 test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {
@@ -423,6 +484,58 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
+})
+
+test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, one newly obfuscated', async () => {
+  const version = (ver, files) => ({ integrity: `files@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'files', version: ver } })
+  const compared = (base, other) => computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  const badges = async (base, other, files = compared(base, other)) => {
+    npmCompareBadges(base, other, files); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other, files))
+  }
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const payload = `${obfuscated(25)}\n${'// padding padding padding\n'.repeat(12_000)}`
+  const big = '// big\n'.repeat(40_000)
+  const base = version('1.0.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\n${code}\n`, 'lib/vendor.js': obfuscated(25, 0x2000), 'lib/big.js': big,
+    'lib/util.js': `${code}\n` })
+  const other = version('1.1.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\nconst payload = '${'y'.repeat(2001)}'\n${code}\n`, 'lib/vendor.js': obfuscated(30, 0x3000),
+    'lib/big-moved.js': big, 'lib/helpers.js': `${code}\n${obfuscated(25)}\n`, 'dist/payload.js': payload })
+  const files = compared(base, other)
+  assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
+    [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')
+  const flagged = await badges(base, other, files)
+  const chips = [...flagged.matchAll(/<li><span class=npm-extension npm-compare-file (npm-compare-\w+)[^]*?>\s*<span>([^<]+)<\/span>(?:<span class="npm-extension-count">([^<]+)<\/span>)?<\/span><\/li>/gu)]
+    .map(([, kind, label, count]) => [kind, label, count ?? null])
+  assert.deepEqual(chips, [['npm-compare-large', 'Large new code', null], ['npm-compare-unreadable', 'Now unreadable', null],
+    ['npm-compare-obfuscated', 'Obfuscated', '2']], 'a large code file added, not one moved; a file become unreadable; files newly obfuscated, one renamed, not one obfuscated before; counted where several, no file named')
+  const outside = flagged.replaceAll(/data-tooltip=[^\n]*|\.tooltipContent=[^]*?<\/div>\s*<\/div>>/gu, '')
+  assert.match(outside, /<span>Large new code<[^]*<span>Now unreadable<[^]*<span>Obfuscated</u)
+  assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
+  const size = `${(payload.length / 1024).toFixed(1)} KiB`
+  assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
+  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
+    + '[^]*compare-tip-note">Code files the open version adds, of 256 KiB or more<', 'u'), 'styled, a row for each file')
+  assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
+  assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
+  assert.doesNotMatch(flagged, /compare-tip-path">lib\/(?:vendor|big-moved)\.js</u)
+  assert.doesNotMatch(await badges(base, other, null), /npm-compare-file/u, 'none until the files are compared')
+  assert.doesNotMatch(await badges(other, base), /npm-compare-file/u, 'none the other way: a file dropped, one readable again, obfuscation gone')
+
+  // Their tags on the files, as in the Files list: what each is now, whatever
+  // it was before.
+  const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="?(npm-\w+-tag)[^>]*>([^<]+)</gu)].map(([, kind, tag]) => `${kind}:${tag}`)
+  assert.deepEqual(tags('dist/payload.js'), ['npm-flag-tag:Large', 'npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'])
+  assert.deepEqual(tags('lib/vendor.js'), ['npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'], 'obfuscated before too: tagged, not flagged')
+  assert.deepEqual(tags('lib/big-moved.js'), ['npm-flag-tag:Large', 'npm-encoding-tag:ASCII'])
+  assert.deepEqual(tags('index.js'), ['npm-flag-tag:Long lines', 'npm-encoding-tag:ASCII'], 'one become unreadable by its Long lines tag, beside ASCII')
+
+  // Many files: counted, the tooltip listing the first eight.
+  const many = (ver, line) => version(ver, Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`lib/f${i}.js`, `${code}\n${line}\n`])))
+  const counted = await badges(many('2.0.0', 'export {}'), many('2.1.0', `const x = '${'z'.repeat(2001)}'`))
+  assert.match(counted, /<span>Now unreadable<\/span><span class="npm-extension-count">10</u)
+  assert.equal(counted.match(/compare-tip-path"/gu).length, 8)
+  assert.match(counted, /compare-tip-note">and 2 more</u)
+  assert.match(counted, /data-tooltip=Now unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {

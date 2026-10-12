@@ -435,6 +435,15 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
 })
 
+test('a source\'s badges are given the one compared with, the open one, and the comparison\'s files', async () => {
+  const { view, source } = sourced()
+  view.source = { ...source('2.0.0'), badges: (base, other, files) => `<badges ${base.integrity} → ${other.integrity}: ${files.changed.map(row => row.path)}>` }
+  view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'overview' }
+  view.willUpdate(new Map([['request', null]]))
+  await Promise.resolve()
+  assert.match(renderText(view.render()), /<badges sha512-1\.0\.0 → sha512-2\.0\.0: a\.js>/u)
+})
+
 test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {
   const { view, source } = sourced()
   const files = { icon: path => `<icon ${path}>`, tag: (shown, path) => `<tag ${shown.integrity} ${path}>`, warning: (shown, paths) => `<warning ${shown.integrity} ${paths.join(',')}>` }

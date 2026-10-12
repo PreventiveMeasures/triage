@@ -215,8 +215,12 @@ repointed import lists those imports alone. Past that, Code shows a file at
 a time, its Previous and Next file buttons stepping through them in the
 tree's order. A link naming the older Diff mode opens Code. Each file's
 head tags how it reads, as the npm Overview tags files (ASCII, UTF-8,
-Controls, Minified, ...), after how it read where that differs, and the tree
-tags a file the same way where it can be hard to review by reading it. A file a
+Controls, Minified, ...), after how it read where that differs, with Long
+lines beside it where it has them now, and the tree
+tags a file the same way where it can be hard to review by reading it (Long
+lines alone, for one with them); both
+tag it Large or Obfuscated as the npm Files list does, as it is now (as it
+was, for one removed). A file a
 bundle or package starts from is labelled in blue in its head (a Stasis
 bundle's entry, an npm version's main, module, types or bin), a license
 file as license in grey (an npm version's at its root, its tooltip naming the
@@ -1291,7 +1295,15 @@ control. A version shows in the bundle view with four tabs:
   those fixed in it (affecting only older versions) struck through, and
   those affecting later versions, older ones perhaps too, plain, each with
   its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
-  tag naming the control or invisible characters or long lines it holds; and, where the
+  tag naming the control or invisible characters or long lines it holds (one with
+  unexpected long lines still tagged ASCII or UTF-8, Long lines beside it as
+  a warning), and before them,
+  Large, quietly, on a JavaScript or TypeScript file of 256 KiB or more
+  (not a declaration file), which says little of a file alone, and
+  Obfuscated, as a warning, on one with an obfuscator's fingerprint (20
+  names or more such as `_0x1a2b`, `_0x` and four to six hex digits, or the
+  loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
+  source map, which holds the names of the code it maps); and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names,
   each file's head linking it on GitHub at the commit the version was
@@ -1332,7 +1344,16 @@ control. A version shows in the bundle view with four tabs:
   from its maintainers wouldn't; install scripts the open version adds or
   changes (`postinstall added`, node-gyp's `install` for a `binding.gyp` it
   adds among them, not one it drops), each version's with their commands in
-  its tooltip; an open version under two weeks old, as on
+  its tooltip; in red, though their tags on the files say little of one
+  alone, a code file of 256 KiB or more the open version adds (not one
+  renamed), a file it changes that had no line over 200 characters and now
+  has one over 2,000 (prose, source maps and an inline
+  map's line aside, as its Long lines or Minified tag says of it), and a file
+  it adds or changes with an obfuscator's fingerprint where the version
+  compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
+  each counting them where there are several, its tooltip alone listing
+  them, each with its size, its longest line before and now, or what its
+  fingerprint holds; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
@@ -1359,7 +1380,7 @@ control. A version shows in the bundle view with four tabs:
   that changed, each opening its package, and a changed one whose ranges
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
   Files, open from the start, show each file's type, and the files the open
-  version adds or changes their category as in the Files list, under the
+  version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them.
   Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides

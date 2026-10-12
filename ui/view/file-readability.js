@@ -1,6 +1,7 @@
 // How a file's text reads, for a reviewer: the npm Overview's tags and
 // warnings (npm-overview.js), Compare's tags in a file's head
-// (bundle-compare-code.js), and which files the Code tab offers
+// (bundle-compare-code.js) and its chips on what a version changes
+// (npm-overview.js npmCompareBadges), and which files the Code tab offers
 // pretty-printed (pretty-source.js).
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
@@ -94,6 +95,53 @@ function minifiedAverage(text, { stringOrComment, droppable, needed }) {
   return lines.length > 0 && length > MINIFIED_AVERAGE * lines.length && dropped < MINIFIED_SPACES * length ? Math.round(length / lines.length) : 0
 }
 
+// What javascript-obfuscator writes, and next to nothing else: its names,
+// `_0x` and four to six hex digits, OBFUSCATED_NAMES of them or more, or the
+// loop it turns its array of strings with, `while(!![])`, spaced or not.
+const OBFUSCATED_NAME = /(?<![\p{ID_Continue}$])_0x[0-9a-f]{4,6}(?![\p{ID_Continue}$])/gu
+const OBFUSCATED_NAMES = 20
+const OBFUSCATED_LOOP = /while\s*\(\s*!!\[\]\s*\)/u
+// Names counted before a fingerprint's count stops, reading as that many or
+// more: each is kept to tell it from the others, and a file can hold millions.
+const OBFUSCATED_COUNTED = 1000
+// A text's obfuscator fingerprint, `{ names, loop }`: how many such names it
+// has, up to OBFUSCATED_COUNTED, and whether it has the loop; null where it
+// has neither enough names nor the loop.
+export function npmObfuscation(text) {
+  const names = new Set()
+  for (const [name] of text.matchAll(OBFUSCATED_NAME)) {
+    names.add(name)
+    if (names.size === OBFUSCATED_COUNTED) break
+  }
+  const loop = OBFUSCATED_LOOP.test(text)
+  return names.size >= OBFUSCATED_NAMES || loop ? { names: names.size, loop } : null
+}
+
+// What a fingerprint holds, as a tooltip says it.
+export const npmObfuscationFound = ({ names, loop }) => [names >= OBFUSCATED_NAMES
+  && `${names.toLocaleString('en')}${names === OBFUSCATED_COUNTED ? ' or more' : ''} names such as _0x1a2b`, loop && 'while(!![])'].filter(Boolean).join(', and ')
+
+// A code file this large is mostly a bundle, worth a look where a version
+// adds it: JavaScript or TypeScript, not a declaration file, which holds no
+// code that runs.
+export const NPM_LARGE_CODE = 256 * 1024
+const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/iu
+const DECLARATION = /\.d\.[cm]?ts$/iu
+export const npmLargeCode = (path, bytes) => typeof bytes === 'number' && bytes >= NPM_LARGE_CODE && CODE.test(path) && !DECLARATION.test(path)
+
+// A file that had no line over SHORT_LINES characters and now has one over
+// UNREADABLE_LINE, by how it reads on each side (`was` and `now`,
+// npmFileReadability's), `path` its path now: an inline source map's line
+// counts for neither, and prose and source maps, whose long lines the Long
+// lines tag passes over, never become so, nor does a file that isn't text on
+// either side.
+const SHORT_LINES = 200
+const UNREADABLE_LINE = 2000
+export function npmBecameUnreadable(path, was, now) {
+  if (!was || !now || was.category === 'binary' || now.category === 'binary' || PROSE.test(path) || SOURCE_MAP.test(path)) return false
+  return was.longest <= SHORT_LINES && now.longest > UNREADABLE_LINE
+}
+
 // How a file reads, as its `category`, the first that holds (READABILITY):
 // binary (no text), controls (text holding control, bidirectional or
 // invisible characters), map (a source map), long (code with some lines
@@ -105,10 +153,12 @@ function minifiedAverage(text, { stringOrComment, droppable, needed }) {
 // npmTextEncoding's `kind` and `controls`, its `longest` line's length and
 // `longLines`, its code's lines' `average` length where it is minified into
 // short ones (strings and comments aside, see MINIFIED_AVERAGE; 0 otherwise),
-// and how long its inline map is (`inlineMap`, 0 for none).
+// how long its inline map is (`inlineMap`, 0 for none), and its obfuscator
+// fingerprint (`obfuscation`, npmObfuscation's; null for none, and for prose
+// or a source map).
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
-  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0 }
+  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0, obfuscation: null }
   let inlineMap = 0, longChars = 0, longLines = 0, longest = 0
   for (let at = 0; at <= text.length;) {
     const next = text.indexOf('\n', at)
@@ -124,7 +174,10 @@ export function npmFileReadability(path, text) {
     }
     at = end + 1
   }
-  const read = { ...encoding, longest, longLines, average: 0, inlineMap }
+  // A source map holds the names and sources of the code it maps, and prose
+  // its examples: neither runs.
+  const obfuscation = PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
+  const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
@@ -177,9 +230,35 @@ function readabilityNote({ average, category, controls, longLines, longest, inli
   }
 }
 
-// A file's tag, marked where it can't be read as it is, saying why.
-export function npmReadabilityTag(readability) {
+// A file's tag in the column a list keeps for it: how it reads, marked where
+// it can't be read as it is, saying why; for one with unexpected long lines,
+// how its text is encoded (ASCII or UTF-8), its long lines tagged beside it
+// (npmLongLinesTag) rather than in its place.
+export function npmEncodingTag(readability) {
   if (!readability) return nothing
-  const { tag, mark } = READABILITY.get(readability.category)
-  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
+  const category = readability.category === 'long' ? readability.kind : readability.category
+  const { tag, mark } = READABILITY.get(category)
+  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
+}
+
+// A file's Long lines, beside its tag as Obfuscated is (npmFileFlagTags), saying
+// how many and how long; nothing for one without unexpected long lines.
+export function npmLongLinesTag(readability) {
+  if (readability?.category !== 'long') return nothing
+  return html`<span class="npm-flag-tag is-warn" data-tooltip=${readabilityNote(readability)}>${READABILITY.get('long').tag}</span>`
+}
+
+// A file's tags of how it reads: its long lines, where it has them, then its tag.
+export const npmReadabilityTag = readability => readability ? html`${npmLongLinesTag(readability)}${npmEncodingTag(readability)}` : nothing
+
+// What a file is beyond how it reads, before its tag: Large, a code file of
+// NPM_LARGE_CODE or more (`bytes` its size), which says little of a file
+// alone, as `notice`; and Obfuscated, one with an obfuscator's fingerprint
+// (npmObfuscation), as `warn`. Nothing for neither.
+export function npmFileFlagTags(path, readability, bytes) {
+  const large = npmLargeCode(path, bytes)
+  const obfuscation = readability?.obfuscation
+  if (!large && !obfuscation) return nothing
+  return html`${large ? html`<span class="npm-flag-tag is-notice" data-tooltip=${`A code file of ${formatBytes(bytes)}, 256 KiB or more`}>Large</span>` : nothing}${
+    obfuscation ? html`<span class="npm-flag-tag is-warn" data-tooltip=${`An obfuscator's fingerprint: ${npmObfuscationFound(obfuscation)}`}>Obfuscated</span>` : nothing}`
 }
