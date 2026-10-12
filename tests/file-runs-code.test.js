@@ -20,6 +20,7 @@ test('a script is read for eval, Function and child_process, each with the lines
     'a comment in the global object\'s access')
   assert.deepEqual(found('a.js', 'require ( \'child_process\' )\n__require("child_process")\nimport \'node:child_process\'\nexport { spawn } from "child_process"\n'),
     { 'child-process': [1, 2, 3, 4] }, 'loaded however a module is')
+  assert.deepEqual(found('a.js', 'require?.("child_process")\n__require ?. (\'child_process\')\n'), { 'child-process': [1, 2] }, 'required optionally')
   assert.deepEqual(found('a.ts', 'require/* bundled */(\'child_process\')\nawait import(/* webpackIgnore: true */ \'child_process\')\nimport type from \'child_process\'\nimport type { A } from \'a\'\nimport { spawn } from \'child_process\'\n'),
     { 'child-process': [1, 2, 3, 5] }, 'comments in how it is loaded; a default named type, and a load after a type-only one')
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
@@ -52,6 +53,9 @@ test('a name read as another or as a property, or in a string, a regular express
     + 'import /* explanation */ type { ChildProcess } from \'node:child_process\'\nexport /* c */ type { CP } from "child_process"\n'), null,
     'a type-only import or export, erased, comments in it or not')
   assert.deepEqual(found('a.ts', 'import typeX from \'child_process\'\n'), { 'child-process': [1] }, 'a default named typeX')
+  assert.equal(found('a.ts', 'import type cp = require(\'child_process\')\n'), null, 'a type-only import-equals, erased')
+  assert.deepEqual(found('a.ts', 'import cp = require(\'child_process\')\nimport type = require("child_process")\n'), { 'child-process': [1, 2] },
+    'an import-equals, and one named type')
   assert.equal(found('a.js', "const s = 'a \\\r\neval(x)'\r\nconst d = \"b \\\r\nFunction(y)\"\r\n"), null, 'a string continued past a CRLF')
   assert.equal(found('a.js', '// eval(x)\n/* new Function(a) */\nconst s = "eval(" + \'Function(\'\nconst re = /eval\\(/u\n'), null)
   assert.equal(found('a.js', 'const docs = "see child_process"\n// require("child_process")\n'), null, 'a string naming a module only where it is one')

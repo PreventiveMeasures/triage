@@ -47,15 +47,16 @@ const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?
 const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`, 'gmu')
 // A string naming child_process.
 const CHILD_PROCESS = /^(["'\u0060])(?:node:)?child_process\1$/u
-// What comes before a module's name where code loads it: `require(`, a
-// bundler's `__require(` or `__non_webpack_require__(`, `import(`, `import`
-// and `from`, comments allowed between (`import(/* webpackIgnore: true */ …)`);
-// a name not loaded, as in a list of node's modules, is none, nor one a
-// type-only import or export names (`import type { … } from`, comments
-// allowed as in a load), which TypeScript erases (`import type from` imports
-// a default named type).
-const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*|\bimport)${GAP}\(|\b(?:from|import))${GAP}$`, 'u')
-const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}from\b)[^;'"\x60]*\bfrom${GAP}$`, 'u')
+// What comes before a module's name where code loads it: `require(` (or
+// `require?.(`), a bundler's `__require(` or `__non_webpack_require__(`,
+// `import(`, `import` and `from`, comments allowed between
+// (`import(/* webpackIgnore: true */ …)`); a name not loaded, as in a list of
+// node's modules, is none, nor one a type-only import or export names
+// (`import type { … } from`, `import type cp = require(`, comments allowed as
+// in a load), which TypeScript erases (`import type from` imports a default
+// named type, `import type = require(` one named so).
+const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*${GAP}(?:\?\.${GAP})?|\bimport${GAP})\(|\b(?:from|import))${GAP}$`, 'u')
+const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}(?:from\b|=))[^;'"\x60]*(?:\bfrom|=${GAP}require${GAP}\()${GAP}$`, 'u')
 
 // Each kind, in the order its tags show: its tag and what it does.
 const RUNS_CODE = new Map([
