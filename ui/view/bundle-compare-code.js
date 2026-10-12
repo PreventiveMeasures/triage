@@ -30,7 +30,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmFileFlagTags, npmFileReadability, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLongLinesTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -790,11 +790,14 @@ export class BundleCompareCode extends LitElement {
 
   // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
   // UTF-8, Minified, Controls, ...): as it reads now, after how it read where
-  // that differs.
+  // that differs; its long lines, as it reads now, beside that, as Obfuscated
+  // is (file-readability.js npmLongLinesTag).
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
-    if (!was || !now || was.category === now.category) return npmReadabilityTag(now ?? was)
-    return html`<span class="bundle-compare-code-readability">${npmReadabilityTag(was)}<span aria-hidden="true">→</span>${npmReadabilityTag(now)}</span>`
+    const tagged = read => read.category === 'long' ? read.kind : read.category
+    const tag = !was || !now || tagged(was) === tagged(now) ? npmEncodingTag(now ?? was)
+      : html`<span class="bundle-compare-code-readability">${npmEncodingTag(was)}<span aria-hidden="true">→</span>${npmEncodingTag(now)}</span>`
+    return html`${npmLongLinesTag(now ?? was)}${tag}`
   }
 
   // What a file is beyond how it reads, as the npm Files list tags it
@@ -811,7 +814,8 @@ export class BundleCompareCode extends LitElement {
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
-    return shown && READABILITY.get(shown.category).mark ? npmReadabilityTag(shown) : nothing
+    if (!shown || !READABILITY.get(shown.category).mark) return nothing
+    return shown.category === 'long' ? npmLongLinesTag(shown) : npmEncodingTag(shown)
   }
 
   // A file's lines added and removed, and its sizes.

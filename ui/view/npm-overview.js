@@ -570,20 +570,20 @@ function fileBadges(base, other, files) {
   const unreadable = changed.filter(row => npmBecameUnreadable(row.path, before(row), after(row)))
   const obfuscated = [...files.onlyOther, ...changed].filter(row => after(row)?.obfuscation && !before(row)?.obfuscation)
   return [
-    fileBadge('npm-compare-large', large.length === 1 ? 'Large new code file' : 'Large new code files', large, row => formatBytes(now.sizes.get(row.path)),
+    fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
       'Code files the open version adds, of 256 KiB or more'),
-    fileBadge('npm-compare-unreadable', 'Became unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
+    fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
       'Its longest line: none over 200 characters before, now one over 2,000'),
     fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
       'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
   ]
 }
 
-// A chip on `rows`, files the open version adds or changes, named by its
-// one file or counting them, each with what `said` of it in its tooltip.
+// A chip on `rows`, files the open version adds or changes, counting them
+// where there are several, the files in its tooltip alone, each with what
+// `said` of it.
 function fileBadge(kind, label, rows, said, note) {
   if (rows.length === 0) return nothing
-  const name = path => path.slice(path.lastIndexOf('/') + 1)
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
   return html`<li><span class=${`npm-extension npm-compare-file ${kind}`}
@@ -594,7 +594,7 @@ function fileBadge(kind, label, rows, said, note) {
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
       <div class="compare-tip-note">${note}</div>
     </div>`}>
-    <span>${label}</span><span class="npm-extension-count">${rows.length === 1 ? name(rows[0].path) : `${rows.length.toLocaleString('en')} files`}</span></span></li>`
+    <span>${label}</span>${rows.length > 1 ? html`<span class="npm-extension-count">${rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
 }
 
 // The open version, where it is too recent to trust yet: how long ago it

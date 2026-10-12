@@ -3688,16 +3688,18 @@ a.npm-compare-publisher {
 }
 /* A chip's text in its warning's color, one color to a warning: its value,
    and the whole of a chip that names its issue (the open version's age, its
-   provenance lost, its deprecation). Only a chip's type, the same whatever
+   provenance lost, its deprecation, what it does to its files, a count and
+   all). Only a chip's type, the same whatever
    its tint (Socket's scores', the publisher's, the advisories', the install
-   scripts', the files'), reads in the text's own color. Each npm account a publisher's
+   scripts'), reads in the text's own color. Each npm account a publisher's
    chip names, there and in its tooltip, green where it is known to publish,
    else orange. */
 :is(.npm-compare-account.is-unknown, .npm-extension.npm-compare-published, .npm-compare-install .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
 .npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
-:is(.npm-extension.npm-compare-provenance, .npm-extension.npm-compare-deprecated, .npm-compare-file .npm-extension-count) {
+:is(.npm-extension.npm-compare-provenance, .npm-extension.npm-compare-deprecated,
+  .npm-extension.npm-compare-file, .npm-compare-file .npm-extension-count) {
   color: color-mix(in srgb, var(--critical) 55%, var(--text));
 }
 /* Provenance the open version lost: a stronger warning than its deprecation. */

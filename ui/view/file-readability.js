@@ -220,12 +220,26 @@ function readabilityNote({ average, category, controls, longLines, longest, inli
   }
 }
 
-// A file's tag, marked where it can't be read as it is, saying why.
-export function npmReadabilityTag(readability) {
+// A file's tag in the column a list keeps for it: how it reads, marked where
+// it can't be read as it is, saying why; for one with unexpected long lines,
+// how its text is encoded (ASCII or UTF-8), its long lines tagged beside it
+// (npmLongLinesTag) rather than in its place.
+export function npmEncodingTag(readability) {
   if (!readability) return nothing
-  const { tag, mark } = READABILITY.get(readability.category)
-  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
+  const category = readability.category === 'long' ? readability.kind : readability.category
+  const { tag, mark } = READABILITY.get(category)
+  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
 }
+
+// A file's Long lines, beside its tag as Obfuscated is (npmFileFlagTags), saying
+// how many and how long; nothing for one without unexpected long lines.
+export function npmLongLinesTag(readability) {
+  if (readability?.category !== 'long') return nothing
+  return html`<span class="npm-flag-tag is-warn" data-tooltip=${readabilityNote(readability)}>${READABILITY.get('long').tag}</span>`
+}
+
+// A file's tags of how it reads: its long lines, where it has them, then its tag.
+export const npmReadabilityTag = readability => readability ? html`${npmLongLinesTag(readability)}${npmEncodingTag(readability)}` : nothing
 
 // What a file is beyond how it reads, before its tag: Large, a code file of
 // NPM_LARGE_CODE or more (`bytes` its size), which says little of a file

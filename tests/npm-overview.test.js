@@ -21,7 +21,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityTag, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
@@ -88,7 +88,7 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
   assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
-  const note = text => npmReadabilityTag(npmFileReadability('lib/a.js', text)).values[1]
+  const note = text => npmEncodingTag(npmFileReadability('lib/a.js', text)).values[1]
   assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
   assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
   assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
@@ -498,13 +498,16 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
     [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')
   const flagged = await badges(base, other, files)
-  const chips = [...flagged.matchAll(/<li><span class=npm-extension npm-compare-file (npm-compare-\w+)[^]*?<span>([^<]+)<\/span><span class="npm-extension-count">([^<]+)<\/span><\/span><\/li>/gu)]
-    .map(([, kind, label, value]) => [kind, label, value])
-  assert.deepEqual(chips, [['npm-compare-large', 'Large new code file', 'payload.js'], ['npm-compare-unreadable', 'Became unreadable', 'index.js'],
-    ['npm-compare-obfuscated', 'Obfuscated', '2 files']], 'a large code file added, not one moved; a file become unreadable; files newly obfuscated, one renamed, not one obfuscated before')
+  const chips = [...flagged.matchAll(/<li><span class=npm-extension npm-compare-file (npm-compare-\w+)[^]*?>\s*<span>([^<]+)<\/span>(?:<span class="npm-extension-count">([^<]+)<\/span>)?<\/span><\/li>/gu)]
+    .map(([, kind, label, count]) => [kind, label, count ?? null])
+  assert.deepEqual(chips, [['npm-compare-large', 'Large new code', null], ['npm-compare-unreadable', 'Now unreadable', null],
+    ['npm-compare-obfuscated', 'Obfuscated', '2']], 'a large code file added, not one moved; a file become unreadable; files newly obfuscated, one renamed, not one obfuscated before; counted where several, no file named')
+  const outside = flagged.replaceAll(/data-tooltip=[^\n]*|\.tooltipContent=[^]*?<\/div>\s*<\/div>>/gu, '')
+  assert.match(outside, /<span>Large new code<[^]*<span>Now unreadable<[^]*<span>Obfuscated</u)
+  assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
   const size = `${(payload.length / 1024).toFixed(1)} KiB`
-  assert.match(flagged, new RegExp(`data-tooltip=Large new code file: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
-  assert.match(flagged, new RegExp(`compare-tip-head">Large new code file<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
+  assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
+  assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>`
     + '[^]*compare-tip-note">Code files the open version adds, of 256 KiB or more<', 'u'), 'styled, a row for each file')
   assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
   assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
@@ -518,15 +521,15 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.deepEqual(tags('dist/payload.js'), ['npm-flag-tag:Large', 'npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'])
   assert.deepEqual(tags('lib/vendor.js'), ['npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'], 'obfuscated before too: tagged, not flagged')
   assert.deepEqual(tags('lib/big-moved.js'), ['npm-flag-tag:Large', 'npm-encoding-tag:ASCII'])
-  assert.deepEqual(tags('index.js'), ['npm-encoding-tag:Long lines'], 'one become unreadable by its Long lines tag')
+  assert.deepEqual(tags('index.js'), ['npm-flag-tag:Long lines', 'npm-encoding-tag:ASCII'], 'one become unreadable by its Long lines tag, beside ASCII')
 
   // Many files: counted, the tooltip listing the first eight.
   const many = (ver, line) => version(ver, Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`lib/f${i}.js`, `${code}\n${line}\n`])))
   const counted = await badges(many('2.0.0', 'export {}'), many('2.1.0', `const x = '${'z'.repeat(2001)}'`))
-  assert.match(counted, /<span>Became unreadable<\/span><span class="npm-extension-count">10 files</u)
+  assert.match(counted, /<span>Now unreadable<\/span><span class="npm-extension-count">10</u)
   assert.equal(counted.match(/compare-tip-path"/gu).length, 8)
   assert.match(counted, /compare-tip-note">and 2 more</u)
-  assert.match(counted, /data-tooltip=Became unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
+  assert.match(counted, /data-tooltip=Now unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
