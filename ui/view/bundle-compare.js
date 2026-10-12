@@ -41,7 +41,8 @@
 // the second opens what was picked, compared with the same first side, and
 // picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
-// `from` and `to` in place of `range`. `badges` is what calls for a look at
+// `from` and `to` in place of `range`, and `dependencyTag(row, kind)` what to
+// tag one with, where it has anything. `badges` is what calls for a look at
 // the two, at the picker row's end, and `widest` the `{ name, detail }` its
 // selects are sized to hold.
 import { LitElement, html, nothing } from 'lit'
@@ -494,7 +495,7 @@ class BundleCompare extends LitElement {
   _depGroup(title, rows, kind, lanes) {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
     const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
-      ${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
+      ${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}${this.source?.dependencyTag?.(r, kind) ?? nothing}
       ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
           <span class="bundle-compare-ver-from">${r.from}</span>
           <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
@@ -839,11 +840,13 @@ class BundleCompare extends LitElement {
       ${mode === 'code' && this._diffFits ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
+          .dependencyTag=${this.source?.dependencyTag ?? null}
           .models=${this._combinedFor().models} .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
         : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
+          .dependencyTag=${this.source?.dependencyTag ?? null}
           .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
         : html`<div class="bundle-compare-body">${body}</div>`}

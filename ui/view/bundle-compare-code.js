@@ -248,9 +248,11 @@ export class BundleCompareCode extends LitElement {
     otherAlerts: { attribute: false },
     alertTags: { attribute: false },
     // A source's dependency changes, `{ removed, added, changed }`
-    // (npm-package.js npmDependencyChanges), and what opens one.
+    // (npm-package.js npmDependencyChanges), what opens one, and what tags
+    // one (npm-overview.js npmDependencyTier).
     dependencies: { attribute: false },
     openDependency: { attribute: false },
+    dependencyTag: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -928,7 +930,7 @@ export class BundleCompareCode extends LitElement {
         const range = kind === 'changed'
           ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
           : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
-        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}`
+        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTag?.(row, kind) ?? nothing}`
         const label = `${{ added: 'New', changed: 'Updated', removed: 'Removed' }[kind]}: ${row.name}`
         return html`<li>${open && row.opens
           ? html`<button type="button" class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label} @click=${() => open(row)}>${content}</button>`

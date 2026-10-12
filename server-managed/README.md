@@ -1331,7 +1331,11 @@ control. A version shows in the bundle view with four tabs:
   20,000), its last complete month's downloads in its tooltip. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
-  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
+  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those; one
+  the open version adds is tagged with its package's tier by downloads,
+  whatever it is, as the package's own is (a version-specific check, as of
+  a version's age or publisher, would have to cover every version its
+  range takes).
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them.
@@ -1342,7 +1346,8 @@ control. A version shows in the bundle view with four tabs:
   one, and picking the other side's swaps them. Code
   reviews the changes as for bundles, over the package's package.json its
   dependencies' changes (plain, peer and optional ones, not dev ones) under
-  one head counting them, each a chip with its range beside its name,
+  one head counting them, each a chip with its range beside its name (a new
+  one's tier by downloads after it),
   tinted as the Dependencies section's groups are: those the open version
   adds, those whose range it changes (`~1.3.8 → ^2.0.0`) and those it drops,
   struck through, each opening as there: with the pretty-print toggle

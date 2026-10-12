@@ -984,6 +984,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &:is(button):hover { border-color: var(--dep); }
   &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   & .npm-dependency-kind { align-self: center; }
+  /* A new one's tier by downloads, as small as its kind's tag. */
+  & span.npm-downloads-tier { align-self: center; font-size: .6rem; line-height: 1.35; }
 }
 .bundle-compare-code-dep-range {
   color: var(--muted);

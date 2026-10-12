@@ -627,18 +627,30 @@ function socketBadges([from, to], affecting) {
   })
 }
 
-// The package's tier by downloads where it is orange or red (past the top
-// 20,000), its last complete month's downloads in its tooltip, over the
-// month's name.
-function popularityBadge(name) {
+// A package's tier by downloads, where `shown` takes its level, its last
+// complete month's downloads in its tooltip, over the month's name; nothing
+// until its figures arrive.
+function tierTag(name, shown = () => true) {
   const stats = npmPackageStats(name)
   const tier = stats.status === 'ready' ? npmDownloadTier(stats.downloads) : null
   const level = tier === null ? null : npmTierLevel(tier)
-  if (level !== 'is-low' && level !== 'is-unpopular') return nothing
+  if (level === null || !shown(level)) return nothing
   const last = npmLastMonth(stats.downloads), total = last?.total.toLocaleString('en')
-  return html`<li><span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
-    .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier)}</span></li>`
+  return html`<span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
+    .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier)}</span>`
 }
+
+// The package's tier where it is orange or red (past the top 20,000).
+function popularityBadge(name) {
+  const tag = tierTag(name, level => level === 'is-low' || level === 'is-unpopular')
+  return tag === nothing ? nothing : html`<li>${tag}</li>`
+}
+
+// A dependency Compare lists new (bundle-compare.js source's `dependencyTag`):
+// its package's tier, whatever it is. Nothing for one changed or removed,
+// which the version compared with already had, nor one that names no package
+// in the registry (a git or file one).
+export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(row.opens) : nothing
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {

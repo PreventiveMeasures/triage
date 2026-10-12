@@ -370,7 +370,7 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
     dependencies: { removed: [{ key: '\0gone', name: 'gone', kind: null, range: '1.0.0', opens: 'gone' }],
       added: [{ key: 'peer\0fresh', name: 'fresh', kind: 'peer', range: '2.0.0', opens: 'fresh' }],
       changed: [{ key: '\0kept', name: 'kept', kind: null, from: '^1.0.0', to: '^1.1.0', opens: 'kept' }] },
-    openDependency: row => opened.push(row.name) }
+    openDependency: row => opened.push(row.name), dependencyTag: (row, kind) => kind === 'added' ? `[tier ${row.opens}]` : '' }
   const element = Object.assign(new CompareCode(), shared)
   element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
   const render = path => { element.path = path; return renderText(element.render()) }
@@ -378,8 +378,8 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
   assert.match(pkg, /class="bundle-compare-code-deps"[^]*<h4>Dependencies <span>1 new · 1 updated · 1 removed<\/span><\/h4>[^]*class=bundle-compare-diff-table/u, 'one head, over its diff')
   const chips = [...pkg.matchAll(/class=bundle-compare-code-dep (is-\w+) aria-label=([^@>]+?) @click=>([^]*?)<\/button>/gu)]
     .map(([, kind, label, content]) => [kind, label.trim(), content.replaceAll(/<[^>]+>/gu, '')])
-  assert.deepEqual(chips, [['is-added', 'New: fresh', 'freshpeer2.0.0'], ['is-changed', 'Updated: kept', 'kept^1.0.0 → ^1.1.0'], ['is-removed', 'Removed: gone', 'gone1.0.0']],
-    'new, updated and removed, each its range beside its name, a peer dependency marked')
+  assert.deepEqual(chips, [['is-added', 'New: fresh', 'freshpeer2.0.0[tier fresh]'], ['is-changed', 'Updated: kept', 'kept^1.0.0 → ^1.1.0'], ['is-removed', 'Removed: gone', 'gone1.0.0']],
+    'new, updated and removed, each its range beside its name, a peer dependency marked, and what the source tags one with')
   assert.doesNotMatch(render('lib/package.json'), /bundle-compare-code-deps/u, 'only over the package\'s own')
   // Each opens as the Overview's rows do.
   const handlers = value => Array.isArray(value) ? value.flatMap(handlers) : value?.values ? value.values.flatMap(handlers) : typeof value === 'function' ? [value] : []

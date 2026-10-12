@@ -421,6 +421,8 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
   assert.doesNotMatch(diff, />Packages</u)
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
+  view.source = { ...view.source, dependencyTag: (row, kind) => `[${kind} ${row.name}]` }
+  assert.match(renderText(view._renderDiff()), /npm-dependency-kind">peer<\/span>\[added dep\]/u, 'what the source tags one with, beside its kind')
 })
 
 test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {
