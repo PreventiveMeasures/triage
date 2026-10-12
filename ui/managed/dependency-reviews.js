@@ -6,6 +6,7 @@ const ERRORS = {
   'review-conflict': 'This review changed or was published in another tab. Refresh reviews before editing it again.',
   'package-not-found': 'One of these package versions is no longer available to you.',
   'unknown-review-file': 'This file is not in either package version.',
+  'non-text-review-file': 'Verdicts for non-text files are not supported yet.',
   'bad-review-teams': 'Select at least one team you belong to with dependency review enabled. Refresh if team access changed.',
   'no-reviewed-files': 'Review at least one changed file before publishing.',
   'package-json-not-reviewed': 'Review package.json before publishing a partial review.',

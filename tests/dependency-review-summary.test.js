@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { allowedReviewVerdicts, auditMarkdown, needsPackageJsonReview, npmReviewVerdictLimit, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
+import { allowedReviewVerdicts, auditMarkdown, isReviewableFile, needsPackageJsonReview, npmReviewVerdictLimit, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
+
+test('non-text content on either side is never reviewable and cannot yield full coverage', () => {
+  const binary = { format: 'digest', size: 12, digest: 'sha256-binary' }
+  for (const [before, after] of [[undefined, binary], [binary, undefined], [binary, binary], [binary, 'text'], ['text', binary], [null, 'text'], [undefined, undefined]]) {
+    assert.equal(isReviewableFile(before, after), false)
+  }
+  for (const [before, after] of [[undefined, ''], ['', undefined], ['', 'text'], ['text', 'updated']]) assert.equal(isReviewableFile(before, after), true)
+  const files = ['package.json', 'asset.bin'], nonTextFiles = ['asset.bin']
+  const checked = files.map(file => ({ file, status: 'accept' }))
+  assert.deepEqual(summarizeReview(checked, files, nonTextFiles), { coverage: 'partial', checkedFiles: 1, totalFiles: 2, verdictLimit: 'accept' })
+  assert.equal(summarizeReview(checked.slice(1), files, nonTextFiles).checkedFiles, 0)
+  assert.equal(needsPackageJsonReview(checked.slice(1), files, nonTextFiles), true)
+  assert.equal(needsPackageJsonReview(checked, files, nonTextFiles), false)
+  assert.equal(needsPackageJsonReview(checked, files, ['package.json', 'asset.bin']), true)
+  assert.equal(summarizeReview(checked, files, null).coverage, 'partial', 'legacy coverage without type evidence cannot certify a full review')
+})
 
 test('security findings constrain only the reviewed version, combined with the strictest file verdict', () => {
   const npm = { version: '2.0.0' }

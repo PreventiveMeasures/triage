@@ -30,7 +30,7 @@ test('legacy notes become one editable note when continuing, without rewriting f
   let review = await original.changeDependencyReview(reviewContext, sid, { action: 'save', reviewId: null, revision: null, entryId: null,
     entry: { file: 'index.js', status: 'reject', comment: 'First concern.' } }, 100)
   review = await original.changeDependencyReview(reviewContext, sid, { action: 'publish', reviewId: review.id, revision: review.revision,
-    teamIds: ['team'], files: ['index.js'], final: { status: 'reject', comment: '' } }, 300)
+    teamIds: ['team'], files: ['index.js'], nonTextFiles: [], final: { status: 'reject', comment: '' } }, 300)
   await original.close()
   const raw = new DatabaseSync(path)
   t.after(() => raw.close())
@@ -54,6 +54,11 @@ test('legacy notes become one editable note when continuing, without rewriting f
   await db.discardDependencyReview(sid, continued.id, continued.revision)
   assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(continued.id).n, 0)
   assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
+  raw.prepare('UPDATE managed_dependency_review SET files = ? WHERE id = ?').run(JSON.stringify(['index.js']), review.id)
+  const legacy = (await db.listOwnDependencyReviews(session.userId, null)).reviews.find(row => row.id === review.id)
+  assert.equal(legacy.coverage, 'partial', 'a historical snapshot without file type evidence cannot certify a full review')
+  assert.equal(legacy.nonTextFiles, null)
+  assert.deepEqual(legacy.entries, frozen.entries, 'classification does not rewrite frozen verdicts or notes')
 })
 
 

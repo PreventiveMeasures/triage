@@ -65,7 +65,8 @@ function toolbar(page) {
 export function renderReviewEditor(page, file = page._file, inline = false) {
   const editor = page._editorState(file)
   const saved = page._shownReview?.entries.find(row => row.file === file), whole = file === null
-  const showNotes = whole || ['accept-with-nits', 'request-changes', 'reject'].includes(editor.status)
+  const nonText = page._nonTextFiles.includes(file)
+  const showNotes = whole || nonText || ['accept-with-nits', 'request-changes', 'reject'].includes(editor.status)
   if (!page._canEdit) {return html`<section class=${`npm-review-decision${inline ? ' npm-review-inline-decision' : ''}`} aria-label="File review"><div class="npm-review-decision-head">
     <strong>${whole ? 'Review notes' : 'File review'}</strong><span class="npm-review-muted">${isFrozen(page) ? 'Frozen' : 'Read only'}</span></div>
     ${saved ? html`<div class="npm-review-saved-entry">${saved.status ? verdictLabel(saved.status) : nothing}${reviewNote(saved.comment)}</div>`
@@ -73,8 +74,9 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
     ${page._writable ? nothing : html`<p class="npm-review-help">Triage access is required to add a review.</p>`}</section>`}
   return html`<section class=${`npm-review-decision${inline ? ' npm-review-inline-decision' : ''}`} aria-label=${whole ? 'Review notes editor' : 'File decision'}>
     <div class="npm-review-form">
-      ${whole ? nothing : html`<div class="npm-review-verdict-field">${verdictChoices(`file:${file}`, editor.status,
-        status => void page._setFileStatus(file, status), busy(page), undefined, true)}</div>`}
+      ${whole ? nothing : html`<div class="npm-review-verdict-field">${verdictChoices(`file:${file}`, nonText ? '' : editor.status,
+        status => void page._setFileStatus(file, status), busy(page) || nonText, undefined, true)}</div>`}
+      ${nonText ? html`<p class="npm-review-help">Non-text file. Verdicts are not supported yet; this file remains unchecked.</p>` : nothing}
       ${showNotes ? html`<textarea aria-label=${whole ? 'Review notes' : 'File note'} rows=${whole ? 6 : 2} maxlength="20000" placeholder=${whole ? 'Add context that spans more than one file…' : 'Add a note (optional)…'}
         .value=${live(editor.comment)} ?disabled=${busy(page)} @input=${event => page._editFile(file, { _comment: event.target.value })}
         @blur=${() => void page._saveFile(file)}></textarea>` : nothing}
@@ -83,7 +85,7 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
 }
 
 export function renderReviewConfirmation(page, review) {
-  const allowed = page._allowedVerdicts, summary = summarizeReview(review.entries, page._files)
+  const allowed = page._allowedVerdicts, summary = summarizeReview(review.entries, page._files, page._nonTextFiles)
   return html`<form class="npm-review-publish-form" @submit=${event => { event.preventDefault(); void page._publish() }}>
     <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${coverage(summary)} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}<p>${summary.totalFiles > summary.checkedFiles ? html`${summary.totalFiles - summary.checkedFiles} files not checked.

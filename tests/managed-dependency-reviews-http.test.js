@@ -6,6 +6,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
+import { auditMarkdown } from '../common/dependency-reviews.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
 
 async function fixture(t) {
@@ -33,6 +34,63 @@ async function fixture(t) {
   return { db, sessions, send }
 }
 const url = context => `/api/npm/reviews?${new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))}`
+
+test('non-text verdicts are disabled, notes remain writable, and binaries keep published coverage partial', async t => {
+  const h = await fixture(t)
+  const binary = Buffer.from([0, 1, 255]), changedBinary = Buffer.from([0, 2, 255])
+  const before = packageOf('review-binary', '1.0.0', { 'package.json': '{}', 'removed.bin': Buffer.from([0, 4, 254]),
+    'changed.bin': binary, 'to-text.js': binary, 'to-binary.js': 'old text', 'unchanged.bin': binary })
+  const after = packageOf('review-binary', '2.0.0', { 'package.json': '{"version":"2.0.0"}', 'added.bin': binary,
+    'changed.bin': changedBinary, 'to-text.js': 'new text', 'to-binary.js': binary, 'unchanged.bin': binary, 'empty.txt': '' })
+  registry(t, [after, before])
+  await h.db.createTeam('binary-team', 'Binary team', Date.now())
+  await h.db.setTeamMember('binary-team', h.sessions.triage.userId, { dependencies: true, security: true })
+  await h.send('/api/admin/teams/set-dependency-review', { who: 'admin', body: { teamId: 'binary-team', enabled: true } })
+  const target = { ecosystem: 'npm', package: after.doc.name, version: after.doc.version, integrity: after.doc.dist.integrity }
+  for (const base of [{}, { basePackage: before.doc.name, baseVersion: before.doc.version, baseIntegrity: before.doc.dist.integrity }]) {
+    const context = { ...target, ...base }
+    const nonTextFiles = base.basePackage ? ['added.bin', 'changed.bin', 'removed.bin', 'to-binary.js', 'to-text.js']
+      : ['added.bin', 'changed.bin', 'to-binary.js', 'unchanged.bin']
+    for (const file of nonTextFiles) {
+      for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) {
+        const blocked = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file, status, comment: '' } })
+        assert.equal(blocked.status, 400, `${file}: ${JSON.stringify(blocked.body)}`)
+        assert.equal(blocked.body.error, 'non-text-review-file')
+      }
+    }
+    const note = '* Inspect this externally.\n* Keep the original bytes.'
+    let review = (await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'added.bin', status: null, comment: note } })).body.review
+    assert.equal(review.entries[0].comment, note)
+    const texts = base.basePackage ? ['package.json', 'empty.txt'] : ['package.json', 'empty.txt', 'to-text.js']
+    for (const file of texts) {
+      const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: review.id, revision: review.revision, file, status: 'accept', comment: '' } })
+      assert.equal(saved.status, 200, JSON.stringify(saved.body))
+      review = saved.body.review
+    }
+    // A verdict saved before this restriction must not make a binary checked.
+    review = await h.db.changeDependencyReview({ ...context, basePackage: base.basePackage ?? null, baseVersion: base.baseVersion ?? null, baseIntegrity: base.baseIntegrity ?? null },
+      hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4)), { action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
+        entry: { file: 'added.bin', status: 'accept', comment: note } }, Date.now())
+    const response = await h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: review.id, revision: review.revision,
+      teamIds: ['binary-team'], finalStatus: 'accept', files: texts, nonTextFiles: [], coverage: 'full' } })
+    assert.equal(response.status, 200, JSON.stringify(response.body))
+    const published = response.body.review
+    assert.deepEqual(published.nonTextFiles, nonTextFiles.toSorted())
+    assert.equal(published.coverage, 'partial')
+    assert.equal(published.checkedFiles, texts.length)
+    assert.equal(published.totalFiles, texts.length + nonTextFiles.length)
+    assert.equal(published.files.includes('removed.bin'), Boolean(base.basePackage))
+    assert.equal(published.files.includes('unchanged.bin'), !base.basePackage)
+    assert.equal(auditMarkdown(published), null)
+    const reloaded = (await h.send(url(context))).body.reviews.find(row => row.id === review.id)
+    const listed = (await h.send('/api/npm/reviews/mine')).body.reviews.find(row => row.id === review.id)
+    for (const result of [reloaded, listed]) {
+      assert.equal(result.coverage, 'partial'); assert.equal(result.checkedFiles, texts.length)
+      assert.deepEqual(result.nonTextFiles, published.nonTextFiles)
+      assert.equal(result.entries.find(row => row.file === 'added.bin').comment, note)
+    }
+  }
+})
 
 test('publication enforces detected malware and critical vulnerabilities using server evidence', async t => {
   const h = await fixture(t)
@@ -170,7 +228,7 @@ test('final verdict is mandatory and constrained, while coverage is derived from
   const publish = patch => h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: review.id,
     revision: review.revision, teamIds: ['team'], files: [], coverage: 'full', ...patch } })
   assert.equal((await publish({})).status, 400, 'a final verdict is required even with no checks')
-  for (const file of ['package.json', 'b.js', 'c.bin']) {
+  for (const file of ['package.json', 'b.js', 'empty']) {
     review = (await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: review.id, revision: review.revision,
       file, status: file === 'b.js' ? 'request-changes' : 'accept', comment: '' } })).body.review
   }

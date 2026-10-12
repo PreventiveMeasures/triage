@@ -39,7 +39,7 @@ mock.module('../ui/view/npm-review-diff.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { EMPTY_REVIEW_BASE, NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
-const { renderReview } = await import('../ui/view/npm-review-view.js')
+const { renderReview, renderReviewEditor } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { NpmReviewTree, reviewTree } = await import('../ui/view/npm-review-tree.js')
@@ -65,6 +65,45 @@ function component() {
   page._reviews = [review]
   return page
 }
+
+test('non-text files stay visible and unchecked in both review modes, with disabled verdicts and editable notes', async () => {
+  const page = component()
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['package.json', 'index.js'], sourcesContent: ['{}', 'new text'] },
+    npmBinaries: new Map([['asset.bin', { size: 24, digest: 'sha256-new' }]]) }
+  page._base = { ...base, kind: 'sourcemap', json: { sources: ['package.json'], sourcesContent: ['old'] },
+    npmBinaries: new Map([['index.js', { size: 12, digest: 'sha256-old' }]]) }
+  const saved = { ...review, entries: ['package.json', 'asset.bin', 'index.js'].map((path, i) => ({ ...file, id: String(i), file: path, status: 'accept', comment: '' })) }
+  answer = { reviews: [saved], teams: [] }
+  page._key = null
+  page._ensureContext(page._base)
+  await Promise.resolve()
+  assert.deepEqual(page._files, ['asset.bin', 'index.js', 'package.json'])
+  assert.deepEqual(page._nonTextFiles, ['asset.bin', 'index.js'], 'a binary-to-text change remains non-reviewable')
+  assert.deepEqual(page._summary, { coverage: 'partial', checkedFiles: 1, totalFiles: 3, verdictLimit: 'accept' })
+  assert.equal(reviewTree(page._treeFiles, page._fileStates).checked, 1)
+  for (const mode of ['code', 'diff']) {
+    page._mode = mode
+    page._selectFile('asset.bin')
+    assert.equal(page._dirty, false, 'a previously saved binary verdict is ignored without creating a new edit')
+    const editor = text(renderReviewEditor(page, 'asset.bin', mode === 'diff'))
+    assert.equal((editor.match(/\?disabled=true/gu) ?? []).length, 5, 'all verdict controls, including Not checked, are disabled')
+    assert.match(editor, /Non-text file.*remains unchecked/u)
+    assert.match(editor, /aria-label=File note/u)
+    requests.length = 0
+    for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) await page._setFileStatus('asset.bin', status)
+    assert.equal(requests.length, 0)
+    assert.equal(page._status, '')
+  }
+  const comment = '* Still visible\n* External inspection needed'
+  answer = { review: { ...saved, revision: 2, entries: saved.entries.map(row => row.file === 'asset.bin' ? { ...row, comment, status: null } : row) } }
+  page._editFile('asset.bin', { _comment: comment })
+  await page._saveFile('asset.bin')
+  assert.equal(requests.at(-1)[1].status, null)
+  assert.equal(requests.at(-1)[1].comment, comment)
+  assert.equal(page._unsaved, false)
+  assert.equal(page._summary.coverage, 'partial')
+  assert.match(text(page._confirmation(page._activeReview)), /1 of 3 files checked/u)
+})
 
 test('Review uses the current comparison source for badges and file alerts in both diff modes', () => {
   const called = [], page = component()

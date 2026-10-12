@@ -4,7 +4,7 @@ import { dependencyReviews, latestDependencyReview } from './client-managed.js'
 import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'
-import { allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
+import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
 import { bundleCompareFiles } from './bundle-compare-inputs.js'
 import { computeBundleDiff } from './bundle-compare-diff.js'
 import { compareReviewPaths, reviewViewMode } from './npm-review-files.js'
@@ -35,7 +35,7 @@ export class NpmReview extends LitElement {
   createRenderRoot() { return this }
   constructor() {
     super()
-    this._teams = []; this._reviews = []; this._files = []; this._treeFiles = []
+    this._teams = []; this._reviews = []; this._files = []; this._treeFiles = []; this._nonTextFiles = []
     this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._drafts = new Map()
     this._file = null; this._path = null; this._comment = ''; this._status = ''; this._edit = null
     this._loading = false; this._saving = false; this._error = null; this._context = null; this._key = null
@@ -60,15 +60,19 @@ export class NpmReview extends LitElement {
   get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
   get _canEdit() { return this._writable && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
-  get _dirty() { return this._comment !== (this._edit?.comment ?? '') || this._status !== (this._edit?.status ?? '') }
+  get _dirty() { return this._comment !== (this._edit?.comment ?? '') || this._status !== (this._nonTextFiles.includes(this._file) ? '' : this._edit?.status ?? '') }
   get _blocked() { return this._saving || this._saveBlocked }
   get _unsaved() { return this._pendingSaves.length > 0 || this._dirty || [...this._drafts.keys()].some(file => !this._canEdit || file !== this._file) }
   get _fileStates() {
     const entries = this._shownReview?.entries
-    if (!this._statesCache || this._statesCache.entries !== entries) this._statesCache = { entries, states: reviewFileStates(entries) }
+    if (!this._statesCache || this._statesCache.entries !== entries || this._statesCache.nonTextFiles !== this._nonTextFiles) {
+      const states = reviewFileStates(entries)
+      for (const file of this._nonTextFiles) if (states.has(file)) states.set(file, { ...states.get(file), status: null })
+      this._statesCache = { entries, nonTextFiles: this._nonTextFiles, states }
+    }
     return this._statesCache.states
   }
-  get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files) }
+  get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files, this._nonTextFiles) }
   get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry) ?? 'accept' }
   get _allowedVerdicts() {
     const entries = new Map((this._shownReview?.entries ?? []).map(entry => [entry.file, entry]))
@@ -76,9 +80,9 @@ export class NpmReview extends LitElement {
       for (const [file, draft] of this._drafts) entries.set(file, { file, status: draft.status || null })
       if (this._file !== null) entries.set(this._file, { file: this._file, status: this._status || null })
     }
-    return allowedReviewVerdicts([...entries.values()], this._securityLimit)
+    return allowedReviewVerdicts([...entries.values()].filter(entry => !this._nonTextFiles.includes(entry.file)), this._securityLimit)
   }
-  get _needsPackageJson() { return needsPackageJsonReview(this._activeReview?.entries ?? [], this._files) }
+  get _needsPackageJson() { return needsPackageJsonReview(this._activeReview?.entries ?? [], this._files, this._nonTextFiles) }
   get _unchangedContinuation() {
     const source = this._continuation?.source
     return Boolean(source && this._finalStatus === source.status && this._finalComment === source.comment)
@@ -123,6 +127,7 @@ export class NpmReview extends LitElement {
     this._treeFiles = [['onlyBase', 'removed'], ['onlyOther', 'added'], ['changed', 'changed']].flatMap(([group, kind]) =>
       this._diff.files[group].map(file => ({ path: file.path, kind: file.renamedFrom == null ? kind : 'renamed',
         before: group === 'onlyOther' ? '' : before.get(file.basePath ?? file.path), after: group === 'onlyBase' ? '' : after.get(file.path) }))).toSorted((a, b) => compareReviewPaths(a.path, b.path))
+    this._nonTextFiles = this._treeFiles.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path)
     this._mode = reviewViewMode(this._treeFiles)
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
     this._selectedReview = null; this._continuation = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
@@ -162,20 +167,20 @@ export class NpmReview extends LitElement {
     const saved = this._canEdit ? this._drafts.get(file) : null
     this._file = file; this._edit = saved?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
     this._editRevision = saved?.revision ?? this._activeReview?.revision ?? null
-    this._comment = saved?.comment ?? this._edit?.comment ?? ''; this._status = saved?.status ?? this._edit?.status ?? ''
+    this._comment = saved?.comment ?? this._edit?.comment ?? ''; this._status = this._nonTextFiles.includes(file) ? '' : saved?.status ?? this._edit?.status ?? ''
   }
   _editorState(file) {
     if (file === this._file) return { edit: this._edit, status: this._status, comment: this._comment, dirty: this._dirty }
     const buffer = this._canEdit ? this._drafts.get(file) : null
     const edit = buffer?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
-    return { edit, status: buffer?.status ?? edit?.status ?? '', comment: buffer?.comment ?? edit?.comment ?? '', dirty: !!buffer }
+    return { edit, status: this._nonTextFiles.includes(file) ? '' : buffer?.status ?? edit?.status ?? '', comment: buffer?.comment ?? edit?.comment ?? '', dirty: !!buffer }
   }
   _editFile(file, values = {}) {
     if (!this._canEdit || this._blocked) return
     if (file !== this._file) { this._rememberEditor(); this._resetEditor(file) }
     Object.assign(this, values)
   }
-  _setFileStatus(file, status) { if (this._blocked) return; this._editFile(file, { _status: status }); return this._saveFile(file) }
+  _setFileStatus(file, status) { if (this._blocked || this._nonTextFiles.includes(file)) return; this._editFile(file, { _status: status }); return this._saveFile(file) }
   _rememberEditor() {
     if (!this._canEdit) return
     if (this._dirty || this._pendingSaves.some(save => save.change.file === this._file)) this._drafts.set(this._file, { edit: this._edit, revision: this._editRevision, comment: this._comment, status: this._status })
@@ -313,7 +318,7 @@ export class NpmReview extends LitElement {
     }
     const revision = file === this._file ? this._editRevision : this._drafts.get(file)?.revision
     return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: revision ?? review?.revision ?? null,
-      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null ? null : editor.status || null })
+      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null || this._nonTextFiles.includes(file) ? null : editor.status || null })
   }
   async _saveAll() {
     const key = this._key

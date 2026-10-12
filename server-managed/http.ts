@@ -146,7 +146,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
-import { allowedReviewVerdicts, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
+import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
@@ -2671,7 +2671,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
         && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
         sendJson(res, 400, { error: 'bad-final-verdict' }); return
       }
-      change = { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [],
+      change = { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
         final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
     } else if (action === 'continue' || action === 'revoke') change = { action, reviewId: reviewId as string, revision: revision as number }
     else {
@@ -2708,10 +2708,16 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
         const files = await Promise.all(loads.map(load => load.result))
         const reviewedFile = change.action === 'save' ? change.entry.file : null
         if (change.action === 'save' && !files.some(list => list.some(file => file.path === reviewedFile))) { sendJson(res, 400, { error: 'unknown-review-file' }); return }
+        const maps = files.map(list => new Map<string, unknown>(npmFileRows(list).map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
+        const after = maps[0]!, before = maps[1] ?? new Map<string, unknown>()
+        if (change.action === 'save' && change.entry.status !== null && !isReviewableFile(before.get(change.entry.file!), after.get(change.entry.file!))) {
+          sendJson(res, 400, { error: 'non-text-review-file' }); return
+        }
         if (change.action === 'publish') {
-          const maps = files.map(list => new Map<string, unknown>(npmFileRows(list).map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
-          const diff = computeBundleDiff(maps[1] ?? new Map(), maps[0]!, () => '.')
-          change.files = [...diff.files.onlyBase, ...diff.files.onlyOther, ...diff.files.changed].map(file => file.path)
+          const diff = computeBundleDiff(before, after, () => '.')
+          const changed: { path: string; basePath?: string }[] = [...diff.files.onlyBase, ...diff.files.onlyOther, ...diff.files.changed]
+          change.files = changed.map(file => file.path)
+          change.nonTextFiles = changed.filter(file => !isReviewableFile(before.get(file.basePath ?? file.path), after.get(file.path))).map(file => file.path)
         }
       } finally { loads.forEach(load => load.release()) }
     }

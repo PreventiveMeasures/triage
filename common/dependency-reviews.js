@@ -5,11 +5,19 @@ export const REVIEW_VERDICTS = {
   reject: 'Reject',
 }
 
-// Publication saves the exact changed paths. Only per-file verdicts check
-// files; the strongest one limits how favorable the final verdict can be.
-export function summarizeReview(entries, files) {
+// Keep non-text files in the diff and its denominator. Verdicts for them are
+// disabled for now, including when either side of a change is non-text.
+export function isReviewableFile(before, after) {
+  return [before, after].every(content => content === undefined || typeof content === 'string')
+    && [before, after].some(content => typeof content === 'string')
+}
+
+// Publication saves all changed paths and their non-text subset. Null means
+// an older snapshot without type evidence: it cannot certify full coverage.
+export function summarizeReview(entries, files, nonTextFiles = []) {
   const verdicts = Object.keys(REVIEW_VERDICTS)
-  const checks = entries.filter(entry => entry.file !== null && verdicts.includes(entry.status))
+  const excluded = new Set(nonTextFiles ?? [])
+  const checks = entries.filter(entry => entry.file !== null && nonTextFiles !== null && !excluded.has(entry.file) && verdicts.includes(entry.status))
   const verdictLimit = verdicts.findLast(verdict => checks.some(entry => entry.status === verdict)) ?? 'accept'
   if (files === null) return { coverage: null, checkedFiles: null, totalFiles: null, verdictLimit }
   const checked = new Set(checks.map(entry => entry.file))
@@ -42,9 +50,10 @@ export function npmReviewVerdictLimit(npm, advisoryList, socket) {
   return 'accept'
 }
 
-export function needsPackageJsonReview(entries, files) {
-  return summarizeReview(entries, files).coverage === 'partial'
-    && !entries.some(entry => entry.file === 'package.json' && Object.keys(REVIEW_VERDICTS).includes(entry.status))
+export function needsPackageJsonReview(entries, files, nonTextFiles = []) {
+  return summarizeReview(entries, files, nonTextFiles).coverage === 'partial'
+    && (nonTextFiles === null || nonTextFiles.includes('package.json')
+      || !entries.some(entry => entry.file === 'package.json' && Object.keys(REVIEW_VERDICTS).includes(entry.status)))
 }
 
 const markdownText = text => text.replaceAll(/[\\`*_{}[\]<>]/gu, '\\$&').replaceAll(/\r\n?/gu, '\n').replaceAll('\n', '\n  ')

@@ -13,11 +13,12 @@ export interface ReviewTeam { id: string; name: string }
 export interface DependencyReview extends ReviewContext, ReviewSummary {
   id: string; user: string | null; userLogin: string; time: number; revision: number
   publishedAt: number | null; revokedAt: number | null; entries: ReviewEntry[]; teams: ReviewTeam[]; files: string[] | null
+  nonTextFiles: string[] | null
   status: ReviewVerdict | null; comment: string
 }
 export type ReviewChange = { action: 'save'; reviewId: string | null; revision: number | null; entryId: string | null; entry: ReviewInput }
   | { action: 'start'; reviewId: null; revision: null }
-  | { action: 'publish'; reviewId: string; revision: number; teamIds: string[]; files: string[]; final: { status: ReviewVerdict; comment: string } | null }
+  | { action: 'publish'; reviewId: string; revision: number; teamIds: string[]; files: string[]; nonTextFiles: string[]; final: { status: ReviewVerdict; comment: string } | null }
   | { action: 'continue'; reviewId: string; revision: number }
   | { action: 'revoke'; reviewId: string; revision: number }
 export interface DependencyReviewStore {
@@ -107,9 +108,11 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
       SELECT 1 FROM managed_team_user m WHERE m.team_id = t.id AND m.user_id = ?)))
     ORDER BY t.name, t.id`).all(...ids, user, user) as (ReviewTeam & { reviewId: string })[]
   return reviews.map(review => {
-    const files = review.files === null ? null : JSON.parse(review.files) as string[]
+    const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
+    const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
+    const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
     const ownEntries = fileEntries(entries.filter(entry => entry.reviewId === review.id).map(({ reviewId: _reviewId, ...entry }) => entry))
-    return { ...review, files, entries: ownEntries, ...summarizeReview(ownEntries, files),
+    return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles),
       teams: linked.filter(team => team.reviewId === review.id).map(({ reviewId: _reviewId, ...team }) => team) }
   })
 }
@@ -121,11 +124,11 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
   if (selected.length === 0 || selected.some(team => !allowed.has(team))) throw new ManagedMutationError(400, 'bad-review-teams')
   const entries = await db.prepare('SELECT file, status FROM managed_dependency_file_review WHERE review_id = ?').all(current.id) as ReviewInput[]
   if (current.publishedAt === null) {
-    if (!summarizeReview(entries, change.files).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
-    if (!change.final || !allowedReviewVerdicts(entries).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
-    if (needsPackageJsonReview(entries, change.files)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
+    if (!summarizeReview(entries, change.files, change.nonTextFiles).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
+    if (!change.final || !allowedReviewVerdicts(entries.filter(entry => !change.nonTextFiles.includes(entry.file!))).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
+    if (needsPackageJsonReview(entries, change.files, change.nonTextFiles)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
     await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, revision = revision + 1 WHERE id = ?`)
-      .run(now, JSON.stringify([...new Set(change.files)].toSorted()), change.final.status, change.final.comment, current.id)
+      .run(now, JSON.stringify({ paths: [...new Set(change.files)].toSorted(), nonTextFiles: [...new Set(change.nonTextFiles)].toSorted() }), change.final.status, change.final.comment, current.id)
   } else {
     if (change.final) return conflict()
     await db.prepare('UPDATE managed_dependency_review SET revision = revision + 1 WHERE id = ?').run(current.id)

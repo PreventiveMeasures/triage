@@ -25,7 +25,7 @@ export async function checkDependencyReviews(db) {
   assert.deepEqual((await db.listTeamsForUser(users.admin.userId)).filter(team => team.dependencyReview), [], 'admins do not gain review access without membership')
   await assert.rejects(db.setTeamDependencyReview(users.alice.sid, 'one', false), /forbidden/u)
   const change = (action, who = 'alice', context = reviewContext) => db.changeDependencyReview(context, users[who].sid,
-    action.action === 'publish' ? { files: ['index.js', 'other.js', 'README.md', 'package.json'], final: null, ...action } : action, Date.now())
+    action.action === 'publish' ? { files: ['index.js', 'other.js', 'README.md', 'package.json'], nonTextFiles: [], final: null, ...action } : action, Date.now())
   const save = (review, file, status, comment = '', entryId = null) => ({ action: 'save', reviewId: review?.id ?? null,
     revision: review?.revision ?? null, entryId, entry: { file, status, comment } })
   let review = await change(save(null, 'index.js', 'accept-with-nits', 'Rename this.'))
@@ -129,7 +129,7 @@ async function checkCoverage(db, session) {
   const files = ['package.json', 'b.js', 'c.js', 'd.js']
   const change = action => db.changeDependencyReview(reviewContext, session, action, Date.now())
   let review = await change({ action: 'start', reviewId: null, revision: null })
-  const unchecked = () => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files,
+  const unchecked = () => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files, nonTextFiles: [],
     final: { status: 'accept', comment: '' } })
   await assert.rejects(unchecked(), /no-reviewed-files/u)
   review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
@@ -143,7 +143,7 @@ async function checkCoverage(db, session) {
       entry: { file, status: index < 3 ? index === 1 ? 'accept-with-nits' : 'accept' : null, comment: index === 3 ? 'Still to review.' : '' } })
   }
   assert.equal(review.entries.length, files.length, 'the initial note and subsequent verdict share one file row')
-  const publish = (final, paths = files) => ({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files: paths, final })
+  const publish = (final, paths = files) => ({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files: paths, nonTextFiles: [], final })
   await assert.rejects(change(publish({ status: 'accept', comment: '' })), /bad-final-verdict/u)
   const manifest = review.entries.find(entry => entry.file === 'package.json')
   review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: manifest.id,
