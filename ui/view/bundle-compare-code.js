@@ -31,7 +31,8 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, listedBlocks, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
@@ -215,6 +216,11 @@ export const diffCounts = (additions, deletions) => html`<span class="bundle-com
 
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
+// Whether a file reads as its source in place of a diff, a file at a time:
+// its only change a repointed import, moved there by a rename or not, its
+// record the same (see _renderFile).
+const readsAsSource = entry => entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
+
 function dirOrder([a, an], [b, bn]) {
   return sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path)
 }
@@ -294,9 +300,11 @@ export class BundleCompareCode extends LitElement {
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
     this._mode = 'files'
-    // A changed file's change blocks, as the search found them (listedBlocks),
-    // by path; and its last results, kept while the query and files are.
+    // A changed file's change blocks, as the search found them, by path; the
+    // files it found too large to diff unasked (_searchResults); and its last
+    // results, kept while the query and files are.
     this._blocks = new Map()
+    this._undiffed = new Set()
     this._found = null
     // A search hit picked, `{ path, side, line, query }`, until its file's
     // diff draws; then that row, `{ path, index }`, until it is scrolled to.
@@ -329,6 +337,7 @@ export class BundleCompareCode extends LitElement {
         this._limits.clear()
         this._forced.clear()
         this._blocks.clear()
+        this._undiffed.clear()
       }
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
@@ -547,6 +556,7 @@ export class BundleCompareCode extends LitElement {
       ${repeat(files, file => file.path, ({ path, hits: lines }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: path === current })}>
         <button type="button" class=${`bundle-code-search-file-name bundle-compare-code-name ${this._entries.get(path).kind}`}
           data-tooltip-truncated data-tooltip=${path} @click=${() => this._select(path)}>${strip(path)}</button>
+        ${this._undiffed.has(path) ? html`<p class="bundle-compare-search-note">A large diff, not shown yet: the lines it removed aren't searched.</p>` : nothing}
         <ul class="bundle-code-search-hits">
           ${lines.map(hit => html`<li class="bundle-code-search-hit">
             <button type="button" class="bundle-code-search-hit-link" aria-label=${`${SIGNS[hit.sign]?.label ?? 'Line'} ${hit.line + 1}${hit.side === 'a' ? ' of the old text' : ''}: ${hit.text.trim().slice(0, 80)}`}
@@ -561,36 +571,52 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  // The search's results over the files the rail lists (`order`), as
-  // searchCompareFiles finds them in the texts their diffs show: none for a
-  // file whose bytes are the same, which shows no text (but where its imports
-  // repointed, when it shows its source). Kept while the query, the files
-  // and the kinds shown are. A changed file's blocks are found a little at a
-  // time, as the tree's line counts are: one whose budget is spent lists its
-  // new text's lines, unsigned, and another render signs them.
+  // The search's results over the files the rail lists (`order`) whose text
+  // this view shows (_searchable), as searchCompareFiles finds them there.
+  // Kept while the query, the files and the kinds shown are, and the large
+  // diffs asked for. A changed file is diffed as this view diffs it: unasked
+  // unless it is large (isLargeDiff), which lists its new text's lines alone,
+  // unsigned, until its diff is shown. Diffs are found a little at a time,
+  // as the tree's line counts are, a render's budget counted from its first:
+  // a file past it lists its new text's lines unsigned, and another render
+  // signs them.
   _searchResults(order) {
-    const key = `${this._query}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
-    const until = performance.now() + COUNT_BUDGET_MS
+    // Counted from the first diff, not the scan, so each render finds one.
+    let until = null
     let complete = true
     const blocksOf = (path, before, after) => {
       if (this._blocks.has(path)) return this._blocks.get(path)
-      if (performance.now() > until) {
+      if (!this._forced.has(path) && isLargeDiff(before, after)) {
+        this._undiffed.add(path)
+        return null
+      }
+      const now = performance.now()
+      until ??= now + COUNT_BUDGET_MS
+      if (now > until) {
         complete = false
         return null
       }
-      const blocks = listedBlocks(before, after)
+      const blocks = changeBlocks(before, after)
       this._blocks.set(path, blocks)
+      this._undiffed.delete(path)
       return blocks
     }
     const files = order.flatMap(path => {
       const entry = this._entries.get(path)
-      return entry.modified === false && !entry.repointed ? [] : [{ path, ...fileContents(this.base, this.other, path, entry) }]
+      return this._searchable(entry) ? [{ path, ...fileContents(this.base, this.other, path, entry) }] : []
     })
     const result = searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf)
     if (complete) this._found = { key, entries: this._entries, result }
     else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
     return result
+  }
+
+  // Whether a file's text shows here, to be searched: its diff, where its
+  // bytes changed, or its source, where it reads as one (readsAsSource).
+  _searchable(entry) {
+    return entry.modified !== false || readsAsSource(entry)
   }
 
   // A search hit picked: its file opened, its line brought into view where
@@ -1048,7 +1074,7 @@ export class BundleCompareCode extends LitElement {
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
     // its two sides are one text. One whose record changed too says how.
-    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
+    const asSource = readsAsSource(entry)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path

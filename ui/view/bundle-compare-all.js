@@ -124,6 +124,13 @@ class BundleCompareAll extends BundleCompareCode {
     this.requestUpdate()
   }
 
+  // The list draws a diff alone, never a file's source: a file whose only
+  // change is a repointed import lists its imports there, and one whose bytes
+  // are the same says so, so neither is searched.
+  _searchable(entry) {
+    return entry.modified !== false && entry.kind !== 'repointed'
+  }
+
   _section(path) {
     return [...this.querySelectorAll('.bundle-compare-all-file')].find(section => section.dataset.path === path) ?? null
   }

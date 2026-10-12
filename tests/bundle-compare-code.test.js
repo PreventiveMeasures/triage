@@ -412,6 +412,55 @@ test('the rail\'s Code mode searches the code the diffs show, each hit signed an
   assert.match(renderText(element.render()), /No matches\./u)
 })
 
+test('the search diffs a changed file as the view does: a long one\'s removed lines found, a large one\'s once its diff is asked for', () => {
+  const text = (lines, line) => Array.from({ length: lines }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
+  const hits = (element, path) => element._searchResults(element._railState().order).files.find(file => file.path === path)?.hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)
+  // Past the tree's line counts (20,000 lines), short of a diff too large to show unasked.
+  const long = view(null, [{ 'src/long.js': text(25_000, 'fetch(old)') }, { 'src/long.js': text(25_000, 'fetch(new)') }])
+  long._mode = 'code'
+  long._query = 'fetch('
+  assert.deepEqual(hits(long, 'src/long.js'), ['−a7', '+b7'])
+  // Too large to diff unasked (isLargeDiff): its new text alone, said so, until asked for.
+  const large = view(null, [{ 'src/large.js': text(60_000, 'fetch(old)') }, { 'src/large.js': text(60_000, 'fetch(new)') }])
+  large._mode = 'code'
+  large._query = 'fetch('
+  assert.deepEqual(hits(large, 'src/large.js'), ['?b7'])
+  assert.match(renderText(large.render()), /A large diff, not shown yet: the lines it removed aren't searched\./u)
+  large._forced.add('src/large.js')
+  assert.deepEqual(hits(large, 'src/large.js'), ['−a7', '+b7'], 'asked for, it is diffed, and the results with it')
+  assert.doesNotMatch(renderText(large.render()), /A large diff, not shown yet/u)
+})
+
+test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
+  // Every reading of the clock past the budget: the scan alone outlasts it.
+  let clock = 0
+  t.mock.method(performance, 'now', () => (clock += 1000))
+  const element = view(null, [{ 'src/one.js': 'a\nfetch(1)\n', 'src/two.js': 'b\nfetch(2)\n' }, { 'src/one.js': 'a\nfetch(10)\n', 'src/two.js': 'b\nfetch(20)\n' }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.map(file => file.hits.map(hit => hit.sign ?? '?').join(''))
+  assert.deepEqual(signs(), ['−+', '?'], 'the first file diffed, the next left for another render')
+  assert.deepEqual(signs(), ['−+', '−+'])
+  clearTimeout(element._searchLater)
+})
+
+test('the one list\'s search leaves out a file it shows only the imports of: its source isn\'t there to open at', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const code = view()
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'resolutions', 'baseName', 'otherName']) all[name] = code[name]
+  all.models = combinedDiffRows(code.base, code.other, code.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  for (const element of [code, all]) {
+    element._mode = 'code'
+    element._query = 'export'
+  }
+  const found = element => element._searchResults(element._railState().order).files.map(file => file.path)
+  assert.ok(found(code).includes('src/server.js'), 'a file at a time, its source shows, and is searched')
+  assert.ok(!found(all).includes('src/server.js'))
+  assert.ok(found(all).includes('src/api.js'))
+})
+
 test('a search hit in an unchanged run opens its fold to it, and its row is the one scrolled to', () => {
   const long = (marker, change) => Array.from({ length: 60 }, (_, i) => i === 30 ? `const needle = ${marker}` : i === 59 ? `tail ${change}` : `line ${i}`).join('\n') + '\n'
   const element = view('src/long.js', [{ 'src/long.js': long(1, 'a') }, { 'src/long.js': long(1, 'b') }])
