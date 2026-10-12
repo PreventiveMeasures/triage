@@ -11,7 +11,10 @@
 // (`'https://' + name`, `${host}`) goes unseen, so a version without these
 // labels is not one that sends nothing.
 import { NPM_PROSE, SOURCE_MAP } from './readability.js'
-import { JS_STRING_OR_COMMENT, lineOf, npmIsScript } from './script.js'
+import { JS_STRING_OR_COMMENT, NPM_MAX_FOUND, lineOf, npmIsScript } from './script.js'
+
+// How many hosts a file is told naming at most, the first it names.
+export const NPM_MAX_HOSTS = 1000
 
 // A URL's host: a name whose last label is letters (an internationalized
 // one's too, as written or as punycode), or an IPv4 address, after its
@@ -33,11 +36,13 @@ const LOCAL = /^(?:localhost|.+\.(?:localhost|local|test|invalid|example|interna
 const ESCAPED = /\\([/.])/gu
 
 // The hosts a script's strings name, each with the line it is first named on,
-// in the order named; null for none, or for a file that is no script.
+// in the order named, NPM_MAX_HOSTS at most; null for none, or for a file
+// that is no script.
 export function npmHosts(path, text) {
   if (!npmIsScript(path, text) || !(text.includes('://') || text.includes(':\\/\\/'))) return null
   const hosts = new Map(), line = lineOf(text)
   for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
+    if (hosts.size >= NPM_MAX_HOSTS) break
     // Read unescaped, its offsets as near: on the same line but in a template
     // across lines.
     const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
@@ -45,6 +50,7 @@ export function npmHosts(path, text) {
     for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
       if (!hosts.has(host) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(host, line(index + at))
+      if (hosts.size >= NPM_MAX_HOSTS) break
     }
   }
   return hosts.size > 0 ? hosts : null
@@ -78,13 +84,15 @@ export const EXFILTRATION = new Map([
 const SAYS_ANY = new RegExp([...EXFILTRATION.values()].map(({ pattern }) => pattern.source).join('|'), 'iu')
 
 // The exfiltration services a file names, each with the lines it is named on,
-// in EXFILTRATION's order; null for none, or for prose or a source map.
+// the first NPM_MAX_FOUND, in EXFILTRATION's order; null for none, or for
+// prose or a source map.
 export function npmExfiltration(path, text) {
   if (typeof text !== 'string' || NPM_PROSE.test(path) || SOURCE_MAP.test(path) || !SAYS_ANY.test(text)) return null
   const found = new Map(), line = lineOf(text)
   for (const [service, { pattern }] of EXFILTRATION) {
-    const lines = [...new Set([...text.matchAll(pattern)].map(({ index }) => line(index)))]
-    if (lines.length > 0) found.set(service, lines)
+    const lines = new Set()
+    for (const { index } of text.matchAll(pattern)) if (lines.add(line(index)).size >= NPM_MAX_FOUND) break
+    if (lines.size > 0) found.set(service, [...lines])
   }
   return found.size > 0 ? found : null
 }

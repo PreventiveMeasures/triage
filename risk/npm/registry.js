@@ -131,13 +131,26 @@ export async function npmPackageFacts(name, versions, context) {
   return { versions: read, deprecated, created }
 }
 
+// `promise`, given up on once `signal` aborts, its reason thrown: what it
+// waits on, which takes no signal (upstream's getTarball), left to settle
+// unheeded.
+function untilAborted(promise, signal) {
+  if (!signal) return promise
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
 // A version's files, as compare.js takes a version, from its tarball
 // (tarball.js): the caller's (`tarball`) where it gives one, its failures
-// thrown as they are, else upstream's; with `npm` its `{ name, version,
-// manifest, published }`.
+// thrown as they are, else upstream's, given up on once `signal` aborts; with
+// `npm` its `{ name, version, manifest, published }`.
 export async function npmVersionFiles(name, version, { manifest, published, dist }, { cache, tarball: read, signal }) {
   const what = `${name}@${version}`
-  const tarball = read ? await read(name, version, { signal }) : await getTarball(name, version, dist, cache === undefined ? {} : { cache }).catch(error => {
+  signal?.throwIfAborted()
+  const tarball = read ? await read(name, version, { signal }) : await untilAborted(getTarball(name, version, dist, cache === undefined ? {} : { cache }), signal).catch(error => {
     throw signal?.aborted ? error : new NpmRiskError('upstream-unavailable', `npm's tarball of ${what} couldn't be had: ${error.message}`)
   })
   try { return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) } } catch (error) {

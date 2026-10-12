@@ -7,7 +7,7 @@ import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
 import { npmTierLevel } from './downloads.js'
-import { npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionFiles } from './registry.js'
+import { NpmRiskError, npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionFiles } from './registry.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
 import { npmFilesDiff } from './diff.js'
@@ -16,6 +16,11 @@ import { npmFilesDiff } from './diff.js'
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
 export const RISK_VERSION = 1
+
+// How long an assessment kept may be as JSON: one past it, of a package whose
+// files name thousands of hosts or do what they run on thousands of lines
+// each, is refused as too large rather than held, kept and answered.
+const MAX_ASSESSMENT_LENGTH = 32 * 1024 * 1024
 
 // A value as JSON holds it: a Map as an object, its keys as strings.
 const plain = value => value instanceof Map ? Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]))
@@ -48,6 +53,7 @@ async function lasting(name, version, oldVersion, facts, context) {
   }))
   const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
   const kept = plain({ findings, files, dependencies: { added, changed } })
+  if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw new NpmRiskError('package-too-large', `what risk tells of ${name}@${version} is past ${MAX_ASSESSMENT_LENGTH} characters`)
   if (context.cache) await context.cache.write('risk/npm/assessments', key, kept)
   return kept
 }

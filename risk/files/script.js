@@ -50,8 +50,14 @@ const CSS = {
 // comments, for a reader that sets them aside (runs-code.js, hosts.js).
 export const JS_STRING_OR_COMMENT = JS.stringOrComment
 export const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
-// Its code's lines' average length where they are minified into short ones, else 0.
-export function minifiedAverage(text, { stringOrComment, droppable, needed }) {
+// How much of a text is read for how its lines are minified: their average
+// is told by as much of them, and a text of millions of lines is read no
+// further.
+const MINIFIED_READ = 4 * 1024 * 1024
+// Its code's lines' average length where they are minified into short ones,
+// else 0, told by its first MINIFIED_READ characters.
+export function minifiedAverage(whole, { stringOrComment, droppable, needed }) {
+  const text = whole.length > MINIFIED_READ ? whole.slice(0, whole.lastIndexOf('\n', MINIFIED_READ) + 1 || MINIFIED_READ) : whole
   // Its lines of code alone, as long as what is on them: a comment set aside
   // leaves nothing but its line breaks, a string or template `""` and its, a
   // regular expression `/REGEX/`, so the code either side stays apart.
@@ -75,18 +81,32 @@ const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
 // Whether a file (its path and text) is a script, as SCRIPT and NODE_HASHBANG tell.
 export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
-// Each offset in a text as its line: one more than the line breaks before it.
+// How many places a file is told doing a thing, the first ones, at most
+// (runs-code.js, hosts.js): a file doing it on millions of lines is told by
+// its first, and what it holds of them kept to a bound however many there
+// are.
+export const NPM_MAX_FOUND = 100
+// Every how many line breaks one is kept where lineOf counts from.
+const LINE_MARK = 1024
+// Each offset in a text as its line: one more than the line breaks before it,
+// counted on from the nearest of every LINE_MARKth, which alone are kept.
 export function lineOf(text) {
-  let breaks = null
+  let marks = null
   return offset => {
-    breaks ??= [...text.matchAll(/\n/gu)].map(({ index }) => index)
-    let high = breaks.length, low = 0
+    if (!marks) {
+      marks = []
+      for (let at = text.indexOf('\n'), count = 0; at !== -1; at = text.indexOf('\n', at + 1), count++) if (count % LINE_MARK === 0) marks.push(at)
+    }
+    let high = marks.length, low = 0
     while (low < high) {
       const middle = (low + high) >> 1
-      if (breaks[middle] < offset) low = middle + 1
+      if (marks[middle] < offset) low = middle + 1
       else high = middle
     }
-    return low + 1
+    if (low === 0) return 1
+    let breaks = (low - 1) * LINE_MARK + 1
+    for (let at = text.indexOf('\n', marks[low - 1] + 1); at !== -1 && at < offset; at = text.indexOf('\n', at + 1)) breaks++
+    return breaks + 1
   }
 }
 

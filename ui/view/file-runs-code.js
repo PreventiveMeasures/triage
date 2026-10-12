@@ -3,6 +3,7 @@
 // label a file: its tags, their tooltips, and each version's files read once.
 import { html, nothing } from 'lit'
 import { RUNS_CODE } from '../../risk/files/runs-code.js'
+import { NPM_MAX_FOUND } from '../../risk/files/script.js'
 import { npmVersionFileRisk } from '../../risk/npm/files.js'
 
 export { RUNS_CODE, npmFoundAdded, npmRunsCode, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeWithout } from '../../risk/files/runs-code.js'
@@ -12,8 +13,10 @@ export { lineOf, npmIsScript } from '../../risk/files/script.js'
 // (risk/npm/compare.js npmVersionFileRisk).
 export const npmFileRunsCode = (details, path) => npmVersionFileRisk(details, path).runsCode
 
+// Its first lines, and how many more: some more yet where as many as risk
+// keeps were found (NPM_MAX_FOUND).
 export const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
-  : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')} more` : ''}`
+  : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')}${lines.length >= NPM_MAX_FOUND ? '+' : ''} more` : ''}`
 
 // The kinds a file holds, each named with its lines, by its own name where
 // kinds share a tag: `eval (line 3), Function (line 5)`.

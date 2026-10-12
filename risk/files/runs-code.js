@@ -22,7 +22,7 @@
 // required by a name computed, a path or URL put together, the
 // registry's host read from config), so a file without a label is not one
 // without them.
-import { JS_STRING_OR_COMMENT, lineOf, npmIsScript } from './script.js'
+import { JS_STRING_OR_COMMENT, NPM_MAX_FOUND, lineOf, npmIsScript } from './script.js'
 
 // What may come between a call's parts: blanks and comments
 // (`Function/* note */(…)`), each comment ending at its first `*/`.
@@ -126,12 +126,17 @@ export const RUNS_CODE = new Map([
   ['publish', { tag: 'publish', note: 'Publishes to npm (npm publish, /-/whoami, a registry PUT)', mark: 'critical' }],
 ])
 
-// The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
-// order; null for none, or for a file that is no script.
+// The kinds a file's code holds, each with the lines it is on, of the first
+// NPM_MAX_FOUND places it does each, in RUNS_CODE's order; null for none, or
+// for a file that is no script.
 export function npmRunsCode(path, text) {
   if (!npmIsScript(path, text)) return null
   const found = new Map()
-  const at = (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset])
+  const at = (kind, offset) => {
+    const offsets = found.get(kind)
+    if (!offsets) found.set(kind, [offset])
+    else if (offsets.length < NPM_MAX_FOUND) offsets.push(offset)
+  }
   read(text, 0, at)
   // A PUT request publishing where the file names the registry.
   if (found.has('registry')) for (const offset of found.get('put') ?? []) at('publish', offset)

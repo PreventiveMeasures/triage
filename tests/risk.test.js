@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
 import publishers from '@preventive/publishers/npm.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm } from '../risk/index.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk } from '../risk/index.js'
+import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
@@ -167,6 +168,38 @@ test('a file that isn\'t text compared by its digest: one added large is large c
   npm(t, [{ name: 'bin-like', versions: [before, after] }])
   const assessment = await assessNpm('bin-like', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
   assert.deepEqual(assessment.findings, [{ id: 'large-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] }], 'not UTF-8, yet added; bin/tool unchanged')
+})
+
+test('what a file holds read to a bound: the first 100 places of each kind, 1,000 hosts', () => {
+  const lines = (count, line) => Array.from({ length: count }, (_, i) => line(i)).join('\n')
+  const first = count => Array.from({ length: count }, (_, i) => i + 1)
+  const evals = lines(150, () => 'eval(x)')
+  assert.deepEqual(npmFileRisk('lib/a.js', evals, evals.length).runsCode, new Map([['eval', first(100)]]))
+  const said = lines(150, () => '// see https://webhook.site/x')
+  assert.deepEqual(npmFileRisk('lib/b.js', said, said.length).exfiltration, new Map([['webhook-site', first(100)]]))
+  const named = lines(1200, i => `fetch("https://h${i}.attacker.dev/")`)
+  const { hosts } = npmFileRisk('lib/c.js', named, named.length)
+  assert.deepEqual([hosts.size, hosts.get('h999.attacker.dev'), hosts.has('h1000.attacker.dev')], [1000, 1000, false])
+  assert.equal(linesNote(first(100)), 'lines 1, 2, 3, 4, 5 and 95+ more', 'as many as risk keeps: some more yet')
+  assert.equal(linesNote(first(99)), 'lines 1, 2, 3, 4, 5 and 94 more')
+})
+
+test('an assessment given up on as its signal aborts, upstream\'s download still on its way', async t => {
+  const slow = version('slow', '1.0.0', { 'package.json': '{}' }, {}, ago(30))
+  let arrive = () => {}
+  const fetching = new Promise(resolve => {
+    t.mock.method(globalThis, 'fetch', input => {
+      if (String(input) !== slow.doc.dist.tarball) return Promise.resolve(Response.json(documentOf({ name: 'slow', versions: [slow] })))
+      resolve()
+      return new Promise(answer => { arrive = () => answer(new Response(slow.tgz)) })
+    })
+  })
+  const controller = new AbortController()
+  const assessed = assessNpm('slow', '1.0.0', { now: NOW, downloads: false, signal: controller.signal })
+  await fetching
+  controller.abort(new Error('caller gone'))
+  await assert.rejects(assessed, /caller gone/u)
+  arrive()
 })
 
 test('a version document read for what risk reads of it', () => {

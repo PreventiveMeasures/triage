@@ -31,7 +31,15 @@ An assessment kept needs no tarball. What depends on the time (a deprecation, be
 
 The package assessed is asked for with the npm token the environment has for a scoped one, as upstream asks. Its dependencies' downloads and first publish are asked with none: a private dependency reads as unknown, not unpopular.
 
-What risk reads is bounded: each of its own requests to 30 seconds, the packages of at most 100 dependencies added, the rest left unknown, a package's document to 64 MiB, a tarball's tar stream to 96 MiB as it unpacks, and its files to 20,000 and 64 MiB, as the npm viewer's (`NpmRiskError` `upstream-too-large`, `package-too-large`). A caller holding its reads of npm to bounds of its own asks for documents and tarballs itself: `packument: (name, { authorized, signal }) => document | null`, `authorized` for the package assessed, not its dependencies, and `tarball: (name, version, { signal }) => bytes`, gzipped, for the version assessed or the one compared with. The managed server does both, its documents within the budget they all share and its tarballs as the viewer loads them. Without `tarball`, a tarball is upstream's `getTarball`'s, held to upstream's bounds (512 MiB).
+Risk is bounded, however a package is made:
+
+- Of each file, it tells the first 100 places the file does each thing it runs or names each exfiltration service, the first 1,000 hosts it names, and how its lines are minified by its first 4 MiB.
+- An assessment past 32 MiB as JSON is refused (`package-too-large`).
+- Each request it makes of npm itself is given up on after 30 seconds, and a tarball upstream is still downloading once `signal` aborts.
+- It asks after the packages of at most 100 dependencies added, the rest left unknown.
+- It reads a package's document to 64 MiB, a tarball's tar stream to 96 MiB as it unpacks, and its files to 20,000 and 64 MiB, as the npm viewer does (`NpmRiskError` `upstream-too-large`, `package-too-large`).
+
+A caller holding its reads of npm to bounds of its own asks for documents and tarballs itself: `packument: (name, { authorized, signal }) => document | null`, `authorized` for the package assessed, not its dependencies, and `tarball: (name, version, { signal }) => bytes`, gzipped, for the version assessed or the one compared with. The managed server does both, its documents within the budget they all share and its tarballs as the viewer loads them. Without `tarball`, a tarball is upstream's `getTarball`'s, held to upstream's bounds (512 MiB).
 
 ## What it tells
 
