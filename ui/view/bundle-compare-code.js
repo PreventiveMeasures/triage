@@ -86,6 +86,9 @@ const SEARCH_MODES = [
 ]
 // Lines a hit opens its fold by past itself, so it isn't at the fold's edge.
 const SEEK_MARGIN = EXPAND_STEP / 2
+// Characters of a minified line a hit's match is looked for in at a time,
+// in a pretty-printed copy's text as published (_soughtLine).
+const SEEK_CHUNK = 65_536
 // Why a file's hits aren't as its diff shows them (_searchResults): a changed
 // file's unsigned, the lines it removed not searched, its diff too large to
 // show unasked or of its pretty-printed copies, whose lines and changes
@@ -714,11 +717,25 @@ export class BundleCompareCode extends LitElement {
     const needle = solid(query).toLowerCase()
     // The first match in a text's characters other than whitespace, case
     // folded as the search matches, that `found(index, start)` takes, its
-    // `{ index, start }`: scanned no further, however common the query.
+    // `{ index, start }`: read a piece at a time (a line, or SEEK_CHUNK of a
+    // minified one), so neither read nor folded further, however common the
+    // query or large the text. Kept of what was read: what a match may
+    // still start in (`text`, from `past`).
     const first = (lines, found) => {
-      const text = lines.map(solid).join('').toLowerCase()
-      for (let i = needle ? text.indexOf(needle) : -1, index = 0; i !== -1; i = text.indexOf(needle, i + needle.length), index++) {
-        if (found(index, i)) return { index, start: i }
+      if (!needle) return null
+      let from = 0, index = 0, past = 0, text = ''
+      for (const read of lines) {
+        for (let piece = 0; piece < read.length; piece += SEEK_CHUNK) {
+          text += solid(read.slice(piece, piece + SEEK_CHUNK)).toLowerCase()
+          for (let i = text.indexOf(needle, from); i !== -1; i = text.indexOf(needle, from), index++) {
+            if (found(index, past + i)) return { index, start: past + i }
+            from = i + needle.length
+          }
+          const kept = Math.max(from, text.length - needle.length + 1)
+          text = text.slice(kept)
+          past += kept
+          from = Math.max(0, from - kept)
+        }
       }
       return null
     }

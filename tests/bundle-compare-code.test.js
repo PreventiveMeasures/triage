@@ -577,29 +577,33 @@ test('the search diffs a file anew where another scope pairs it with another old
   assert.deepEqual(hits(), ['−a0', ' b20'], 'old2\'s first line removed, the new last line unchanged')
 })
 
-test('a hit opened pretty-printed is found in the copy reading its matches no further than its own', async t => {
+test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {
   t.after(() => { state.bundleSourcePretty = false })
-  const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);'.repeat(5000)}\n` }, { 'dist/common.min.js': `var X=1;${'x(1);'.repeat(5000)}\n` }])
+  const published = `var X=1;${'x(1);y(22);'.repeat(40_000)}\n`
+  const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);y(22);'.repeat(40_000)}\n` }, { 'dist/common.min.js': published }])
   element.base.managedId = 'b27'
   element.other.managedId = 'b28'
-  pretty.set('b27:dist/common.min.js', `var Y = 1;\n${'x(1);\n'.repeat(5000)}`)
-  pretty.set('b28:dist/common.min.js', `var X = 1;\n${'x(1);\n'.repeat(5000)}`)
+  pretty.set('b27:dist/common.min.js', `var Y = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
+  pretty.set('b28:dist/common.min.js', `var X = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
   state.bundleSourcePretty = true
   element.path = 'dist/common.min.js'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const { pretty: copies, model } = element._fileState('dist/common.min.js', element._entries.get('dist/common.min.js'))
-  const read = side => {
-    element._sought = { path: 'dist/common.min.js', side, line: 0, at: 18, query: 'x(1)' }
-    const indexOf = t.mock.method(String.prototype, 'indexOf')
-    try {
-      return { at: element._soughtLine('dist/common.min.js', element._entries.get('dist/common.min.js'), copies, model), scans: indexOf.mock.calls.filter(call => call.arguments[0] === 'x(1)').length }
-    } finally {
-      indexOf.mock.restore()
-    }
+  element._sought = { path: 'dist/common.min.js', side: 'b', line: 0, at: 30, query: 'x(1)' }
+  const indexOf = t.mock.method(String.prototype, 'indexOf'), toLowerCase = t.mock.method(String.prototype, 'toLowerCase')
+  let at
+  try {
+    at = element._soughtLine('dist/common.min.js', element._entries.get('dist/common.min.js'), copies, model)
+  } finally {
+    indexOf.mock.restore()
+    toLowerCase.mock.restore()
   }
-  // Its third match, after `var X=1;x(1);x(1);`: the copy's line 3.
-  assert.deepEqual(read('b'), { at: { side: 'b', line: 3 }, scans: 6 })
   element._sought = null
+  // Its third match, after `var X=1;x(1);y(22);x(1);y(22);`: the copy's line 3.
+  assert.deepEqual(at, { side: 'b', line: 3 })
+  assert.ok(indexOf.mock.calls.filter(call => call.arguments[0] === 'x(1)').length < 20, 'matches past its own not looked for')
+  const folded = toLowerCase.mock.calls.reduce((sum, call) => sum + call.this.length, 0)
+  assert.ok(folded < published.length / 3, `the texts read no further than a piece past it (${folded} characters)`)
 })
 
 test('a file whose printed copy failed shows, and is searched, as published', async t => {
