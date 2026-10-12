@@ -36,7 +36,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, keptPrettyCopy, prettyCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -314,8 +314,10 @@ export class BundleCompareCode extends LitElement {
     // setting and path; and its last results (_searchResults).
     this._blocks = new Map()
     this._found = null
-    // A search hit picked, `{ path, side, line, query }`, until its file's
-    // diff draws; then that row, `{ path, index }`, until it is scrolled to.
+    // A search hit picked, `{ path, side, line, at, query, key }`, until its
+    // file's diff draws (`key` the model last sought in), and while what it
+    // draws is still coming (`_soughtSettling`); then that row, `{ path,
+    // index }`, until it is scrolled to.
     this._sought = null
     this._soughtRow = null
     // Directory path → open, for the disclosures the user toggled.
@@ -365,9 +367,11 @@ export class BundleCompareCode extends LitElement {
   }
 
   // The row of a search hit picked (see _seek), once drawn, scrolled into
-  // view and flashed; a hit whose file drew no diff, dropped.
+  // view and flashed; a hit whose file drew no diff, dropped, but while its
+  // printed copies or renamed names are still coming: the diff they draw
+  // seeks it again.
   _scrollSought() {
-    if (this._sought?.path === this._current) this._sought = null
+    if (this._sought?.path === this._current && !this._soughtSettling) this._sought = null
     if (!this._soughtRow) return
     const { path, index } = this._soughtRow
     this._soughtRow = null
@@ -581,7 +585,8 @@ export class BundleCompareCode extends LitElement {
   // The search's results over the files the rail lists (`order`) whose text
   // this view shows (_searchable), as searchCompareFiles finds them there.
   // Kept while the query, the files and the kinds shown are, the large diffs
-  // asked for, and the whitespace and pretty-print settings. A changed file is
+  // asked for, the whitespace and pretty-print settings, and the printed
+  // copies come or failed. A changed file is
   // diffed as this view diffs it, its whitespace changes hidden where the
   // view hides them; but one whose diff here is of its pretty-printed copies
   // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
@@ -593,7 +598,7 @@ export class BundleCompareCode extends LitElement {
   // past it lists its new text's lines unsigned, and another render signs
   // them.
   _searchResults(order) {
-    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
@@ -642,9 +647,14 @@ export class BundleCompareCode extends LitElement {
   }
 
   // Whether a file's diff here is of its pretty-printed copies (_pretty), the
-  // toggle on and the view printing it (the one list prints only a few).
+  // toggle on and the view printing it (the one list prints only a few):
+  // not where a copy kept of either side failed, when the diff is of the
+  // file as published.
   _prettyShown(path, entry, contents) {
-    return !!state.bundleSourcePretty && this._prettyAllowed !== false && this._printable(path, entry, contents)
+    if (!state.bundleSourcePretty || this._prettyAllowed === false || !this._printable(path, entry, contents)) return false
+    const { basePath = path } = entry
+    return ![[this.base, basePath, contents.before], [this.other, path, contents.after]]
+      .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
   }
 
   // A search hit picked: its file opened, its line brought into view where
@@ -881,6 +891,9 @@ export class BundleCompareCode extends LitElement {
       : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
+    // A hit sought here waits while what its diff shows is still coming (see
+    // _scrollSought).
+    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || changes?.status === 'loading'
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, whitespace }
   }
 
@@ -1286,8 +1299,10 @@ export class BundleCompareCode extends LitElement {
     const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready' ? 'pretty' : '') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
-    // A search hit picked in this file: its line, shown, to scroll to.
-    const sought = this._sought?.path === path ? this._soughtLine(path, this._entries.get(path), pretty, model) : null
+    // A search hit picked in this file: its line, shown, to scroll to, once
+    // for each model it is drawn from.
+    const sought = this._sought?.path === path && this._sought.key !== modelKeyed ? this._soughtLine(path, this._entries.get(path), pretty, model) : null
+    if (this._sought?.path === path) this._sought.key = modelKeyed
     if (sought && sought.line < model.b.length) {
       if (sought.line >= (this._limits.get(key) ?? ROW_LIMIT)) this._limits.set(key, Math.ceil((sought.line + 1) / ROW_LIMIT) * ROW_LIMIT)
       this._soughtRow = { path, index: sought.line }
@@ -1349,8 +1364,10 @@ export class BundleCompareCode extends LitElement {
   _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, reading }) {
     const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
-    // A search hit picked in this file: its row, opened and shown, to scroll to.
-    const sought = this._sought?.path === path ? this._soughtLine(path, entry, pretty, model) : null
+    // A search hit picked in this file: its row, opened and shown, to scroll
+    // to, once for each model it is drawn from.
+    const sought = this._sought?.path === path && this._sought.key !== key ? this._soughtLine(path, entry, pretty, model) : null
+    if (this._sought?.path === path) this._sought.key = key
     const seek = sought ? this._seekRows(key, model, sought, split) : null
     if (seek?.index >= 0) this._soughtRow = { path, index: seek.index + (split ? 1 : 0) }
     const expansion = this._expansions.get(key) ?? new Map()

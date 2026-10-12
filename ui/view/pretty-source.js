@@ -31,6 +31,9 @@ const MISMATCH = "The server's copy is of another file than the one open."
 // rename-diff.js), or `{ status: 'error', message, retry }`, `retry` where
 // asking again may succeed.
 const copies = new Map()
+// Copies come or failed so far, for a view to tell its own work stale by.
+let settled = 0
+export const prettySettled = () => settled
 // What a copy asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
 const copyKey = (details, path) => `${details.integrity}\0${path}`
@@ -104,6 +107,7 @@ async function load(key, copy, entry, path, content, known) {
   }
   if (copies.get(key) !== copy) return
   copies.set(key, next)
+  settled++
   const notify = notifiers.get(key)
   notifiers.delete(key)
   notify?.()
@@ -122,6 +126,12 @@ export function prettyCopy(details, entry, path, content, notify) {
   if (copy.status === 'loading') notifiers.set(key, notify)
   if (!asked) load(key, copy, entry, path, content, details.fileHashes?.get(path))
   return copy
+}
+
+// The copy kept for a file, as prettyCopy has it, without asking for one:
+// null where none is kept, or while the toggle is off.
+export function keptPrettyCopy(details, path) {
+  return state.bundleSourcePretty ? copies.get(copyKey(details, path)) ?? null : null
 }
 
 // Turned back on, the toggle asks again for copies that failed for a reason

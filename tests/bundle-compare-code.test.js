@@ -508,6 +508,54 @@ test('a hit opens at the same match pretty-printed where the printer respaced an
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">1<\/span>[^]*var x = /u, 'the expression\'s line, not the string\'s')
 })
 
+test('a file whose printed copy failed shows, and is searched, as published', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/failed.min.js': `var Y=1;${'q(Y);'.repeat(250)}fetch(1);\n` }, { 'dist/failed.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  element.base.managedId = 'b15'
+  element.other.managedId = 'b16'
+  pretty.set('b15:dist/failed.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  pretty.set('b16:dist/failed.min.js', 'var X = 1;\nfetch(2);\n')
+  state.bundleSourcePretty = true
+  element.path = 'dist/failed.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /is-error/u, 'its copy failed')
+  element._mode = 'code'
+  element._query = 'fetch('
+  const found = element._searchResults(element._railState().order)
+  assert.deepEqual(found.files.find(file => file.path === 'dist/failed.min.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`), ['−a0', '+b0'])
+  assert.equal(found.unsigned.has('dist/failed.min.js'), false)
+})
+
+test('a hit in a file whose printed copy is still coming is sought again in the copy once it comes', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('src/api.js', [{ 'dist/coming.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/coming.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
+  element.base.managedId = 'b17'
+  element.other.managedId = 'b18'
+  pretty.set('b17:dist/coming.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b18:dist/coming.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'Z(1)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/coming.min.js')
+  element._seek('dist/coming.min.js', hit)
+  element.path = 'dist/coming.min.js'
+  // Opened while its copies are asked for: the published diff's row, the seek kept.
+  assert.match(renderText(element.render()), /is-loading/u)
+  // As the view does once drawn, the row's scrolling aside (there is no DOM here).
+  element._soughtRow = null
+  element._scrollSought()
+  assert.ok(element._sought, 'kept while the copies come')
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">6<\/span>[^]*Z\(1\)/u, 'the copy\'s line 6')
+  element._soughtRow = null
+  element._scrollSought()
+  assert.equal(element._sought, null, 'and done with once found there')
+})
+
 test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
   // Every reading of the clock past the budget: the scan alone outlasts it.
   let clock = 0

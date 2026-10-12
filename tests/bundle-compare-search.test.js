@@ -51,3 +51,18 @@ test('the search lists up to its caps of lines a file and of files', () => {
   assert.equal(found.hits, SEARCH_MAX_FILES * SEARCH_MAX_FILE_HITS)
   assert.equal(found.truncated, true)
 })
+
+test('a file\'s hits are collected no further than listed: the first lines in its diff\'s order, removed ones among them', () => {
+  const calls = []
+  const counting = { ranges(line) { calls.push(line); return line.includes('x') ? [[0, 1]] : [] } }
+  const many = Array.from({ length: 10_000 }, () => 'x').join('\n')
+  assert.equal(fileHits('', many, counting, null).length, SEARCH_MAX_FILE_HITS)
+  assert.equal(calls.length, SEARCH_MAX_FILE_HITS, 'no line read past the last listed')
+  // Removed lines past many unchanged matches are still found, in order.
+  const before = `${Array.from({ length: 30 }, (_, i) => `x keep ${i}`).join('\n')}\nx gone\n`
+  const after = `${Array.from({ length: 30 }, (_, i) => `x keep ${i}`).join('\n')}\n`
+  const hits = fileHits(before, after, matcher('x'), changeBlocks(before, after))
+  assert.equal(hits.length, SEARCH_MAX_FILE_HITS)
+  assert.deepEqual(lines(hits).slice(0, 2), [' b0', ' b1'])
+  assert.deepEqual(lines(fileHits(before, after, matcher('gone'), changeBlocks(before, after))), ['−a30'])
+})
