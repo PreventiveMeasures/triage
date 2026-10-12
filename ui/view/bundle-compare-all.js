@@ -84,20 +84,21 @@ class BundleCompareAll extends BundleCompareCode {
     // the comparison changed (another scope), is scrolled to, as Code opens it;
     // else a new comparison shows from its top, as it was scrolled however far.
     if ((changed.has('path') || changed.has('files')) && this.path && this.path !== this._current) this._goTo = this.path
-    if (changed.has('files') && !this._goTo) this._toTop = true
+    if (changed.has('files')) this._toTop = true
   }
 
   // The rail's file at the top of the list, kept in view in the rail.
   updated() {
-    if (this._goTo) {
-      const path = this._goTo
-      this._goTo = null
-      this._picked = path
-      this._section(path)?.scrollIntoView({ block: 'start' })
+    const opened = this._goTo && this._section(this._goTo)
+    if (opened) {
+      this._picked = this._goTo
+      opened.scrollIntoView({ block: 'start' })
     } else if (this._toTop) {
+      // A new comparison without it shows from its top.
       const body = this.querySelector('.bundle-compare-diff')
       if (body) body.scrollTop = 0
     }
+    this._goTo = null
     this._toTop = false
     if (this._current !== this._shownPath) {
       this._shownPath = this._current

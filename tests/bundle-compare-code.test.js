@@ -288,19 +288,31 @@ test('the Diff view draws its files 40 at a time, more on asking or as one past 
   all._more()
   assert.deepEqual(drawn().files.length, 80)
   assert.equal(drawn().more, '15')
+  // What updated() does once it's drawn, its pane and the sections drawn stood in for.
+  const pane = { scrollTop: 0 }, scrolled = []
+  all.querySelector = selector => selector === '.bundle-compare-diff' ? pane : null
+  all.querySelectorAll = () => drawn().files.map(path => ({ dataset: { path }, scrollIntoView: () => scrolled.push(path) }))
+  const afterDraw = () => { pane.scrollTop = 900; all.updated() }
   all._current = 'lib/f75.js'
   all.willUpdate(new Map([['files']]))
   assert.equal(drawn().files.length, 40, 'a comparison anew from 40, not from the file the last one was at')
   assert.equal(all._current, 'lib/f00.js', 'its first file the rail\'s')
-  assert.equal(all._toTop, true, 'and the list from its top, however far it was scrolled')
-  all._toTop = false // as updated() does once it's drawn
+  afterDraw()
+  assert.equal(pane.scrollTop, 0, 'and the list from its top, however far it was scrolled')
   all.path = 'lib/f85.js'
   all.willUpdate(new Map([['path']]))
   assert.deepEqual(drawn(), { files: names, more: null, title: '95 files changed' }, 'the batches up to a file opened past them')
-  all._goTo = null // scrolled to, as updated() does once it's drawn
+  afterDraw()
+  assert.deepEqual([scrolled.at(-1), pane.scrollTop], ['lib/f85.js', 900], 'scrolled to')
   all.willUpdate(new Map([['files']]))
   assert.deepEqual([drawn().files.length, all._current], [95, 'lib/f85.js'], 'the file last picked reopened in a new comparison, as Code reopens it')
-  assert.equal(all._toTop, false, 'scrolled to it, not to the top')
+  afterDraw()
+  assert.deepEqual([scrolled.length, pane.scrollTop], [2, 900], 'scrolled to it, not to the top')
+  all.path = 'lib/gone.js'
+  all.willUpdate(new Map([['files']]))
+  assert.deepEqual([drawn().files.length, all._current], [40, 'lib/f00.js'], 'one the new comparison lacks not')
+  afterDraw()
+  assert.deepEqual([scrolled.length, pane.scrollTop], [2, 0], 'its list from its top')
 })
 
 test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
