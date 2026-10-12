@@ -57,7 +57,8 @@ test('license files wear the license icon by name, when they are text', () => {
   }
   for (const [path, icon] of [['lib/license.js', 'js'], ['license.ts', 'ts'], ['LICENSE.json', 'json'], ['copying.py', 'python'], ['licensed.txt', 'generic'],
     ['LICENSES/MIT.txt', 'generic'], ['LICENSES', 'generic'], ['my-license', 'generic'], ['copyright', 'generic'], ['license.svg', 'generic'],
-    ['LICENSE.pdf', 'generic'], ['docs/license.PNG', 'generic'], ['COPYING.gz', 'generic'], ['UNLICENSE.docx', 'generic']]) {
+    ['LICENSE.pdf', 'generic'], ['docs/license.PNG', 'generic'], ['COPYING.gz', 'generic'], ['UNLICENSE.docx', 'generic'],
+    ['lib/license.js.map', 'map'], ['LICENSE.map', 'map'], ['COPYING.MAP', 'map']]) {
     assert.equal(sourceFileType(path), icon, path)
   }
   assert.equal(sourceFileType('LICENSE', 'commonjs'), 'js', 'a recorded format still wins')

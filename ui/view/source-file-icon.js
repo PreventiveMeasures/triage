@@ -48,11 +48,12 @@ function isLicense(path, format, lang) {
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
+  // A source map before a license: license.js.map is the map of license.js.
+  if (lang === null && /\.map$/iu.test(path)) return 'map'
   if (isLicense(path, format, lang)) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown'].includes(lang)) return lang
-  if (lang === null && /\.map$/iu.test(path)) return 'map'
   return 'generic'
 }
 
