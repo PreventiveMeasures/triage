@@ -66,7 +66,8 @@ import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } fro
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
-import { fileMetaTags } from './bundle-compare-meta.js'
+import { fileMetaFlags, fileMetaTags } from './bundle-compare-meta.js'
+import { byFlags } from './file-flags.js'
 import { COMBINED_DIFF_MAX, combinedDiffRows } from './bundle-compare-all.js'
 import { compareModeOf } from '../../common/managed/routes.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
@@ -502,27 +503,34 @@ class BundleCompare extends LitElement {
           data-tooltip=${`${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}${r.baseLines > 0 || r.otherLines > 0 ? ` · ${r.baseLines.toLocaleString()} → ${loc(r.otherLines)}` : ''}`}>${r.delta === null ? '—' : formatDelta(r.delta)}</span>`
   }
 
-  // Name | Size order for one group, kept per kind in the state field
-  // `field` (`_fileSort` / `_pkgSort`).
-  _sortActions(field, kind, label) {
-    const sort = this[field][kind]
+  // Name | Size order for one group, and Flags where `flagged`, kept per
+  // kind in the state field `field` (`_fileSort` / `_pkgSort`); `sort` the
+  // one it is in.
+  _sortActions(field, kind, label, flagged = false, sort = this[field][kind]) {
     return html`<span class="bundles-overview-sort" role="group" aria-label=${`${kind} ${label} order`}>
-      ${[['name', 'Name'], ['size', 'Size']].map(([value, text]) => html`<button type="button" aria-pressed=${String(sort === value)} @click=${() => { this[field] = { ...this[field], [kind]: value } }}>${text}</button>`)}
+      ${[['name', 'Name'], ['size', 'Size'], ...flagged ? [['flags', 'Flags']] : []].map(([value, text]) => html`<button type="button" aria-pressed=${String(sort === value)}
+        @click=${() => { this[field] = { ...this[field], [kind]: value } }}>${text}</button>`)}
     </span>`
   }
 
   // One file group, every row listed (the list scrolls); the kind selects
   // its accent. Size order is the largest first, or for Changed the
-  // largest change in size, name order breaking ties.
+  // largest change in size, name order breaking ties. Where any row is
+  // flagged, as its tags show (a source's `files.flags`, and what a stasis
+  // bundle records of it), Flags order is offered too (file-flags.js byFlags),
+  // and else is Name's.
   _fileGroup(title, rows, kind, displayOf, lanes) {
-    const sort = this._fileSort[kind]
+    const files = this.source?.files, tagged = kind !== 'removed'
+    const flagsOf = r => [...tagged && files?.flags ? files.flags(this.details, r.path) : [], ...fileMetaFlags(r.meta)]
+    const flagged = rows.some(r => flagsOf(r).length > 0)
+    const sort = this._fileSort[kind] === 'flags' && !flagged ? 'name' : this._fileSort[kind]
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
-    const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
+    const sorted = sort === 'flags' ? byFlags(rows, flagsOf, r => r.path)
+      : rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
-    const tagged = kind !== 'removed'
     const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged, r.meta)
       : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged, r.meta)
-    return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
+    return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file', flagged, sort), { lanes })
   }
 
   // One package group: a package each, with its versions and its size —

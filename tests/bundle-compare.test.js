@@ -165,6 +165,35 @@ test('file groups default to name order and sort independently by displayed size
   assert.deepEqual(rows.map(row => row.path), ['z.js', 'a.js', 'b.js'], 'sorting must not mutate the cached diff')
 })
 
+test('file groups offer Flags where a file in them is flagged, as its tags show it, ordered by them', () => {
+  const view = compare()
+  const flags = { 'eval.js': [{ name: 'eval', severity: 'high' }], 'min.js': [{ name: 'Minified', severity: 'notice' }],
+    'both.js': [{ name: 'Minified', severity: 'notice' }, { name: 'Obfuscated', severity: 'high' }] }
+  view.details = { integrity: 'open' }
+  view.source = { files: { icon: () => '', tag: () => '', flags: (of, path) => { assert.equal(of, view.details); return flags[path] ?? [] } } }
+  const rows = ['plain.js', 'min.js', 'eval.js', 'both.js', 'a.js'].map(path => ({ path, bytes: 1 }))
+  const group = (kind, files = rows) => {
+    const markup = renderText(view._fileGroup(kind, files, kind, path => path))
+    const header = markup.match(/aria-label="?\w+ file order"?>(.*?)<\/span>/su)[1]
+    return { header, pressed: /aria-pressed=true[^<]*?>(\w+)<\/button>/u.exec(header)[1],
+      order: [...markup.matchAll(/class="bundle-compare-row-path mono"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]) }
+  }
+  assert.match(group('added').header, />Name<[^]*>Size<[^]*>Flags</u)
+  view._fileSort = { removed: 'flags', added: 'flags', changed: 'flags' }
+  assert.deepEqual(group('added').order, ['both.js', 'eval.js', 'min.js', 'a.js', 'plain.js'], 'the most severe, then the most flags, then the path')
+  assert.equal(group('added').pressed, 'Flags')
+  // A removed file has no tags, so none to order by, and Name's order instead.
+  const removed = group('removed')
+  assert.doesNotMatch(removed.header, />Flags</u)
+  assert.equal(removed.pressed, 'Name')
+  assert.deepEqual(removed.order, ['a.js', 'both.js', 'eval.js', 'min.js', 'plain.js'])
+  // What a stasis bundle records of a changed file flags it too, but what it no longer is.
+  view.source = null
+  const changed = [{ path: 'b.js', delta: 1, meta: [{ field: 'executable', from: false, to: true }] }, { path: 'a.js', delta: 1, meta: [{ field: 'entry', from: true, to: false }] }]
+  assert.deepEqual(group('changed', changed).order, ['b.js', 'a.js'])
+  assert.doesNotMatch(group('changed', [changed[1]]).header, />Flags</u, 'nothing but what a file no longer is')
+})
+
 test('file groups list every file, in a list that scrolls, in the order chosen', () => {
   const view = compare()
   view._fileSort = { ...view._fileSort, added: 'size' }

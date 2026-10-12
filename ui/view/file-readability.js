@@ -313,6 +313,21 @@ export function npmListedReadabilityTag(readability) {
 // long lines, where it has them, then its tag.
 export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
 
+// What a file is flagged with in a list of files, as its tags there show it
+// (npmFileFlagTags, npmListedReadabilityTag): `{ name, mark }` each, its
+// tag's text and mark; none for what reads as most files do (UTF-8, ASCII).
+export function npmListedFlags(path, readability, bytes) {
+  const category = readability && (readability.category === 'long' ? readability.kind : readability.category)
+  const listed = category && category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
+  return [
+    ...npmLargeCode(path, bytes) ? [{ name: 'Large', mark: 'notice' }] : [],
+    ...readability?.obfuscation ? [{ name: 'Obfuscated', mark: 'warn' }] : [],
+    ...readability ? npmReadabilityLabels(readability).filter(label => label === 'controls' || label === 'long')
+      .map(label => ({ name: READABILITY.get(label).tag, mark: npmLabelMark(readability, label) })) : [],
+    ...listed ? [{ name: READABILITY.get(category).tag, mark: listed }] : [],
+  ]
+}
+
 // What a file is beyond how it reads, before its tag: Large, a code file of
 // NPM_LARGE_CODE or more (`bytes` its size), which says little of a file
 // alone, as `notice`; and Obfuscated, one with an obfuscator's fingerprint

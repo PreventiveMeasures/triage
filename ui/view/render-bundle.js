@@ -39,7 +39,8 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { byFlags } from './file-flags.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -459,10 +460,11 @@ function openBundleWhy(details, query) {
 // `leadColumn` replaces the Packages column, as an npm package's Dependencies do;
 // `trailColumns` follow Files, `summaryExtra` follows the summary's meta, and
 // `overviewClass` names the Overview's own layout. `fileIcon` and `fileTag`
-// render before and after each Files row's path.
+// render before and after each Files row's path, and `fileFlags` gives what
+// a file is flagged with as its tags show it (file-flags.js).
 function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
   bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
-  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null, lines = null, sized = (measure, value, text) => text,
+  fileTag = null, fileIcon = null, fileFlags = null, overviewClass = '', fileFilter = null, lines = null, sized = (measure, value, text) => text,
 } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
@@ -473,12 +475,17 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
     packages.add(bundlePkgOf(sources[i], { packageDir: pkgDirOf(i) }))
   }
   // Name ascends; Size puts the largest files first, with unknown
-  // sizes last and name order breaking ties in either view.
-  const filesSort = state.bundleOverviewFilesSort
-  const order = stripped
-    .map((_, i) => i)
-    .toSorted((a, b) => (filesSort === 'size' ? (sizes[b] ?? -1) - (sizes[a] ?? -1) : 0)
-      || stripped[a].localeCompare(stripped[b]))
+  // sizes last and name order breaking ties in either view. Where any file
+  // listed is flagged (`fileFlags`), Flags is offered too (file-flags.js
+  // byFlags), and else is Name's. `fileFilter` narrows the Files list alone,
+  // `{ label, keeps, clear }`: what it keeps, named in the column's head, with
+  // a way back to every file.
+  const shown = stripped.map((_, i) => i).filter((i) => !fileFilter || fileFilter.keeps(sources[i]))
+  const flagsOf = (i) => fileFlags?.(sources[i]) ?? []
+  const flagged = shown.some((i) => flagsOf(i).length > 0)
+  const filesSort = state.bundleOverviewFilesSort === 'flags' && !flagged ? 'name' : state.bundleOverviewFilesSort
+  const listed = filesSort === 'flags' ? byFlags(shown, flagsOf, (i) => stripped[i])
+    : shown.toSorted((a, b) => (filesSort === 'size' ? (sizes[b] ?? -1) - (sizes[a] ?? -1) : 0) || stripped[a].localeCompare(stripped[b]))
 
   const distItems = sources.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) }))
   // `renderBundleSizeDistribution` returns `nothing` when no source
@@ -535,9 +542,6 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // (the click handler checks bundleSourcesAsMap and shows an
   // empty placeholder when content is missing). A resource has no
   // source to view at all, so its row is plain text.
-  // `fileFilter` narrows the Files list alone, `{ label, keeps, clear }`:
-  // what it keeps, named in the column's head, with a way back to every file.
-  const listed = fileFilter ? order.filter((i) => fileFilter.keeps(sources[i])) : order
   const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
     ${listed.map((i) => {
       const src = sources[i]
@@ -606,7 +610,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       ${overviewColumn({ title: 'Files', count: fileFilter ? `${listed.length} of ${sources.length}` : sources.length, body: filesTpl, list: true,
         extra: fileFilter ? html` <button type="button" class="bundles-overview-filter" aria-label=${`Show every file, not only ${fileFilter.label}`} @click=${fileFilter.clear}>${fileFilter.label}<span aria-hidden="true">×</span></button>` : nothing,
         tools: html`<span class="bundles-overview-sort" role="group" aria-label="File order">
-          ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
+          ${[['name', 'Name'], ['size', 'Size'], ...flagged ? [['flags', 'Flags']] : []].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
         </span>` })}
       ${reports.length > 0 ? overviewColumn({ title: 'Reports', count: reports.length, body: reportsTpl, list: true }) : nothing}
       ${trailColumns}
@@ -2664,6 +2668,7 @@ function renderNpmPackageOverview(entry, details) {
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
-    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path)}`, fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
+    fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }
