@@ -306,11 +306,23 @@ export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUN
 export const npmRunsCodeFlags = found => [...new Map([...found?.keys() ?? []].map(kind => RUNS_CODE.get(kind))
   .map(({ tag, mark }) => [tag, { name: tag, severity: mark ?? 'high' }])).values()]
 
+// The one line a tag's lines (each kind's, or service's) are, undefined for
+// several: where a click on the tag opens its file.
+export const onlyLine = lineLists => {
+  const lines = new Set(lineLists.flat())
+  return lines.size === 1 ? [...lines][0] : undefined
+}
+
+// A tag's attributes opening `path` in the code viewer at `line`
+// (`data-bundle-view-source`, events.js), scrolled to it: none without one.
+export const opensAt = (path, line) => line === undefined ? { path: nothing, line: nothing } : { path, line }
+
 // A file's tags, one for the kinds it holds (npmRunsCode) that share it, their
 // lines in its tooltip, each by its name where kinds share it; with `was`,
 // the kinds the file held as the version compared with has it (null for
-// none), one it didn't hold saying so.
-export function npmRunsCodeTags(found, was) {
+// none), one it didn't hold saying so; with `path`, for a list whose rows
+// open the file, a tag on one line opening it there.
+export function npmRunsCodeTags(found, was, path) {
   if (!found) return nothing
   return [...Map.groupBy(found, ([kind]) => RUNS_CODE.get(kind).tag)].map(([tag, kinds]) => {
     const parts = kinds.map(([kind, lines]) => {
@@ -318,6 +330,8 @@ export function npmRunsCodeTags(found, was) {
       return `${name ? `${name}, ` : ''}${linesNote(lines)}${was !== undefined && !was?.has(kind) ? ', new' : ''}`
     })
     const { note, mark } = RUNS_CODE.get(kinds[0][0])
-    return html`<span class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${`${note}: ${parts.join('; ')}`}>${tag}</span>`
+    const at = opensAt(path, path === undefined ? undefined : onlyLine(kinds.map(([, lines]) => lines)))
+    return html`<span data-bundle-view-source=${at.path} data-bundle-view-line=${at.line}
+      class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${`${note}: ${parts.join('; ')}`}>${tag}</span>`
   })
 }

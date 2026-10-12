@@ -25,7 +25,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -806,6 +806,18 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="(npm-[\w-]+)" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, kind, note, tag]) => `${kind}:${tag} ${note}`)
   assert.deepEqual(tags('lib/api.js'), ['npm-exfiltration:Exfiltration Names a host malicious packages send what they take to: webhook.site (line 2)'])
   assert.deepEqual(tags('lib/old.js'), [])
+})
+
+test('the Files list\'s tags on one line open the file at it, the code viewer scrolled there; Compare\'s open none', () => {
+  const details = { integrity: 'opens@1.0.0', kind: 'sourcemap', npm: { name: 'opens', version: '1.0.0' },
+    json: { version: 3, sources: ['lib/one.js', 'lib/two.js'], sourcesContent: ['x\neval(a)\nFunction(b)\npost("https://webhook.site/x")\n', 'eval(a)\neval(b)\n'] } }
+  const opens = markup => [...markup.matchAll(/data-bundle-view-source=(\S*) data-bundle-view-line=(\d*)\s+class="?(npm-[\w-]+)/gu)].map(([, path, line, tag]) => `${tag}${path ? ` ${path}:${line}` : ''}`)
+  assert.deepEqual(opens(rendered(npmFileTags(details, 'lib/one.js', true))), ['npm-runs-code', 'npm-exfiltration lib/one.js:4'],
+    'eval and Function on lines 2 and 3, one tag on two lines; Exfiltration on one')
+  assert.deepEqual(opens(rendered(npmFileTags({ ...details, integrity: 'opens@1.0.1', json: { ...details.json, sourcesContent: ['x\neval(a); Function(b)\n', ''] } }, 'lib/one.js', true))),
+    ['npm-runs-code lib/one.js:2'], 'two ways on one line, one line')
+  assert.deepEqual(opens(rendered(npmFileTags(details, 'lib/two.js', true))), ['npm-runs-code'], 'lines 1 and 2')
+  assert.deepEqual(opens(rendered(npmCompareFiles.tag(details, 'lib/one.js'))), ['npm-runs-code', 'npm-exfiltration'], 'none where its row opens Compare\'s Code')
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
