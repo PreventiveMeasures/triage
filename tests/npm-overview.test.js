@@ -398,7 +398,11 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   answers.provenance['lab@1.0.0'] = { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40), workflow: 'publish', ref: null,
     builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: null }
   const lab = await fact(entry('lab', { provenance: true }))
-  assert.match(lab, /<span class=npm-provenance-builder is-hosted>GitLab CI<\/span>/u)
+  assert.match(lab, /<span class=npm-provenance-builder>GitLab CI<\/span>/u, 'not green where nothing says whose runner it was')
+  answers.provenance['lab-hosted@1.0.0'] = { ...answers.provenance['lab@1.0.0'], runner: 'gitlab-hosted' }
+  assert.match(await fact(entry('lab-hosted', { provenance: true })), /<span class=npm-provenance-builder is-hosted>GitLab CI<\/span>/u, 'green on GitLab\'s own, as its certificate says')
+  answers.provenance['lab-own@1.0.0'] = { ...answers.provenance['lab@1.0.0'], runner: 'self-hosted' }
+  assert.match(await fact(entry('lab-own', { provenance: true })), /<span class=npm-provenance-builder>GitLab CI, self-hosted runner<\/span>/u)
   assert.match(lab, new RegExp(`href=https://gitlab\\.com/group/project/-/commit/${'d'.repeat(40)} [^>]*><span>gitlab\\.com/group/project@ddddddd<`, 'u'), 'its commit, as GitLab links one')
   assert.match(lab, /<span class="mono" data-tooltip=>publish</u, 'its job, by name, no tooltip saying it again')
   assert.doesNotMatch(await fact(entry('lab', { provenance: true, gitlab: 'Group/Project' })), /npm-provenance-warning/u, 'the GitLab project it names')

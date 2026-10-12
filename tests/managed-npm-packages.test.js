@@ -738,9 +738,12 @@ test('npm\'s provenance for a public version: where it was built, read only from
   const secret = { ...version('@acme/attested', { 'index.js': '5' }), private: true }
   registry(t, [pkg, old, lab, forged, bare, secret])
   const hex = doc => Buffer.from(doc.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
-  const envelope = (doc, predicateType, predicate, digest = hex(doc)) => ({ attestations: [
+  // A signing certificate's DER, around Fulcio's Runner Environment extension.
+  const certificate = runner => Buffer.concat([Buffer.from('3082ffff', 'hex'), Buffer.from('060a2b0601040183bf30010b', 'hex'),
+    Buffer.from([0x04, runner.length + 2, 0x0c, runner.length]), Buffer.from(runner), Buffer.from('3000', 'hex')]).toString('base64')
+  const envelope = (doc, predicateType, predicate, digest = hex(doc), material = {}) => ({ attestations: [
     { predicateType: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1', bundle: {} },
-    { predicateType, bundle: { verificationMaterial: { tlogEntries: [{ logIndex: '42' }] }, dsseEnvelope: { payload: Buffer.from(JSON.stringify({
+    { predicateType, bundle: { verificationMaterial: { tlogEntries: [{ logIndex: '42' }], ...material }, dsseEnvelope: { payload: Buffer.from(JSON.stringify({
       subject: [{ name: `pkg:npm/${doc.name.replace(/^@/u, '%40')}@${doc.version}`, digest: { sha512: digest } }], predicate })).toString('base64') } } },
   ] })
   // Its build's parameters long enough that the statement passes 2,048 characters, as one may.
@@ -755,9 +758,10 @@ test('npm\'s provenance for a public version: where it was built, read only from
     invocation: { configSource: { uri: 'git+https://gitlab.com/group/project', digest: { sha1: 'd'.repeat(40) }, entryPoint: 'publish' } },
     metadata: { buildInvocationId: 'https://gitlab.com/group/project/-/jobs/678' } }
   const asked = insights(t, { provenance: {
-    'attested@1.0.0': envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1),
+    'attested@1.0.0': envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1, undefined, { certificate: { rawBytes: certificate('github-hosted') } }),
     'attested-v02@1.0.0': envelope(old.doc, 'https://slsa.dev/provenance/v0.2', v02),
-    'attested-gitlab@1.0.0': envelope(lab.doc, 'https://slsa.dev/provenance/v0.2', v02GitLab),
+    'attested-gitlab@1.0.0': envelope(lab.doc, 'https://slsa.dev/provenance/v0.2', v02GitLab, undefined,
+      { x509CertificateChain: { certificates: [{ rawBytes: certificate('self-hosted') }] } }),
     'forged@1.0.0': envelope(forged.doc, 'https://slsa.dev/provenance/v1', v1, '00'.repeat(64)),
     '@acme/attested@1.0.0': envelope(secret.doc, 'https://slsa.dev/provenance/v1', v1),
   } })
@@ -767,13 +771,14 @@ test('npm\'s provenance for a public version: where it was built, read only from
   assert.ok(envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1).attestations[1].bundle.dsseEnvelope.payload.length > 2048)
   assert.deepEqual(await provenanceOf('attested'), { name: 'attested', version: '1.0.0', provenance: {
     repository: 'https://github.com/org/repo', commit: 'b'.repeat(40), workflow: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0',
-    builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42 } })
+    builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42, runner: 'github-hosted' } },
+  'whose runner built it, as its certificate says')
   assert.deepEqual((await provenanceOf('attested-v02')).provenance, { repository: 'https://github.com/org/repo', commit: 'c'.repeat(40),
     workflow: '.github/workflows/publish.yml', ref: 'refs/heads/main', builder: 'https://github.com/actions/runner',
-    run: 'https://github.com/org/repo/actions/runs/9/attempts/2', logIndex: 42 }, 'as SLSA v0.2 says it, its run GitHub\'s')
+    run: 'https://github.com/org/repo/actions/runs/9/attempts/2', logIndex: 42, runner: null }, 'as SLSA v0.2 says it, its run GitHub\'s; no certificate, no runner')
   assert.deepEqual((await provenanceOf('attested-gitlab')).provenance, { repository: 'https://gitlab.com/group/project', commit: 'd'.repeat(40),
-    workflow: 'publish', ref: null, builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: 42 },
-  'as npm writes GitLab\'s: no ref, its job\'s URL its run')
+    workflow: 'publish', ref: null, builder: 'https://gitlab.com/group/project/-/runners/12345', run: 'https://gitlab.com/group/project/-/jobs/678', logIndex: 42,
+    runner: 'self-hosted' }, 'as npm writes GitLab\'s: no ref, its job\'s URL its run; its runner from a certificate chain')
   assert.equal((await provenanceOf('forged')).provenance, null, 'a statement naming another tarball is not read')
   assert.equal((await provenanceOf('unattested')).provenance, null)
   assert.equal((await provenanceOf('@acme/attested', 'admin')).provenance, null, 'none for a private package')
@@ -981,6 +986,14 @@ test('a GitLab project a package names as its repository is kept, in any form np
     ['https://gitlab.com/group/project/-/tree/main/packages/x', 'group/project'],
     ['https://github.com/org/repo', null], ['https://gitlab.com/group', null], ['https://gitlab.com/../x', null], ['https://gitlab.example.com/a/b', null], [3, null],
   ]) assert.equal(gitlab(repository), project, JSON.stringify(repository))
+})
+
+test('a CI npm trusts to publish is named as npm names it, never as an account', () => {
+  const manifest = npmManifest({ _npmUser: { name: 'GitHub Actions', email: 'npm-oidc-no-reply@github.com', trustedPublisher: { id: 'github', oidcConfigId: 'oidc:1' } } })
+  assert.equal(manifest.trustedPublisher, 'GitHub Actions')
+  assert.equal(manifest.publisher, undefined)
+  assert.equal(npmManifest({ _npmUser: { name: 'Not An Account', email: 'x@example.com' } }).trustedPublisher, undefined, 'only where npm says it trusted it')
+  assert.equal(npmManifest({ _npmUser: { name: 'alice', email: 'a@example.com', trustedPublisher: { id: 'github' } } }).trustedPublisher, undefined, 'an account is named as one')
 })
 
 test('the accounts known to publish one of npm\'s most downloaded packages are named so, whatever their case', () => {

@@ -171,9 +171,12 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
   if (author?.name) pick['author'] = author.name
   const accounts = [json['_npmUser'], ...Array.isArray(json['maintainers']) ? json['maintainers'] : []].map(npmPerson)
     .filter((person): person is NpmPerson & { name: string } => person?.name != null && NPM_ACCOUNT.test(person.name))
-  // The npm account that published it, for its profile.
+  // The npm account that published it, for its profile; or, published by
+  // a CI npm trusts (npm's trusted publishing), the CI, as npm names it
+  // (`GitHub Actions`).
   const publisher = npmPerson(json['_npmUser'])?.name
   if (publisher && NPM_ACCOUNT.test(publisher)) pick['publisher'] = publisher
+  else if (publisher && publisher.length <= 64 && plainObject(json['_npmUser']) && plainObject(json['_npmUser']['trustedPublisher'])) pick['trustedPublisher'] = publisher
   const same = (a: string | null, b: string | null) => a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
   const account = author && accounts.find(person => same(person.email, author.email) || same(person.name, author.name))
   if (account) pick['authorAccount'] = account.name

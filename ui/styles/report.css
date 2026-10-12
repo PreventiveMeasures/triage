@@ -3384,6 +3384,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   &.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &.is-unknown { color: var(--medium); }
 }
+.bundles-detail-meta .npm-trusted-publisher { color: var(--muted); }
 .bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
 .npm-github-archived {
   padding: 0 .35rem;

@@ -555,7 +555,9 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
       ? html`${npmAccount(manifest, manifest.authorAccount, manifest.author)}${manifest.author === manifest.authorAccount ? nothing : html`<span class="npm-publisher">~${manifest.authorAccount}</span>`}`
       : manifest.author}</dd>` : nothing}
     ${manifest.publisher && manifest.publisher !== manifest.authorAccount
-      ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest, manifest.publisher, `~${manifest.publisher}`)}</dd>` : nothing}
+      ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest, manifest.publisher, `~${manifest.publisher}`)}</dd>`
+      // A CI npm trusts, which its provenance names where it has any.
+      : manifest.trustedPublisher && !manifest.provenance ? html`<dt>Publisher</dt><dd class="npm-trusted-publisher">${manifest.trustedPublisher}</dd>` : nothing}
     ${published ? html`<dt>Published</dt><dd>${npmRecentRelease(list, published)
       ? html`<span class="npm-recent">${npmPublished(published)}</span>` : npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">

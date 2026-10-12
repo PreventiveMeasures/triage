@@ -205,15 +205,19 @@ export function npmGithubFigures(entry) {
 
 // What built a version, as its provenance names its builder: GitHub Actions,
 // on a runner GitHub hosts or one of the publisher's own, or GitLab CI.
-// The builders their provider runs, not the publisher.
-const HOSTED_BUILDERS = new Set(['GitHub Actions', 'GitLab CI'])
-function builderName(builder) {
+// What built a version, by its builder's id and its runner's (npm-provenance.ts
+// `runner`): GitHub's names its own runners or the publisher's; GitLab's
+// names the runner in its project (`<project>/-/runners/<id>`), whoever's.
+function builderName(builder, runner) {
   if (!builder) return null
   if (/^https:\/\/github\.com\/actions\/runner(?:\/github-hosted)?$/u.test(builder)) return 'GitHub Actions'
   if (builder.startsWith('https://github.com/actions/runner/')) return 'GitHub Actions, self-hosted runner'
-  // GitLab names the runner in its project, `<project>/-/runners/<id>`.
-  return builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/') ? 'GitLab CI' : new URL(builder).host
+  if (builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/')) return runner === 'self-hosted' ? 'GitLab CI, self-hosted runner' : 'GitLab CI'
+  return new URL(builder).host
 }
+// Built on its provider's own runners, as its certificate says, or, where
+// it doesn't, as GitHub's builder id does.
+const isHosted = (built, runner) => runner ? runner === 'github-hosted' || runner === 'gitlab-hosted' : built === 'GitHub Actions'
 
 // npm's provenance for the version, in the Overview's facts, for a public
 // package (npm-provenance.ts): what built it, from which repository at
@@ -233,11 +237,11 @@ export function npmProvenanceFact(entry) {
   if (!data.provenance) {
     return html`<span class="npm-provenance-warning" data-tooltip="npm lists provenance for this version, but no statement naming its tarball could be read">Listed, but none for this tarball</span>`
   }
-  const { repository, commit, workflow, ref, builder, run, logIndex } = data.provenance
+  const { repository, commit, workflow, ref, builder, run, logIndex, runner } = data.provenance
   const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null
-  const built = builderName(builder)
-  const gitlab = built === 'GitLab CI'
+  const built = builderName(builder, runner)
+  const gitlab = built?.startsWith('GitLab CI')
   const shown = github ?? repository.replace(/^https:\/\//u, '')
   // The repository the package names, GitHub's or GitLab's, as its source
   // reads.
@@ -255,7 +259,7 @@ export function npmProvenanceFact(entry) {
   logIndex === null ? nothing : link(`https://search.sigstore.dev/?logIndex=${logIndex}`, 'Transparency log')].filter(item => item !== nothing)
   return html`<span class="npm-provenance">
     <span class="npm-provenance-line">
-      ${built ? html`<span class=${HOSTED_BUILDERS.has(built) && !elsewhere ? 'npm-provenance-builder is-hosted' : 'npm-provenance-builder'}>${built}</span>` : nothing}
+      ${built ? html`<span class=${isHosted(built, runner) && !elsewhere ? 'npm-provenance-builder is-hosted' : 'npm-provenance-builder'}>${built}</span>` : nothing}
       <span class="npm-provenance-sep">from</span>
       ${commit ? link(github ? `${repository}/commit/${commit}` : gitlab ? `${repository}/-/commit/${commit}` : repository, `${shown}@${commit.slice(0, 7)}`,
         `${repository} at ${commit}${ref ? ` (${ref})` : ''}`) : link(repository, shown)}
