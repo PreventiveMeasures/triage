@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, lineDiff, markHighlighted, markSegments, textLines } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -94,4 +94,21 @@ test('a block the server marks is marked, its lines counted apart, and a mark th
   assert.deepEqual([...marked.marked], [0])
   assert.deepEqual([marked.additions, marked.deletions, marked.renamed], [1, 1, 2], 'the renamed lines counted apart')
   assert.equal(lineDiff(before, after, { marks: [{ a0: 0, a1: 1, b0: 0, b1: 1 }] }).marked.size, 0, 'part of a block')
+})
+
+test('a file\'s lines added and removed, as the tree lists them', () => {
+  assert.deepEqual(fileLineCounts('a\nb\nc\n', 'a\nB\nc\nd\n'), { additions: 2, deletions: 1 })
+  assert.deepEqual(fileLineCounts('same\n', 'same\n'), { additions: 0, deletions: 0 }, 'renamed as it was')
+  assert.deepEqual(fileLineCounts('', 'a\nb'), { additions: 2, deletions: 0 }, 'added, last line unended')
+  assert.deepEqual(fileLineCounts('a\nb\n', ''), { additions: 0, deletions: 2 }, 'removed')
+  assert.deepEqual(fileLineCounts('a', 'a\n'), { additions: 1, deletions: 1 }, 'a newline added at the end changes that line')
+  // As the diff's head counts them, for the same two sides.
+  const before = text(lines(40))
+  const after = text(lines(40).map((line, i) => i % 7 === 0 ? `${line} changed` : line))
+  const { additions, deletions } = lineDiff(before, after)
+  assert.deepEqual(fileLineCounts(before, after), { additions, deletions })
+  assert.equal(fileLineCounts(new Uint8Array([1]), ''), null, 'not text')
+  assert.equal(fileLineCounts('', new Uint8Array([1])), null)
+  assert.equal(fileLineCounts(text(lines(10_001)), text(lines(10_000))), null, 'too large to count while the tree draws')
+  assert.deepEqual(fileLineCounts('', text(lines(30_000))), { additions: 30_000, deletions: 0 }, 'an added file is counted however large')
 })

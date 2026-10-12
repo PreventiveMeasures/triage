@@ -28,7 +28,7 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, lineDiff, markHighlighted, markSegments } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
@@ -64,6 +64,9 @@ const MAX_IMPORT_LINES = 3
 // Directories all start open (a review reads every change) unless the
 // tree is too long to scan that way.
 const OPEN_ALL_MAX = 300
+// Time a render of the tree spends counting its files' lines (_lineCounts)
+// before leaving the rest to the next.
+const COUNT_BUDGET_MS = 30
 
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
@@ -262,6 +265,8 @@ export class BundleCompareCode extends LitElement {
     this._open = new Map()
     this._models = new Map()
     this._modelCap = MODEL_CACHE
+    // Path → the tree's line counts for it (_lineCounts), for these entries.
+    this._counted = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
@@ -281,7 +286,10 @@ export class BundleCompareCode extends LitElement {
         this._forced.clear()
       }
     }
-    if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) this._entries = this._buildEntries()
+    if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
+      this._entries = this._buildEntries()
+      this._counted = new Map()
+    }
   }
 
   updated() {
@@ -379,6 +387,7 @@ export class BundleCompareCode extends LitElement {
   // The rail: the files that differ as a tree, filtered by path and kind,
   // `current` marked, and the splitter beside it. Picking a file is _select.
   _renderRail({ prefix, root, tree, shown, filtered }, current) {
+    this._countUntil = null
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'repointed') counts[entry.kind]++
@@ -488,6 +497,7 @@ export class BundleCompareCode extends LitElement {
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
             ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
+            ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
               data-tooltip=${kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label}>${KIND[kind].letter}</span>
@@ -495,6 +505,45 @@ export class BundleCompareCode extends LitElement {
         </li>`
       })}
     </ul>`
+  }
+
+  // A file's lines added and removed in the tree, before its letter, as an
+  // npm dependency review's tree lists them: `=` for one renamed as it was,
+  // and a count with nothing in it there (an added file's −0) unseen, keeping
+  // its room, so the counts line up. None for a file whose contents are the
+  // same, only its imports repointed.
+  _treeCounts(path, entry) {
+    if (entry.kind === 'repointed') return nothing
+    const counts = this._lineCounts(path, entry)
+    if (!counts) return nothing
+    const { additions, deletions } = counts
+    const renamed = entry.kind === 'renamed'
+    if (renamed && additions === 0 && deletions === 0) {
+      return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
+    }
+    return html`<span class="bundle-compare-code-line-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
+      <span class=${classMap({ add: true, empty: renamed && additions === 0 })}>+${additions.toLocaleString()}</span>
+      <span class=${classMap({ del: true, empty: entry.kind === 'added' || (renamed && deletions === 0) })}>−${deletions.toLocaleString()}</span>
+    </span>`
+  }
+
+  // A file's lines added and removed between its sides as they are
+  // (fileLineCounts), kept for these entries. A long tree is counted a little
+  // at a time: a render counts from its first file until its budget is spent
+  // and asks for another to count the rest, so the tree paints at once and
+  // fills in.
+  _lineCounts(path, entry) {
+    if (this._counted.has(path)) return this._counted.get(path)
+    const now = performance.now()
+    this._countUntil ??= now + COUNT_BUDGET_MS
+    if (now > this._countUntil) {
+      this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
+      return null
+    }
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    const counts = fileLineCounts(before, after)
+    this._counted.set(path, counts)
+    return counts
   }
 
   // ── The selected file ────────────────────────────────────────────

@@ -55,6 +55,32 @@ export function lineDiff(before, after, { ignoreWhitespace = false, changes = nu
   return { a, b, blocks, additions, deletions, renamed, marked, noEol, words: new Map() }
 }
 
+// A file's lines added and removed between its two sides as they are, for a
+// tree to list beside it, as an npm dependency review's tree counts them:
+// none where a side is not text, nor for a file too large to count while a
+// tree draws (its diff can still be asked for), an added or removed one's
+// lines counted without a diff.
+const COUNT_CHARS = 2_000_000
+const COUNT_LINES = 20_000
+const lineCount = text => {
+  let count = Number(text !== '' && !text.endsWith('\n'))
+  for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) count++
+  return count
+}
+export function fileLineCounts(before, after) {
+  if (typeof before !== 'string' || typeof after !== 'string') return null
+  if (before === after) return { additions: 0, deletions: 0 }
+  if (before === '') return { additions: lineCount(after), deletions: 0 }
+  if (after === '') return { additions: 0, deletions: lineCount(before) }
+  if (before.length + after.length > COUNT_CHARS || lineCount(before) + lineCount(after) > COUNT_LINES) return null
+  let additions = 0, deletions = 0
+  for (const { a0, a1, b0, b1 } of changeBlocks(before, after)) {
+    additions += b1 - b0
+    deletions += a1 - a0
+  }
+  return { additions, deletions }
+}
+
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change
 // block's lines. A fold is keyed by the index of the unchanged run it sits
