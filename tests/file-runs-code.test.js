@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmRunsCode } from '../ui/view/file-runs-code.js'
+import { npmRunsCode, npmRunsCodeFlags } from '../ui/view/file-runs-code.js'
 
 const found = (path, text) => {
   const runs = npmRunsCode(path, text)
@@ -25,11 +25,17 @@ test('a script is read for eval, Function and child_process, each with the lines
     { 'child-process': [1, 2, 3, 5] }, 'comments in how it is loaded; a default named type, and a load after a type-only one')
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
     { 'child-process': [1, 2, 3] }, 'a module named by the string that names it, required or imported')
-  assert.deepEqual([...npmRunsCode('a.ts', 'npm_publish("npm publish")\nprocess.env.NPM_TOKEN\nimport cp from "child_process"\nm._compile(s)\nimport vm from "vm"\nFunction(y)\neval(x)\n')],
-    [['eval', [7]], ['function', [6]], ['vm', [5]], ['compile', [4]], ['child-process', [3]], ['credentials', [2]], ['publish', [1]]], 'in RUNS_CODE\'s order')
+  assert.deepEqual([...npmRunsCode('a.ts', 'npm_publish("npm publish")\nsend(JSON.stringify(process.env))\nprocess.env.NPM_TOKEN\nimport cp from "child_process"\nm._compile(s)\nimport vm from "vm"\nFunction(y)\neval(x)\n')],
+    [['eval', [8]], ['function', [7]], ['vm', [6]], ['compile', [5]], ['child-process', [4]], ['credentials', [3]], ['env', [2]], ['publish', [1]]], 'in RUNS_CODE\'s order')
   assert.deepEqual(found('a.js', 'eval(a); eval(b)\n\neval(c)\n'), { eval: [1, 3] }, 'a line once')
   assert.deepEqual(found('bin/cli', '#!/usr/bin/env node\nrequire("child_process").execSync("ls")\n'), { 'child-process': [2] },
     'a script node runs by its hashbang, with no extension')
+})
+
+test('a file\'s kinds as its flags, a shared tag once, the whole environment and publishing critical', () => {
+  assert.deepEqual(npmRunsCodeFlags(npmRunsCode('a.js', 'eval(a)\nFunction(b)\nrequire("vm")\nsend(JSON.stringify(process.env))\nexecSync("npm publish")\nreadFileSync(".npmrc")\n')),
+    [{ name: 'eval', severity: 'high' }, { name: 'credentials', severity: 'high' }, { name: 'whole env', severity: 'critical' }, { name: 'publish', severity: 'critical' }])
+  assert.deepEqual(npmRunsCodeFlags(null), [], 'none for none')
 })
 
 test('vm loaded, and Module\'s _compile called or hooked, run a string as code', () => {
@@ -38,14 +44,19 @@ test('vm loaded, and Module\'s _compile called or hooked, run a string as code',
   assert.equal(found('a.js', 'const name = \'vm\'\nobj.vm\nx._compiled\n// require(\'vm\')\nconst _compile = 1\n'), null, 'a module named, not loaded, and other names')
 })
 
-test('credentials: a credential file\'s path, a token\'s name, the environment read whole', () => {
+test('credentials: a credential file\'s path, a token\'s name; and the environment read out whole', () => {
   assert.deepEqual(found('a.js', 'fs.readFileSync(path.join(os.homedir(), \'.npmrc\'))\nconst key = \'~/.ssh/id_rsa\'\nconst aws = `${home}/.aws/credentials`\n'
     + 'process.env.NPM_TOKEN\nprocess.env[\'GITHUB_TOKEN\']\nconst { NPM_TOKEN } = process.env\n'), { credentials: [1, 2, 3, 4, 5, 6] })
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),
-    { credentials: [1, 2, 3, 4] }, 'the environment\'s values read out whole')
+    { env: [1, 2, 3, 4] }, 'the environment\'s values read out whole, a kind of its own')
   assert.equal(found('a.js', 'process.env.NODE_ENV\nspawn(c, { env: process.env })\nspawn(c, { env: { ...process.env, X: 1 } })\nif (\'HOME\' in process.env) f()\n'
     + 'JSON.stringify(process.env.X)\nObject.values(process.env[name])\nObject.keys(process.env).filter(key => /^debug_/iu.test(key))\nfor (const name in process.env) f(name)\n'), null,
     'one variable, the environment handed to a program, or its names listed')
+  assert.equal(found('a.js', 'const proxy = Object.entries(process.env).reduce((found, [key, value]) => found, {})\n'
+    + 'Object.values(process.env).some(value => value === x)\nObject.entries( process.env )\n  .filter(([key]) => key.startsWith(\'APP_\'))\n'), null,
+    'its entries or values picked among as they are read, as npm\'s agent finds its proxy\'s')
+  assert.deepEqual(found('a.js', 'Object.entries(process.env).map(([k, v]) => `${k}=${v}`)\nfor (const [k, v] of Object.entries(process.env)) send(k, v)\n'),
+    { env: [1, 2] }, 'not where they are turned or looped over')
   assert.equal(found('a.js', '// export NPM_TOKEN=…\nconst s = \'project.npmrc s3.amazonaws.com MY_NPM_TOKEN .sshd\'\nconst re = /\\.npmrc$/u\n'), null,
     'in a comment, or a name or path of another')
 })
@@ -122,7 +133,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
   for (const [text, runs] of [
     [`${"'npm', 'publish', ".repeat(1e5)}\n`, { publish: [1] }],
     [`${"{ method: 'PUT' }, ".repeat(1e5)}'registry.npmjs.org'\n`, { publish: [1] }],
-    [`${'JSON.stringify( '.repeat(1e5)}process.env)\n`, { credentials: [1] }],
+    [`${'JSON.stringify( '.repeat(1e5)}process.env)\n`, { env: [1] }],
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
   ]) assert.deepEqual(found('a.js', text), runs)
   // A minute, when each hit copied those before it.

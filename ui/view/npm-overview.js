@@ -22,7 +22,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmFoundAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmFileRunsCode, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
@@ -492,9 +492,10 @@ export function npmFileTags(details, path) {
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
 // it, by their severity, where the list draws them (the Files list's, not
-// Compare's); what it runs beyond itself and an exfiltration host it names,
-// a warning's; and its flags and how it reads, a warning's (`high`) or a
-// notice, by their marks. Those but Socket's kept, once a version.
+// Compare's); what it does beyond itself, a warning's or, for the whole
+// environment read out and publishing, critical, and an exfiltration host it
+// names, a warning's; and its flags and how it reads, a warning's (`high`) or
+// a notice, by their marks. Those but Socket's kept, once a version.
 const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
 const fileFlags = new WeakMap()
 export function npmFileFlags(details, path, alerts = []) {
@@ -502,7 +503,7 @@ export function npmFileFlags(details, path, alerts = []) {
   if (!known) fileFlags.set(details, known = new Map())
   if (!known.has(path)) {
     const { byPath, sizes } = npmFilesRead(details), text = bundleFilesAsMap(details).get(path)
-    known.set(path, [...npmRunsCodeNames(npmFileRunsCode(details, path, text)).map(name => ({ name, severity: 'high' })),
+    known.set(path, [...npmRunsCodeFlags(npmFileRunsCode(details, path, text)),
       ...npmFileExfiltration(details, path, text) ? [{ name: 'Exfiltration', severity: 'high' }] : [],
       ...npmListedFlags(path, byPath.get(path), sizes.get(path)).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))])
   }
@@ -666,7 +667,7 @@ function fileBadges(base, other, files) {
   const exfiltrating = gained(npmFileExfiltration), runsCode = gained(npmFileRunsCode)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
-      'What the code runs beyond itself, new to the file: a string run as code (eval, Function) or other programs (child_process)',
+      'What the code does beyond itself, new to the file: a string run as code (eval: eval, Function, vm, Module._compile), other programs (child_process), credentials, the whole environment read out, or publishing to npm',
       npmRunsCodeKinds(runsCode.map(row => row.added))),
     fileBadge('npm-compare-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.added),
       'A host malicious packages send what they take to, or fetch what they run from, new to the file',

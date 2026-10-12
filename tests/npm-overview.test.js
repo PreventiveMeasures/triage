@@ -755,7 +755,7 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
   const other = version('1.1.0', { 'lib/a.js': "module.exports = x => require('child_process').exec(x)\n", 'lib/b.js': 'module.exports = x => eval(x) + eval(x)\n',
     'lib/new.js': "module.exports = new Function('return 1')\n", 'lib/moved.js': `${code}\nmodule.exports = s => eval(s)\n`, 'lib/same.js': 'eval(y)\n' })
   const flagged = await badges(base, other)
-  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval, Function, child_process<\/span><\/span><\/li>/u,
+  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval, child_process<\/span><\/span><\/li>/u,
     'red, every kind new to a file named, in their order')
   const rows = [...flagged.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`)
   assert.deepEqual(rows.filter(row => /\((?:line|lines) /u.test(row)), ['lib/new.js: Function (line 1)', 'lib/a.js: child_process (line 1)', 'lib/moved.js: eval (line 31)'],

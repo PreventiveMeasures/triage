@@ -640,6 +640,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
 
   &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
+  /* Worse than the others' warning: the whole environment read out, and
+     publishing (file-runs-code.js). */
+  &.is-critical { background: color-mix(in srgb, var(--critical) 22%, var(--bg)); border-color: var(--critical); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
 /* An install script's name in the Overview, a little larger: what runs on

@@ -1,7 +1,7 @@
 // What a file's code can do beyond itself, for a reviewer: run a string as
 // code (eval, Function with new or without, node:vm, Module's _compile) or
-// other programs (child_process), reach for credentials (a credential file's path, a
-// token's name, the environment read whole) and publish to npm (`npm
+// other programs (child_process), reach for credentials (a credential file's
+// path, a token's name) or the whole environment, and publish to npm (`npm
 // publish`, `/-/whoami`, a registry PUT), as the npm Overview's Files list and
 // Compare label a file.
 // A quick read, not a parse: a script's code with its strings, regular
@@ -46,8 +46,12 @@ const ENV = String.raw`process${GAP}\.${GAP}env(?![\p{ID_Continue}$])(?!${GAP}(?
 // `Object.entries(process.env)`, `new URLSearchParams(process.env)`), not as a
 // program is handed it (`{ env: process.env }`, `{ ...process.env }`), nor its
 // names listed (`Object.keys(process.env)`, as debug picks its DEBUG_ ones),
-// nor one variable asked for (`'HOME' in process.env`).
-const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|Object${GAP}\.${GAP}(?:values|entries)|URLSearchParams)${GAP}\(${GAP}${ENV}`
+// nor one variable asked for (`'HOME' in process.env`), nor its entries or
+// values picked among as they are read (`Object.entries(process.env)
+// .reduce(…)`, as npm's agent finds its proxy's, `.filter(…)`, `.find(…)`).
+const PICKED = String.raw`${GAP}\)${GAP}\??\.${GAP}(?:filter|find|findLast|some|every|reduce)(?![\p{ID_Continue}$])`
+const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${ENV}`
+  + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${ENV}(?!${PICKED})`
 // Any of RUNS_CODE, as a text may say it.
 const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
 
@@ -65,10 +69,10 @@ const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
 // none of its own), and Function called; Module's _compile, called
 // (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
-// = …`); a token's name and the environment read out whole; and a PUT
-// request's call (`axios.put(…)`).
+// = …`); a token's name; the environment read out whole; and a PUT request's
+// call (`axios.put(…)`).
 const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`
-  + String.raw`|(?<compile>\.${GAP}_compile(?![\p{ID_Continue}$]))|(?<credentials>${TOKEN_NAME}|${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
+  + String.raw`|(?<compile>\.${GAP}_compile(?![\p{ID_Continue}$]))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
 // `.sshd`), or a token's name; a command publishing (`npm publish`, `pnpm
@@ -106,15 +110,20 @@ const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*${GAP}(?:\?\.${GAP})?|\bimport${GAP})\(|\b(?:from|import))${GAP}$`, 'u')
 const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}(?:from\b|=))[^;'"\x60]*(?:\bfrom|=${GAP}require${GAP}\()${GAP}$`, 'u')
 
-// Each kind, in the order its tags show: its tag and what it does.
+// Each kind, in the order its tags show: its tag, what it does, for a tag
+// kinds share its name in the tag's tooltip (a string run as code by any way,
+// `eval`'s), and for one marked as worse than the others' warning, `critical`:
+// the whole environment read out, and publishing.
+const AS_CODE = { tag: 'eval', note: 'Runs a string as code' }
 const RUNS_CODE = new Map([
-  ['eval', { tag: 'eval', note: 'Runs a string as code (eval)' }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)' }],
-  ['vm', { tag: 'vm', note: 'Runs a string as code (vm)' }],
-  ['compile', { tag: '_compile', note: 'Compiles a string as a module (Module._compile)' }],
+  ['eval', { ...AS_CODE, name: 'eval' }],
+  ['function', { ...AS_CODE, name: 'Function' }],
+  ['vm', { ...AS_CODE, name: 'vm' }],
+  ['compile', { ...AS_CODE, name: 'Module._compile' }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)' }],
-  ['credentials', { tag: 'credentials', note: 'Reaches for credentials (.npmrc, .ssh, .aws, NPM_TOKEN, GITHUB_TOKEN, process.env whole)' }],
-  ['publish', { tag: 'publish', note: 'Publishes to npm (npm publish, /-/whoami, a registry PUT)' }],
+  ['credentials', { tag: 'credentials', note: 'Reaches for credentials (.npmrc, .ssh, .aws, NPM_TOKEN, GITHUB_TOKEN)' }],
+  ['env', { tag: 'whole env', note: 'Reads out the whole environment (process.env by JSON.stringify, Object.entries or values, URLSearchParams)', mark: 'critical' }],
+  ['publish', { tag: 'publish', note: 'Publishes to npm (npm publish, /-/whoami, a registry PUT)', mark: 'critical' }],
 ])
 
 // The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
@@ -172,7 +181,7 @@ function read(code, base, at) {
 }
 
 // The kinds code itself does, by READS' groups.
-const CODE_KINDS = ['eval', 'function', 'compile', 'credentials', 'put']
+const CODE_KINDS = ['eval', 'function', 'compile', 'credentials', 'env', 'put']
 
 // Whether the string at `index` in code names a module where it is loaded.
 function loaded(code, index) {
@@ -254,24 +263,31 @@ export function npmFoundAdded(found, was) {
   return added.size > 0 ? added : null
 }
 
-// The kinds any of `founds` holds, as their tags name them, in their order:
-// `eval, child_process`.
-export const npmRunsCodeKinds = founds => [...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag).join(', ')
+// The kinds any of `founds` holds, as their tags name them, in their order,
+// a tag kinds share once: `eval, child_process`.
+export const npmRunsCodeKinds = founds => [...new Set([...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag))].join(', ')
 
-// The kinds a file holds, each named with its lines: `eval (line 3)`.
-export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUNS_CODE.get(kind).tag} (${linesNote(lines)})`).join(', ')
+// The kinds a file holds, each named with its lines, by its own name where
+// kinds share a tag: `eval (line 3), Function (line 5)`.
+export const npmRunsCodeSaid = found => [...found].map(([kind, lines]) => `${RUNS_CODE.get(kind).name ?? RUNS_CODE.get(kind).tag} (${linesNote(lines)})`).join(', ')
 
-// A file's tags, one a kind it holds (npmRunsCode), its lines in its tooltip;
-// with `was`, the kinds the file held as the version compared with has it
-// (null for none), one it didn't hold saying so.
-// Their tags' texts, in their order: none for none.
-export const npmRunsCodeNames = found => found ? [...found.keys()].map(kind => RUNS_CODE.get(kind).tag) : []
+// Its tags as a file's flags (file-flags.js), in their order, each once: a
+// warning's (`high`), or for one marked worse, `critical`; none for none.
+export const npmRunsCodeFlags = found => [...new Map([...found?.keys() ?? []].map(kind => RUNS_CODE.get(kind))
+  .map(({ tag, mark }) => [tag, { name: tag, severity: mark ?? 'high' }])).values()]
 
+// A file's tags, one for the kinds it holds (npmRunsCode) that share it, their
+// lines in its tooltip, each by its name where kinds share it; with `was`,
+// the kinds the file held as the version compared with has it (null for
+// none), one it didn't hold saying so.
 export function npmRunsCodeTags(found, was) {
   if (!found) return nothing
-  return [...found].map(([kind, lines]) => {
-    const { tag, note } = RUNS_CODE.get(kind)
-    const fresh = was !== undefined && !was?.has(kind)
-    return html`<span class="npm-runs-code" data-tooltip=${`${note}: ${linesNote(lines)}${fresh ? ', new' : ''}`}>${tag}</span>`
+  return [...Map.groupBy(found, ([kind]) => RUNS_CODE.get(kind).tag)].map(([tag, kinds]) => {
+    const parts = kinds.map(([kind, lines]) => {
+      const { name } = RUNS_CODE.get(kind)
+      return `${name ? `${name}, ` : ''}${linesNote(lines)}${was !== undefined && !was?.has(kind) ? ', new' : ''}`
+    })
+    const { note, mark } = RUNS_CODE.get(kinds[0][0])
+    return html`<span class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${`${note}: ${parts.join('; ')}`}>${tag}</span>`
   })
 }
