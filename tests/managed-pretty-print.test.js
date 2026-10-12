@@ -147,6 +147,7 @@ test('a public npm file is formatted once, kept unencrypted by its hash, and ser
   assert.equal(first.headers['content-encoding'], 'br')
   assert.equal(first.headers['content-type'], 'text/plain; charset=utf-8')
   assert.equal(first.headers['cache-control'], 'private, no-store')
+  assert.equal(first.headers['x-source-hash'], hash, 'naming the file it was formatted from')
   assert.equal(first.text(), await formatted(minified))
   // Kept as the response's bytes, in the public namespace, as they are.
   const kept = await readdir(join(h.dir, 'cache', 'npm', 'pretty-v2'))
@@ -206,6 +207,7 @@ test('a bundle file is formatted once, kept encrypted in its cache, and removed 
   assert.equal(first.status, 200)
   assert.deepEqual(twin.bytes, first.bytes)
   assert.equal(first.headers['content-encoding'], 'br')
+  assert.equal(first.headers['x-source-hash'], hash, 'naming the file it was formatted from')
   assert.equal(first.text(), await formatted(minified))
   const copy = `${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`
   const kept = await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v2'))
@@ -216,6 +218,7 @@ test('a bundle file is formatted once, kept encrypted in its cache, and removed 
   assert.equal(Buffer.concat(chunks).subarray(0, 16).toString(), 'DeepView.storage')
   const again = await h.send(bundlePretty(id, 'dist/app.min.js', hash))
   assert.deepEqual(again.bytes, first.bytes)
+  assert.equal(again.headers['x-source-hash'], hash, 'from the kept copy too')
   const head = await h.send(bundlePretty(id, 'dist/app.min.js', hash), 'viewer', { method: 'HEAD' })
   assert.equal(head.status, 200)
   assert.equal(head.headers['content-length'], String(first.bytes.length))

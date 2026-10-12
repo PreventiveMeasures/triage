@@ -895,7 +895,9 @@ logged, and one of a kind it has no check for 422 `unsupported`. The Brotli byte
 the bundle's cache directory by content hash, encrypted with its data key
 where storage is, and removed with the bundle; later requests stream them as
 they are. Access is checked before and again after formatting, and the
-endpoint supports HEAD.
+endpoint supports HEAD. Each copy names the file it was formatted from, by
+that hash, in `x-source-hash`, and the viewer takes only a copy naming the
+file it asked about.
 
 `GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
 diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the

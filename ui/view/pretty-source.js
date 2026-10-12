@@ -1,9 +1,10 @@
 // Minified files pretty-printed in the Code tab while its toggle is on
 // (state.bundleSourcePretty): a managed bundle's or an npm version's file,
 // asked of the server by its path and its text's hash, which formats it once
-// and keeps the copy (server-managed/pretty-print.ts). The viewer keeps the
-// last few copies it read, for the session; a copy's line numbers are its
-// own, so the file's line links and marks stay with the file as published.
+// and keeps the copy (server-managed/pretty-print.ts), taken where the server
+// names that hash as the one it formatted. The viewer keeps the last few
+// copies it read, for the session; a copy's line numbers are its own, so the
+// file's line links and marks stay with the file as published.
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
@@ -21,6 +22,9 @@ export const prettyTooltip = copy => copy?.status === 'loading' ? 'Pretty-printi
 
 // Copies kept, the one read last last; each can run to megabytes.
 const KEPT_COPIES = 8
+
+// What a copy the server names as another file's, or as none, is told as.
+const MISMATCH = "The server's copy is of another file than the one open."
 
 // Copies by integrity and path: `{ status: 'loading' }`, `{ status: 'ready',
 // text, hash }` (`hash` the copy's own, which a diff of it names:
@@ -83,10 +87,10 @@ async function load(key, copy, entry, path, content, known) {
   let next
   try {
     const hash = known ?? await computeFileHash(content)
-    const text = entry.npm
+    const { text, source } = entry.npm
       ? await fetchPrettyNpmFile(entry.npm.name, entry.npm.version, path, hash)
       : await fetchPrettyBundleFile(entry.managedId, path, hash)
-    next = { status: 'ready', text, hash: await computeFileHash(text) }
+    next = source === hash && typeof text === 'string' ? { status: 'ready', text, hash: await computeFileHash(text) } : { status: 'error', message: MISMATCH, retry: true }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {

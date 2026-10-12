@@ -16,7 +16,7 @@ const pretty = new Map(), renameDiffs = []
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
+  fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
   fetchPrettyNpmFile() {},
   async fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
