@@ -84,6 +84,7 @@ test('the invisible characters text is hidden in are counted where they show, bu
   assert.equal(invisibleCharacters('\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F\u17B4-\u17D3\u180B-\u180D a\u034Fb'), null,
     'a block of selectors in such a table, the other marks that show as nothing')
   assert.equal(invisibleCharacters('\uFEFFa\u200Bb\u00ADc\u00A0d\u001B'), null, 'format characters, spaces, controls')
+  assert.deepEqual(invisibleCharacters('\u3164 = \u3164', 4), new Map([[0x3164, 1]]), 'looked for from where it is told to, as the first character past ASCII')
   const run = `x${'\uFE0F'.repeat(1000)}`
   assert.equal(controlParts(run).length, 1001, 'a long run, each a box')
   assert.deepEqual(invisibleCharacters(run), new Map([[0xFE0F, 1000]]))

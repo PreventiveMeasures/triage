@@ -23,8 +23,11 @@ export function npmTextEncoding(text) {
   if (typeof text !== 'string') return { kind: 'binary', controls: null }
   const controls = new Map()
   for (const [char] of text.matchAll(CONTROLS)) controls.set(char.codePointAt(0), (controls.get(char.codePointAt(0)) ?? 0) + 1)
-  for (const [code, times] of invisibleCharacters(text) ?? []) controls.set(code, times)
-  return { kind: NON_ASCII.test(text) ? 'utf8' : 'ascii', controls: controls.size > 0 ? controls : null }
+  // The invisible characters are all past ASCII: looked for in a text that
+  // has any, from its first.
+  const past = text.search(NON_ASCII)
+  if (past !== -1) for (const [code, times] of invisibleCharacters(text, past) ?? []) controls.set(code, times)
+  return { kind: past === -1 ? 'ascii' : 'utf8', controls: controls.size > 0 ? controls : null }
 }
 
 // Lines longer than anyone writes by hand.

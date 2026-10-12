@@ -192,32 +192,36 @@ const isTag = code => code >= 0xe0020 && code <= 0xe007f
 const FLAGS = new Set(['gbeng', 'gbsct', 'gbwls'])
 const tagged = (text, from, to) => to - from === 10 ? String.fromCodePoint(...Array.from({ length: 5 }, (_, i) => text.codePointAt(from + 2 * i) - 0xe0000)) : ''
 
-// The characters in `text` to show, in order, as [at, code point]. A CR before
-// a newline is part of the line end, as is one that ends `text` where
-// `lineEnd` says a newline follows it. A joiner between two emoji joins them
-// into one, a recommended subdivision flag's tags, up to the cancel tag, name
-// its region (FLAGS), and the text or emoji presentation selector after a
-// pictograph, or the emoji one between a keycap's digit, # or * and its mark,
-// draws it; after a letter or a digit alone it is another name.
+// Where to go on from where `code` at `at` in `text` stays text, else -1 for
+// one to show. A CR before a newline is part of the line end, as is one that
+// ends `text` where `lineEnd` says a newline follows it. A joiner between two
+// emoji joins them into one, a recommended subdivision flag's tags, up to the
+// cancel tag, name its region (FLAGS), and the text or emoji presentation
+// selector after a pictograph, or the emoji one between a keycap's digit, #
+// or * and its mark, draws it; after a letter or a digit alone it is another
+// name.
+function passed(text, at, code, lineEnd) {
+  if (code === 0x0d && (text[at + 1] === '\n' || lineEnd && at + 1 === text.length)) return at + 1
+  if (code === 0x200d && EMOJI_BEFORE.test(text.slice(Math.max(0, at - 4), at)) && EMOJI_AFTER.test(text.slice(at + 1, at + 3))) return at + 1
+  if ((code === 0xfe0e || code === 0xfe0f) && PICTOGRAPH_BEFORE.test(text.slice(Math.max(0, at - 2), at))) return at + 1
+  if (code === 0xfe0f && KEYCAP_BASE.test(text[at - 1] ?? '') && text[at + 1] === '\u20E3') return at + 1
+  if (isTag(code) && !isTag(text.codePointAt(at - 2))) {
+    let end = at
+    while (isTag(text.codePointAt(end))) end += 2
+    if (text.codePointAt(at - 2) === 0x1f3f4 && text.codePointAt(end - 2) === 0xe007f && FLAGS.has(tagged(text, at, end - 2))) return end
+  }
+  return -1
+}
+
+// The characters in `text` to show, in order, as [at, code point] (passed).
 function shown(text, lineEnd) {
   const found = []
   CANDIDATES.lastIndex = 0
   for (let match = CANDIDATES.exec(text); match; match = CANDIDATES.exec(text)) {
-    const at = match.index
     const code = match[0].codePointAt(0)
-    if (code === 0x0d && (text[at + 1] === '\n' || lineEnd && at + 1 === text.length)) continue
-    if (code === 0x200d && EMOJI_BEFORE.test(text.slice(Math.max(0, at - 4), at)) && EMOJI_AFTER.test(text.slice(at + 1, at + 3))) continue
-    if ((code === 0xfe0e || code === 0xfe0f) && PICTOGRAPH_BEFORE.test(text.slice(Math.max(0, at - 2), at))) continue
-    if (code === 0xfe0f && KEYCAP_BASE.test(text[at - 1] ?? '') && text[at + 1] === '\u20E3') continue
-    if (isTag(code) && !isTag(text.codePointAt(at - 2))) {
-      let end = at
-      while (isTag(text.codePointAt(end))) end += 2
-      if (text.codePointAt(at - 2) === 0x1f3f4 && text.codePointAt(end - 2) === 0xe007f && FLAGS.has(tagged(text, at, end - 2))) {
-        CANDIDATES.lastIndex = end
-        continue
-      }
-    }
-    found.push([at, code])
+    const next = passed(text, match.index, code, lineEnd)
+    if (next === -1) found.push([match.index, code])
+    else CANDIDATES.lastIndex = next
   }
   return found
 }
@@ -237,6 +241,12 @@ export function hasControls(text) {
 // selectors), which tables of the characters a name may hold, as JavaScript
 // parsers have, hold too; nor what of these hides nothing (benign).
 const INVISIBLE = /[\u115F\u1160\u3164\uFFA0\u{E0001}\u{E0020}-\u{E007F}]|[\uFE00-\uFE0F]|[\u{E0100}-\u{E01EF}]/u
+// The code units they are in, to look for them by, faster than by code point:
+// the high surrogate starting those past the Basic Multilingual Plane (tags,
+// the selectors' supplement) too, told apart from its others once found. No
+// `u`, which would read a pair as the one code point it spells.
+// eslint-disable-next-line require-unicode-regexp
+const INVISIBLE_UNITS = /[\uFE00-\uFE0F\u115F\u1160\u3164\uFFA0\uDB40]/g
 // A table's code points, from its ranges in hex (`30 2018-2019`).
 const codePoints = ranges => new Set(ranges.split(' ').flatMap(range => {
   const [from, to = from] = range.split('-').map(digits => Number.parseInt(digits, 16))
@@ -333,14 +343,23 @@ function benign(text, at, code) {
   }
 }
 
-// How many of each a text holds, by code point, or null for none.
-export function invisibleCharacters(text) {
-  if (!INVISIBLE.test(text)) return null
-  const found = new Map()
-  for (const [at, code] of shown(text)) {
-    if (INVISIBLE.test(String.fromCodePoint(code)) && !benign(text, at, code)) found.set(code, (found.get(code) ?? 0) + 1)
+// How many of each a text holds, by code point, or null for none: each one
+// Code shows (passed), visited alone, not each character it shows. `from`:
+// where to look from, as the first character past ASCII, since all of them are.
+export function invisibleCharacters(text, from = 0) {
+  let found = null
+  INVISIBLE_UNITS.lastIndex = from
+  for (let match = INVISIBLE_UNITS.exec(text); match; match = INVISIBLE_UNITS.exec(text)) {
+    const at = match.index, code = text.codePointAt(at)
+    if (!INVISIBLE.test(String.fromCodePoint(code))) continue
+    const next = passed(text, at, code, false)
+    if (next !== -1) INVISIBLE_UNITS.lastIndex = next
+    else if (!benign(text, at, code)) {
+      found ??= new Map()
+      found.set(code, (found.get(code) ?? 0) + 1)
+    }
   }
-  return found.size > 0 ? found : null
+  return found
 }
 
 const box = code => {
