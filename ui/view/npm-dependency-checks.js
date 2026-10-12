@@ -6,6 +6,7 @@
 // and the dependencies over its package.json (bundle-compare-code.js) flag
 // them.
 import { html } from 'lit'
+import { NPM_PROSE } from './file-readability.js'
 import { installScripts } from './install-scripts.js'
 
 // The kinds of dependency a manifest names, by its field
@@ -119,12 +120,13 @@ export function npmRegistrySpec(spec) {
   return /^npm:/iu.test(value) || !/^[.]|^(?:git\+)?[a-z]+:|\/|[.](?:tgz|tar\.gz|tar)$/iu.test(value)
 }
 
-// Files no import is read from: prose, by its extension (Markdown, text) or
-// its name alone (`LICENSE-MIT`, `CHANGES`; not code named alike, as
-// `lib/history.js`), source maps, which quote whatever their sources import,
-// and lockfiles, which name every package installed; nor the package's own
-// package.json, which names them all.
-const NO_IMPORTS = /(?:\.(?:md|markdown|txt|rst|adoc|asciidoc|textile|map)|(?:^|\/)(?:(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*)?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml))$/iu
+// Files no import is read from: prose, as the Overview tells it
+// (file-readability.js NPM_PROSE; not code named alike, as
+// `lib/history.js`), but MDX, which imports what it renders; source maps,
+// which quote whatever their sources import, and lockfiles, which name every
+// package installed; nor the package's own package.json, which names them all.
+const MDX = /\.mdx$/iu
+const NO_IMPORTS = /(?:\.map|(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml))$/iu
 // A quote, then a run of the characters names and paths are made of (after
 // webpack's `~` too), and what ends it: a quote, escaped too, as a quote in
 // a quoted command is in binding.gyp (`require(\'nan\')`), or a template's `${`.
@@ -144,7 +146,7 @@ function importsOf({ json, npm }) {
   const sources = json.sources ?? [], texts = json.sourcesContent ?? []
   found = { whole: new Set(), parts: new Set(), commands: installScripts(npm?.manifest?.installScripts, sources.includes('binding.gyp')).map(([, command]) => command) }
   for (const [i, path] of sources.entries()) {
-    if (typeof texts[i] !== 'string' || path === 'package.json' || NO_IMPORTS.test(path)) continue
+    if (typeof texts[i] !== 'string' || path === 'package.json' || (NPM_PROSE.test(path) && !MDX.test(path)) || NO_IMPORTS.test(path)) continue
     for (const [, run, end] of texts[i].matchAll(QUOTED)) {
       if (end && '-/'.includes(run.at(-1))) found.parts.add(run)
       if (end && end !== '${') found.whole.add(run)

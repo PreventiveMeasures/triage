@@ -1328,7 +1328,7 @@ control. A version shows in the bundle view with four tabs:
   alone or before a path in it, `'name'` or `"name/sub"`, after webpack's
   `~` too, or built from a part of its name up to a `-` or `/`, as a
   package picks its platform's build, `` `@rollup/rollup-${platform}` ``
-  or `"@typescript/" + name`; prose, source maps, lockfiles and its own
+  or `"@typescript/" + name`; prose but MDX, which imports, source maps, lockfiles and its own
   package.json aside), nor does an install script npm runs, though npm
   installs it all the same and runs its install scripts, as a dependency
   added for those alone would be; not a peer one, which whoever installs the

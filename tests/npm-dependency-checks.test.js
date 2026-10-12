@@ -72,12 +72,14 @@ test('a dependency nothing of a version imports is one no code file names as an 
   assert.equal(unimported({ 'index.js': '' }, 'bar', setup), true, 'nor a file of the package\'s own')
   assert.equal(unimported({ 'index.js': '' }, 'foo', { installScripts: { install: 'node node_modules/foo/install.js' } }), false)
   // Not files no import is read from: prose, source maps, lockfiles, its own package.json.
-  for (const path of ['README.md', 'docs/guide.txt', 'CHANGELOG', 'HISTORY.md', 'LICENSE-MIT', 'dist/index.js.map', 'npm-shrinkwrap.json', 'package.json']) {
+  for (const path of ['README.md', 'docs/guide.txt', 'CHANGELOG', 'HISTORY.md', 'LICENSE-MIT', 'README.org', 'LICENSE-LGPL2.1', 'CHANGES.2.0', 'dist/index.js.map',
+    'npm-shrinkwrap.json', 'package.json']) {
     assert.equal(unimported({ [path]: 'require("dep")' }, 'dep'), true, path)
   }
-  for (const path of ['lib/history.js', 'src/changes.ts', 'lib/readme-parser.js']) {
+  for (const path of ['lib/history.js', 'src/changes.ts', 'lib/readme-parser.js', 'dist/notice.min.js']) {
     assert.equal(unimported({ [path]: 'require("dep")' }, 'dep'), false, `${path}, code named as prose is`)
   }
+  assert.equal(unimported({ 'docs/intro.mdx': 'import { Chart } from "dep"' }, 'dep'), false, 'MDX, prose that imports, is read')
   assert.equal(unimported({ 'lib/package.json': '{"dependencies":{"dep":"1"}}' }, 'dep'), false, 'another package.json is a file of it as any')
   assert.equal(unimported({ 'index.js': null }, 'dep'), true, 'a file that isn\'t text')
   assert.equal(unimported({ 'index.js': '' }, 'react-dom', {}, 'peer'), false, 'not a peer dependency')
