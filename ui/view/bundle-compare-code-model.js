@@ -103,14 +103,19 @@ export function whitespaceHidden(before, after) {
 // Makefile's tabs, a language no one listed -- and shows all of it. Told by
 // the format a stasis bundle records for the file, where it records one, of
 // the formats stasis knows (its own spelling of a file's language); else by
-// extension, or by a script's #! line naming Node, Deno, Bun or a shell.
+// extension, or by a script's #! line, one of those known to run Node, Deno,
+// Bun or a shell, whole: none is read apart, so no option is taken for one.
 const INSENSITIVE_FORMATS = new Set(['module', 'commonjs', 'module-typescript', 'commonjs-typescript', 'json', 'solidity', 'php', 'shell', 'rust',
   'java', 'kotlin', 'gradle', 'objc', 'objcpp', 'swift', 'c', 'cpp', 'c-header', 'cpp-header', 'xml', 'cmake', 'pbxproj'])
 const INSENSITIVE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx|json5?|jsonc|css|scss|less|html?|xhtml|xml|svg|c|h|cc|cpp|cxx|hh|hpp|hxx|java|kts?|go|rs|cs|swift|php|sh|bash|zsh)$/u
-const INSENSITIVE_SCRIPT = /^#![ \t]*(?:\S*\/)?(?:env[ \t]+(?:-\S*[ \t]+)*)?(?:node|nodejs|deno|bun|sh|bash|dash|ksh|zsh)(?=[ \t\r\n]|$)/u
+const INSENSITIVE_SCRIPTS = new Set([
+  '#!/usr/bin/env node', '#! /usr/bin/env node', '#!/usr/bin/node', '#!/usr/local/bin/node', '#!/usr/bin/env nodejs', '#!/usr/bin/env deno', '#!/usr/bin/env bun',
+  '#!/bin/sh', '#! /bin/sh', '#!/bin/sh -e', '#!/usr/bin/env sh', '#!/bin/bash', '#! /bin/bash', '#!/bin/bash -e', '#!/usr/bin/env bash',
+  '#!/bin/zsh', '#!/usr/bin/env zsh', '#!/bin/dash',
+])
 export function whitespaceInsensitive(path, text = '', format = undefined) {
   if (typeof format === 'string') return INSENSITIVE_FORMATS.has(format)
-  return INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPT.test(text))
+  return INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPTS.has(text.split('\n', 1)[0]))
 }
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the

@@ -75,12 +75,14 @@ test('whitespace is hidden only in files whose whitespace means nothing, told by
     'src/App.vue', 'LICENSE', 'notes.txt', 'binding.gyp', 'pyproject.toml', 'src/a.jsonl', 'src/a.json.py']) {
     assert.equal(whitespaceInsensitive(path), false, `${path}: whatever its type might be, its whitespace shows`)
   }
-  // An extensionless script, by its #! line.
-  for (const line of ['#!/usr/bin/env node', '#!/usr/bin/env -S node --no-warnings', '#!/bin/sh', '#!/usr/local/bin/bash -e', '#!/usr/bin/env deno']) {
+  // An extensionless script, by its #! line, one known whole.
+  for (const line of ['#!/usr/bin/env node', '#! /usr/bin/env node', '#!/usr/local/bin/node', '#!/bin/sh', '#!/bin/bash -e', '#!/usr/bin/env deno']) {
     assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), true, line)
+    assert.equal(whitespaceInsensitive('bin/tool', line), true, `${line}, alone`)
   }
-  for (const line of ['#!/usr/bin/env python3', '#!/usr/bin/env shellcheck', '#!/usr/bin/coffee', '// #!/usr/bin/env node']) {
-    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), false, line)
+  for (const line of ['#!/usr/bin/env python3', '#!/usr/bin/env -S -u node python3', '#!/usr/bin/env -S node --no-warnings', '#!/usr/bin/env node2',
+    '#!/usr/bin/env node # python', '#!/usr/bin/env node\r', '#!/usr/bin/env shellcheck', '#!/usr/bin/coffee', '// #!/usr/bin/env node', ' #!/bin/sh']) {
+    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), false, JSON.stringify(line))
   }
   assert.equal(whitespaceInsensitive('bin/tool', 'run()\n'), false, 'nor one with no #! line')
   assert.equal(whitespaceInsensitive('bin/tool', null), false, 'nor a side that is not text')

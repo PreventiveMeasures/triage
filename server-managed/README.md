@@ -237,8 +237,10 @@ TypeScript, JSON, CSS, SCSS and Less, HTML, XML and SVG, C and C++, Java,
 Kotlin, Go, Rust, C#, Swift, PHP and shell. A stasis bundle's file is told
 by the format the bundle records for it (`module`, `commonjs`, `json`,
 `shell`, `cmake`, …), where it records one, whatever its name; any other by
-extension, or by a script's `#!` line naming Node, Deno, Bun or a shell. A
-format of another language, or one not known, reads as not listed. Any other file may hold
+extension, or by a script's `#!` line, one of a short list known to run Node,
+Deno, Bun or a shell (`#!/usr/bin/env node`, `#!/bin/sh`, …), matched whole
+with nothing parsed out of it. A format of another language, or one not
+known, reads as not listed. Any other file may hold
 its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
 Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
 Nor are they hidden in a file where that would hide blanks of more than one
