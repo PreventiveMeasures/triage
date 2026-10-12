@@ -438,9 +438,11 @@ for (const remote of [false, true]) {
   })
 }
 
-test('encryption streams a generated 115 MiB payload with bounded input read-ahead', async t => {
+// Hundreds of whole chunks, past the multipart threshold; no path depends on the
+// size beyond that, so a larger payload only costs time.
+test('encryption streams a generated 16 MiB payload with bounded input read-ahead', async t => {
   const f = await fixture(t), id = randomUUID()
-  const block = randomBytes(65_536), size = 115 * 1024 * 1024
+  const block = randomBytes(65_536), size = 16 * 1024 * 1024
   const hash = createHash('sha256')
   async function* input() { for (let i = 0; i < size / block.length; i++) { hash.update(block); yield block } }
   await f.raw.put(`reports/${id}`, Readable.from(input(), { objectMode: false }))
