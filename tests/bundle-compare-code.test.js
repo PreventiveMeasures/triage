@@ -348,15 +348,29 @@ test('the one-list Code lists a file whose only change is a repointed import by 
     combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
 })
 
-test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs', () => {
-  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n' }, { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n' }]
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(renderText(view(path, files).render()))[1]
+test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its long lines beside that', () => {
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n` },
+    { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
+      'src/short.js': `${code}\n` }]
+  const rendered = path => renderText(view(path, files).render())
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(rendered(path))[1]
   const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
   assert.deepEqual(tags(head('src/ctl.js')), ['ASCII', 'Controls'])
   assert.match(head('src/ctl.js'), /bundle-compare-code-readability/u)
   assert.deepEqual(tags(head('src/same.js')), ['ASCII'], 'once where it reads alike')
   assert.deepEqual(tags(head('src/new.js')), ['UTF-8'], 'an added file as it reads now')
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
+  // Long lines don't take the place of how a file reads: beside it, as it reads now.
+  const longLines = markup => [...markup.matchAll(/class="npm-flag-tag is-warn" data-tooltip=([^>]*)>Long lines</gu)].map(m => m[1])
+  assert.deepEqual(longLines(head('src/long.js')), ['1 line over 1000 characters, the longest 1,013, among readable ones'])
+  assert.deepEqual(tags(head('src/long.js')), ['ASCII'], 'once, read alike')
+  assert.doesNotMatch(head('src/long.js'), /bundle-compare-code-readability/u)
+  assert.deepEqual(longLines(head('src/short.js')), [], 'not where it had them')
+  const tree = /<ul class=bundle-code-tree root[^]*<\/ul>/u.exec(rendered('src/long.js'))[0]
+  const row = name => /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes(`data-tooltip=src/${name}.js>`))
+  assert.match(row('long'), /npm-flag-tag is-warn[^>]*>Long lines</u)
+  assert.doesNotMatch(row('long'), /npm-encoding-tag/u, 'the tree leaving ASCII untagged')
 })
 
 test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {
@@ -431,6 +445,31 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.match(head('dist/app.min.js'), /<alert malware>/u)
   assert.doesNotMatch(head('index.js'), /<alert/u, 'the open one\'s alerts on a file it has')
   assert.match(render('index.js'), /<alert malware>[^]*?bundle-compare-code-letter added/u, 'in the tree too')
+})
+
+test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
+  const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
+  const big = '// big\n'.repeat(40_000)
+  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = version('a', { 'lib/gone.js': obfuscated, 'lib/big.js': '// small\n', 'lib/plain.js': 'export const a = 1\n' })
+  const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'lib/plain.js': 'export const a = 2\n' })
+  const element = new CompareCode()
+  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const flags = markup => [...markup.matchAll(/class="npm-flag-tag (is-\w+)"[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
+  assert.deepEqual(flags(head('dist/payload.js')), ['Large is-notice', 'Obfuscated is-warn'])
+  assert.match(head('dist/payload.js'), /Obfuscated<\/span>[^]*class=npm-encoding-tag is-notice[^>]*>Minified</u, 'before how it reads')
+  assert.deepEqual(flags(head('lib/big.js')), ['Large is-notice'], 'as it is now')
+  assert.deepEqual(flags(head('lib/gone.js')), ['Obfuscated is-warn'], 'as it was, removed')
+  assert.deepEqual(flags(head('lib/plain.js')), [])
+  const rows = Object.fromEntries([...render('lib/plain.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
+  assert.deepEqual(flags(rows['dist/payload.js']), ['Large is-notice', 'Obfuscated is-warn'], 'in the tree too')
+  assert.deepEqual(flags(rows['lib/gone.js']), ['Obfuscated is-warn'])
+  assert.deepEqual(flags(rows['lib/plain.js']), [])
 })
 
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {

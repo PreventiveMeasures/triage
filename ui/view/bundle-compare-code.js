@@ -30,7 +30,7 @@ import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmFileReadability, npmReadabilityTag } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLongLinesTag } from './file-readability.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -514,7 +514,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
+            ${this._alertTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
             ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
@@ -726,7 +726,7 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one
@@ -790,11 +790,22 @@ export class BundleCompareCode extends LitElement {
 
   // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
   // UTF-8, Minified, Controls, ...): as it reads now, after how it read where
-  // that differs.
+  // that differs; its long lines, as it reads now, beside that, as Obfuscated
+  // is (file-readability.js npmLongLinesTag).
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
-    if (!was || !now || was.category === now.category) return npmReadabilityTag(now ?? was)
-    return html`<span class="bundle-compare-code-readability">${npmReadabilityTag(was)}<span aria-hidden="true">→</span>${npmReadabilityTag(now)}</span>`
+    const tagged = read => read.category === 'long' ? read.kind : read.category
+    const tag = !was || !now || tagged(was) === tagged(now) ? npmEncodingTag(now ?? was)
+      : html`<span class="bundle-compare-code-readability">${npmEncodingTag(was)}<span aria-hidden="true">→</span>${npmEncodingTag(now)}</span>`
+    return html`${npmLongLinesTag(now ?? was)}${tag}`
+  }
+
+  // What a file is beyond how it reads, as the npm Files list tags it
+  // (file-readability.js npmFileFlagTags), in its head and the tree: as it is
+  // now, or was, for one removed.
+  _flagTags(path, entry) {
+    const { was, now } = this._reads(path, entry)
+    return now ? npmFileFlagTags(path, now, entry.otherBytes) : npmFileFlagTags(entry.basePath ?? path, was, entry.baseBytes)
   }
 
   // The tree tags a file as its head does where it can be hard to review by
@@ -803,7 +814,8 @@ export class BundleCompareCode extends LitElement {
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
-    return shown && READABILITY.get(shown.category).mark ? npmReadabilityTag(shown) : nothing
+    if (!shown || !READABILITY.get(shown.category).mark) return nothing
+    return shown.category === 'long' ? npmLongLinesTag(shown) : npmEncodingTag(shown)
   }
 
   // A file's lines added and removed, and its sizes.

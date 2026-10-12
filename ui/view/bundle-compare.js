@@ -29,7 +29,7 @@
 // on hand, as an npm package version offers the package's other versions
 // (npm-package.js npmCompareSource): `{ noun, base, options, choices,
 // pending, error, name(id), load(id), open(base, target, mode),
-// dependencies(base, other), badges(base, other), widest }`, each option `{ id, name, format, detail, date?,
+// dependencies(base, other), badges(base, other, files), widest }`, each option `{ id, name, format, detail, date?,
 // dateWarning? }`, its date flagged where it has a `dateWarning`, which its tooltip says
 // (bundle-selector.js bundleOptions); its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
@@ -42,8 +42,9 @@
 // picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
 // `from` and `to` in place of `range`. `badges` is what calls for a look at
-// the two, at the picker row's end, and `widest` the `{ name, detail }` its
-// selects are sized to hold.
+// the two, at the picker row's end, `files` the comparison's file lists
+// (computeBundleDiff), and `widest` the `{ name, detail }` its selects are
+// sized to hold.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -849,7 +850,7 @@ class BundleCompare extends LitElement {
       && this._otherDetails
       && (this._otherDetails.json || this._otherDetails.bundle)
       && !this._otherDetails.error
-    const badges = this._baseReady && ready ? this.source?.badges?.(this._otherDetails, this.details) ?? nothing : nothing
+    const badges = this._baseReady && ready ? this.source?.badges?.(this._otherDetails, this.details, this._diffFor().files) ?? nothing : nothing
     // Picker is always present (when there's anything to pick) so the
     // user can switch the compared bundle without leaving the tab; the
     // swap button rides next to the clear button once a target is live,

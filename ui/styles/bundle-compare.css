@@ -636,8 +636,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
 /* A file that can be hard to review by reading it, tagged in the tree as in its
-   head. */
-.bundle-code-tree-link > .npm-encoding-tag { flex: none; padding: 0 .25rem; font-size: .56rem; }
+   head, as is what it is beyond that (a large code file, one obfuscated). */
+.bundle-code-tree-link > :is(.npm-encoding-tag, .npm-flag-tag) { flex: none; padding: 0 .25rem; font-size: .56rem; }
 .bundle-compare-code-oldname {
   flex: 1 1 auto;
   min-width: 0;

@@ -39,7 +39,7 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2654,7 +2654,7 @@ function renderNpmPackageOverview(entry, details) {
   const { sources } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const { paths, binaries, byPath, content } = npmFilesRead(details)
+  const { paths, binaries, content } = npmFilesRead(details)
   // Socket's alerts on the files they name, beside each one's tag.
   const alerts = npmSocketFileAlerts(entry.npm)
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), provenance: npmProvenanceFact(entry),
@@ -2664,6 +2664,6 @@ function renderNpmPackageOverview(entry, details) {
     summaryExtra: html`${npmAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
-    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmReadabilityTag(byPath.get(path))}`, fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path)}`, fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }
