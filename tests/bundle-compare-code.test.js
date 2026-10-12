@@ -376,7 +376,8 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   assert.match(markup, /Only renamed names changed in this file\./u, 'its one change hidden')
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
-  assert.match(bar, /aria-label="Mark renamed lines"/u)
+  assert.match(bar, /aria-label="Mark renamed lines" data-tooltip=Mark renamed lines @click/u)
+  assert.match(bar, /aria-label="Hide renamed names"\s+data-tooltip="Hide renamed names"/u, 'each toggle saying what it does in three words')
   all._mode = 'code'
   all._query = 'q(X)'
   assert.match(renderText(all.render()), /bundle-code-search-empty">No matches\./u, 'its lines aren\'t listed: its diff draws no row to open')
@@ -1532,7 +1533,7 @@ test('names a file reads keep renamed names from being hidden: its renamed lines
   await settle()
   const read = renderText(element.render())
   assert.match(read, /Renamed lines are marked rather than hidden: the file reads names \(\.name\), which a rename changes\./u)
-  assert.match(read, /aria-pressed=true aria-disabled=true\s+aria-label="Mark renamed lines"/u, 'marking on, and kept on')
+  assert.match(read, /aria-pressed=true aria-disabled=true\s+aria-label="Mark renamed lines" data-tooltip=Code reads names @click/u, 'marking on, and kept on, saying why')
   assert.match(read, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is, marked')
   assert.match(read, /diff-row del renamed/u)
   assert.match(read, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
