@@ -15,10 +15,17 @@ test('a dependency npm fetches from elsewhere than its registry is told by its s
     ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'git'], ['git://github.com/a/b.git#v1', 'git'], ['git+ssh://git@github.com:a/b.git', 'git'], ['ssh://git@github.com/org/repo.git', 'git'],
     ['git@github.com:a/b.git', 'git'], ['github:web3-js/WebSocket-Node#polyfill/globalThis', 'GitHub'], ['GitHub:a/b', 'GitHub'], ['gitlab:a/b', 'GitLab'],
     ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['sourcehut:~user/repo', 'SourceHut'], ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'],
-    ['a/b', 'GitHub'], ['a/b#feat/x:y', 'GitHub'], ['user@git.example.com:path/repo.git', 'git'], ['git+rsync://example.com/x.git', 'git'],
+    ['a/b', 'GitHub'], ['a/b#feat/x:y', 'GitHub'], ['git+rsync://example.com/x.git', 'git'], ['git+ssh://git@example.com:a/b.git', 'git'],
+    ['git@gitlab.com:group/sub/repo.git', 'git'], ['git@git.sr.ht:~u/repo', 'git'], ['ssh://git@www.github.com/org/repo.git', 'git'],
   ]) assert.equal(npmDependencySource(spec), source, spec)
   for (const spec of ['^1.2.3', '1.x', '>=1.0.0 <2', '1.0.0 || 2.0.0', '*', '', 'latest', 'npm:@scope/real@^1.0.0', 'npm:other', 'file:../x', 'link:../x',
-    './x', '../x', '~/x', '/x', 'c:\\x', 'workspace:*', 'catalog:', '@scope/name', 'a/b/c', 'a/', 'a b/c']) assert.equal(npmDependencySource(spec), null, spec)
+    './x', '../x', '~/x', '/x', 'c:\\x', 'workspace:*', 'catalog:', '@scope/name', 'a/b/c', 'a/', 'a b/c',
+    // Nor what npm doesn't install, or reads as a path: a git+ protocol it
+    // doesn't know, ssh: or git@host:path on a host it doesn't know (or
+    // SourceHut's over ssh:, which it doesn't take).
+    'git+foo://example.com/x.git', 'ssh://git@example.com/org/repo.git', 'ssh://git@git.sr.ht/~u/repo', 'git@example.com:org/repo.git', 'user@host.example.com:path/repo.git',
+    'SSH://git@github.com/a/b.git', 'git@GITHUB.COM:a/b',
+  ]) assert.equal(npmDependencySource(spec), null, spec)
 })
 
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {

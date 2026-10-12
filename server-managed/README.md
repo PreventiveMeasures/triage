@@ -1292,11 +1292,12 @@ control. A version shows in the bundle view with four tabs:
   their latest version (an `npm:` alias at the package it names), their kinds
   and ranges lined up, each tagged after its name where it calls for a look:
   non-registry where npm fetches it from elsewhere than its registry (an
-  `http:` or `https:` URL, a `git:`, `git+https:`, `git+ssh:`, `ssh:` or
-  `git@host:path` repository, `github:`, `gitlab:`, `bitbucket:`, `gist:`
-  or `sourcehut:`, or GitHub's `owner/repo` shorthand, each as npm reads a
-  spec; not a `file:` path, nor a scheme npm doesn't install, as
-  `workspace:`), its
+  `http:` or `https:` URL, a `git:`, `git+https:` or `git+ssh:`
+  repository, or over `ssh:` or as `git@host:path` on a host npm knows,
+  `github:`, `gitlab:`, `bitbucket:`, `gist:` or `sourcehut:`, or GitHub's
+  `owner/repo` shorthand, each as npm reads a spec; not a `file:` path, nor
+  what npm doesn't install, as `workspace:`, or reads as a path, as
+  `git@example.com:org/repo`), its
   spec in its tooltip, and opening nothing, as the registry's package of
   that name isn't what npm installs; and unimported where nothing of the
   version imports it: no code file names it as an import would (quoted,

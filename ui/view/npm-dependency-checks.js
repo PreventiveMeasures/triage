@@ -12,6 +12,9 @@ import { installScripts } from './install-scripts.js'
 // The hosts npm takes a repository on by name (`github:owner/repo`), as
 // hosted-git-info, which reads them for it, has them.
 const HOSTS = new Map([['github', 'GitHub'], ['gitlab', 'GitLab'], ['bitbucket', 'Bitbucket'], ['gist', 'Gist'], ['sourcehut', 'SourceHut']])
+// Their domains, and whether hosted-git-info takes one over `ssh:`
+// (`ssh://git@github.com/org/repo`), as all over `git@host:path`.
+const HOST_DOMAINS = new Map([['github.com', true], ['gitlab.com', true], ['bitbucket.org', true], ['gist.github.com', true], ['git.sr.ht', false]])
 
 // GitHub's `owner/repo` shorthand, at a commit, branch or tag (`#v1.0.0`) or
 // not, as hosted-git-info tells it: one slash, neither first nor last, and
@@ -22,22 +25,27 @@ function githubShorthand(spec) {
 }
 
 // Where a dependency's spec has npm fetch it from, where that isn't its
-// registry, as npm reads a spec (npm-package-arg), in its order: not a path
-// (`./x`, `~/x`, `/x`, `c:\x`, `file:`), nor an `npm:` alias of a registry
-// package; a host npm takes a repository on by name (`github:`, `gitlab:`,
-// `bitbucket:`, `gist:`, `sourcehut:`); `git`, a repository's (`git:`,
-// `git+https:`, `git+ssh:`, `ssh:`, `git@host:path`); `URL`, a tarball's
-// (`https:`, `http:`, with its `//` or without); GitHub, for its
-// `owner/repo` shorthand. Null for the registry's ranges and tags, and for
-// any other scheme (`workspace:`), which npm doesn't install.
+// registry, as npm reads a spec (npm-package-arg's resolve), in its order:
+// not a path (`./x`, `~/x`, `/x`, `c:\x`, `file:`), nor an `npm:` alias of
+// a registry package; a host npm takes a repository on by name (`github:`,
+// `gitlab:`, `bitbucket:`, `gist:`, `sourcehut:`); `git`, a repository's
+// (`git:`, `git+https:`, `git+http:`, `git+ssh:`, `git+rsync:`, `git+ftp:`,
+// `git+file:`, and over `ssh:` or as `git@host:path` on a host it knows, as
+// on another it installs nothing); `URL`, a tarball's (`https:`, `http:`,
+// with its `//` or without); GitHub, for its `owner/repo` shorthand. Null
+// for the registry's ranges and tags, and for what npm doesn't install
+// (`workspace:`, `git+foo:`), or reads as a path (`git@example.com:x/y`).
 export function npmDependencySource(spec) {
   const value = String(spec ?? '').trim()
   if (/^(?:[.]|~\/|\/|[a-z]:|file:|npm:)/iu.test(value)) return null
   const scheme = /^(git\+)?([a-z]+):/iu.exec(value)
   if (scheme && !scheme[1] && HOSTS.has(scheme[2].toLowerCase())) return HOSTS.get(scheme[2].toLowerCase())
-  if (scheme?.[1] || /^(?:git|ssh):/iu.test(value) || /^[^@]+@[^:.]+\.[^:]+:.+$/iu.test(value)) return 'git'
-  if (scheme) return /^https?$/iu.test(scheme[2]) ? 'URL' : null
-  return githubShorthand(value) ? 'GitHub' : null
+  if (/^(?:git|git\+(?:https?|ssh|rsync|ftp|file)):/iu.test(value)) return 'git'
+  if (/^https?:/iu.test(value)) return 'URL'
+  // As hosted-git-info reads them: `ssh:` and the host as spelled, `www.` aside.
+  const host = (scheme ? /^ssh:\/\/(?:[^@/]*@)?([^:/#]+)/u : /^[^@\s]+@([^:/\s]+):/u).exec(value)?.[1].replace(/^www\./u, '')
+  if (HOST_DOMAINS.has(host) && (!scheme || HOST_DOMAINS.get(host))) return 'git'
+  return !scheme && githubShorthand(value) ? 'GitHub' : null
 }
 
 // Files no import is read from: prose (file-readability.js), source maps,
