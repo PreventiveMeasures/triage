@@ -8,6 +8,7 @@ const ERRORS = {
   'unknown-review-file': 'This file is not in either package version.',
   'bad-review-teams': 'Select at least one team you belong to with dependency review enabled. Refresh if team access changed.',
   'no-reviewed-files': 'Review at least one changed file before publishing.',
+  'package-json-not-reviewed': 'Review package.json before publishing a partial review.',
   'bad-final-verdict': 'Choose a final verdict no more favorable than the file verdicts.',
   forbidden: 'Reviewing requires triage access.',
 }

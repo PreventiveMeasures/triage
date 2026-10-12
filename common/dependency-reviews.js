@@ -22,12 +22,21 @@ export function allowedReviewVerdicts(entries) {
   return verdicts.slice(verdicts.indexOf(summarizeReview(entries, null).verdictLimit))
 }
 
+export function needsPackageJsonReview(entries, files) {
+  return summarizeReview(entries, files).coverage === 'partial'
+    && !entries.some(entry => entry.file === 'package.json' && Object.keys(REVIEW_VERDICTS).includes(entry.status))
+}
+
 const markdownText = text => text.replaceAll(/[\\`*_{}[\]<>]/gu, '\\$&').replaceAll(/\r\n?/gu, '\n').replaceAll('\n', '\n  ')
+
+export function parseReviewNotes(comment) {
+  return comment.replaceAll(/\r\n?/gu, '\n').split(/(?:^|\n)[\t ]*\*[\t ]+/u)
+    .map((text, index) => ({ text: text.trim(), bullet: index > 0 })).filter(note => note.text)
+}
 
 function auditNotes(comment, file = null) {
   const prefix = file === null ? '' : `In ${markdownText(file)}: `
-  return comment.replaceAll(/\r\n?/gu, '\n').split(/(?:^|\n)[\t ]*\*[\t ]+/u)
-    .map(note => note.trim()).filter(Boolean).map(note => `* ${prefix}${markdownText(note)}`)
+  return parseReviewNotes(comment).map(note => `* ${prefix}${markdownText(note.text)}`)
 }
 
 export function auditMarkdown(review) {

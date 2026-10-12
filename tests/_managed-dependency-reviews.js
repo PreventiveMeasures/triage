@@ -25,7 +25,7 @@ export async function checkDependencyReviews(db) {
   assert.deepEqual((await db.listTeamsForUser(users.admin.userId)).filter(team => team.dependencyReview), [], 'admins do not gain review access without membership')
   await assert.rejects(db.setTeamDependencyReview(users.alice.sid, 'one', false), /forbidden/u)
   const change = (action, who = 'alice', context = reviewContext) => db.changeDependencyReview(context, users[who].sid,
-    action.action === 'publish' ? { files: ['index.js', 'other.js', 'README.md'], final: null, ...action } : action, Date.now())
+    action.action === 'publish' ? { files: ['index.js', 'other.js', 'README.md', 'package.json'], final: null, ...action } : action, Date.now())
   const save = (review, file, status, comment = '', entryId = null) => ({ action: 'save', reviewId: review?.id ?? null,
     revision: review?.revision ?? null, entryId, entry: { file, status, comment } })
   let review = await change(save(null, 'index.js', 'accept-with-nits', 'Rename this.'))
@@ -51,6 +51,7 @@ export async function checkDependencyReviews(db) {
     await assert.rejects(change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds }), /bad-review-teams/u)
     assert.equal((await db.listDependencyReviews(reviewContext, users.alice.userId))[0].publishedAt, null)
   }
+  review = await change(save(review, 'package.json', 'accept'))
   const publication = { action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'] }
   await assert.rejects(change(publication), /bad-final-verdict/u, 'publication requires a separate final verdict')
   await assert.rejects(change({ ...publication, final: { status: 'accept', comment: '' } }), /bad-final-verdict/u, 'file verdicts limit the final verdict')
@@ -59,10 +60,10 @@ export async function checkDependencyReviews(db) {
   assert.ok(review.publishedAt)
   assert.equal(review.status, 'request-changes')
   assert.equal(review.coverage, 'partial')
-  assert.equal(review.checkedFiles, 2)
-  assert.equal(review.totalFiles, 3)
+  assert.equal(review.checkedFiles, 3)
+  assert.equal(review.totalFiles, 4)
   assert.equal(review.comment, 'Resolve the remaining concerns.')
-  assert.equal((await db.listDependencyReviews(reviewContext, users.bob.userId))[0].entries.length, 3)
+  assert.equal((await db.listDependencyReviews(reviewContext, users.bob.userId))[0].entries.length, 4)
   assert.deepEqual(await db.listDependencyReviews(reviewContext, users.outsider.userId), [])
   await assert.rejects(change(save(review, 'index.js', 'accept', 'Edit frozen', review.entries[0].id)), /review-conflict/u)
   review = await change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one', 'two'] })
@@ -125,15 +126,18 @@ export async function checkDependencyReviews(db) {
 }
 
 async function checkCoverage(db, session) {
-  const files = ['a.js', 'b.js', 'c.js', 'd.js']
+  const files = ['package.json', 'b.js', 'c.js', 'd.js']
   const change = action => db.changeDependencyReview(reviewContext, session, action, Date.now())
   let review = await change({ action: 'start', reviewId: null, revision: null })
   const unchecked = () => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files,
     final: { status: 'accept', comment: '' } })
   await assert.rejects(unchecked(), /no-reviewed-files/u)
   review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
-    entry: { file: 'a.js', status: null, comment: 'A note is not a verdict.' } })
+    entry: { file: 'package.json', status: null, comment: 'A note is not a verdict.' } })
   await assert.rejects(unchecked(), /no-reviewed-files/u)
+  review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
+    entry: { file: 'b.js', status: 'accept', comment: '' } })
+  await assert.rejects(unchecked(), /package-json-not-reviewed/u, 'a package.json note does not allow partial publication')
   for (const [index, file] of files.entries()) {
     review = await change({ action: 'save', reviewId: review?.id ?? null, revision: review?.revision ?? null, entryId: null,
       entry: { file, status: index < 3 ? index === 1 ? 'accept-with-nits' : 'accept' : null, comment: index === 3 ? 'Still to review.' : '' } })
@@ -141,6 +145,12 @@ async function checkCoverage(db, session) {
   assert.equal(review.entries.length, files.length, 'the initial note and subsequent verdict share one file row')
   const publish = (final, paths = files) => ({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files: paths, final })
   await assert.rejects(change(publish({ status: 'accept', comment: '' })), /bad-final-verdict/u)
+  const manifest = review.entries.find(entry => entry.file === 'package.json')
+  review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: manifest.id,
+    entry: { file: 'package.json', status: null, comment: '' } })
+  await assert.rejects(change(publish({ status: 'accept-with-nits', comment: '' })), /package-json-not-reviewed/u, 'clearing the verdict blocks publication again')
+  review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: manifest.id,
+    entry: { file: 'package.json', status: 'accept', comment: '' } })
   review = await change(publish({ status: 'accept-with-nits', comment: 'Three files checked; one remains.' }))
   assert.equal(review.coverage, 'partial')
   assert.equal(review.checkedFiles, 3)
@@ -158,7 +168,7 @@ async function checkCoverage(db, session) {
   assert.equal(review.totalFiles, 4)
   review = await change(publish(null, []))
   assert.equal(review.coverage, 'full', 'additional team publication retains the frozen coverage')
-  assert.deepEqual(review.files, files)
+  assert.deepEqual(review.files, files.toSorted())
   assert.equal(partial.coverage, 'partial')
   assert.equal(partial.comment, 'Three files checked; one remains.')
 }

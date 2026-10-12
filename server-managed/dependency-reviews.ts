@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ManagedMutationError } from './management.ts'
 import type { ManagedSql } from './sql.ts'
-import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, summarizeReview } from '../common/dependency-reviews.js'
+import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../common/dependency-reviews.js'
 
 export interface ReviewContext {
   ecosystem: 'npm'; package: string; version: string; integrity: string
@@ -123,6 +123,7 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
   if (current.publishedAt === null) {
     if (!summarizeReview(entries, change.files).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
     if (!change.final || !allowedReviewVerdicts(entries).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
+    if (needsPackageJsonReview(entries, change.files)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
     await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, revision = revision + 1 WHERE id = ?`)
       .run(now, JSON.stringify([...new Set(change.files)].toSorted()), change.final.status, change.final.comment, current.id)
   } else {

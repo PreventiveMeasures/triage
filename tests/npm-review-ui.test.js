@@ -11,6 +11,11 @@ let latestAnswer = null
 const latestRequests = [], loadedBases = []
 let discardConfirmation = { confirmed: false }
 const confirmations = []
+const loadingToasts = []
+mock.module('../ui/view/toast.js', { namedExports: { showToast: (message, options) => {
+  const toast = { message, options, dismissed: false }; loadingToasts.push(toast)
+  return () => { toast.dismissed = true }
+} } })
 mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
   openDiscardReviewDialog: props => { confirmations.push(props); return Promise.resolve(discardConfirmation) },
 } })
@@ -37,7 +42,7 @@ const { NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { NpmReviewTree, reviewTree } = await import('../ui/view/npm-review-tree.js')
-const { reviewFileStates, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
+const { reviewFileStates, reviewNote, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
 
 function text(value) {
   if (Array.isArray(value)) return value.map(text).join('')
@@ -82,7 +87,7 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   answer = { reviews: [partial, full], next: { time: 100, id: 'partial' } }
   await page._load()
   assert.equal(page._reviews.length, 2)
-  assert.match(text(page._row(partial)), /Partial · 3\/4 files checked/u)
+  assert.match(text(page._row(partial)), />Partial<\/span> · 3\/4 files checked/u)
   assert.match(text(page._row(partial)), /Accept with nits/u)
   assert.match(text(page._row(full)), /Full · 4\/4 files checked/u)
   assert.equal(managedRoutePath(dependencyReviewRoute(full)), '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0')
@@ -105,8 +110,8 @@ test('My reviews discards only unpublished reviews after confirmation and keeps 
   page._key = 'alice'
   const published = { ...review, id: 'published', publishedAt: 200 }
   page._reviews = [review, published]
-  assert.match(text(page._row(review)), />Discard</u)
-  assert.doesNotMatch(text(page._row(published)), />Discard</u)
+  assert.match(text(page._row(review)), /aria-label="Discard review"/u)
+  assert.doesNotMatch(text(page._row(published)), /aria-label="Discard review"/u)
   requests.length = 0
   confirmations.length = 0
   discardConfirmation = { confirmed: false }
@@ -165,7 +170,8 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.equal(requests.length, 0)
   page._comment = ''
-  page._files = ['index.js', 'second.js']
+  page._files = ['index.js', 'second.js', 'package.json']
+  page._reviews = [{ ...review, entries: [...review.entries, { ...file, id: 'manifest', file: 'package.json', status: 'accept', comment: '' }] }]
   page._beginPublish()
   assert.equal(page._finalStatus, 'request-changes')
   assert.match(text(page._confirmation(review)), /Partial review/u)
@@ -178,7 +184,7 @@ test('only a sole eligible team is selected initially; Publish requires at least
   assert.equal(requests.length, 0, 'final verdict cannot override file concerns')
   page._finalStatus = 'request-changes'
   page._finalComment = 'Check the second file too.'
-  const published = { ...review, publishedAt: 200, revision: 2, status: 'request-changes', coverage: 'partial', checkedFiles: 1, totalFiles: 2, teams: [{ id: 'two', name: 'Two' }] }
+  const published = { ...page._activeReview, publishedAt: 200, revision: 2, status: 'request-changes', coverage: 'partial', checkedFiles: 2, totalFiles: 3, teams: [{ id: 'two', name: 'Two' }] }
   answer = { review: published }
   await page._publish()
   assert.deepEqual(requests[0][1], { action: 'publish', reviewId: 'review', revision: 1, teamIds: ['two'], finalStatus: 'request-changes', finalComment: 'Check the second file too.' })
@@ -279,11 +285,111 @@ test('editing captures the loaded revision, and continuing uses a separate revie
   const published = { ...review, publishedAt: 200, revision: 4 }
   page._reviews = [published]
   const continued = { ...review, id: 'new-review', entries: [{ ...file, id: 'new-file' }] }
-  answer = { review: continued }
+  requests.length = 0
   await page._change({ action: 'continue', reviewId: 'review', revision: 4 })
-  assert.equal(page._activeReview.id, 'new-review')
   assert.equal(page._canEdit, true)
+  assert.equal(requests.length, 0, 'continuing an unchanged review does not save a draft')
+  assert.equal(page._reviews.length, 1)
+  page._resetEditor('index.js')
+  await page._save()
+  assert.equal(requests.length, 0, 'leaving an unchanged note does not save a draft')
+  const creating = Promise.withResolvers()
+  answer = creating.promise
+  page._comment = 'A new note'
+  const saving = page._save()
+  assert.equal(requests[0][1].action, 'continue')
+  answer = { review: { ...continued, revision: 2, entries: [{ ...continued.entries[0], comment: 'A new note' }] } }
+  creating.resolve({ review: continued })
+  await saving
+  assert.equal(page._activeReview.id, 'new-review')
+  assert.deepEqual(requests[1][1], { action: 'save', reviewId: 'new-review', revision: 1, entryId: 'new-file', file: 'index.js', comment: 'A new note', status: 'request-changes' })
   assert.equal(page._reviews.find(row => row.id === 'review').publishedAt, 200)
+})
+
+test('a continuation with only a changed final comment is created at publication, while unchanged copies stay local', async () => {
+  const page = component(), source = { ...review, publishedAt: 200, status: 'reject', comment: 'Original summary' }
+  page._reviews = [source]; page._files = ['index.js']; page._path = 'index.js'
+  await page._change({ action: 'continue', reviewId: source.id, revision: source.revision })
+  page._selectedTeams = new Set(['one'])
+  await page._beginPublish()
+  assert.equal(page._finalStatus, 'reject', 'continuation retains the existing final verdict')
+  requests.length = 0
+  await page._publish()
+  assert.equal(requests.length, 0, 'the identical published review is not duplicated')
+  assert.equal(page._unchangedContinuation, true)
+  page._finalComment = 'Updated summary'
+  const continued = { ...review, id: 'continued', comment: source.comment }, creating = Promise.withResolvers()
+  answer = creating.promise
+  const publishing = page._publish()
+  assert.equal(requests[0][1].action, 'continue')
+  answer = { review: { ...continued, publishedAt: 300, status: 'reject', comment: 'Updated summary' } }
+  creating.resolve({ review: continued })
+  await publishing
+  assert.deepEqual(requests[1][1], { action: 'publish', reviewId: 'continued', revision: 1, teamIds: ['one'], finalStatus: 'reject', finalComment: 'Updated summary' })
+})
+
+test('edits queued while creating a continuation use the new review and file IDs', async () => {
+  const page = component(), published = { ...review, publishedAt: 200, revision: 4,
+    entries: [file, { ...file, id: 'old-other', file: 'other.js', status: 'accept' }] }
+  page._reviews = [published]; page._files = ['index.js', 'other.js']; page._path = 'index.js'
+  await page._change({ action: 'continue', reviewId: published.id, revision: published.revision })
+  const continued = { ...review, id: 'new-review', entries: [
+    { ...file, id: 'new-index' }, { ...file, id: 'new-other', file: 'other.js', status: 'accept' },
+  ] }, creating = Promise.withResolvers(), firstSave = Promise.withResolvers()
+  requests.length = 0; answer = creating.promise
+  const first = page._setFileStatus('index.js', 'accept')
+  const second = page._setFileStatus('other.js', 'reject')
+  answer = firstSave.promise
+  creating.resolve({ review: continued })
+  await creating.promise
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(requests[1][1].entryId, 'new-index')
+  const saved = { ...continued, revision: 2, entries: [{ ...continued.entries[0], status: 'accept' }, continued.entries[1]] }
+  answer = { review: { ...saved, revision: 3, entries: [saved.entries[0], { ...saved.entries[1], status: 'reject' }] } }
+  firstSave.resolve({ review: saved })
+  await Promise.all([first, second])
+  assert.deepEqual(requests[2][1], { action: 'save', reviewId: 'new-review', revision: 2, entryId: 'new-other', file: 'other.js', comment: 'A note', status: 'reject' })
+  assert.equal(page._unsaved, false)
+  assert.deepEqual(page._reviews.find(row => row.id === published.id).entries, published.entries)
+})
+
+test('canceling a continuation save ignores a late creation response', async () => {
+  const page = component(), pending = Promise.withResolvers(), published = { ...review, publishedAt: 200 }
+  page._reviews = [published]; page._path = 'index.js'
+  await page._change({ action: 'continue', reviewId: published.id, revision: published.revision })
+  requests.length = 0; answer = pending.promise
+  const saving = page._setFileStatus('index.js', 'accept')
+  page._cancelSaves()
+  pending.resolve({ review: { ...review, id: 'ignored' } })
+  await saving
+  await pending.promise
+  await Promise.resolve()
+  assert.equal(requests.length, 1)
+  assert.deepEqual(page._reviews, [published])
+})
+
+test('loading reviews uses a dismissible toast and no layout-shifting status line', async () => {
+  const page = new DependencyReviewList(), pending = Promise.withResolvers()
+  answer = pending.promise
+  const loading = page._load()
+  const toast = loadingToasts.at(-1)
+  assert.equal(toast.message, 'Loading reviews…')
+  assert.deepEqual(toast.options, { duration: 0 })
+  assert.equal(toast.dismissed, false)
+  pending.resolve({ reviews: [], next: null })
+  await loading
+  assert.equal(toast.dismissed, true)
+  page._key = JSON.stringify([undefined, undefined])
+  assert.doesNotMatch(text(page.render()), /Loading reviews/u)
+  const abandoned = Promise.withResolvers()
+  answer = abandoned.promise
+  const anotherLoad = page._load()
+  const nextToast = loadingToasts.at(-1)
+  page.disconnectedCallback()
+  assert.equal(nextToast.dismissed, true)
+  abandoned.resolve({ reviews: [], next: null })
+  await anotherLoad
 })
 
 test('file navigation preserves unsaved edits and advances their revisions as files are saved', async () => {
@@ -519,6 +625,43 @@ test('finalization requires at least one checked changed file, not just a note',
   page._reviews = [review]
   page._beginPublish()
   assert.equal(page._panel, 'publish')
+})
+
+test('partial publication requires a package.json verdict and offers the file from confirmation', async () => {
+  const page = component()
+  page._files = ['index.js', 'package.json', 'other.js']
+  page._selectedTeams = new Set(['one'])
+  requests.length = 0
+  await page._beginPublish()
+  assert.equal(page._panel, 'publish')
+  assert.equal(page._needsPackageJson, true)
+  assert.match(text(page._confirmation(page._activeReview)), />package.json<\/button> before publishing a partial review/u)
+  assert.match(text(page._confirmation(page._activeReview)), /type="submit"[^>]+\?disabled=true/u)
+  await page._publish()
+  assert.equal(requests.length, 0)
+  const manifest = { ...file, id: 'manifest', file: 'package.json', status: null, comment: 'Not checked yet.' }
+  page._reviews = [{ ...review, entries: [file, manifest] }]
+  await page._publish()
+  assert.equal(requests.length, 0, 'notes alone do not check package.json')
+  page._reviews = [{ ...review, entries: [file, { ...manifest, status: 'accept' }] }]
+  assert.equal(page._needsPackageJson, false)
+  assert.doesNotMatch(text(page._confirmation(page._activeReview)), /before publishing a partial review/u)
+  answer = { review: { ...page._activeReview, publishedAt: 200 } }
+  await page._publish()
+  assert.equal(requests[0][1].action, 'publish')
+})
+
+test('displayed notes render star lists as bullets while the editor keeps the typed text', () => {
+  const comment = 'Context\n* Can we make it faster?\n* Preserve compatibility.'
+  const rendered = text(reviewNote(comment))
+  assert.match(rendered, /<p class="npm-review-note">Context<\/p>/u)
+  assert.match(rendered, /<li>Can we make it faster\?<\/li><li>Preserve compatibility\.<\/li>/u)
+  assert.doesNotMatch(rendered, /\* Can/u)
+  const page = component()
+  page._resetEditor('index.js')
+  page._comment = comment
+  page._editor()
+  assert.equal(page._editorState('index.js').comment, comment)
 })
 
 test('leaving a note saves its file without changing the active editor, and unchanged notes need no save', async () => {

@@ -36,12 +36,12 @@ const url = context => `/api/npm/reviews?${new URLSearchParams(Object.entries(co
 
 test('review API validates bytes and file scope, protects identity, and publishes whole sets', async t => {
   const h = await fixture(t)
-  const after = packageOf('lib', '2.0.0', { 'index.js': 'new\n' })
+  const after = packageOf('lib', '2.0.0', { 'index.js': 'new\n', 'package.json': '{"name":"lib","version":"2.0.0"}' })
   const before = packageOf('lib', '1.0.0', { 'removed.js': 'gone\n' })
   registry(t, [after, before])
   const context = { ecosystem: 'npm', package: 'lib', version: '2.0.0', integrity: after.doc.dist.integrity,
     basePackage: 'lib', baseVersion: '1.0.0', baseIntegrity: before.doc.dist.integrity }
-  const body = { ...context, action: 'save', file: 'removed.js', comment: 'Intentional removal', status: 'accept', user: 'forged' }
+  const body = { ...context, action: 'save', file: 'removed.js', comment: '* Intentional removal\n* Keep the fallback.', status: 'accept', user: 'forged' }
   assert.equal((await h.send(url(context), { who: 'anonymous' })).status, 401)
   assert.equal((await h.send('/api/npm/reviews', { body, csrf: false })).status, 403)
   assert.equal((await h.send('/api/npm/reviews', { body, who: 'view' })).status, 403)
@@ -53,9 +53,10 @@ test('review API validates bytes and file scope, protects identity, and publishe
   }
   const saved = await h.send('/api/npm/reviews', { body })
   assert.equal(saved.status, 200, JSON.stringify(saved.body))
-  const review = saved.body.review
+  let review = saved.body.review
   assert.equal(review.user, h.sessions.triage.userId)
   assert.equal(review.entries[0].file, 'removed.js', 'removed files are reviewable against the base')
+  assert.equal(review.entries[0].comment, body.comment, 'notes are stored exactly as typed')
   assert.equal((await h.send(url(context), { who: 'admin' })).body.reviews.length, 0, 'admin sees no other user private review')
   await h.db.createTeam('team', 'Team', Date.now())
   await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: false, security: false })
@@ -65,14 +66,21 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.deepEqual((await h.send(url(context))).body.teams, [{ id: 'team', name: 'Team' }])
   const publish = { ...context, action: 'publish', reviewId: review.id, revision: review.revision, teamIds: [], finalStatus: 'accept', finalComment: 'Removal checked.' }
   assert.equal((await h.send('/api/npm/reviews', { body: publish })).status, 400)
-  const published = await h.send('/api/npm/reviews', { body: { ...publish, teamIds: ['team'] } })
+  const blocked = await h.send('/api/npm/reviews', { body: { ...publish, teamIds: ['team'], files: ['removed.js'], coverage: 'full' } })
+  assert.equal(blocked.status, 400)
+  assert.equal(blocked.body.error, 'package-json-not-reviewed', 'forged coverage cannot bypass the package.json check')
+  assert.equal((await h.send(url(context))).body.reviews[0].publishedAt, null)
+  review = (await h.send('/api/npm/reviews', { body: { ...body, reviewId: review.id, revision: review.revision,
+    file: 'package.json', comment: '', status: 'accept' } })).body.review
+  const published = await h.send('/api/npm/reviews', { body: { ...publish, revision: review.revision, teamIds: ['team'] } })
   assert.equal(published.status, 200)
   assert.ok(published.body.review.publishedAt)
   assert.equal(published.body.review.coverage, 'partial')
-  assert.equal(published.body.review.checkedFiles, 1)
-  assert.equal(published.body.review.totalFiles, 2)
+  assert.equal(published.body.review.checkedFiles, 2)
+  assert.equal(published.body.review.totalFiles, 3)
   assert.equal(published.body.review.status, 'accept')
   assert.equal(published.body.review.comment, 'Removal checked.')
+  assert.equal(published.body.review.entries.find(entry => entry.file === 'removed.js').comment, body.comment)
   assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].id, review.id)
   assert.deepEqual((await h.send('/api/npm/reviews/mine', { who: 'admin' })).body.reviews, [])
   const edited = await h.send('/api/npm/reviews', { body: { ...body, reviewId: review.id, revision: published.body.review.revision, entryId: review.entries[0].id, comment: 'overwrite' } })
@@ -102,7 +110,7 @@ test('reviews recheck private access to both packages, including before publicat
 
 test('final verdict is mandatory and constrained, while coverage is derived from package bytes', async t => {
   const h = await fixture(t)
-  const pkg = packageOf('all-files', '1.0.0', { 'a.js': 'a', 'b.js': 'b', 'c.bin': Buffer.from([0, 255]), 'empty': '' })
+  const pkg = packageOf('all-files', '1.0.0', { 'package.json': '{}', 'b.js': 'b', 'c.bin': Buffer.from([0, 255]), 'empty': '' })
   registry(t, [pkg])
   await h.db.createTeam('team', 'Team', Date.now())
   await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: false, security: false })
@@ -113,7 +121,7 @@ test('final verdict is mandatory and constrained, while coverage is derived from
   const publish = patch => h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: review.id,
     revision: review.revision, teamIds: ['team'], files: [], coverage: 'full', ...patch } })
   assert.equal((await publish({})).status, 400, 'a final verdict is required even with no checks')
-  for (const file of ['a.js', 'b.js', 'c.bin']) {
+  for (const file of ['package.json', 'b.js', 'c.bin']) {
     review = (await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: review.id, revision: review.revision,
       file, status: file === 'b.js' ? 'request-changes' : 'accept', comment: '' } })).body.review
   }

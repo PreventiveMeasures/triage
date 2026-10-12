@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { allowedReviewVerdicts, auditMarkdown, summarizeReview } from '../common/dependency-reviews.js'
+import { allowedReviewVerdicts, auditMarkdown, needsPackageJsonReview, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
 
 const paths = ['a.js', 'b.js', 'c.js', 'd.js']
 const entries = [
@@ -10,6 +10,29 @@ const entries = [
   { file: 'd.js', status: null, comment: 'Not checked yet.' },
   { file: null, status: null, comment: 'General note.' },
 ]
+test('partial reviews require a root package.json verdict, while full reviews satisfy coverage', () => {
+  const checked = [{ file: 'a.js', status: 'accept' }], files = ['package.json', 'a.js', 'b.js']
+  assert.equal(needsPackageJsonReview(checked, files), true)
+  for (const file of ['package.json', 'nested/package.json', null]) {
+    assert.equal(needsPackageJsonReview([...checked, { file, status: null }], files), true)
+  }
+  assert.equal(needsPackageJsonReview([...checked, { file: 'nested/package.json', status: 'accept' }], files), true)
+  for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) {
+    assert.equal(needsPackageJsonReview([...checked, { file: 'package.json', status }], files), false)
+  }
+  assert.equal(needsPackageJsonReview(checked, ['a.js']), false)
+  assert.equal(needsPackageJsonReview(checked, ['a.js', 'b.js']), true, 'a partial cannot bypass the requirement by omitting the manifest')
+})
+
+test('note parsing recognizes star lists and preserves paragraph text and continuations', () => {
+  const comment = 'Context with a * b.\r\n * First\r\ncontinued.\r\n* Second\r\n*   '
+  assert.deepEqual(parseReviewNotes(comment), [
+    { text: 'Context with a * b.', bullet: false },
+    { text: 'First\ncontinued.', bullet: true },
+    { text: 'Second', bullet: true },
+  ])
+  assert.deepEqual(parseReviewNotes('  '), [])
+})
 test('three checks out of four remain partial even with whole-diff notes and a final verdict', () => {
   assert.deepEqual(summarizeReview(entries, paths), { coverage: 'partial', checkedFiles: 3, totalFiles: 4, verdictLimit: 'accept-with-nits' })
   assert.deepEqual(allowedReviewVerdicts(entries), ['accept-with-nits', 'request-changes', 'reject'])

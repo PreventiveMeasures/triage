@@ -20,7 +20,7 @@ export class ReviewAuditCopy extends LitElement {
   render() {
     if (!this.review || auditMarkdown(this.review) === null) return nothing
     return html`<button type="button" class=${`bundle-code-copy-path${this._copied ? ' copied' : ''}`} aria-label="Copy audit Markdown"
-      data-tooltip=${this._copied ? 'Copied' : 'Copy audit Markdown'} @click=${() => this._copy()}>${COPY_ICON}</button>
+      @click=${() => this._copy()}>${COPY_ICON}</button>
       ${this._error ? html`<span role="alert">Could not copy to the clipboard.</span>` : nothing}`
   }
 }

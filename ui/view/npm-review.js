@@ -3,7 +3,8 @@ import { state } from '#client/index.js'
 import { dependencyReviews, latestDependencyReview } from './client-managed.js'
 import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
-import { allowedReviewVerdicts, summarizeReview } from '../../common/dependency-reviews.js'
+import { showToast } from './toast.js'
+import { allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
 import { bundleCompareFiles } from './bundle-compare-inputs.js'
 import { computeBundleDiff } from './bundle-compare-diff.js'
 import { compareReviewPaths, reviewViewMode } from './npm-review-files.js'
@@ -29,7 +30,7 @@ export class NpmReview extends LitElement {
     _file: { state: true }, _comment: { state: true }, _status: { state: true }, _edit: { state: true },
     _publishStep: { state: true }, _finalStatus: { state: true }, _finalComment: { state: true },
     _base: { state: true }, _baseError: { state: true }, _panel: { state: true }, _path: { state: true },
-    _selectedReview: { state: true }, _unchecked: { state: true }, _notice: { state: true },
+    _selectedReview: { state: true }, _unchecked: { state: true }, _notice: { state: true }, _continuation: { state: true },
   }
   createRenderRoot() { return this }
   constructor() {
@@ -42,7 +43,7 @@ export class NpmReview extends LitElement {
     this._panel = null; this._selectedReview = null; this._unchecked = false
     this._pendingSaves = []; this._saveBlocked = false
   }
-  disconnectedCallback() { super.disconnectedCallback(); this._controller.abort(); this._cancelSaves(); this._key = null; this._baseKey = null }
+  disconnectedCallback() { super.disconnectedCallback(); this._controller.abort(); this._cancelSaves(); this._dismissLoading?.(); this._key = null; this._baseKey = null }
   updated() {
     const dialog = this.querySelector('dialog'); if (dialog && !dialog.open) dialog.showModal()
     this._rememberBase()
@@ -54,7 +55,8 @@ export class NpmReview extends LitElement {
       ...(this._mode === 'diff' ? { reviewMode: 'diff' } : {}), started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
-  get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null) ?? null }
+  get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null)
+    ?? (this._continuation && this._continuation.review.user === this.session?.id ? this._continuation.review : null) }
   get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
   get _canEdit() { return this._writable && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
@@ -67,6 +69,11 @@ export class NpmReview extends LitElement {
     return this._statesCache.states
   }
   get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files) }
+  get _needsPackageJson() { return needsPackageJsonReview(this._activeReview?.entries ?? [], this._files) }
+  get _unchangedContinuation() {
+    const source = this._continuation?.source
+    return Boolean(source && this._finalStatus === source.status && this._finalComment === source.comment)
+  }
   _location(target, mode = this._mode) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
     return { ...(parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}), ...(mode === 'diff' ? { reviewMode: 'diff' } : {}) }
@@ -109,7 +116,7 @@ export class NpmReview extends LitElement {
         before: group === 'onlyOther' ? '' : before.get(file.basePath ?? file.path), after: group === 'onlyBase' ? '' : after.get(file.path) }))).toSorted((a, b) => compareReviewPaths(a.path, b.path))
     this._mode = reviewViewMode(this._treeFiles)
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
-    this._selectedReview = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
+    this._selectedReview = null; this._continuation = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
     this._resetEditor(this._path); this._saving = false
     void this._refresh(true)
     if (state.bundleDetailsTab === 'review' && state.selectedBundle === this.entry.integrity) {
@@ -123,12 +130,15 @@ export class NpmReview extends LitElement {
   async _refresh(initializeTeams = false) {
     if (this._pendingSaves.length > 0) return
     const key = this._key
+    this._dismissLoading?.()
+    const dismiss = this._dismissLoading = showToast('Loading reviews…', { duration: 0 })
     this._loading = true; this._error = null
     try {
       const { reviews, teams } = await dependencyReviews(this._context, null, null, this._controller.signal)
       if (key === this._key) {
         const preserve = this._unsaved
         this._reviews = reviews; this._teams = teams
+        if (reviews.some(review => review.user === this.session?.id && review.publishedAt === null)) this._continuation = null
         this._rememberBase()
         const selection = takeReviewSelection(this._context)
         if (selection && reviews.some(review => review.id === selection && review.publishedAt !== null)) this._selectedReview = selection
@@ -136,7 +146,7 @@ export class NpmReview extends LitElement {
         if (!preserve) this._resetEditor(this._file)
       }
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
-    finally { if (key === this._key) this._loading = false }
+    finally { dismiss(); if (key === this._key) this._loading = false }
   }
   _resetEditor(file = null) {
     this._publishStep = false
@@ -184,6 +194,23 @@ export class NpmReview extends LitElement {
     this._file = this._path; this._edit = null; this._comment = ''; this._status = ''
   }
   _resume() { this._selectedReview = null; this._panel = null; this._resetEditor(this._path) }
+  _continue(reviewId, revision) {
+    const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.user === this.session?.id && review.publishedAt !== null)
+    if (!source || this._activeReview) return null
+    this._continuation = { source, review: { ...source, publishedAt: null, revokedAt: null, status: null, teams: [] } }
+    this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : [])
+    this._selectedReview = null; this._panel = null; this._drafts.clear(); this._resetEditor(this._path)
+    this._notice = 'Continue editing. A new review will be saved when you make a change.'
+    return this._activeReview
+  }
+  async _persistContinuation(save) {
+    const continuation = this._continuation, key = this._key
+    const { review } = await dependencyReviews(this._context, { action: 'continue', reviewId: continuation.source.id,
+      revision: continuation.source.revision }, this.session.csrfToken, this._controller.signal)
+    if (key !== this._key || this._continuation !== continuation || save && this._pendingSaves[0] !== save) return null
+    this._acceptSave(review, { revision: continuation.source.revision })
+    return review
+  }
   _cancelSaves() {
     for (const save of this._pendingSaves) { clearTimeout(save.timer); save.resolve(null) }
     this._pendingSaves = []; this._saveBlocked = false
@@ -202,6 +229,7 @@ export class NpmReview extends LitElement {
   _acceptSave(review, change) {
     this._rememberEditor()
     this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
+    this._continuation = null
     // Rebase only our own edits; a revision changed in another tab still conflicts.
     for (const [file, buffer] of this._drafts) {
       if (buffer.revision !== change.revision) continue
@@ -221,6 +249,12 @@ export class NpmReview extends LitElement {
       const save = this._pendingSaves[0]
       this._error = null
       try {
+        if (this._continuation) {
+          const continued = await this._persistContinuation(save)
+          if (!continued || this._pendingSaves[0] !== save) return
+          Object.assign(save.change, { reviewId: continued.id, revision: continued.revision,
+            entryId: continued.entries.find(row => row.file === save.change.file)?.id ?? null })
+        }
         const { review } = await dependencyReviews(this._context, save.change, this.session.csrfToken, this._controller.signal)
         if (this._pendingSaves[0] !== save) return
         this._acceptSave(review, save.change)
@@ -237,16 +271,18 @@ export class NpmReview extends LitElement {
   }
   async _change(change) {
     if (this._blocked || this._pendingSaves.length > 0 || this._loading || !this._writable) return null
+    if (change.action === 'continue') return this._continue(change.reviewId, change.revision)
     const key = this._key
     this._saving = true; this._error = null
     try {
+      if (change.action === 'publish' && this._continuation) {
+        const continued = await this._persistContinuation()
+        if (!continued) return null
+        change = { ...change, reviewId: continued.id, revision: continued.revision }
+      }
       const { review } = await dependencyReviews(this._context, change, this.session.csrfToken, this._controller.signal)
       if (key !== this._key) return null
       this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
-      if (change.action === 'continue') {
-        this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : []); this._selectedReview = null; this._panel = null
-        this._drafts.clear(); this._resetEditor(this._path); this._notice = 'New private review created. The published review is unchanged.'
-      }
       if (change.action === 'publish') {
         this._selectedReview = review.id; this._panel = null; this._publishStep = false
         this._comment = ''; this._status = ''; this._edit = null; this._notice = 'Published. Verdicts and notes are now frozen.'
@@ -292,13 +328,13 @@ export class NpmReview extends LitElement {
       if (key !== this._key || !this._canEdit || this._unsaved || !this._summary.checkedFiles) return
       const review = this._activeReview
       if (!review) return
-      this._finalStatus = summarizeReview(review.entries, this._files).verdictLimit; this._finalComment = review.comment ?? ''
+      this._finalStatus = this._continuation?.source.status ?? summarizeReview(review.entries, this._files).verdictLimit; this._finalComment = review.comment ?? ''
       this._publishRevision = review.revision; this._publishStep = true; this._panel = 'publish'
     } finally { this._finalizing = false }
   }
   _publish() {
     const review = this._activeReview
-    if (!review || !this._summary.checkedFiles || !this._publishStep || this._selectedTeams.size === 0 || this._unsaved || !allowedReviewVerdicts(review.entries).includes(this._finalStatus)) return
+    if (!review || !this._summary.checkedFiles || this._needsPackageJson || this._unchangedContinuation || !this._publishStep || this._selectedTeams.size === 0 || this._unsaved || !allowedReviewVerdicts(review.entries).includes(this._finalStatus)) return
     return this._change({ action: 'publish', reviewId: review.id, revision: this._publishRevision, teamIds: [...this._selectedTeams],
       finalStatus: this._finalStatus, finalComment: this._finalComment })
   }

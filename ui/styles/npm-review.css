@@ -33,7 +33,6 @@ npm-review textarea { display: block; width: 100%; resize: vertical; line-height
 .npm-review-muted, .npm-review-help { color: var(--muted); font-size: .72rem; }
 .npm-review-help { line-height: 1.5; }
 .npm-review-error { color: var(--critical); padding: .4rem 1rem; overflow-wrap: anywhere; }
-.npm-review-loading { padding: .3rem 1rem; color: var(--muted); }
 .npm-review-saving {
   position: absolute; bottom: 1rem; inset-inline: 1rem; z-index: 5;
   width: fit-content; margin-inline: auto; padding: .5rem .85rem;
@@ -189,6 +188,9 @@ npm-review .bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundl
 .npm-review-inline-decision textarea { min-height: 2rem; }
 .npm-review-dialog-body .npm-review-verdict-options { margin-top: .5rem; }
 .npm-review-note { margin: .45rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.npm-review-note-list { padding-left: 1.1rem; list-style: disc; white-space: normal; }
+.npm-review-note-list > li { white-space: pre-wrap; }
+.npm-review-note + .npm-review-note { margin-top: .25rem; }
 .npm-review-verdict { display: inline-flex; align-items: center; gap: .4rem; font-size: .75rem; }
 .npm-review-verdict-icon {
   display: inline-flex;
@@ -319,7 +321,7 @@ npm-review button.npm-review-danger, .dependency-review-list button.npm-review-d
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {
   display: grid;
-  grid-template-columns: 1.35rem minmax(0, 1fr) 10rem 5.5rem;
+  grid-template-columns: 1.35rem minmax(0, 1fr) 10rem 3.7rem;
   align-items: center;
   gap: .6rem;
   padding: .65rem .5rem;
@@ -348,36 +350,52 @@ npm-review button.npm-review-danger, .dependency-review-list button.npm-review-d
 .dependency-review-result { display: flex; flex-direction: column; gap: .2rem; line-height: 1.5; }
 .dependency-review-result .npm-review-verdict, .dependency-review-checked { font-size: .72rem; }
 .dependency-review-coverage { color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
-.dependency-review-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .5rem; }
+.dependency-review-partial {
+  display: inline-block; padding: 0 .3rem; border-radius: var(--ui-radius, 4px);
+  color: var(--warning); background: rgb(from var(--warning) r g b / .12);
+}
+.dependency-review-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
 .dependency-review-row-actions review-audit-copy { display: inline-flex; }
-.dependency-review-list button.dependency-review-expand, .dependency-review-open {
+.dependency-review-list button.dependency-review-expand,
+.dependency-review-list button.dependency-review-discard,
+.dependency-review-open {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 1.35rem; height: 1.35rem; min-height: 0; padding: 0; border: 0;
   border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted);
 }
 .dependency-review-open:hover { color: var(--accent); background: var(--surface-active); }
 .dependency-review-expand[aria-expanded='true'] svg { transform: rotate(90deg); }
-.dependency-review-list button.dependency-review-discard {
-  min-height: 1.35rem; padding: .1rem .2rem; border: 0; background: transparent; color: var(--muted); font-size: .68rem;
-}
+review-audit-copy .bundle-code-copy-path,
+.dependency-review-list button.dependency-review-discard,
+.dependency-review-open { width: 1.8rem; height: 1.8rem; }
+review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .95rem; }
 .dependency-review-list button.dependency-review-discard:not(:disabled):hover { color: var(--critical); }
 .dependency-review-title:focus-visible, .dependency-review-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dependency-review-details { margin: 0 .5rem .7rem 2.45rem; border-left: 2px solid var(--border); padding-left: .8rem; }
-.dependency-review-recipients { color: var(--muted); font-size: .68rem; margin-bottom: .6rem; overflow-wrap: anywhere; }
-.dependency-review-final-note { padding-bottom: .65rem; font-size: .72rem; }
-.dependency-review-final-note > strong { font-size: .68rem; font-weight: 500; color: var(--muted); }
-.dependency-review-entries { list-style: none; padding: 0; margin: 0; max-height: 20rem; overflow: auto; overscroll-behavior: contain; }
-.dependency-review-entries > li { padding: .45rem .5rem .45rem 0; border-top: 1px solid var(--border); }
-.dependency-review-entry-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
-.dependency-review-entry-head > span:first-child { font: .72rem/1.5 ui-monospace, monospace; overflow-wrap: anywhere; min-width: 0; }
-.dependency-review-entry-head .npm-review-verdict { flex: none; font-size: .68rem; }
-.dependency-review-row .npm-review-note { margin: .25rem 0 0; color: var(--text); font-size: .72rem; line-height: 1.5; }
+.dependency-review-details { margin: 0 .5rem .7rem 2.45rem; }
+.dependency-review-final-note { margin-bottom: .5rem; }
+.dependency-review-entries {
+  list-style: none; padding: 0; margin: 0 0 0 .75rem; max-height: 20rem; overflow: auto; overscroll-behavior: contain;
+}
+.dependency-review-entries > li {
+  display: grid; grid-template-columns: minmax(0, 1fr) 8.5rem minmax(0, 1.6fr); align-items: baseline;
+  gap: .75rem; padding: .2rem .5rem .2rem 0; line-height: 1.5;
+}
+.dependency-review-entry-file { display: flex; align-items: baseline; gap: .4rem; font: .72rem/1.5 ui-monospace, monospace; min-width: 0; }
+.dependency-review-entry-file > span { overflow-wrap: anywhere; min-width: 0; }
+.dependency-review-entry-file .source-file-icon { width: 13px; height: 13px; align-self: start; margin-top: .13rem; }
+.dependency-review-entry-verdict { justify-self: start; text-align: left; }
+.dependency-review-entry-verdict .npm-review-verdict { font-size: .68rem; white-space: nowrap; }
+.dependency-review-entry-note { min-width: 0; }
+.dependency-review-row .npm-review-note { margin: 0; color: var(--text); font-size: .72rem; line-height: 1.5; }
+.dependency-review-final-note .npm-review-note { font-size: .78rem; }
 @container review-list (width <= 560px) {
   .dependency-review-row-main { grid-template-columns: 1.35rem minmax(0, 1fr) auto; row-gap: .35rem; }
   .dependency-review-result { grid-column: 2; grid-row: 2; flex-flow: row wrap; align-items: center; gap: .3rem .65rem; }
   .dependency-review-row-actions { grid-column: 3; grid-row: 1 / 3; }
   .dependency-review-meta { flex-wrap: wrap; gap: .15rem .5rem; }
-  .dependency-review-entry-head { flex-wrap: wrap; gap: .15rem .6rem; }
+  .dependency-review-entries > li { grid-template-columns: minmax(0, 1fr) 8.5rem; gap: .1rem .65rem; }
+  .dependency-review-entry-note { grid-column: 1 / -1; }
+  .dependency-review-entry-note:empty { display: none; }
 }
 @media (width <= 900px) {
   .npm-review-summary-actions { flex: 1; justify-content: flex-end; }

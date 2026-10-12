@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit'
-import { REVIEW_VERDICTS } from '../../common/dependency-reviews.js'
+import { REVIEW_VERDICTS, parseReviewNotes } from '../../common/dependency-reviews.js'
 
 export const verdictLabels = { ...REVIEW_VERDICTS, 'accept-with-nits': 'Accept with nits' }
 export const reviewState = review => review.revokedAt === null ? review.publishedAt === null ? 'Private to you' : 'Published' : 'Revoked'
@@ -16,7 +16,13 @@ export function reviewFileStates(entries = []) {
     [entry.file, { status: entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
 }
 
-export const reviewNote = comment => comment ? html`<p class="npm-review-note">${comment}</p>` : nothing
+export function reviewNote(comment) {
+  const notes = parseReviewNotes(comment)
+  if (notes.length === 0) return nothing
+  const bullets = notes.filter(note => note.bullet)
+  return html`${notes.filter(note => !note.bullet).map(note => html`<p class="npm-review-note">${note.text}</p>`)}
+    ${bullets.length > 0 ? html`<ul class="npm-review-note npm-review-note-list">${bullets.map(note => html`<li>${note.text}</li>`)}</ul>` : nothing}`
+}
 
 // A list row opens that exact snapshot, even when a newer private set exists.
 // Keep this handoff inside review components, without changing app routing.
