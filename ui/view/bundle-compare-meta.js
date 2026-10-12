@@ -27,6 +27,11 @@ export function fileMetaTags(meta = [], compact = false) {
   })
 }
 
+// The same as flags (file-flags.js), each a warning's: what it is now, not
+// what it no longer is, struck through.
+export const fileMetaFlags = (meta = []) => meta.filter(({ field, to }) => field === 'format' || to)
+  .map(({ field, from, to }) => ({ name: field === 'format' ? `${from ?? 'none'} → ${to ?? 'none'}` : field === 'executable' ? '+x' : 'new entry', severity: 'high' }))
+
 // The same, said in sentences, for a file whose contents read the same.
 export function metaSentences(meta = []) {
   return meta.map(({ field, from, to }) => field === 'format' ? `${formatSaid(from, to)}.`

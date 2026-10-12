@@ -167,6 +167,9 @@ const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
 // A file's tags, one a kind it holds (npmRunsCode), its lines in its tooltip;
 // with `was`, the kinds the file held as the version compared with has it
 // (null for none), one it didn't hold saying so.
+// Their tags' texts, in their order: none for none.
+export const npmRunsCodeNames = found => found ? [...found.keys()].map(kind => RUNS_CODE.get(kind).tag) : []
+
 export function npmRunsCodeTags(found, was) {
   if (!found) return nothing
   return [...found].map(([kind, lines]) => {

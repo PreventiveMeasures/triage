@@ -19,8 +19,8 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
-import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
-import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
+import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
+import { npmFileRunsCode, npmRunsCodeNames, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -477,6 +477,24 @@ export function npmFileTags(details, path) {
   return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
 
+// A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
+// it, by their severity, where the list draws them (the Files list's, not
+// Compare's); what it runs beyond itself, a warning's; and its flags and how
+// it reads, a warning's (`high`) or a notice, by their marks. Those but
+// Socket's kept, once a version.
+const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
+const fileFlags = new WeakMap()
+export function npmFileFlags(details, path, alerts = []) {
+  let known = fileFlags.get(details)
+  if (!known) fileFlags.set(details, known = new Map())
+  if (!known.has(path)) {
+    const { byPath, sizes } = npmFilesRead(details)
+    known.set(path, [...npmRunsCodeNames(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path))).map(name => ({ name, severity: 'high' })),
+      ...npmListedFlags(path, byPath.get(path), sizes.get(path)).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))])
+  }
+  return [...alerts.map(alert => ({ name: socketAlertName(alert.type), severity: SOCKET_SEVERITIES.get(alert.severity) ?? 'low' })), ...known.get(path)]
+}
+
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
 // one's type icon and Socket's alerts on it, the tags of one the open version
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
@@ -487,6 +505,8 @@ export const npmCompareFiles = {
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
   tag: npmFileTags,
+  // Its flags as its tags show them, for its lists' Flags order.
+  flags: (details, path) => npmFileFlags(details, path),
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)
     const read = readabilityCounts(paths.filter(path => byPath.has(path)).map(path => byPath.get(path)))

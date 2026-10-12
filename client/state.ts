@@ -144,7 +144,7 @@ export interface State {
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
-  bundleOverviewFilesSort: 'name' | 'size'
+  bundleOverviewFilesSort: 'name' | 'size' | 'flags'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
   bundleCodeSearchMode: string

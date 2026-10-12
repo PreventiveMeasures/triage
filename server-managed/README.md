@@ -1347,7 +1347,12 @@ control. A version shows in the bundle view with four tabs:
   Obfuscated, as a warning, on one with an obfuscator's fingerprint (20
   names or more such as `_0x1a2b`, `_0x` and four to six hex digits, or the
   loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
-  source map, which holds the names of the code it maps); and, where the
+  source map, which holds the names of the code it maps), ordered by name or
+  size, or, where any file listed is flagged (Socket's alerts on it, what
+  it runs beyond itself, a warning's or a notice's tag), by its flags: the
+  most severe first (a critical alert, then a warning's or a high alert,
+  then a moderate and a low alert, then a notice), then the most flags, then
+  their names, then its path, files with none last; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names,
   each file's head linking it on GitHub at the commit the version was
@@ -1441,7 +1446,10 @@ control. A version shows in the bundle view with four tabs:
   to cover every version its range takes).
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
-  Overview's warning where any of those can be hard to review by reading them.
+  Overview's warning where any of those can be hard to review by reading them;
+  each group ordered by name or size, or, where a file in it is flagged, as
+  the Files list orders them by its flags (a stasis bundle's what it records
+  of a changed file, `+x` or a format, among them).
   Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
   are pickers in the same order as for bundles, the version compared with
