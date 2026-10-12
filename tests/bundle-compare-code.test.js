@@ -631,6 +631,21 @@ test('a file whose bytes are the same, its record in the stasis bundle changed, 
   assert.match(dropped, /The contents are the same\. The bundle records no format for it now, resource before, carried as data before, run as code now\./u)
 })
 
+test('a large file whose bytes are the same, its record changed, says so without asking to diff it', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const big = { 'src/big.js': 'x\n'.repeat(60_000) }
+  const element = view('src/big.js', [big, big])
+  const { base, other } = element
+  base.bundle.formats.set('src/big.js', 'resource')
+  other.bundle.formats.set('src/big.js', 'module')
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__', undefined, [bundleFileMeta(base), bundleFileMeta(other)]).files
+  element.willUpdate(new Map([['files']]))
+  const markup = renderText(element.render())
+  assert.match(markup, /The contents are the same\. The bundle loads it as module, as resource before, carried as data before, run as code now\./u)
+  assert.doesNotMatch(markup, /This diff is large/u)
+  assert.ok(Number.isFinite(combinedDiffRows(base, other, element.files).rows), 'and the one list is not too large for it')
+})
+
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
   const files = ['a.js', 'a/b.js', 'Z.js', 'src/z/y.js', 'src/b.js', 'lib/x/y/z.js']
   const element = view(null, [Object.fromEntries(files.map(path => [path, '1'])), Object.fromEntries(files.map(path => [path, '2']))])

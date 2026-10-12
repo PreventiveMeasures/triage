@@ -39,7 +39,10 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
   for (const [path, entry] of combinedEntries(entries)) {
     rows++
     const { before, after } = fileContents(base, other, path, entry)
-    if (typeof before === 'string' && typeof after === 'string') {
+    // Its bytes the same (renamed, or recorded otherwise): a line saying so, however large.
+    if (entry.modified === false) {
+      rows++
+    } else if (typeof before === 'string' && typeof after === 'string') {
       if (isLargeDiff(before, after)) return { rows: Infinity, models }
       const model = lineDiff(before, after)
       models.set(path, model)

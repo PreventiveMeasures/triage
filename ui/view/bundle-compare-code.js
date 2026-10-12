@@ -686,6 +686,9 @@ export class BundleCompareCode extends LitElement {
   _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, hiding, changes, whitespace }) {
     const size = value => formatBytes(value ?? 0)
     const recorded = metaSentences(meta)
+    const same = `${kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}`
+    // Its bytes the same (bundle-compare-diff.js): no diff to compute, however large.
+    if (textual && modified === false) return html`<div class="bundle-compare-code-message"><p>${same}</p></div>`
     if (!textual) {
       if (kind === 'changed' && modified === false) {
         return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
@@ -711,8 +714,7 @@ export class BundleCompareCode extends LitElement {
     const spaced = prefs.ignoreWhitespace && whitespace === 'hideable'
     const hidden = [spaced && 'whitespace', hiding && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
-      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.')
-        : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}</p>
+      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.${recorded ? ` ${recorded}` : ''}` : same}</p>
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
