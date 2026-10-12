@@ -498,13 +498,13 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
         : Response.json(answer > 0 ? [{}] : [], { headers: answer > 1 ? { link: `<https://api.github.com/repositories/1/pulls?state=open&per_page=1&page=${answer}>; rel="last"` } : {} }))
     }
     // A repository by its name, or by its id, where GitHub redirects one
-    // renamed or transferred (`location`).
+    // renamed or transferred (`location`, with a 301 or its `status`).
     const repo = url.match(/^https:\/\/api\.github\.com\/(?:repos\/([^/]+\/[^/?]+)|repositories\/(\d+))$/u)
     if (repo) {
       const [, name, id] = repo
       asked.push(['github', name ?? `repositories/${id}`, auth])
       const answer = name === undefined ? Object.values(repos).find(found => found.id === Number(id)) : repos[name]
-      if (answer?.location) return Promise.resolve(Response.json({ message: 'Moved Permanently', url: answer.location }, { status: 301, headers: { location: answer.location } }))
+      if (answer?.location) return Promise.resolve(Response.json({ message: 'Moved', url: answer.location }, { status: answer.status ?? 301, headers: { location: answer.location } }))
       return Promise.resolve(answer ? Response.json(answer) : Response.json({ message: 'Not Found' }, { status: 404 }))
     }
     if (url === `${REGISTRY}/-/npm/v1/security/advisories/bulk`) {
@@ -1066,8 +1066,7 @@ test('a repository renamed or transferred is followed once, by its id, to its na
   assert.deepEqual((await h.send('/api/npm/stats?name=moved')).json().github,
     { repo: 'new/name', stars: 40, forks: 2, openIssues: 3, openPulls: 1, archived: false, pushedAt: '2026-09-01T00:00:00Z' })
   assert.deepEqual(asked.filter(([what]) => what === 'github' || what === 'pulls'),
-    [['github', 'old/name', null], ['github', 'old/name', null], ['github', 'repositories/1', null], ['pulls', 'new/name', null]],
-    'upstream refusing the redirect, asked again for where it leads, then that')
+    [['github', 'old/name', null], ['github', 'repositories/1', null], ['pulls', 'new/name', null]], 'then by its id, and by its name now')
   const body = (await h.send('/api/npm/advisories?name=moved')).json()
   assert.equal(body.repository, true)
   assert.deepEqual(body.advisories.map(row => [row.source, row.url]), [['repository', 'https://github.com/new/name/security/advisories/GHSA-gggg-hhhh-jjjj']])
@@ -1086,7 +1085,7 @@ test('a redirect to a repository that isn\'t public, anywhere but a repository b
     repos: {
       'old/private': { location: 'https://api.github.com/repositories/1' },
       'new/private': { id: 1, full_name: 'new/private', private: true, visibility: 'private', stargazers_count: 9 },
-      'old/elsewhere': { location: 'https://example.com/repositories/2' },
+      'old/elsewhere': { location: 'https://example.com/repositories/2', status: 307 },
       'old/twice': { location: 'https://api.github.com/repositories/3' },
       'new/twice': { id: 3, location: 'https://api.github.com/repositories/4' },
       'newer/twice': { id: 4, full_name: 'newer/twice', private: false, visibility: 'public', stargazers_count: 9 },
@@ -1099,12 +1098,8 @@ test('a redirect to a repository that isn\'t public, anywhere but a repository b
     const body = (await h.send(`/api/npm/advisories?name=${name}`)).json()
     assert.deepEqual([body.repository, body.advisories.map(row => row.id)], [true, ['GHSA-aaaa-bbbb-cccc']], `${name}: there is no public repository to ask`)
   }
-  // Upstream refusing the redirect, the old name asked again for it, then where it leads.
-  const followed = (repo, ...then) => [repo, repo, ...then]
   assert.deepEqual(asked.filter(([what]) => what === 'github').map(([, repo]) => repo), [
-    ...followed('old/private', 'repositories/1'), ...followed('old/private', 'repositories/1'),
-    ...followed('old/elsewhere'), ...followed('old/elsewhere'),
-    ...followed('old/twice', 'repositories/3'), ...followed('old/twice', 'repositories/3'),
+    'old/private', 'repositories/1', 'old/private', 'repositories/1', 'old/elsewhere', 'old/elsewhere', 'old/twice', 'repositories/3', 'old/twice', 'repositories/3',
   ], 'for its figures, then afresh for its advisories, a second redirect never followed')
   assert.ok(!calls.some(call => call.url.startsWith('https://example.com/')), 'nor one off GitHub\'s API')
   assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'no listing asked for')
@@ -1120,8 +1115,8 @@ test('a redirect is followed with the reader\'s token where GitHub takes it, and
   assert.equal((await npmGithubStats('old/tokened', () => Promise.resolve('user-token')))?.repo, 'new/tokened')
   assert.equal((await npmGithubStats('old/revoked', () => Promise.resolve('revoked')))?.repo, 'new/tokened')
   assert.deepEqual(asked.filter(([what]) => what === 'github'), [
-    ['github', 'old/tokened', 'Bearer user-token'], ['github', 'old/tokened', 'Bearer user-token'], ['github', 'repositories/5', 'Bearer user-token'],
-    ['github', 'old/revoked', null], ['github', 'old/revoked', null], ['github', 'repositories/5', null],
+    ['github', 'old/tokened', 'Bearer user-token'], ['github', 'repositories/5', 'Bearer user-token'],
+    ['github', 'old/revoked', null], ['github', 'repositories/5', null],
   ])
 })
 
