@@ -95,11 +95,19 @@ async function gunzip(gzipped) {
   return new Uint8Array(await new Blob(chunks).arrayBuffer())
 }
 
-// A gzipped tarball's files as a version holds them for risk, as a source map
-// lists them (`kind: 'sourcemap'`, as the npm viewer holds a version):
-// `json.sources` their paths, sorted, `json.sourcesContent` their texts, and
-// `fileSizes` by path.
+// A file's bytes' digest, as the managed server gives one of a file that
+// isn't text (server-managed/npm-packages.ts).
+const sha256 = async bytes => `sha256-${btoa(String.fromCodePoint(...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))))}`
+
+// A gzipped tarball's files as a version holds them for risk, as the npm
+// viewer holds a version (ui/view/npm-package.js npmPackageDetails), a source
+// map listing them (`kind: 'sourcemap'`): `json.sources` their paths, sorted,
+// `json.sourcesContent` their texts, `fileSizes` by path, and `npmBinaries`,
+// those that aren't text, `{ size, digest }` by path, which compare.js and
+// diff.js tell them by.
 export async function npmTarballVersion(gzipped) {
   const files = [...npmTarFiles(await gunzip(gzipped))].toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-  return { kind: 'sourcemap', json: { version: 3, sources: files.map(([path]) => path), sourcesContent: files.map(([, bytes]) => npmFileText(bytes)) }, fileSizes: new Map(files.map(([path, bytes]) => [path, bytes.length])) }
+  const texts = files.map(([, bytes]) => npmFileText(bytes))
+  const binaries = await Promise.all(files.filter((_, at) => texts[at] === null).map(async ([path, bytes]) => [path, { size: bytes.length, digest: await sha256(bytes) }]))
+  return { kind: 'sourcemap', json: { version: 3, sources: files.map(([path]) => path), sourcesContent: texts }, fileSizes: new Map(files.map(([path, bytes]) => [path, bytes.length])), npmBinaries: new Map(binaries) }
 }

@@ -150,10 +150,20 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
   const read = await npmTarballVersion(tgz)
   assert.deepEqual(read.json, { version: 3, sources: ['a/c.js', 'b.js', 'bin/tool', 'package.json'], sourcesContent: ['c', 'b', null, '{}'] }, 'sorted; one with a NUL no text')
   assert.equal(read.fileSizes.get('bin/tool'), 2)
+  assert.deepEqual(read.npmBinaries, new Map([['bin/tool', { size: 2, digest: `sha256-${createHash('sha256').update('\0\u0001').digest('base64')}` }]]), 'one not text told by its digest, as the server gives it')
   const side = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const text = 'module.exports = function long() { return 42 }\n'.repeat(20)
   assert.deepEqual(npmFilesDiff(side({ 'old.js': text, 'same.js': 'x', 'edit.js': '1' }), side({ 'new.js': text, 'same.js': 'x', 'edit.js': '2', 'add.js': 'y' })),
     { onlyOther: [{ path: 'add.js' }], changed: [{ path: 'edit.js', modified: true }, { path: 'new.js', basePath: 'old.js', renamedFrom: 'old.js', modified: false }] })
+})
+
+test('a file that isn\'t text compared by its digest: one added large is large code, one kept unchanged', async t => {
+  const packed = Buffer.alloc(256 * 1024, 0xff), tool = Buffer.from([0, 1, 2])
+  const before = version('bin-like', '1.0.0', { 'package.json': '{}', 'bin/tool': tool }, { dependencies: {} }, ago(30))
+  const after = version('bin-like', '1.0.1', { 'package.json': '{}', 'bin/tool': tool, 'dist/packed.js': packed }, { dependencies: {} }, ago(20))
+  npm(t, [{ name: 'bin-like', versions: [before, after] }])
+  const assessment = await assessNpm('bin-like', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(assessment.findings, [{ id: 'large-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] }], 'not UTF-8, yet added; bin/tool unchanged')
 })
 
 test('a version document read for what risk reads of it', () => {

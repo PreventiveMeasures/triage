@@ -11,21 +11,27 @@ import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 // them.
 const RENAME_LIMIT = 250
 
-// A file's content as compareTrees reads it to find renames: its text, or, for
-// one that isn't, its place in its list, so that only its path pairs it.
-const treeData = (text, at) => typeof text === 'string' ? `\0text\0${text.toWellFormed()}` : `\0none\0${at}`
+// Whether two sides hold the same file: text as text, one that isn't by its
+// digest (bundle-compare-diff.js sameContent).
+const same = (a, b) => a === b || (a?.format === 'digest' && b?.format === 'digest' && a.digest === b.digest)
+
+// A file's content as compareTrees reads it to find renames: its text, its
+// digest for one that isn't, or else its place in its list, so that only its
+// path pairs it (bundle-compare-diff.js treeData).
+const treeData = (content, at) => typeof content === 'string' ? `\0text\0${content.toWellFormed()}`
+  : content?.format === 'digest' ? `\0digest\0${content.digest}` : `\0none\0${at}`
 
 // `onlyOther`, the files the open version (`other`) adds, `{ path }` each, and
 // `changed`, those it changes, `{ path, modified }`, or moves, `{ path,
 // basePath, renamedFrom, modified }`, `modified` whether its content changed
 // too; each version as compare.js takes one. A file that isn't text is
-// unchanged where its path is.
+// told by its digest (npmBinaries), as the viewer's Compare tells it.
 export function npmFilesDiff(base, other) {
   const after = bundleFilesAsMap(other), before = bundleFilesAsMap(base)
   const changed = [], onlyBase = [], onlyOther = []
   for (const [path, text] of after) {
     if (!before.has(path)) onlyOther.push(path)
-    else if (before.get(path) !== text) changed.push({ path, modified: true })
+    else if (!same(before.get(path), text)) changed.push({ path, modified: true })
   }
   for (const path of before.keys()) if (!after.has(path)) onlyBase.push(path)
   const entries = (paths, files, side) => paths.filter(path => path.isWellFormed()).map((path, at) => ({ name: path, data: treeData(files.get(path), `${side}${at}`) }))
