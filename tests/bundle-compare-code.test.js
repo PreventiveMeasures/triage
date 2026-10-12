@@ -571,10 +571,17 @@ test('the search diffs a file anew where another scope pairs it with another old
   element.willUpdate(new Map([['files']]))
   assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old1.js')
   assert.deepEqual(hits(), ['−a20', '+b20'])
+  // A hit picked there, still to be sought as the scope changes, isn't sought in old2.
+  const [removed] = element._searchResults(element._railState().order).files.find(file => file.path === 'lib/new.js').hits
+  element._seek('lib/new.js', removed)
   element.files = scoped('lib/old2.js')
   element.willUpdate(new Map([['files']]))
   assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old2.js')
   assert.deepEqual(hits(), ['−a0', ' b20'], 'old2\'s first line removed, the new last line unchanged')
+  assert.equal(element._sought, null)
+  element.path = 'lib/new.js'
+  element.render()
+  assert.equal(element._soughtRow, null, 'no row of old2 sought for old1\'s line')
 })
 
 test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {

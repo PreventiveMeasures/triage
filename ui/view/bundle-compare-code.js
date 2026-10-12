@@ -362,9 +362,12 @@ export class BundleCompareCode extends LitElement {
       this._entries = this._buildEntries()
       this._counted = new Map()
       // A path may name another pair of files now (another scope pairs a
-      // renamed file anew), so what the search kept of it is found again.
+      // renamed file anew), so what the search kept of it is found again,
+      // and a hit still sought in the files as they were is let go.
       this._blocks.clear()
       this._rowless.clear()
+      this._sought = this._soughtRow = null
+      this._soughtSettling = false
     }
   }
 
