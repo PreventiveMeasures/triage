@@ -22,8 +22,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
@@ -90,7 +90,7 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
   assert.deepEqual(npmTextEncoding('a\u001B \u3164'), { kind: 'utf8', controls: new Map([[0x1B, 1], [0x3164, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
-  const note = text => npmEncodingTag(npmFileReadability('lib/a.js', text)).values[1]
+  const note = text => /data-tooltip=([^>]*)>Controls</u.exec(rendered(npmReadabilityFlags(npmFileReadability('lib/a.js', text))))[1]
   assert.equal(note('a\u001B'), 'Control characters: U+001B \u00D71')
   assert.equal(note('x\u3164'), 'Invisible characters: U+3164 \u00D71')
   assert.equal(note('a\u001B \u3164\u3164'), 'Control and invisible characters: U+3164 \u00D72, U+001B \u00D71', 'named for which it holds')
@@ -103,8 +103,16 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   assert.equal(category('lib/a.js', code), 'ascii')
   assert.equal(category('lib/a.js', `// héllo\n${code}`), 'utf8')
   assert.equal(category('lib/a.png', null), 'binary')
-  assert.equal(category('lib/a.js', `${code}\u001B`), 'controls')
-  assert.equal(category('lib/a.js', `${code}\n${long}\u202E`), 'controls', 'controls before anything else a text has')
+  // Controls are counted beside how a file otherwise reads, not in its place.
+  const labels = (path, text) => npmReadabilityLabels(npmFileReadability(path, text))
+  assert.equal(category('lib/a.js', `${code}\u001B`), 'ascii')
+  assert.deepEqual(labels('lib/a.js', `${code}\u001B`), ['controls'], 'not as readable ASCII')
+  assert.deepEqual(labels('lib/a.js', `${code}\n${code}\n${long}\u202E\n${code}`), ['controls', 'long'])
+  assert.deepEqual(labels('dist/a.js', `var r=/[ \f]/;${long}`), ['controls', 'long', 'minified'], 'a minified file holding a form feed is all three')
+  assert.deepEqual(labels('lib/a.js', `${code}\n${code}\n${long}\n${code}`), ['long'], 'long lines among readable ones, not as readable ASCII')
+  assert.deepEqual(labels('README.md', `${long}\u001B`), ['controls'], 'prose\'s long lines are paragraphs')
+  assert.deepEqual(labels('a.js.map', `{"mappings":"${long}"}`), ['map'], 'a source map\'s, all it is')
+  assert.deepEqual(labels('lib/a.js', code), ['ascii'])
   assert.equal(category('lib/a.js.map', '{"version":3,"mappings":"AAAA"}'), 'map')
   assert.equal(category('dist/a.js', `${long}${long}\n${long}`), 'minified', 'most of it on long lines')
   assert.equal(category('dist/a.min.js', `${code}\n${long}`), 'minified', 'named minified, with any long line')
@@ -130,6 +138,44 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   }
   const read = npmFileReadability('lib/a.js', `${code}\n${long}\n${long}y\n${code}`)
   assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])
+})
+
+test('the Overview finds a file under each label it has, counting it once, each chip marked as the most it is on one', () => {
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  const minified = `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n`
+  const long = `${code}\n${code}\nconst x = '${'x'.repeat(1001)}'\n${code}\n`
+  const version = (name, files) => ({ entry: { npm: { name, version: '1.0.0' } },
+    details: { integrity: name, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } } })
+  const functions = value => Array.isArray(value) ? value.flatMap(functions) : value?.values ? value.values.flatMap(functions) : typeof value === 'function' ? [value] : []
+  const chipsOf = warning => [...rendered(warning).matchAll(/class=npm-extension npm-category ?(is-\w+)?[^]*?<span>([^<]+)<\/span><span class="npm-extension-count">(\d+)</gu)]
+    .map(([, mark, name, count]) => `${name} ${count}${mark ? ` ${mark}` : ''}`)
+  // Each chip pressed narrows the Files list to the files labelled with it.
+  const found = ({ entry, details }) => functions(npmReadabilityWarning(entry, details)).map(click => {
+    click()
+    const { keeps } = npmFilesFilter(entry)
+    return details.json.sources.filter(keeps)
+  })
+
+  const mixed = version('labelled', { 'dist/min.js': minified, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}', 'lib/long.js': long, 'lib/a.js': 'const a = 1\n' })
+  const warning = npmReadabilityWarning(mixed.entry, mixed.details)
+  assert.match(rendered(warning), /<strong>3 of 4 files<\/strong>/u, 'each file once')
+  assert.match(rendered(warning), /npm-readability-warning is-warn/u)
+  assert.deepEqual(chipsOf(warning), ['Control or invisible characters 1 is-warn', 'Long lines 2 is-warn', 'Minified 1 is-notice', 'Source maps 1 is-notice'],
+    'long lines a warning where some are unexpected')
+  assert.deepEqual(found(mixed), [['dist/min.js'], ['dist/min.js', 'lib/long.js'], ['dist/min.js'], ['dist/min.js.map']], 'the minified file under each of its labels')
+  // Each file's tags in the list: all its labels, but Map, which a source map's name says.
+  const listed = path => [...rendered(npmCompareFiles.tag(mixed.details, path)).matchAll(/class="?npm-(?:flag|encoding)-tag[^>]*>([^<]+)</gu)].map(m => m[1])
+  assert.deepEqual(listed('dist/min.js'), ['Controls', 'Long lines', 'Minified'])
+  assert.deepEqual(listed('dist/min.js.map'), [], 'no Map in a list')
+  assert.deepEqual(listed('lib/long.js'), ['Long lines'], 'nor ASCII, as most files are')
+  assert.deepEqual(listed('lib/a.js'), [])
+  const utf8 = version('utf8', { 'lib/b.js': 'const ü = 1\n' })
+  assert.deepEqual([...rendered(npmCompareFiles.tag(utf8.details, 'lib/b.js')).matchAll(/class="?npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1]), ['UTF-8'], 'UTF-8 tagged')
+
+  const bundled = version('bundled', { 'dist/min.js': `${'var a=1;'.repeat(200)}\n`, 'lib/a.js': 'const a = 1\n' })
+  const quiet = npmReadabilityWarning(bundled.entry, bundled.details)
+  assert.deepEqual(chipsOf(quiet), ['Long lines 1 is-notice', 'Minified 1 is-notice'], 'minified code\'s long lines a notice, as it is')
+  assert.doesNotMatch(rendered(quiet), /npm-readability-warning is-warn/u)
 })
 
 test('code minified into shorter lines is minified too, by its lines\' length and its spacing', () => {
@@ -607,8 +653,8 @@ test('Compare flags in red the files the open version adds or changes that call 
   const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="?(npm-\w+-tag)[^>]*>([^<]+)</gu)].map(([, kind, tag]) => `${kind}:${tag}`)
   assert.deepEqual(tags('dist/payload.js'), ['npm-flag-tag:Large', 'npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'])
   assert.deepEqual(tags('lib/vendor.js'), ['npm-flag-tag:Obfuscated', 'npm-encoding-tag:Minified'], 'obfuscated before too: tagged, not flagged')
-  assert.deepEqual(tags('lib/big-moved.js'), ['npm-flag-tag:Large', 'npm-encoding-tag:ASCII'])
-  assert.deepEqual(tags('index.js'), ['npm-flag-tag:Long lines', 'npm-encoding-tag:ASCII'], 'one become unreadable by its Long lines tag, beside ASCII')
+  assert.deepEqual(tags('lib/big-moved.js'), ['npm-flag-tag:Large'], 'ASCII untagged in a list')
+  assert.deepEqual(tags('index.js'), ['npm-flag-tag:Long lines'], 'one become unreadable by its Long lines tag')
 
   // Many files: counted, the tooltip listing the first eight.
   const many = (ver, line) => version(ver, Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`lib/f${i}.js`, `${code}\n${line}\n`])))
