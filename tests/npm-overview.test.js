@@ -495,7 +495,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(taken, /npm-compare-publisher is-from-known /u, 'red from a known account to one not')
   assert.ok(taken.includes(`${account('alice', true)} → ${account('mallory', false)}`))
   assert.match(taken, /compare-tip-said"><span class=npm-compare-account is-known>~alice<[^]*after one that does/u)
-  assert.match(taken, /compare-tip-note">A different npm account published the open version,<br>one that publishes none of npm's most downloaded packages, after one that does</u)
+  assert.match(taken, /compare-tip-note">A different npm account published the open version,<br>one that publishes none of npm's most downloaded packages,<br>after one that does</u, 'what was before on a line of its own')
   const joined = await badges(side('joined', '1.0.0', published('alice')), side('joined', '1.1.0', published('bob', true)))
   assert.match(joined, /npm-compare-publisher is-to-known /u, 'grey to a known one')
   assert.match(joined, /compare-tip-note">A different npm account published the open version,<br>one that publishes one of npm's most downloaded packages</u)
