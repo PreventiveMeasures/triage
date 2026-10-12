@@ -84,6 +84,12 @@ test('whitespace is hidden only in files whose whitespace means nothing, told by
   }
   assert.equal(whitespaceInsensitive('bin/tool', 'run()\n'), false, 'nor one with no #! line')
   assert.equal(whitespaceInsensitive('bin/tool', null), false, 'nor a side that is not text')
+  // A stasis bundle's own format for the file, where it records one, over its name.
+  for (const [path, format, insensitive] of [['src/a.js', 'module', true], ['CMakeLists.txt', 'cmake', true], ['gradlew', 'shell', true], ['App.xcodeproj/project.pbxproj', 'pbxproj', true],
+    ['src/a.js', 'resource', false], ['src/a.js', 'resource:base64', false], ['tools/gen.py', 'python', false], ['Podfile', 'podfile', false], ['ios/Podfile.lock', 'podfile-lock', false],
+    ['fix.patch', 'patch', false], ['src/a.js', 'a-format-no-one-knows', false]]) {
+    assert.equal(whitespaceInsensitive(path, '', format), insensitive, `${path} as ${format}`)
+  }
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

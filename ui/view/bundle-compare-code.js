@@ -78,6 +78,10 @@ const WHITESPACE_KEPT = {
   mixed: 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show',
   unlisted: 'Whitespace changes are hidden only in code whose whitespace means nothing, as JavaScript, CSS or JSON: all of this file\'s show',
 }
+// The format a stasis bundle records for one of its files, its own spelling
+// of the file's language; undefined for another kind of bundle, or a file it
+// records none for.
+const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
 // Renamed names are hidden in JavaScript alone, what a minifier renames: in
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 export const renamable = path => /\.[cm]?js$/iu.test(path)
@@ -354,8 +358,7 @@ export class BundleCompareCode extends LitElement {
 
   _format(path) {
     const entry = this._entries.get(path)
-    const [side, file] = entry?.kind === 'removed' ? [this.base, entry.basePath ?? path] : [this.other, path]
-    return side?.kind === 'stasis' ? side.bundle?.formats?.get(file) : undefined
+    return entry?.kind === 'removed' ? stasisFormat(this.base, entry.basePath ?? path) : stasisFormat(this.other, path)
   }
 
   // The tree over the files the kind filter keeps. The display prefix comes
@@ -613,7 +616,8 @@ export class BundleCompareCode extends LitElement {
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
     // where that would hide blanks of more than one kind changing
     // (hidesMixedWhitespace): others are diffed with them shown.
-    const unlisted = !whitespaceInsensitive(path, contents.after) || !whitespaceInsensitive(basePath, contents.before)
+    const unlisted = !whitespaceInsensitive(path, contents.after, stasisFormat(this.other, path))
+      || !whitespaceInsensitive(basePath, contents.before, stasisFormat(this.base, basePath))
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
@@ -804,7 +808,7 @@ export class BundleCompareCode extends LitElement {
   // given another file's names (`renamed` and that file).
   _highlighted(details, path, text, copy = '') {
     if (!text) return null
-    const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, text)
+    const lang = langForPath(path, stasisFormat(details, path), text)
     if (!lang) return null
     const key = `${details.integrity}\0${path}${copy ? `\0${copy}` : ''}`
     if (highlightCache.has(key)) return highlightCache.get(key)

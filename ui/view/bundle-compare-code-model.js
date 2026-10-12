@@ -101,10 +101,17 @@ export function whitespaceHidden(before, after) {
 // Kotlin, Go, Rust, C#, Swift, PHP) and shell. Anything else may hold its
 // meaning in its whitespace -- Python's, YAML's or Markdown's indentation, a
 // Makefile's tabs, a language no one listed -- and shows all of it. Told by
+// the format a stasis bundle records for the file, where it records one, of
+// the formats stasis knows (its own spelling of a file's language); else by
 // extension, or by a script's #! line naming Node, Deno, Bun or a shell.
+const INSENSITIVE_FORMATS = new Set(['module', 'commonjs', 'module-typescript', 'commonjs-typescript', 'json', 'solidity', 'php', 'shell', 'rust',
+  'java', 'kotlin', 'gradle', 'objc', 'objcpp', 'swift', 'c', 'cpp', 'c-header', 'cpp-header', 'xml', 'cmake', 'pbxproj'])
 const INSENSITIVE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx|json5?|jsonc|css|scss|less|html?|xhtml|xml|svg|c|h|cc|cpp|cxx|hh|hpp|hxx|java|kts?|go|rs|cs|swift|php|sh|bash|zsh)$/u
 const INSENSITIVE_SCRIPT = /^#![ \t]*(?:\S*\/)?(?:env[ \t]+(?:-\S*[ \t]+)*)?(?:node|nodejs|deno|bun|sh|bash|dash|ksh|zsh)(?=[ \t\r\n]|$)/u
-export const whitespaceInsensitive = (path, text = '') => INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPT.test(text))
+export function whitespaceInsensitive(path, text = '', format = undefined) {
+  if (typeof format === 'string') return INSENSITIVE_FORMATS.has(format)
+  return INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPT.test(text))
+}
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change

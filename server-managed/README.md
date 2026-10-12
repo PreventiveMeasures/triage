@@ -234,8 +234,11 @@ taken from between them still show, as in `/tmp` to `/ tmp` inside a string
 or `return x` to `returnx`, which `diff -w` would hide. It hides them only in
 code whose whitespace means nothing but in its strings: JavaScript and
 TypeScript, JSON, CSS, SCSS and Less, HTML, XML and SVG, C and C++, Java,
-Kotlin, Go, Rust, C#, Swift, PHP and shell, told by extension, or by a
-script's `#!` line naming Node, Deno, Bun or a shell. Any other file may hold
+Kotlin, Go, Rust, C#, Swift, PHP and shell. A stasis bundle's file is told
+by the format the bundle records for it (`module`, `commonjs`, `json`,
+`shell`, `cmake`, …), where it records one, whatever its name; any other by
+extension, or by a script's `#!` line naming Node, Deno, Bun or a shell. A
+format of another language, or one not known, reads as not listed. Any other file may hold
 its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
 Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
 Nor are they hidden in a file where that would hide blanks of more than one

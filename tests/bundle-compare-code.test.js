@@ -578,6 +578,27 @@ test('whitespace changes all show in a file whose whitespace may mean something,
   assert.match(sections['tools/gen.py'], /class=bundle-compare-diff-table/u)
 })
 
+test('in a stasis bundle, whether whitespace may be hidden is told by the format it records for the file, over its name', t => {
+  const reindent = ['if (a) {\n  b()\n}\n', 'if (a) {\n    b()\n}\n']
+  const files = [{ 'CMakeLists.txt': reindent[0], 'src/data.js': reindent[0] }, { 'CMakeLists.txt': reindent[1], 'src/data.js': reindent[1] }]
+  const formatted = path => {
+    const element = view(path, files)
+    for (const side of [element.base, element.other]) {
+      side.bundle.formats.set('CMakeLists.txt', 'cmake')
+      side.bundle.formats.set('src/data.js', 'resource')
+    }
+    return renderText(element.render())
+  }
+  const element = view('CMakeLists.txt', files)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  assert.match(formatted('CMakeLists.txt'), /Only whitespace changed in this file\./u, 'CMake, which a .txt name alone would not say')
+  const data = formatted('src/data.js')
+  assert.match(data, /class=diff-row del[^]*class=diff-row add/u, 'a .js name carried as a resource shows its whitespace changes')
+  assert.match(data, /aria-disabled=true\s*aria-label=Whitespace changes are hidden only/u)
+  assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
+})
+
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
   const files = ['a.js', 'a/b.js', 'Z.js', 'src/z/y.js', 'src/b.js', 'lib/x/y/z.js']
   const element = view(null, [Object.fromEntries(files.map(path => [path, '1'])), Object.fromEntries(files.map(path => [path, '2']))])
