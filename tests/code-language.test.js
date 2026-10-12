@@ -52,13 +52,16 @@ test('a .map file is JSON when its text is an object, whitespace aside', () => {
 
 test('license files wear the license icon by name, when they are text', () => {
   for (const path of ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE.BSD', 'license', 'Licence', 'node_modules/pkg/LICENSE-MIT',
-    'COPYING', 'COPYING.LESSER', 'copying.txt', 'UNLICENSE', 'Unlicense.md']) {
+    'COPYING', 'COPYING.LESSER', 'copying.txt', 'UNLICENSE', 'Unlicense.md', 'COPYING.LIB', 'LICENSE.Apache-2.0', 'LICENSE.APACHE2', 'LICENSE.GPLv3',
+    'LICENSE.BSD-3-Clause', 'LICENSE.0BSD', 'LICENSE.2.0', 'LICENSE-2.0.txt', 'LICENSE-MIT.txt', 'LICENSE.mit.md']) {
     assert.equal(sourceFileType(path), 'license', path)
   }
   for (const [path, icon] of [['lib/license.js', 'js'], ['license.ts', 'ts'], ['LICENSE.json', 'json'], ['copying.py', 'python'], ['licensed.txt', 'generic'],
     ['LICENSES/MIT.txt', 'generic'], ['LICENSES', 'generic'], ['my-license', 'generic'], ['copyright', 'generic'], ['license.svg', 'generic'],
     ['LICENSE.pdf', 'generic'], ['docs/license.PNG', 'generic'], ['COPYING.gz', 'generic'], ['UNLICENSE.docx', 'generic'],
-    ['lib/license.js.map', 'map'], ['LICENSE.map', 'map'], ['COPYING.MAP', 'map']]) {
+    ['lib/license.js.map', 'map'], ['LICENSE.map', 'map'], ['COPYING.MAP', 'map'],
+    ['license.go', 'generic'], ['COPYING.cs', 'generic'], ['license.swift', 'generic'], ['pkg/license-checker.go', 'generic'], ['license.libsonnet', 'generic'],
+    ['LICENSE.asc', 'generic'], ['LICENSE-MIT.sig', 'generic']]) {
     assert.equal(sourceFileType(path), icon, path)
   }
   assert.equal(sourceFileType('LICENSE', 'commonjs'), 'js', 'a recorded format still wins')
