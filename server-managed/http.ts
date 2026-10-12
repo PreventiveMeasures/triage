@@ -2577,6 +2577,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await reply(doc.private || old?.private === true, { ...assessment })
       return
     }

@@ -11,6 +11,9 @@
 //   cache table, shared by every instance; a private one's in memory.
 // - `risk/npm/packages`, `risk/npm/public` and `risk/npm/downloads`, kept an
 //   hour or a day by risk itself: in memory.
+//
+// What memory keeps is held to 2,000 records and 64 MiB as JSON, the first
+// kept going first.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
 //   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
 //   an assessment kept needs none.
@@ -35,11 +38,24 @@ const MEMORY_ENTRIES = 2000
 // As npm-loads.ts MAX_ACTIVE_LOADS.
 const MAX_ACTIVE_ASSESSMENTS = 4
 let assessing = 0
-const memory = new Map<string, unknown>()
-function remember(key: string, value: unknown) {
+// What memory holds at most, by its records' length as JSON: the first kept
+// go first past it, and a record past an eighth of it isn't kept at all.
+const MEMORY_LENGTH = 64 * 1024 * 1024
+let memoryLength = 0
+const memory = new Map<string, { value: unknown; length: number }>()
+function forget(key: string) {
+  const kept = memory.get(key)
+  if (!kept) return
   memory.delete(key)
-  memory.set(key, value)
-  while (memory.size > MEMORY_ENTRIES) memory.delete(memory.keys().next().value!)
+  memoryLength -= kept.length
+}
+function remember(key: string, value: unknown) {
+  forget(key)
+  const length = JSON.stringify(value)?.length ?? 0
+  if (length > MEMORY_LENGTH / 8) return
+  memory.set(key, { value, length })
+  memoryLength += length
+  while (memory.size > MEMORY_ENTRIES || memoryLength > MEMORY_LENGTH) forget(memory.keys().next().value!)
 }
 
 const hashed = (type: string, key: string) => `risk/${createHash('sha256').update(`${type}\0${key}`).digest('hex')}`
@@ -61,7 +77,7 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
         if (isPublic && type === 'risk/npm/assessments' && npmCache) return JSON.parse((await buffer((await npmCache.open(hashed(type, key))).stream)).toString('utf8'))
         if (isPublic && type === 'risk/npm/versions') { const value = await db.getUpstreamCacheEntry(`${type}/${key}`); return value === null ? null : JSON.parse(value) }
       } catch (error) { if (!(error instanceof CacheMissError)) warn('read', error); return null }
-      return memory.get(`${isPublic ? '' : 'private\0'}${type}\0${key}`) ?? null
+      return memory.get(`${isPublic ? '' : 'private\0'}${type}\0${key}`)?.value ?? null
     },
     async write(type, key, value) {
       if (type === 'npm/tarballs') return

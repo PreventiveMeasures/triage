@@ -13,7 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmDownloads, npmGithubStats } from '../server-managed/npm-insights.ts'
-import { npmRisk } from '../server-managed/npm-risk.ts'
+import { npmRisk, npmRiskCache } from '../server-managed/npm-risk.ts'
 import { npmDownloadCounts } from '../server-managed/npm-download-counts.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -290,6 +290,16 @@ test('access is checked again once the registry answers', async t => {
   const res = await h.send(packagePath('@acme/secret', '2.0.0'), 'manage')
   assert.equal(res.status, 404)
   assert.deepEqual(res.json(), { error: 'package-not-found' })
+})
+
+test('risk\'s records kept in memory are held to a length, the first kept going first', async () => {
+  const cache = npmRiskCache({ db: { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() } }, false)
+  const MiB = 1024 * 1024, part = 'p'.repeat(7 * MiB)
+  await cache.write('risk/npm/assessments', 'too-large', 'x'.repeat(9 * MiB))
+  assert.equal(await cache.read('risk/npm/assessments', 'too-large'), null, 'past an eighth of what memory holds: not kept')
+  for (let i = 0; i < 10; i++) await cache.write('risk/npm/assessments', `part-${i}`, part)
+  assert.deepEqual(await Promise.all([0, 1, 9].map(async i => (await cache.read('risk/npm/assessments', `part-${i}`))?.length ?? null)), [null, 7 * MiB, 7 * MiB],
+    'ten of 7 MiB: the first gone for the 64 MiB memory holds')
 })
 
 test('risk against a private version is checked again for it once told', async t => {
