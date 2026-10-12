@@ -144,17 +144,40 @@ const PRETTY_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
-// A file pretty-printed by the server, which keeps the copy; the viewer
-// keeps it only while the file is open (pretty-source.js). `{ text, source }`,
-// `source` the hash of the file the server formatted it from, as it names it.
-const requestPretty = (url, signal) => request(url, PRETTY_ERRORS, async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
-
+// A bundle's file pretty-printed by the server, which keeps the copy; the
+// viewer keeps it only while the file is open (pretty-source.js).
+// `{ text, source }`, `source` the hash of the file the server formatted it
+// from, as it names it.
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
-  return requestPretty(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, signal)
+  return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS,
+    async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
 }
 
-export function fetchPrettyNpmFile(name, version, path, hash, { signal } = {}) {
-  return requestPretty(`/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`, signal)
+// Every file of an npm version that needs pretty-printing, pretty-printed by
+// the server in one request, which keeps the copies of a public one: `onLine`
+// called with each as it comes, in path order, `{ path, source, text }`, or
+// `{ path, source, status, message }` where it has none, `source` as above.
+// Resolves once the server sent them all; refused as the version's files are.
+export function fetchPrettyNpmFiles(name, version, onLine, { signal } = {}) {
+  return request(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, async response => {
+    const generation = managedAppState.generation
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    // The line being read, in the chunks it came in.
+    let parts = []
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      let start = 0
+      for (let end = value.indexOf('\n'); end !== -1; start = end + 1, end = value.indexOf('\n', start)) {
+        parts.push(value.slice(start, end))
+        const { error, status, ...line } = JSON.parse(parts.join(''))
+        parts = []
+        if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+        await onLine(error ? { ...line, status, message: PRETTY_ERRORS[error] ?? PRETTY_ERRORS[status] ?? `Request failed (${status})` } : line)
+      }
+      parts.push(value.slice(start))
+    }
+  }, signal)
 }
 
 const RENAME_DIFF_ERRORS = {

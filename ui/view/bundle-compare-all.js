@@ -17,9 +17,6 @@ import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 25_000
-// Minified files pretty-printed together, both sides of each among the
-// copies pretty-source.js keeps: more would ask for as many copies at once.
-const COMBINED_PRETTY_MAX = 4
 // Files drawn at a time, as Review's whole diff draws them.
 const FILE_BATCH = 40
 
@@ -184,10 +181,7 @@ class BundleCompareAll extends BundleCompareCode {
     const at = order.indexOf(this._current)
     if (at >= this._fileLimit) this._fileLimit = Math.ceil((at + 1) / FILE_BATCH) * FILE_BATCH
     const entries = order.map(path => [path, this._entries.get(path)])
-    const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
-    // As the rail's search asks (_prettyShown).
-    this._prettyAllowed = prettyAllowed
-    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
+    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
     // The toggle's state for every file, as for one file's two sides (_pretty): a failure first, then one still coming.

@@ -944,14 +944,15 @@ Both endpoints support HEAD, compressed Content-Length when known, and
 `GET /api/bundles/:id/pretty?path=&hash=` returns one of its files
 pretty-printed, as Brotli-encoded `text/plain`, for the pretty-print toggle
 beside the wrap toggle of the Code tab, the source popup and the Search tab's
-source; the npm viewer's `GET /api/npm/pretty` is the same for a
-package version's files. The file is named by its path and the hash the
+source; the npm viewer's `GET /api/npm/pretty` formats a package version's
+files as these are, all at once. The file is named by its path and the hash the
 metadata gives it (`sha512-<base64>` of its UTF-8 text); only JavaScript,
 TypeScript, JSX, CSS and JSON files of at most 4 MiB are formatted, with
 [oxfmt](https://oxc.rs/docs/guide/usage/formatter), changing no more than
 layout needs. The first request reads the bundle, checks the file's hash (409
 `hash-mismatch` where it differs) and formats it, off the event loop and two
-files at a time per process (429 `pretty-busy` past that). A file that does
+files at a time per process, up to sixteen more waiting their turn (429
+`pretty-busy` past those); the viewer asks for two at a time. A file that does
 not parse is 422 `unformattable`; one whose output, checked apart from the
 formatter by @preventive/compare's `format` (a script's syntax tree as oxc
 parses it, a style sheet's as css-tree does, JSON's strings and comments as
@@ -1401,10 +1402,11 @@ control. A version shows in the bundle view with four tabs:
   each file as the side it's read from has it.
   A minified file (as the Overview tags them) of a language the server
   formats has a pretty-print toggle in its bar, as a managed bundle's has:
-  turned on, the file shows as the server formatted it (see `GET
-  /api/npm/pretty` below), and so does each minified file opened after,
-  until it is turned off. The formatted copy has lines of its own, so line
-  links and marks stay on the file as published.
+  turned on, the file shows as the server formatted it, and so does each
+  minified file opened after, until it is turned off: the version's minified
+  files are asked for all at once, in one request, the first time one is
+  wanted (see `GET /api/npm/pretty` below). The formatted copy has lines of
+  its own, so line links and marks stay on the file as published.
 - **Treemap**: the files by size, as for bundles, colored by the top-most
   directories that tell them apart, as package colors can't tell one
   package's files apart: below the directories every file shares, each
@@ -1693,14 +1695,22 @@ name, version and sha512 digest; its signature isn't checked here, as npm
 checks it when the version is published. null where npm keeps none, and for
 a private package; asked only where the version's manifest says npm keeps
 one, without a token, kept for an hour, and a failure answered as one. `GET
-/api/npm/pretty?name=&version=&path=&hash=` returns one of the version's files
-pretty-printed, formatted and checked as a bundle's are (`GET
-/api/bundles/:id/pretty`), its hash the `sha512-<base64>` of the file's bytes,
-which the client takes of the text it was sent. The files are loaded as for
-`package`, within the same four loads at once. A public version's copy is kept
-by content hash under `cache/npm/`, unencrypted, as what it is made from is
-public, and served as it is to anyone who may read a public version and names
-that hash; a private version's is made for each request and never kept. `GET
+/api/npm/pretty?name=&version=` returns every one of the version's files that
+needs pretty-printing (`needsPrettyPrint` in `common/pretty-print.js`: one the
+viewer tags minified, of a language formatted, of at most 4 MiB), each
+formatted and checked as a bundle's are (`GET /api/bundles/:id/pretty`), as
+Brotli-encoded `application/x-ndjson`: a line a file, in path order, each sent
+as it is formatted, `{ path, source, text }`, or `{ path, source, error,
+status }` where it has no copy (`unformattable`, `pretty-mismatch`,
+`pretty-busy`, …), `source` the `sha512-<base64>` of the file's bytes it was
+formatted from, which the client checks against the text it was sent. The
+files are loaded once, as for `package`, within the same four loads at once,
+before anything is answered, so a version that can't be loaded is refused as
+`package` refuses it; access is checked again before each line, and a reader
+who lost it has the response cut short. A public version's copies are kept by
+content hash under `cache/npm/`, unencrypted, as what they are made from is
+public, and read from there by anyone who may read a public version; a private
+version's are made for each request and never kept. `GET
 /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace=`
 diffs one of the version's JavaScript files with one of `otherVersion`'s of
 the same package, from both pretty-printed as `pretty` has them, as a

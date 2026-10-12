@@ -13,9 +13,15 @@ const answer = hash => {
   const next = answers.shift() ?? new Error('unexpected request')
   return next instanceof Error ? Promise.reject(next) : Promise.resolve(next).then(text => (typeof text === 'string' ? { text, source: hash } : text))
 }
+// An npm version's request for all its copies, its lines sent, and the
+// request ended or failed, by the test.
+const npmRequests = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer(args[2]) },
-  fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer(args[3]) },
+  fetchPrettyNpmFiles: (name, version, onLine) => {
+    requests.push(['npm', name, version])
+    return new Promise((end, fail) => { npmRequests.push({ send: onLine, end, fail }) })
+  },
 } })
 const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
@@ -37,6 +43,10 @@ function bundleOf(files) {
   return { kind: 'sourcemap', integrity: `sha512-bundle-${++serial}`, json, fileHashes: new Map(Object.entries(files).map(([path, text]) => [path, hashOf(text)])) }
 }
 const managed = { managedId: 'bundle-1' }
+// An npm version's details, its files' texts, which carry no hashes.
+const npmOf = files => ({ integrity: `sha512-npm-${++serial}`, kind: 'sourcemap', npm: { name: '@scope/lib', version: '2.0.0' },
+  json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+const MISMATCH = "The server's copy is of another file than the one open."
 const settled = () => setImmediate()
 // Turns until `done()` holds, for a copy asked for only once its file is
 // hashed (an npm version's details carry no hashes), which on a loaded
@@ -50,6 +60,7 @@ beforeEach(() => {
   state.bundleSourcePretty = false
   requests.length = 0
   answers.length = 0
+  npmRequests.length = 0
   renders = []
 })
 
@@ -88,15 +99,93 @@ test('a bundle file\'s copy is asked for by its metadata hash once the toggle is
   assert.equal(requests.length, 1, 'turned back on, a kept copy is not asked for again')
 })
 
-test('an npm file\'s copy is asked for by its version and the hash of its text', async () => {
-  const npm = { integrity: 'sha512-npm-hash', kind: 'sourcemap', npm: { name: '@scope/lib', version: '2.0.0' }, json: { version: 3, sources: ['lib.min.js'], sourcesContent: [minified] } }
-  const copy = () => prettyCopy(npm, { npm: npm.npm }, 'lib.min.js', minified)
+test('an npm version\'s copies come in one request, all its files that need it, each as it comes', async () => {
+  const files = { 'a.min.js': minified, 'b.min.js': `${minified}b`, 'c.min.js': `${minified}c`, 'd.min.js': `${minified}d`, 'index.js': readable }
+  const npm = npmOf(files)
+  const copy = path => prettyCopy(npm, { npm: npm.npm }, path, files[path])
+  assert.equal(copy('a.min.js'), null, 'off by default')
   togglePrettySource()
-  answers.push('pretty')
+  assert.deepEqual(['a.min.js', 'b.min.js', 'c.min.js', 'd.min.js'].map(path => copy(path).status), ['loading', 'loading', 'loading', 'loading'])
+  assert.deepEqual(requests, [['npm', '@scope/lib', '2.0.0']], 'one request for them all')
+  const asked = npmRequests[0]
+  await asked.send({ path: 'a.min.js', source: hashOf(minified), text: 'var a = 1;\n' })
+  assert.deepEqual(renders, ['a.min.js'], 'the view that asked repaints as each comes')
+  assert.deepEqual(copy('a.min.js'), { status: 'ready', text: 'var a = 1;\n', hash: hashOf('var a = 1;\n') }, 'with its own hash')
+  assert.equal(copy('b.min.js').status, 'loading', 'one still coming waits')
+  await asked.send({ path: 'b.min.js', source: hashOf('another file'), text: 'var b = 2;\n' })
+  assert.deepEqual(copy('b.min.js'), { status: 'error', message: MISMATCH, retry: true }, 'one the server names as another file\'s is refused')
+  await asked.send({ path: 'c.min.js', source: hashOf(`${minified}c`), status: 422, message: "This file couldn't be read as code." })
+  assert.deepEqual(copy('c.min.js'), { status: 'error', message: "This file couldn't be read as code.", retry: false })
+  asked.end()
+  await settledUntil(() => renders.length === 4)
+  assert.deepEqual(copy('d.min.js'), { status: 'error', message: "The server didn't pretty-print this file.", retry: false }, 'one it brought none of')
+  assert.deepEqual(prettyCopy(npm, { npm: npm.npm }, 'a.min.js', `${minified}x`), { status: 'error', message: MISMATCH, retry: false },
+    'a text other than the version\'s file has none')
+  togglePrettySource()
+  togglePrettySource()
+  assert.equal(copy('a.min.js').status, 'loading', 'turned back on, a version is asked again whole where a copy failed for a reason that may pass')
+  assert.equal(requests.length, 2)
+  npmRequests[1].end()
+  await settledUntil(() => copy('a.min.js').status !== 'loading')
+})
+
+test('an npm version\'s request that fails fails each file, and is asked again whole where that may succeed', async () => {
+  togglePrettySource()
+  const files = { 'a.min.js': minified }
+  const npm = npmOf(files)
+  const copy = () => prettyCopy(npm, { npm: npm.npm }, 'a.min.js', minified)
   copy()
-  // Until it is read: a request left pending would take a later test's answer.
+  npmRequests[0].fail(Object.assign(new Error('Too many packages are loading. Try again shortly.'), { status: 429 }))
   await settledUntil(() => copy().status !== 'loading')
-  assert.deepEqual(requests, [['npm', '@scope/lib', '2.0.0', 'lib.min.js', hashOf(minified)]])
+  assert.deepEqual(copy(), { status: 'error', message: 'Too many packages are loading. Try again shortly.', retry: true })
+  assert.deepEqual(renders, ['a.min.js'])
+  togglePrettySource()
+  togglePrettySource()
+  assert.equal(copy().status, 'loading')
+  assert.equal(requests.length, 2, 'asked again whole')
+  await npmRequests[1].send({ path: 'a.min.js', source: hashOf(minified), text: 'var a = 1;\n' })
+  npmRequests[1].end()
+  assert.equal(copy().text, 'var a = 1;\n')
+  const gone = npmOf(files)
+  prettyCopy(gone, { npm: gone.npm }, 'a.min.js', minified)
+  npmRequests[2].fail(Object.assign(new Error('No such package version, or it is not available to you.'), { status: 404 }))
+  await settledUntil(() => prettyCopy(gone, { npm: gone.npm }, 'a.min.js', minified).status !== 'loading')
+  togglePrettySource()
+  togglePrettySource()
+  assert.equal(prettyCopy(gone, { npm: gone.npm }, 'a.min.js', minified).retry, false, 'one that is not there stays so')
+  assert.equal(requests.length, 3)
+})
+
+test('an npm version\'s request a session change aborted is asked again on the next paint', async () => {
+  togglePrettySource()
+  const npm = npmOf({ 'a.min.js': minified })
+  const copy = () => prettyCopy(npm, { npm: npm.npm }, 'a.min.js', minified)
+  copy()
+  npmRequests[0].fail(new DOMException('Managed session changed', 'AbortError'))
+  await settled()
+  assert.deepEqual(renders, [], 'an aborted request paints nothing')
+  assert.equal(copy().status, 'loading')
+  assert.equal(requests.length, 2)
+  npmRequests[1].end()
+  await settledUntil(() => copy().status !== 'loading')
+})
+
+test('bundle copies are asked of the server two at a time, the rest in turn as they were asked', async () => {
+  togglePrettySource()
+  const files = Array.from({ length: 4 }, (_, i) => `h${i}.min.js`)
+  const details = bundleOf(Object.fromEntries(files.map((path, i) => [path, `${minified}${i}`])))
+  const comes = []
+  for (let i = 0; i < files.length; i++) answers.push(new Promise(resolve => { comes.push(resolve) }))
+  for (const [i, path] of files.entries()) prettyCopy(details, managed, path, `${minified}${i}`)
+  await settledUntil(() => requests.length === 2)
+  await settled()
+  assert.deepEqual(requests.map(([, , path]) => path), ['h0.min.js', 'h1.min.js'])
+  comes[1]('copy 1')
+  await settledUntil(() => requests.length === 3)
+  assert.equal(requests[2][2], 'h2.min.js', 'the next as one came')
+  for (const [i, come] of comes.entries()) come(`copy ${i}`)
+  await settledUntil(() => renders.length === files.length)
+  assert.equal(requests.length, 4)
 })
 
 test('a copy the server names as another file\'s, or as none, is refused', async () => {

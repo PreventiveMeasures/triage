@@ -89,8 +89,8 @@ export async function fetchPrettyBundleFile(id, path, hash, options) {
   return (await loadManagedBundle()).fetchPrettyBundleFile(id, path, hash, options)
 }
 
-export async function fetchPrettyNpmFile(name, version, path, hash, options) {
-  return (await loadManagedBundle()).fetchPrettyNpmFile(name, version, path, hash, options)
+export async function fetchPrettyNpmFiles(name, version, onLine, options) {
+  return (await loadManagedBundle()).fetchPrettyNpmFiles(name, version, onLine, options)
 }
 
 export async function fetchBundleRenameDiff(id, other, params, options) {

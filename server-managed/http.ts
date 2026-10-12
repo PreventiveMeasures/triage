@@ -59,7 +59,7 @@
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404/429/502
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404/429/502
 //   GET  /api/npm/provenance?name=&version= → npm's provenance for a public version | 400/401/404/429/502
-//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
+//   GET  /api/npm/pretty?name=&version= → every one of its files that needs it pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
@@ -70,6 +70,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
+import { createBrotliCompress, constants as zlibConstants } from 'node:zlib'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -134,8 +135,8 @@ import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, np
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
-import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest } from './pretty-print.ts'
-import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
+import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest, prettyText } from './pretty-print.ts'
+import { renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -1309,6 +1310,30 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
   try { await pipeline(blob.stream, res) } catch { res.destroy() }
 }
 
+// Lines of JSON, Brotli-encoded and sent as each is written, so the reader
+// has each while the next is made. A reader gone, or no longer `allowed`
+// before a line, has the response cut short, as is one whose lines fail: a
+// response that ends is one with every line.
+async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, allowed: () => Promise<boolean>) {
+  res.writeHead(200, { 'content-type': 'application/x-ndjson', 'content-encoding': 'br', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
+  const encoder = createBrotliCompress({ params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
+  const sent = pipeline(encoder, res).catch(() => {})
+  const closed = new Promise(resolve => { res.once('close', resolve) })
+  try {
+    for await (const line of lines) {
+      if (res.destroyed || !await allowed()) { res.destroy(); return }
+      encoder.write(`${JSON.stringify(line)}\n`)
+      await Promise.race([new Promise<void>(resolve => { encoder.flush(() => { resolve() }) }), closed])
+    }
+  } catch (err) {
+    console.warn('managed: a streamed response failed:', err)
+    res.destroy()
+    return
+  }
+  encoder.end()
+  await sent
+}
+
 // A pretty-printed copy names the file it was formatted from, by the hash it
 // was asked for and its source was found to have, for the viewer to check.
 const prettySource = ({ hash }: PrettyRequest): Record<string, string> => ({ 'x-source-hash': hash })
@@ -2464,9 +2489,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     || (path === NPM_RISK_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
-  const file = path === NPM_PRETTY_PATH ? prettyRequest(params) : null
   const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
-  if ((path === NPM_PRETTY_PATH && !file) || (path === NPM_RENAME_DIFF_PATH && !diffed)) { sendJson(res, 400, { error: 'bad-file' }); return }
+  if (path === NPM_RENAME_DIFF_PATH && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2566,14 +2590,19 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       return
     }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
-    // One of its files pretty-printed (pretty-print.ts), from a copy kept
-    // for a public version.
-    if (file) {
+    // Every one of its files that needs it pretty-printed (pretty-print.ts
+    // npmAll), a line each as it is formatted, or found kept for a public
+    // version; its files read before anything is answered. A reader who lost
+    // their session, or their access, meanwhile has the rest cut short.
+    if (path === NPM_PRETTY_PATH) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const pretty = await deps.prettyCache.npm(doc, file)
-      if (!(await recheck(doc.private))) { pretty.stream.destroy(); return }
+      const lines = await deps.prettyCache.npmAll(doc)
+      if (!(await recheck(doc.private))) return
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
-      await sendEncoded(req, res, pretty, 'text/plain; charset=utf-8', prettySource(file))
+      await sendLines(res, lines, async () => {
+        const current = await npmReader(deps, cookie)
+        return current != null && (!doc.private || canReadPrivateNpm(current, name))
+      })
       return
     }
     // One of its JavaScript files diffed with another version's, both
