@@ -3675,16 +3675,16 @@ a.npm-socket-score {
   & > li { display: flex; }
 }
 /* A publisher that changed, linking to the new one's profile, tinted by the
-   change: light yellow to an account known to publish, mostly fine; orange
-   between two that aren't; red from one that is to one that isn't. */
+   change: grey to an account known to publish, mostly fine; orange between
+   two that aren't; red from one that is to one that isn't. */
 a.npm-compare-publisher {
   --tint: var(--high);
   color: var(--text); text-decoration: none;
   background: color-mix(in srgb, var(--tint) 14%, var(--bg)); border-color: color-mix(in srgb, var(--tint) 70%, var(--border));
 
   &.is-to-known {
-    --tint: var(--medium);
-    background: color-mix(in srgb, var(--tint) 8%, var(--bg)); border-color: color-mix(in srgb, var(--tint) 45%, var(--border));
+    --tint: var(--muted);
+    background: color-mix(in srgb, var(--tint) 14%, var(--bg)); border-color: var(--border);
   }
   &.is-from-known { --tint: var(--critical); }
   &:hover { border-color: var(--tint); }
