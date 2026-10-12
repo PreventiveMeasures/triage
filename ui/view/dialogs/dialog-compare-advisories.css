@@ -1,0 +1,35 @@
+/* Compare's advisories dialog (npm-compare-advisories-dialog.js): its frame
+   and head the advisory details dialog's, narrower, and its groups as the
+   Overview's Advisories column has them: what the open version brings boxed
+   and marked, what it still has plain, and what it fixes struck through. */
+dialog { width: min(94vw, 56rem); }
+.compare-advisories {
+  min-height: 0; padding: .75rem 1rem 1rem; overflow: auto; overscroll-behavior: contain;
+}
+.compare-advisories:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.compare-advisory-group + .compare-advisory-group { margin-top: .9rem; }
+.compare-advisory-group h4 {
+  display: flex; align-items: baseline; gap: .4rem;
+  margin: 0 0 .25rem; padding: 0 .55rem;
+  color: var(--muted);
+  font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+.compare-advisory-count { font-variant-numeric: tabular-nums; }
+/* Every group inset alike, and one badge width whichever the severity, so
+   titles line up across them. */
+.compare-advisory-group > .bundle-advisories-rows {
+  padding: .1rem .55rem;
+  border: 1px solid transparent; border-radius: var(--ui-radius, 4px);
+}
+.compare-advisory-group .bundle-advisory-rail { width: 5rem; align-items: stretch; text-align: center; }
+.compare-advisory-group.is-new {
+  & h4 { color: var(--critical); }
+  & > .bundle-advisories-rows {
+    background: color-mix(in srgb, var(--critical) 6%, var(--bg));
+    border-color: color-mix(in srgb, var(--critical) 55%, var(--border));
+  }
+}
+.compare-advisory-group.is-fixed {
+  & .bundle-advisory-title { color: var(--muted); text-decoration: line-through; }
+  & .bundle-advisory-severity { opacity: .55; }
+}

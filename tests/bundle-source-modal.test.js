@@ -18,6 +18,7 @@ mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.e
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
 // Dialogs have separate rendering tests; capture why requests without browser-only dependencies.
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
+mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })
 const openedWhy = []
 mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog: props => openedWhy.push(props) } })
 const highlightCalls = []

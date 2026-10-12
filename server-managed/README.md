@@ -1246,9 +1246,13 @@ control. A version shows in the bundle view with four tabs:
   calls for a look: the advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
   match), tinted by the worst still affecting the open one, or green where
-  none does, each side's severities in its tooltip; for a public package,
-  each of Socket's scores either version has under its bar, from one to the
-  other and tinted as on the Overview: supply chain under 85; vulnerability
+  none does, its tooltip a line for each version's by severity and one for
+  how many the open one brings and fixes, and a click listing them in a
+  dialog, rows as in the Overview's Advisories column: those the open one
+  brings, marked, those it still has, and those it fixes, struck through;
+  for a public package, each of Socket's scores either version has under
+  its bar, from one to the other, each version's on a line of its tooltip,
+  and tinted as on the Overview: supply chain under 85; vulnerability
   under 85 where it tells of worse than the advisories found affecting the
   version (Socket's score counts much the same advisories: under 85 for a
   high one, 84 for one alone, and 25, its floor, for a critical one or many

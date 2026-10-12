@@ -8,6 +8,9 @@ mock.module('../client/index.js', { exports: {
 } })
 mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
+// What Compare's advisories dialog is opened with, each time.
+const comparedAdvisories = []
+mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog: props => { comparedAdvisories.push(props) } } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
@@ -279,7 +282,8 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   const badges = async (...sides) => { npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return text(npmCompareBadges(...sides)) }
 
   const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
-  assert.match(flagged, /npm-compare-advisories sev-moderate[^]*Advisories affecting 1\.0\.0: 2 \(1 high, 1 moderate\) · 2\.0\.0: 1 \(1 moderate\)[^]*>2 → 1</u)
+  assert.match(flagged, /<button type="button" class=npm-extension npm-compare-advisories sev-moderate[^]*>2 → 1</u)
+  assert.match(flagged, /data-tooltip=Advisories affecting\n1\.0\.0  2  1 high, 1 moderate\n2\.0\.0  1  1 moderate\n0 new · 1 fixed\s/u, 'each version on a line')
   assert.match(flagged, /npm-socket-score is-good[^]*>Quality<[^]*>30 → 90</u, 'under its bar on one side, tinted as the open one stands')
   assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u)
   assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Maintenance)</u, 'at or over their bars on both sides')
@@ -316,9 +320,20 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['chained@1.2.0'] = { scores: scores({ supplyChain: .84 }), alerts: [] }
   assert.match(await badges(side('chained', '1.1.0'), side('chained', '1.2.0')), /npm-socket-score is-fair[^]*>Supply chain<[^]*>85 → 84</u)
 
+  // A click lists them: what the open one brings, still has, and fixes.
+  const clicked = npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0')).values[0][0].values
+  clicked.find(value => typeof value === 'function')()
+  const [dialog] = comparedAdvisories
+  assert.equal(dialog.heading, 'Advisories · flagged 1.0.0 → 2.0.0')
+  assert.deepEqual(dialog.groups.map(({ status, heading, rows }) => [status, heading, rows.length]), [['kept', 'Still affecting 2.0.0', 1], ['fixed', 'Fixed in 2.0.0', 1]])
+  assert.equal(dialog.isCurrent(), true)
+  assert.match(text(npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))),
+    /data-tooltip=Socket's quality score\n1\.0\.0  30\n2\.0\.0  90>/u, 'Socket\'s, a version a line')
+
   // Socket has no report on the open one yet, as on one just published.
   answers.socket['unscanned@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
   const unscanned = await badges(side('unscanned', '1.0.0'), side('unscanned', '1.1.0'))
+  assert.match(unscanned, /Socket's quality score\n1\.0\.0    30\n1\.1\.0  none/u, 'right-aligned, none where it has none')
   assert.match(unscanned, /href=https:\/\/socket\.dev\/npm\/package\/unscanned\/overview\/1\.0\.0 [^]*>Quality<[^]*>30 → –</u, 'linking to the report it shows')
 
   answers.socket['@acme/secret@1.0.0'] = { scores: scores({ quality: .1 }), alerts: [] }

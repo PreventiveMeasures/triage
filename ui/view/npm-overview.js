@@ -13,6 +13,7 @@ import { NPM_LICENSE_FILE, factFile, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
+import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories-dialog.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
@@ -212,16 +213,28 @@ export function npmAdvisoryStatus(advisory, versions, version) {
   return affected.length > 0 && affected.every(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
+// Whether the session the advisories are read in is still the current one:
+// what shows them is discarded once it isn't.
+function sessionCheck() {
+  const session = state.managedSession?.id
+  return () => state.managedSession?.id === session
+}
+
+// An advisory's row, as the Advisories tab draws a bundle's, its text, where
+// it has one, opening in the dialog the tab opens, until the session changes.
+function npmAdvisoryRow(advisory, isCurrent) {
+  return advisoryRow({ ...advisory, title: advisory.title ?? advisory.id, severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown',
+    cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range },
+  ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent }))
+}
+
 // The package's advisories across every version, npm's and its repository's
 // on GitHub, grouped by how they stand for the version shown: those affecting
 // it first and marked, those it fixes last and struck through.
 export function npmAdvisoriesColumn(entry) {
   const { name, version } = entry.npm
   const data = npmPackageAdvisories(name)
-  // Its text, where it has one, in the dialog the Advisories tab opens, until
-  // the session changes.
-  const session = state.managedSession?.id
-  const showDetails = ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent: () => state.managedSession?.id === session })
+  const isCurrent = sessionCheck()
   const ready = data.status === 'ready'
   const advisories = ready ? data.advisories : []
   const statuses = advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version))
@@ -236,8 +249,7 @@ export function npmAdvisoriesColumn(entry) {
     : groups.length === 0 ? html`${unchecked}<p class="bundles-overview-col-empty">No advisories for any version.</p>`
     : html`${unchecked}${groups.map(group => html`<section class=${`npm-advisory-group is-${group.status}`}>
       <h4 class="npm-advisory-group-head">${group.heading} <span class="bundles-overview-col-count">${group.advisories.length}</span></h4>
-      <ul class="bundle-advisories-rows">${group.advisories.map(advisory => advisoryRow({ ...advisory, title: advisory.title ?? advisory.id,
-        severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown', cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range }, showDetails))}</ul>
+      <ul class="bundle-advisories-rows">${group.advisories.map(advisory => npmAdvisoryRow(advisory, isCurrent))}</ul>
     </section>`)}`
   return overviewColumn({ title: 'Advisories', count: ready ? advisories.length : '…', body, className: 'npm-advisories-col',
     extra: ready ? html` <span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`}>${active} active</span>` : nothing })
@@ -386,18 +398,44 @@ const severityOf = advisory => SEVERITIES.has(advisory.severity) ? advisory.seve
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
 
 // The advisories affecting each version, tinted by the worst still affecting
-// the open one, or green where none does; how many of each severity in its
-// tooltip.
-function advisoriesBadge([from, to], affecting) {
+// the open one, or green where none does; each version's, by severity, and
+// how many the open one brings and fixes, in its tooltip; a click lists them
+// (npm-compare-advisories-dialog.js).
+function advisoriesBadge(sides, affecting) {
   if (!affecting) return nothing
   const [was, now] = affecting
   if (was.length === 0 && now.length === 0) return nothing
   const tint = now.length === 0 ? 'is-cleared' : `sev-${worstOf(now)}`
-  const told = list => list.length === 0 ? 'none' : `${list.length} (${SEVERITY_ORDER.map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length])
-    .filter(([, count]) => count > 0).map(([severity, count]) => `${count} ${severity}`).join(', ')})`
-  return html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`}
-    data-tooltip=${`Advisories affecting ${from.version}: ${told(was)} · ${to.version}: ${told(now)}`}>
-    <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></span></li>`
+  const brought = now.filter(advisory => !was.includes(advisory)).length, fixed = was.filter(advisory => !now.includes(advisory)).length
+  const counts = alignedRight(affecting.map(list => String(list.length)))
+  const tooltip = ['Advisories affecting', ...versionLines(sides, affecting.map((list, i) => list.length === 0 ? 'none'
+    : `${counts[i]}  ${SEVERITY_ORDER.map(severity => [severity, list.filter(advisory => severityOf(advisory) === severity).length])
+      .filter(([, count]) => count > 0).map(([severity, count]) => `${count} ${severity}`).join(', ')}`)),
+  `${brought} new · ${fixed} fixed`].join('\n')
+  return html`<li><button type="button" class=${`npm-extension npm-compare-advisories ${tint}`} aria-haspopup="dialog" data-tooltip=${tooltip}
+    @click=${() => openCompareAdvisories(sides, affecting)}>
+    <span>Advisories</span><span class="npm-extension-count">${fromTo(was.length, now.length)}</span></button></li>`
+}
+
+// Each side's version and what is said of it, a line each, the versions
+// padded to one width (the tooltip is monospace).
+function versionLines(sides, said) {
+  const width = Math.max(...sides.map(({ version }) => version.length))
+  return sides.map(({ version }, i) => `${version.padEnd(width)}  ${said[i]}`)
+}
+// Texts padded at their start to one width, so numbers line up.
+const alignedRight = texts => texts.map(text => text.padStart(Math.max(...texts.map(each => each.length))))
+
+// The advisories between the two versions, in a dialog: those the open one
+// brings, those it still has, and those it fixes.
+function openCompareAdvisories([from, to], [was, now]) {
+  const isCurrent = sessionCheck()
+  const groups = [
+    ['new', `New in ${to.version}`, now.filter(advisory => !was.includes(advisory))],
+    ['kept', `Still affecting ${to.version}`, now.filter(advisory => was.includes(advisory))],
+    ['fixed', `Fixed in ${to.version}`, was.filter(advisory => !now.includes(advisory))],
+  ].filter(([, , list]) => list.length > 0).map(([status, heading, list]) => ({ status, heading, rows: list.map(advisory => npmAdvisoryRow(advisory, isCurrent)) }))
+  void openNpmCompareAdvisoriesDialog({ heading: `Advisories · ${from.name} ${from.version} → ${to.version}`, groups, isCurrent })
 }
 
 // Whether Socket's vulnerability score on a version under `bar` tells of
@@ -425,7 +463,7 @@ function socketBadges([from, to], affecting) {
     if (key === 'vulnerability' && !(affecting && scores.some((score, i) => vulnerabilityBeyond(score, affecting[i], bar)))) return []
     const [before, after] = scores, shown = after ?? before
     return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(shown, good)}`} href=${npmSocketHref({ npm: after === null ? from : to })} target="_blank" rel="noopener noreferrer"
-      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${before ?? 'none'} for ${from.version}, ${after ?? 'none'} for ${to.version}`}>
+      data-tooltip=${[`Socket's ${label.toLowerCase()} score`, ...versionLines([from, to], alignedRight(scores.map(score => String(score ?? 'none'))))].join('\n')}>
       ${socketGauge(shown)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
   })
 }
