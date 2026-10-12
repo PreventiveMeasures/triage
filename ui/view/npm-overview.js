@@ -8,7 +8,7 @@ import { bundleFileSizes } from '../../common/bundle-sources.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
-import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
+import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
@@ -35,6 +35,25 @@ const ADVISORY_GROUPS = [
 function npmPackageStats(name) {
   return npmPackageData('stats', name, () => fetchNpmStats(name), data => ({ downloads: data.downloads ?? null, github: data.github ?? null }))
 }
+
+// Packages' recent downloads, enough for their tiers, for this session:
+// those asked for in one pass (as a Compare's new dependencies are) in one
+// request, up to as many as the server takes in one.
+const DOWNLOAD_COUNTS_AT_ONCE = 512
+let countsAsked = null
+function askDownloadCounts(name) {
+  if (!countsAsked || countsAsked.names.size >= DOWNLOAD_COUNTS_AT_ONCE) {
+    const names = new Set()
+    const asked = { names, answer: Promise.resolve().then(() => { if (countsAsked === asked) countsAsked = null; return fetchNpmDownloadCounts([...names]) }) }
+    countsAsked = asked
+  }
+  countsAsked.names.add(name)
+  return countsAsked.answer.then(({ downloads = {} }) => {
+    if (!Object.hasOwn(downloads, name)) throw new Error('Not answered')
+    return { downloads: downloads[name] }
+  })
+}
+const npmDownloadCounts = name => npmPackageData('downloads', name, () => askDownloadCounts(name), data => ({ downloads: data.downloads ?? null }))
 
 // A package's advisories for this session, across its published versions,
 // which each one's `affected` indexes.
@@ -627,11 +646,11 @@ function socketBadges([from, to], affecting) {
   })
 }
 
-// A package's tier by downloads, where `shown` takes its level, its last
-// complete month's downloads in its tooltip, over the month's name; nothing
-// until its figures arrive.
-function tierTag(name, shown = () => true) {
-  const stats = npmPackageStats(name)
+// A package's tier by its downloads (`stats`, its figures or its recent
+// downloads alone), where `shown` takes its level, its last complete
+// month's downloads in its tooltip, over the month's name; nothing until
+// they arrive.
+function tierTag(stats, shown = () => true) {
   const tier = stats.status === 'ready' ? npmDownloadTier(stats.downloads) : null
   const level = tier === null ? null : npmTierLevel(tier)
   if (level === null || !shown(level)) return nothing
@@ -642,15 +661,16 @@ function tierTag(name, shown = () => true) {
 
 // The package's tier where it is orange or red (past the top 20,000).
 function popularityBadge(name) {
-  const tag = tierTag(name, level => level === 'is-low' || level === 'is-unpopular')
+  const tag = tierTag(npmPackageStats(name), level => level === 'is-low' || level === 'is-unpopular')
   return tag === nothing ? nothing : html`<li>${tag}</li>`
 }
 
 // A dependency Compare lists new (bundle-compare.js source's `dependencyTag`):
-// its package's tier, whatever it is. Nothing for one changed or removed,
-// which the version compared with already had, nor one that names no package
-// in the registry (a git or file one).
-export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(row.opens) : nothing
+// its package's tier, whatever it is, by its recent downloads, asked with
+// the others'. Nothing for one changed or removed, which the version
+// compared with already had, nor one that names no package in the registry
+// (a git or file one).
+export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(npmDownloadCounts(row.opens)) : nothing
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {

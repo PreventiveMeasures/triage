@@ -65,6 +65,10 @@ export async function fetchNpmStats(name, options) {
   return (await loadManagedBundle()).fetchNpmStats(name, options)
 }
 
+export async function fetchNpmDownloadCounts(names, options) {
+  return (await loadManagedBundle()).fetchNpmDownloadCounts(names, options)
+}
+
 export async function fetchNpmAdvisories(name, options) {
   return (await loadManagedBundle()).fetchNpmAdvisories(name, options)
 }

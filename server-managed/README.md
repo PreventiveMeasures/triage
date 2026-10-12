@@ -1333,7 +1333,8 @@ control. A version shows in the bundle view with four tabs:
   that changed, each opening its package, and a changed one whose ranges
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those; one
   the open version adds is tagged with its package's tier by downloads,
-  whatever it is, as the package's own is (a version-specific check, as of
+  whatever it is, as the package's own is, the new ones' downloads asked
+  for in one request (`/api/npm/download-counts`) (a version-specific check, as of
   a version's age or publisher, would have to cover every version its
   range takes).
   Files, open from the start, show each file's type, and the files the open
@@ -1435,7 +1436,15 @@ archived, pushedAt }` for the repository the latest version's manifest names,
 `openIssues` taking in the open pull requests `openPulls` counts apart (from
 the last page of their list, one a page; null where GitHub didn't say); either
 is null where it can't be had, `github` for a repository GitHub does not
-say is public. `GET /api/npm/tags?name=&version=` returns `{ name, version,
+say is public. `GET /api/npm/download-counts?names=a,b` returns `{ downloads }`,
+many packages' recent downloads at once by name (`{ start, end, days }`,
+from the first of the month before last to yesterday: the latest six weeks
+and the last whole month their tiers go by; null where npm has none; one
+npm couldn't be asked about left out), up to 512 names: npm's range API is
+asked for up to 128 unscoped ones in one request and a scoped one alone,
+four at a time, without credentials, as it answers anyone; each is kept for
+an hour, and a package's year, where kept for its Overview, answers for it.
+`GET /api/npm/tags?name=&version=` returns `{ name, version,
 tags }`: the tags of its GitHub repository that point to its publish commit
 (`gitHead`), among those whose names hold the version (`v1.2.3`,
 `pkg@1.2.3`), which the Overview shows after the commit. GitHub's GraphQL API

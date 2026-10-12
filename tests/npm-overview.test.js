@@ -14,10 +14,12 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
-const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {} }
-const socketAsked = []
+const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, counts: {} }
+// Each request for many packages' recent downloads, by its names.
+const countsAsked = [], socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
+  fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmDependencyTier, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
@@ -417,12 +419,21 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 })
 
-test('a dependency Compare lists new is tagged with its package\'s tier by downloads, whatever it is, once its figures arrive', async () => {
+test('a dependency Compare lists new is tagged with its package\'s tier by downloads, whatever it is, once they arrive, asked with the others\'', async () => {
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   // 500 a day: 3,500 a week, among the top 100,000; 4M a day, 28M a week, among the top 2,000.
-  answers.stats['new-low'] = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) } }
-  answers.stats['new-top'] = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 4e6) } }
-  const tag = async (row, kind = 'added') => { npmDependencyTier(row, kind); await new Promise(resolve => { setImmediate(resolve) }); return text(npmDependencyTier(row, kind)) }
+  answers.counts['new-low'] = { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) }
+  answers.counts['new-top'] = { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 4e6) }
+  const settle = () => new Promise(resolve => { setImmediate(resolve) })
+  // Asked for in one pass, as a Compare's are: one request for all.
+  countsAsked.length = 0
+  npmDependencyTier({ name: 'new-low', opens: 'new-low' }, 'added')
+  npmDependencyTier({ name: 'new-top', opens: 'new-top' }, 'added')
+  npmDependencyTier({ name: 'unlisted', opens: 'unlisted' }, 'added')
+  await settle()
+  assert.deepEqual(countsAsked, [['new-low', 'new-top', 'unlisted']])
+  assert.equal(text(npmDependencyTier({ name: 'unlisted', opens: 'unlisted' }, 'added')), '', 'nothing for one not answered')
+  const tag = async (row, kind = 'added') => { npmDependencyTier(row, kind); await settle(); return text(npmDependencyTier(row, kind)) }
   assert.match(await tag({ name: 'alias', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
     'the package it opens, an alias\'s too')
   assert.match(await tag({ name: 'new-top', opens: 'new-top' }), /npm-downloads-tier is-top[^]*>top 2,000</u, 'green ones too')

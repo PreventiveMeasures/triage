@@ -110,6 +110,10 @@ export function fetchNpmStats(name, { signal } = {}) {
   return requestNpm('stats', { name }, signal)
 }
 
+export function fetchNpmDownloadCounts(names, { signal } = {}) {
+  return requestNpm('download-counts', { names: names.join(',') }, signal)
+}
+
 export function fetchNpmAdvisories(name, { signal } = {}) {
   return requestNpm('advisories', { name }, signal)
 }

@@ -188,10 +188,19 @@ export function npmPackageData(kind, name, ask, shape) {
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
     if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait)
-    render()
+    repaint()
     return null
   }).catch(() => {})
   return loading
+}
+
+// One repaint for answers arriving together, as those of one request for
+// many packages do.
+let repaintQueued = false
+function repaint() {
+  if (repaintQueued) return
+  repaintQueued = true
+  queueMicrotask(() => { repaintQueued = false; render() })
 }
 
 // A package's versions, newest first, and dist-tags, and whether a team
