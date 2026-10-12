@@ -67,6 +67,24 @@ test('a file\'s hits are collected no further than listed: the first lines in it
   assert.deepEqual(lines(fileHits(before, after, matcher('gone'), changeBlocks(before, after))), ['−a30'])
 })
 
+test('a changed file\'s lines are told changed or not from its blocks, not by indexing each line they change', t => {
+  const run = word => Array.from({ length: 200_000 }, (_, i) => `${word} ${i}`).join('\n')
+  const after = `keep fetch\n${run('new')}\n`, before = `keep fetch\n${run('old')}\n`
+  // One block replacing 200,000 lines with as many.
+  const blocks = [{ a0: 1, a1: 200_001, b0: 1, b1: 200_001 }]
+  const set = t.mock.method(Map.prototype, 'set')
+  let kept, removed
+  try {
+    kept = lines(fileHits(before, after, matcher('fetch'), blocks))
+    removed = lines(fileHits(before, after, matcher('old 7'), blocks)).slice(0, 2)
+  } finally {
+    set.mock.restore()
+  }
+  assert.deepEqual(kept, [' b0'])
+  assert.deepEqual(removed, ['−a8', '−a71'])
+  assert.ok(set.mock.callCount() < 100, `${set.mock.callCount()} lines indexed`)
+})
+
 test('a changed block\'s hits list as its diff\'s layout draws them: unified, the removed over the added; split, row by row', () => {
   const before = `keep\n${Array.from({ length: 25 }, (_, i) => `x old ${i}`).join('\n')}\n`
   const after = `keep\n${Array.from({ length: 25 }, (_, i) => `x new ${i}`).join('\n')}\n`

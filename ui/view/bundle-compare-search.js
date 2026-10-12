@@ -14,12 +14,11 @@ export const SEARCH_MAX_FILES = 100
 export const SEARCH_MAX_FILE_HITS = 20
 
 // A text's lines (`lines`) that match, `{ line, text, ranges }` each, the
-// first `limit` of those `kept` (by line number), so a common query over a
-// large text stops at what is listed.
-function matching(lines, matcher, limit = SEARCH_MAX_FILE_HITS, kept = () => true) {
+// first `limit` of those from line `from` up to `to`, so a common query over
+// a large text stops at what is listed.
+function matching(lines, matcher, limit = SEARCH_MAX_FILE_HITS, from = 0, to = lines.length) {
   const hits = []
-  for (let i = 0; i < lines.length && hits.length < limit; i++) {
-    if (!kept(i)) continue
+  for (let i = from; i < Math.min(to, lines.length) && hits.length < limit; i++) {
     const ranges = matcher.ranges(lines[i])
     if (ranges.length > 0) hits.push({ line: i, text: lines[i], ranges })
   }
@@ -44,19 +43,32 @@ export function fileHits(before, after, matcher, blocks, { split = false } = {})
 function changedHits(a, b, matcher, blocks, split) {
   const newer = matching(b, matcher)
   if (!blocks) return newer.map(hit => ({ ...hit, side: 'b', sign: null }))
-  const added = new Map(), dropped = new Map()
-  for (const block of blocks) {
-    for (let j = block.b0; j < block.b1; j++) added.set(j, block)
-    for (let i = block.a0; i < block.a1; i++) dropped.set(i, block)
+  // A line's change block on its side (`a0`–`a1` old, `b0`–`b1` new), found
+  // among the blocks in order, not by indexing every changed line; null where
+  // the line is unchanged.
+  const blockAt = (side, line) => {
+    const [start, end] = side === 'a' ? ['a0', 'a1'] : ['b0', 'b1']
+    let high = blocks.length, low = 0
+    while (low < high) {
+      const mid = (low + high) >> 1
+      if (blocks[mid][end] <= line) low = mid + 1
+      else high = mid
+    }
+    return low < blocks.length && blocks[low][start] <= line ? blocks[low] : null
   }
-  const older = matching(a, matcher, SEARCH_MAX_FILE_HITS, i => dropped.has(i))
+  // The old lines dropped, read block by block up to those listed.
+  const older = []
+  for (const { a0, a1 } of blocks) {
+    if (older.length === SEARCH_MAX_FILE_HITS) break
+    older.push(...matching(a, matcher, SEARCH_MAX_FILE_HITS - older.length, a0, a1))
+  }
   // Split, each changed line's row in its block, aligned as the view aligns
   // them (alignLines), in the blocks a hit is in.
   const rows = new Map()
   if (split) {
-    const hit = new Set([...newer.map(({ line }) => added.get(line)), ...older.map(({ line }) => dropped.get(line))])
-    for (const block of blocks) {
-      if (!hit.has(block)) continue
+    const hit = new Set([...newer.map(({ line }) => blockAt('b', line)), ...older.map(({ line }) => blockAt('a', line))])
+    for (const block of hit) {
+      if (!block) continue
       alignLines(a, b, block).forEach(([left, right], row) => {
         if (left !== null) rows.set(`a${left}`, row)
         if (right !== null) rows.set(`b${right}`, row)
@@ -67,13 +79,13 @@ function changedHits(a, b, matcher, blocks, split) {
   // the block's removed lines over its added ones; split, the two sides row
   // by row, the removed line of a row before the added.
   const at = hit => {
-    const block = (hit.side === 'a' ? dropped : added).get(hit.line)
+    const block = blockAt(hit.side, hit.line)
     if (!block) return [hit.line, 1, 0, 0]
     if (split) return [block.b0, 0, rows.get(`${hit.side}${hit.line}`), hit.side === 'a' ? 0 : 1]
     return hit.side === 'a' ? [block.b0, 0, 0, hit.line] : [hit.line, 1, 0, 0]
   }
   return [
-    ...newer.map(hit => ({ ...hit, side: 'b', sign: added.has(hit.line) ? '+' : ' ' })),
+    ...newer.map(hit => ({ ...hit, side: 'b', sign: blockAt('b', hit.line) ? '+' : ' ' })),
     ...older.map(hit => ({ ...hit, side: 'a', sign: '−' })),
   ].toSorted((x, y) => {
     const kx = at(x), ky = at(y)
