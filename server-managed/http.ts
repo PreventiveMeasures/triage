@@ -52,7 +52,7 @@
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
-//   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published, and whether a team lists its scope | 400/401/404/502
+//   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
 //   GET  /api/npm/download-counts?names=a,b → many packages' recent downloads, for their tiers | 400/401

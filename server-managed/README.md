@@ -1444,7 +1444,19 @@ control. A version shows in the bundle view with four tabs:
   could owe to that release alone), the downloads of new ones the session
   hasn't any of asked for in one request (`/api/npm/download-counts`)
   (a version-specific check, as of a version's age or publisher, would have
-  to cover every version its range takes).
+  to cover every version its range takes); unpopular where npm counts none
+  of its downloads, as it counts none of a package's until the day after it
+  was first published (axios 1.14.1, 21 minutes past midnight, named
+  plain-crypto-js, first published the morning before), and its version
+  list says it's public: none for a private one, whose downloads npm's API
+  tells no one, nor one the reader can't open. One below the top
+  20,000 whose package didn't exist when the version compared with was
+  published (its first version, one since unpublished among them, published
+  after it) is tagged with how old it was when the open version was
+  (`18 hours old`), or `published later` where it came after that, as a
+  name someone took once a release named it would, the day in its tooltip;
+  its version list is asked for only then, as a package many install isn't
+  one to doubt for being new.
   Files, open from the start, show each file's type, and the files the open
   version adds or changes their category, and Large or Obfuscated, as in the Files list, under the
   Overview's warning where any of those can be hard to review by reading them;
@@ -1536,8 +1548,11 @@ viewer shows, never kept, is always asked for apart. A version naming no
 repository or commit has no tags to ask for, and a private one no Socket
 report. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions,
-times, teamScoped }`, newest first, `times` when each was published (ISO
+times, created, teamScoped }`, newest first, `times` when each was published (ISO
 dates, from the registry's whole document rather than its abbreviated one),
+`created` when its first version was, one since unpublished among them (the
+earliest time the document lists, which npm's own `created` can postdate, as
+a placeholder's does for a package npm took down),
 `teamScoped` whether any visible team lists its scope, whatever teams the
 reader is in, and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`

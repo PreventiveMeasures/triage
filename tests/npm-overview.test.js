@@ -15,12 +15,14 @@ mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
 const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, counts: {} }
-// Each request for many packages' recent downloads, by its names.
-const countsAsked = [], socketAsked = []
+// Each request for many packages' recent downloads, by its names; each
+// package whose version list was asked for, and those the server answers
+// none for, as for a reader who can't open it.
+const countsAsked = [], socketAsked = [], versionsAsked = [], versionsFail = new Set()
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
-  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
@@ -617,6 +619,69 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   // What calls for a look at one, flagged, whatever its kind.
   const source = { check: 'source', label: 'non-registry', tooltip: 'From GitHub, not npm\'s registry: github:a/b' }
   assert.equal(await tag({ name: 'b', opens: null, flags: [source] }, 'changed'), '<span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm\'s registry: github:a/b>non-registry</span>')
+})
+
+test('a new dependency npm counts no downloads of is unpopular; one below the top 20,000 whose package is new since the version compared with, how old it was', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-12T12:00:00Z') })
+  const settle = () => new Promise(resolve => { setImmediate(resolve) })
+  // Its downloads asked for, then its version list, then shown.
+  const tag = async row => { npmDependencyTags(row, 'added'); await settle(); npmDependencyTags(row, 'added'); await settle(); return rendered(npmDependencyTags(row, 'added')) }
+  const days = perDay => ({ start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => perDay) })
+  // npm's downloads API answers none for a package until the day after its
+  // first is over: axios 1.14.1, 21 minutes past midnight, named one first
+  // published the morning before, plain-crypto-js.
+  const axios = [{ name: 'axios', version: '1.14.0', published: '2026-03-27T19:01:40.000Z' }, { name: 'axios', version: '1.14.1', published: '2026-03-31T00:21:58.000Z' }]
+  answers.counts['crypto-uncounted'] = null
+  answers.versions['crypto-uncounted'] = { versions: ['0.0.1-security'], times: { '0.0.1-security': '2026-03-31T03:25:11.636Z' }, created: '2026-03-30T05:57:32.867Z' }
+  const uncounted = await tag({ name: 'crypto-uncounted', opens: 'crypto-uncounted', compared: axios })
+  assert.match(uncounted, /<span class="npm-downloads-tier is-unpopular"\s+data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular<\/span>/u)
+  assert.match(uncounted, /<span class="npm-dependency-flag is-new" data-tooltip=First published on Mar 30, 2026, 18 hours before 1\.14\.1 was; npm had no package by its name when 1\.14\.0 was published>18 hours old<\/span>$/u,
+    'its first version\'s day, one npm took down since')
+  // Not a private one, whose downloads npm's API tells no one, nor one the
+  // reader can't open: neither its tier nor its age.
+  answers.counts['@acme/internal'] = null
+  answers.versions['@acme/internal'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-03-30T05:57:32.867Z' }, created: '2026-03-30T05:57:32.867Z', private: true }
+  assert.equal(await tag({ name: '@acme/internal', opens: '@acme/internal', compared: axios }), '')
+  answers.counts['@acme/unopened'] = null
+  versionsFail.add('@acme/unopened')
+  assert.equal(await tag({ name: '@acme/unopened', opens: '@acme/unopened', compared: axios }), '')
+  // Orange too, its age in days; the versions' times from their package's
+  // version list where they came without.
+  answers.counts['fresh-low'] = days(500)
+  answers.versions['fresh-low'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-02-01T00:00:00.000Z' }, created: '2026-02-01T00:00:00.000Z' }
+  answers.versions.listing = { versions: ['1.1.0', '1.0.0'], times: { '1.1.0': '2026-03-31T00:21:00.000Z', '1.0.0': '2026-01-01T00:00:00.000Z' } }
+  const listed = [{ name: 'listing', version: '1.0.0', published: null }, { name: 'listing', version: '1.1.0', published: null }]
+  assert.match(await tag({ name: 'fresh-low', opens: 'fresh-low', compared: listed }), /npm-downloads-tier is-low[^]*>top 100,000<\/span>[^]*<span class="npm-dependency-flag is-new" data-tooltip=First published on Feb 1, 2026, 58 days before 1\.1\.0 was;[^>]*>58 days old<\/span>$/u)
+  // One first published after the open version was: npm had none by its
+  // name then, as where someone took a name a release named.
+  answers.counts['taken-later'] = days(0)
+  answers.versions['taken-later'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-04-02T06:00:00.000Z' }, created: '2026-04-02T06:00:00.000Z' }
+  assert.match(await tag({ name: 'taken-later', opens: 'taken-later', compared: axios }),
+    /<span class="npm-dependency-flag is-new" data-tooltip=First published on Apr 2, 2026, 2 days after 1\.14\.1 was: npm had no package by its name when either version was published>published later<\/span>$/u)
+  // Not one that existed when the version compared with was published.
+  answers.counts['old-unpopular'] = days(0)
+  answers.versions['old-unpopular'] = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' }, created: '2020-01-01T00:00:00.000Z' }
+  const old = await tag({ name: 'old-unpopular', opens: 'old-unpopular', compared: axios })
+  assert.match(old, />unpopular<\/span>$/u)
+  assert.doesNotMatch(old, /is-new/u)
+  // Nor, its version list not even asked for, one in the top 20,000, nor
+  // one changed, which the version compared with had.
+  answers.counts['fresh-popular'] = days(4e6)
+  answers.versions['fresh-popular'] = { versions: ['1.0.0'], times: {}, created: '2026-03-30T00:00:00.000Z' }
+  versionsAsked.length = 0
+  assert.doesNotMatch(await tag({ name: 'fresh-popular', opens: 'fresh-popular', compared: axios }), /is-new/u)
+  npmDependencyTags({ name: 'crypto-uncounted', opens: 'crypto-uncounted', compared: axios }, 'changed')
+  await settle()
+  assert.deepEqual(versionsAsked, [])
+  // A package's own figures saying none, as npm failing leaves them too: its
+  // downloads asked for again, alone.
+  answers.stats['figured-none'] = { downloads: null }
+  npmCompareBadges({ npm: { name: 'figured-none', version: '1.0.0' } }, { npm: { name: 'figured-none', version: '1.1.0' } })
+  await settle()
+  answers.counts['figured-none'] = days(4e6)
+  countsAsked.length = 0
+  assert.match(await tag({ name: 'figured-none', opens: 'figured-none' }), />top 2,000<\/span>$/u)
+  assert.deepEqual(countsAsked, [['figured-none']])
 })
 
 test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, one newly obfuscated', async () => {

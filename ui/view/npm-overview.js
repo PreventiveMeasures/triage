@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmFlaggedDependencyChanges, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedDay, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
 import { npmDependencyFlagTags, npmDependencySpecs } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
@@ -60,8 +60,13 @@ function askDownloadCounts(name) {
 const npmDownloadCounts = name => npmPackageData('downloads', name, () => askDownloadCounts(name), data => ({ downloads: data.downloads ?? null }))
 // A package's downloads from whatever the session has of them: its figures,
 // asked for or come with a version, else its downloads alone, asked with
-// others'.
-const npmDownloadsOf = name => npmPackageAsked('stats', name) ? npmPackageStats(name) : npmDownloadCounts(name)
+// others'. Its figures' none, which npm's failing gives too, is asked again
+// with others', whose none is npm's own: it counts none of the package's.
+function npmDownloadsOf(name) {
+  if (!npmPackageAsked('stats', name)) return npmDownloadCounts(name)
+  const stats = npmPackageStats(name)
+  return stats.status === 'ready' && stats.downloads === null ? npmDownloadCounts(name) : stats
+}
 
 // A package's advisories for this session, across its published versions,
 // which each one's `affected` indexes.
@@ -816,22 +821,86 @@ export function npmSettledDownloads(downloads, now = Date.now()) {
   return { start: downloads.start, end: new Date((first + days.length - 1) * DAY_MS).toISOString().slice(0, 10), days }
 }
 
-// The package's tier where it is orange or red (past the top 20,000).
+// Orange or red: past the top 20,000.
+const isLow = level => level === 'is-low' || level === 'is-unpopular'
+
+// The package's tier where it is orange or red.
 function popularityBadge(name) {
-  const tag = tierTag(ready(npmPackageStats(name)), level => level === 'is-low' || level === 'is-unpopular')
+  const tag = tierTag(ready(npmPackageStats(name)), isLow)
   return tag === nothing ? nothing : html`<li>${tag}</li>`
+}
+
+// A new dependency's tier where npm counts none of its package's downloads:
+// none of its days counted yet, as npm counts a package's from the day after
+// it was first published (axios 1.14.1, 21 minutes past midnight, named
+// plain-crypto-js, first published the morning before). As unpopular as
+// one can be, as its tier by its downloads would be once counted: a package
+// that new had none before its latest two weeks. Not a private one, whose
+// downloads npm's API tells no one, however many it has.
+const UNCOUNTED_TAG = html`<span class="npm-downloads-tier is-unpopular"
+  data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular</span>`
+
+// When a version was published: as it came with it, else as its package's
+// version list has it; undefined until then.
+const publishedAt = ({ name, version, published }) => published ?? npmVersionList(name).times?.[version]
+
+// How long `ms` is, as npmAge counts: in minutes, then hours, then days,
+// months past two months, years past two years (`18 hours`).
+const spanIn = unit => new Intl.NumberFormat('en', { style: 'unit', unit, unitDisplay: 'long' })
+const SPANS = { minute: spanIn('minute'), hour: spanIn('hour'), day: spanIn('day'), month: spanIn('month'), year: spanIn('year') }
+function npmSpan(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  const days = Math.floor(minutes / (24 * 60))
+  return minutes < 60 ? SPANS.minute.format(minutes) : minutes < 24 * 60 ? SPANS.hour.format(Math.floor(minutes / 60))
+    : days < 60 ? SPANS.day.format(days) : days < 730 ? SPANS.month.format(Math.floor(days / 30.44)) : SPANS.year.format(Math.floor(days / 365.25))
+}
+
+// A new dependency whose package didn't exist when the version compared
+// with was published (`compared`, npm-package.js npmFlaggedDependencyChanges;
+// its first version published after it, npmVersionList's `created`): how
+// old it was when the open one was, or that it came after that, as a name
+// someone took once a release named it would; the day in its tooltip.
+function newPackageTag({ opens, compared }) {
+  const [base, open] = compared ?? []
+  if (!base || !open) return nothing
+  const { created } = npmVersionList(opens)
+  const now = publishedAt(open), was = publishedAt(base)
+  if (!created || !was || !now || Date.parse(created) <= Date.parse(was)) return nothing
+  const gap = Date.parse(now) - Date.parse(created)
+  const first = `First published on ${npmPublishedDay(created)}`, span = npmSpan(Math.abs(gap))
+  return gap >= 0
+    ? html`<span class="npm-dependency-flag is-new" data-tooltip=${`${first}, ${span} before ${open.version} was; npm had no package by its name when ${base.version} was published`}>${span} old</span>`
+    : html`<span class="npm-dependency-flag is-new" data-tooltip=${`${first}, ${span} after ${open.version} was: npm had no package by its name when either version was published`}>published later</span>`
 }
 
 // What tags a dependency Compare lists (bundle-compare.js source's
 // `dependencyTags`): what calls for a look at it (its `flags`,
 // npm-dependency-checks.js), and for a new one its package's tier, whatever
 // it is, by its downloads (npmDownloadsOf) but its latest two weeks'
-// (npmSettledDownloads). No tier for one changed or removed, which the
+// (npmSettledDownloads), unpopular where npm counts none (UNCOUNTED_TAG)
+// and its version list says it's public, and below the top 20,000, how old
+// its package was where it is new since the version compared with
+// (newPackageTag): its version list, the whole document of a package, is
+// asked for only then, as one many install isn't one to doubt for being
+// new. None for a private one, nor one the reader can't open, which npm's
+// downloads API can't tell from no package. No tier for one changed or
+// removed, which the
 // version compared with already had, nor one that opens no package
 // (npm-package.js npmDependencies), as npm doesn't install it from the
 // registry, whose package of its name has downloads that aren't its own.
-export const npmDependencyTags = (row, kind) => [npmDependencyFlagTags(row.flags),
-  kind === 'added' && row.opens ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing]
+export function npmDependencyTags(row, kind) {
+  const flags = npmDependencyFlagTags(row.flags)
+  if (kind !== 'added' || !row.opens) return [flags, nothing]
+  const data = npmDownloadsOf(row.opens)
+  if (data.status !== 'ready') return [flags, nothing]
+  const settled = npmSettledDownloads(data.downloads)
+  if (!settled) {
+    const list = npmVersionList(row.opens)
+    return list.status === 'ready' && !list.private ? [flags, UNCOUNTED_TAG, newPackageTag(row)] : [flags, nothing]
+  }
+  const tier = npmDownloadTier(settled)
+  return [flags, tierTag(settled), tier !== null && isLow(npmTierLevel(tier)) ? newPackageTag(row) : nothing]
+}
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {
