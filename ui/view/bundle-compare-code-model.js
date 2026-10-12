@@ -8,7 +8,7 @@
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { pairLines } from '@preventive/compare'
+import { hidesMixedWhitespace, pairLines } from '@preventive/compare'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }
@@ -24,8 +24,9 @@ const MIN_FOLD = 4
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
-// three kinds of change share one model. `ignoreWhitespace` is diff -w:
-// lines differing only in whitespace pair up as unchanged. `changes` are
+// three kinds of change share one model. `ignoreWhitespace` is diff -b:
+// lines differing only in how much whitespace they have pair up as
+// unchanged (common/line-diff.js changeBlocks). `changes` are
 // blocks found elsewhere: the server's, its old side given the new one's
 // names (server-managed/rename-diff.ts). `marks` are the blocks the server
 // found to differ in renamed names alone (rename-diff-worker.js): those of
@@ -82,9 +83,23 @@ export function fileLineCounts(before, after) {
 }
 
 // Whether hiding whitespace changes hides one between two texts: whether the
-// blocks a diff of them shows with those hidden, or diff -w's where none are
+// blocks a diff of them shows with those hidden, or diff -b's where none are
 // given, pair as unchanged lines that differ (blocksHold).
 export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
+
+// What diff -b would hide between two texts: whether it hides a change at all
+// (`hides`), and whether one it hides mixes kinds of blank (`mixed`), as spaces
+// turned to a tab, which no view hides (hidesMixedWhitespace).
+export function whitespaceHidden(before, after) {
+  const blocks = changeBlocks(before, after, true)
+  return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
+}
+
+// Files whose indentation is part of what they say, in which no view hides a
+// whitespace change: Python's and YAML's nesting, a Makefile's recipes, the
+// indented template and style languages; and TSV, whose tabs part its fields.
+const INDENTED = /\.(?:py[iw]?|ya?ml|mk|coffee|litcoffee|cson|pug|jade|haml|slim|sass|styl|nim|hs|lhs|elm|tsv)$|(?:^|\/)(?:gnu)?makefile$/u
+export const indentationMatters = path => INDENTED.test(path.toLowerCase())
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change

@@ -322,6 +322,17 @@ const diffSide = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' 
 const diffed = { base: diffSide(built), other: diffSide(rebuilt), ignoreWhitespace: false }
 const readBuilds = () => Promise.resolve([built, rebuilt])
 
+test('a rename diff with whitespace changes hidden hides how much whitespace a line has alone, as diff -b', async () => {
+  // A blank put into a string, which diff -w would read as no change.
+  const rerun = 'function f(b){return exec("rm -rf / tmp/x",b)}export{f};\n', run = 'function f(a){return exec("rm -rf /tmp/x",a)}export{f};\n'
+  const asked = { base: diffSide(run), other: diffSide(rerun), ignoreWhitespace: true }
+  const copies = await Promise.all([run, rerun].map(text => formatted(text)))
+  const answer = await renameDiffRead(renameDiffOf(asked, () => Promise.resolve(copies), false))
+  assert.equal(answer.reason, null, 'its names given')
+  assert.equal(answer.blocks.length, 1, 'the string\'s change shown')
+  assert.match(answer.before.split('\n')[answer.blocks[0].a0], /"rm -rf \/tmp\/x"/u)
+})
+
 test('a rename diff waiting its turn has its minute run out there, and leaves the queue', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 30_000 })
   let release

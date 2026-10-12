@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, fileLineCounts, indentationMatters, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -50,9 +50,29 @@ test('added and removed files are one block of every line', () => {
   assert.deepEqual(removed.noEol, { a: true, b: false })
 })
 
-test('ignoring whitespace pairs lines that differ only in it', () => {
+test('ignoring whitespace pairs lines that differ only in how much of it they have, as diff -b does', () => {
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n', { ignoreWhitespace: true }).blocks.length, 0)
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n').blocks.length, 1)
+  assert.equal(lineDiff('  a()\n', '    a()\n', { ignoreWhitespace: true }).blocks.length, 0, 're-indented')
+  for (const [before, after] of [['exec("rm -rf /tmp/x")\n', 'exec("rm -rf / tmp/x")\n'], ['return x\n', 'returnx\n'], ['c()\n', '    c()\n']]) {
+    assert.equal(lineDiff(before, after, { ignoreWhitespace: true }).blocks.length, 1, `${JSON.stringify(before)} → ${JSON.stringify(after)}: blanks put between other characters, or taken from there`)
+  }
+})
+
+test('what diff -b would hide: whether it hides a change, and one mixing kinds of blank', () => {
+  assert.deepEqual(whitespaceHidden('  a()\n', '    a()\n'), { hides: true, mixed: false })
+  assert.deepEqual(whitespaceHidden('  a()\n', '\ta()\n'), { hides: true, mixed: true }, 'spaces turned to a tab')
+  assert.deepEqual(whitespaceHidden('\t  a()\n', '\t    a()\n'), { hides: true, mixed: true }, 'a run of tabs and spaces made longer')
+  assert.deepEqual(whitespaceHidden('a b\n', 'ab\n'), { hides: false, mixed: false }, 'a blank taken from between two characters shows')
+})
+
+test('files whose indentation is part of their code are told by name', () => {
+  for (const path of ['tools/gen.py', 'stubs/a.PYI', '.github/workflows/ci.yml', 'docker-compose.yaml', 'Makefile', 'sub/GNUmakefile', 'rules.mk', 'views/a.pug', 'styles/a.sass', 'data/a.tsv']) {
+    assert.equal(indentationMatters(path), true, path)
+  }
+  for (const path of ['src/a.js', 'src/a.ts', 'package.json', 'styles/a.css', 'styles/a.scss', 'README.md', 'makefile.js', 'pyproject.toml']) {
+    assert.equal(indentationMatters(path), false, path)
+  }
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

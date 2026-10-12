@@ -13,7 +13,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { renamedDiff } from '@preventive/compare/names.js'
 
 const { before, after, extension, otherExtension, ignoreWhitespace } = workerData
-const diff = await renamedDiff(before, after, { extension, otherExtension, whitespace: ignoreWhitespace ? 'all' : 'none' })
+const diff = await renamedDiff(before, after, { extension, otherExtension, whitespace: ignoreWhitespace ? 'change' : 'none' })
 // A check that should never fail did, or a step gave way: told, the file shown with its names.
 for (const warning of diff.warnings) console.warn(`managed: rename diff: ${warning}`)
 // Node worker messages have no browser target origin.

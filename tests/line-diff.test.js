@@ -30,17 +30,20 @@ test('change blocks are checked to take one text\'s lines to another\'s, hiding 
     ['a count no number', [{ ...blocks[0], a0: '1' }, blocks[1]]],
     ['no list', null],
   ]) assert.equal(blocksHold(before, after, wrong), false, label)
-  assert.equal(blocksHold('a b\n', 'ab\n', [], true), true, 'whitespace ignored, as diff -w ignores it')
-  assert.equal(blocksHold('a b\n', 'ab\n', []), false)
+  assert.equal(blocksHold('a b\n', 'a \t b\n', [], true), true, 'a run of blanks read as one, as diff -b reads it')
+  assert.equal(blocksHold('a\n', 'a \t\n', [], true), true, 'and those ending a line as none')
+  assert.equal(blocksHold('a b\n', 'ab\n', [], true), false, 'blanks taken from between other characters a change, as diff -b has it')
+  assert.equal(blocksHold('a\u00A0b\n', 'a b\n', [], true), false, 'a no-break space no blank, as diff has it')
+  assert.equal(blocksHold('a b\n', 'a  b\n', []), false)
   assert.equal(blocksHold('', '', []), true)
   assert.equal(blocksHold('', 'x\n', [{ a0: 0, a1: 0, b0: 0, b1: 1 }]), true)
-  // A newline dropped after the last line changes that line, but for diff -w.
+  // A newline dropped after the last line changes that line, but for diff -b.
   assert.deepEqual(changeBlocks('a\nx', 'a\nx\n'), [{ a0: 1, a1: 2, b0: 1, b1: 2 }])
   assert.equal(blocksHold('a\nx', 'a\nx\n', changeBlocks('a\nx', 'a\nx\n')), true)
   for (const [old, now] of [['a\nx', 'a\nx\n'], ['x\n', 'x'], ['a\nx', 'b\nx\n']]) {
     assert.equal(blocksHold(old, now, old.startsWith('a') === now.startsWith('a') ? [] : [{ a0: 0, a1: 1, b0: 0, b1: 1 }]), false, `${JSON.stringify(old)} → ${JSON.stringify(now)}: its newline left out`)
   }
-  assert.equal(blocksHold('a\nx', 'a\nx\n', [], true), true, 'as diff -w ignores it')
+  assert.equal(blocksHold('a\nx', 'a\nx\n', [], true), true, 'as diff -b ignores it')
 })
 
 test('what changeBlocks finds holds, for texts made at random, whitespace ignored or not', () => {
@@ -55,5 +58,14 @@ test('what changeBlocks finds holds, for texts made at random, whitespace ignore
     for (const ignoreWhitespace of [false, true]) {
       assert.ok(blocksHold(before, after, changeBlocks(before, after, ignoreWhitespace), ignoreWhitespace), JSON.stringify({ before, after, ignoreWhitespace }))
     }
+  }
+})
+
+test('lines alike but for how much whitespace they have are what diff -b pairs, blanks the C locale\'s alone', () => {
+  const next = random(11)
+  const line = () => Array.from({ length: Math.floor(next() * 6) }, () => ['a', 'b', ' ', '  ', '\t', '\r', '\v', '\f', '\u00A0', '\u3000'][Math.floor(next() * 10)]).join('')
+  for (let i = 0; i < 2000; i++) {
+    const [before, after] = [`${line()}\n`, `${line()}\n`]
+    assert.equal(blocksHold(before, after, [], true), changeBlocks(before, after, true).length === 0, JSON.stringify({ before, after }))
   }
 })
