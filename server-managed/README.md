@@ -233,9 +233,11 @@ at its end, reads as unchanged, while blanks put between other characters or
 taken from between them still show, as in `/tmp` to `/ tmp` inside a string
 or `return x` to `returnx`, which `diff -w` would hide. None are hidden in a
 file whose indentation is part of its code (Python, Cython, Starlark and the
-build files written in them, YAML, Makefiles, CoffeeScript, Pug, Haml, Slim,
-Sass, Stylus, Nim, Haskell, Elm, and Markdown, reStructuredText and AsciiDoc,
-where indenting a line makes it code or nests it; told by name, or by a
+build files written in them, YAML, Makefiles, the languages whose blocks are
+their indentation: CoffeeScript, LiveScript, Imba, F#, Scala 3, Haskell,
+PureScript, Elm, Nim, Idris, Agda; Pug, Haml, Slim, Sass, SugarSS, Stylus;
+and Markdown, reStructuredText and AsciiDoc, where indenting a line makes it
+code or nests it; told by name, or by a
 script's `#!` line naming Python or CoffeeScript) or whose tabs part its
 fields (TSV), nor in one where hiding them would hide blanks of more
 than one kind changing between the same two characters, such as spaces
