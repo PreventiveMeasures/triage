@@ -9,11 +9,10 @@
 // without one (http.ts), each answer kept as npm-insights.ts keeps its own.
 import { Buffer } from 'node:buffer'
 import { kept } from './kept.ts'
-import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
+import { NPM_REGISTRY, askUpstreamJson, plainObject } from './npm-packages.ts'
 
-const ATTESTATIONS_API = 'https://registry.npmjs.org/-/npm/v1/attestations'
+const ATTESTATIONS_API = `${NPM_REGISTRY}/-/npm/v1/attestations`
 const ATTESTATIONS_BYTES = 1024 * 1024
-const API_TIMEOUT_MS = 30_000
 // SLSA's v1 statement, as npm writes it now, and v0.2, as it first did.
 const SLSA = /^https:\/\/slsa\.dev\/provenance\/v(?:1|0\.2)$/u
 const COMMIT = /^[0-9a-f]{40}$/u
@@ -90,15 +89,9 @@ function runnerOf(bundle: unknown): string | null {
 }
 
 async function askProvenance(name: string, version: string, integrity: string): Promise<NpmProvenance | null> {
-  let res: Response
-  try {
-    res = await fetch(`${ATTESTATIONS_API}/${name.replace('/', '%2f')}@${encodeURIComponent(version)}`,
-      { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if (res.status === 404) { await res.body?.cancel(); return null }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  let json: unknown
-  try { json = JSON.parse((await readLimited(res, ATTESTATIONS_BYTES)).toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  const json = await askUpstreamJson(`${ATTESTATIONS_API}/${name.replace('/', '%2f')}@${encodeURIComponent(version)}`,
+    { headers: { accept: 'application/json' }, limit: ATTESTATIONS_BYTES })
+  if (json === null) return null
   const attestations: unknown[] = Array.isArray(field(json, 'attestations')) ? field(json, 'attestations') as unknown[] : []
   const slsa = attestations.find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
   if (!slsa) return null

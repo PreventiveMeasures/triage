@@ -17,9 +17,12 @@ import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisorie
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { kept } from './kept.ts'
 import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
-import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
+import { NpmPackageError, askUpstreamJson, plainObject, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
+// What npm's range API may answer for each package asked: a year of days is
+// some 16 KiB.
+const DOWNLOADS_BYTES = 64 * 1024
 // Socket's answer for a package version, by its purl, as Socket Firewall
 // asks it: no key needed. Its scores are cut to two decimals; its badge's,
 // the supply chain score, is rounded (askSocketBadge).
@@ -28,7 +31,7 @@ const SOCKET_BADGE = 'https://badge.socket.dev/npm/package'
 const BADGE_BYTES = 16 * 1024
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
-const DAY_MS = 24 * 60 * 60_000
+export const DAY_MS = 24 * 60 * 60_000
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -38,35 +41,34 @@ const isDay = (value: unknown): value is string => typeof value === 'string' && 
 // none for a day npm leaves out; null where npm has none for it.
 export interface NpmDownloads { start: string; end: string; days: number[] }
 
-const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
+export const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
 
 // Its last year, as npm counts it (to the last day it has counted), from
 // the first of the month that year starts in, so that month is whole too.
 async function askDownloads(name: string): Promise<NpmDownloads | null> {
-  const year = await askRange('last-year', name)
+  const year = (await askDownloadRange('last-year', [name])).get(name) ?? null
   const start = new Date(year?.start ?? 0)
   if (year === null || start.getUTCDate() === 1) return year
   const first = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)
-  const before = await askRange(`${isoDay(first)}:${isoDay(start.getTime() - DAY_MS)}`, name).catch(() => null)
+  const before = await askDownloadRange(`${isoDay(first)}:${isoDay(start.getTime() - DAY_MS)}`, [name]).then(found => found.get(name), () => null)
   return before?.start === isoDay(first) && before.days.length === (start.getTime() - first) / DAY_MS
     ? { start: before.start, end: year.end, days: [...before.days, ...year.days] } : year
 }
 
-async function askRange(range: string, name: string): Promise<NpmDownloads | null> {
-  let res: Response
-  try { res = await fetch(`${DOWNLOADS_API}/${range}/${name}`, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) }) }
-  catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if (res.status === 404) { await res.body?.cancel(); return null }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  let json: unknown
-  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) }
-  catch { throw new NpmPackageError(502, 'upstream-invalid') }
-  return readDownloads(json)
+// npm's downloads of `names` over `range`, by name: null where npm has
+// none. One name is answered alone; many (npm-download-counts.ts), each by
+// its name, up to 128 unscoped ones.
+export async function askDownloadRange(range: string, names: string[], signal?: AbortSignal): Promise<Map<string, NpmDownloads | null>> {
+  const json = await askUpstreamJson(`${DOWNLOADS_API}/${range}/${names.map(name => name.replace('/', '%2f')).join(',')}`,
+    { headers: { accept: 'application/json' }, limit: names.length * DOWNLOADS_BYTES, ...signal && { signal } })
+  if (json === null) return new Map(names.map(name => [name, null]))
+  if (names.length === 1) return new Map([[names[0]!, readDownloads(json)]])
+  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
+  return new Map(names.map(name => [name, json[name] == null ? null : readDownloads(json[name])]))
 }
 
-// One package's downloads as npm's range API gives them (alone, or one of
-// many in bulk: npm-download-counts.ts).
-export function readDownloads(json: unknown): NpmDownloads {
+// One package's downloads as npm's range API gives them.
+function readDownloads(json: unknown): NpmDownloads {
   if (!plainObject(json) || !isDay(json['start']) || !isDay(json['end']) || !Array.isArray(json['downloads'])) throw new NpmPackageError(502, 'upstream-invalid')
   const start = Date.parse(json['start'])
   const length = (Date.parse(json['end']) - start) / DAY_MS + 1
@@ -129,15 +131,10 @@ const unbadged = new WeakSet<object>()
 
 async function askSocket(name: string, version: string): Promise<NpmSocketReport | null> {
   const badge = askSocketBadge(name, version)
-  const res = await fetch(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
-    { headers: { accept: 'application/x-ndjson' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
-    .catch(() => { throw new NpmPackageError(502, 'upstream-unavailable') })
-  if (res.status === 404) { await res.body?.cancel(); return null }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
   // One line, as one purl was asked.
-  let json: unknown
-  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8').split('\n', 1)[0]!) }
-  catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  const json = await askUpstreamJson(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
+    { headers: { accept: 'application/x-ndjson' }, limit: API_BYTES }, body => JSON.parse(body.split('\n', 1)[0]!))
+  if (json === null) return null
   if (!plainObject(json) || json['version'] !== version || [json['namespace'], json['name']].filter(Boolean).join('/') !== name) throw new NpmPackageError(502, 'upstream-invalid')
   // A version Socket hasn't seen is answered with a made-up id and nothing else.
   if (String(json['id']).startsWith('synthetic:')) return null
@@ -257,18 +254,11 @@ function taggedCommit(target: unknown): unknown {
 
 async function askTags(repo: string, sha: string, version: string, token: string): Promise<string[]> {
   const [owner, name] = repo.split('/')
-  let res: Response
-  try {
-    res = await fetch(GITHUB_GRAPHQL, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' },
-      body: JSON.stringify({ query: TAGS_QUERY, variables: { owner, name, query: version } }),
-    })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  let json: unknown
-  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) }
-  catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  const json = await askUpstreamJson(GITHUB_GRAPHQL, {
+    method: 'POST', limit: API_BYTES, absent: [],
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' },
+    body: JSON.stringify({ query: TAGS_QUERY, variables: { owner, name, query: version } }),
+  })
   const data = plainObject(json) ? json['data'] : null
   const repository = plainObject(data) ? data['repository'] : null
   // A repository gone, or not public (private, or internal to an enterprise),

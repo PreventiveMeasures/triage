@@ -9,42 +9,18 @@
 // answers anyone. A package's whole year, where kept for its own Overview
 // (npm-insights.ts), answers for it.
 import { kept } from './kept.ts'
-import { type NpmDownloads, keptNpmDownloads, readDownloads } from './npm-insights.ts'
-import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
+import { DAY_MS, type NpmDownloads, askDownloadRange, isoDay, keptNpmDownloads } from './npm-insights.ts'
 
-const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 const BULK = 128
 const SCOPED_AT_ONCE = 4
-const API_TIMEOUT_MS = 30_000
-const API_BYTES = 8 * 1024 * 1024
-const DAY_MS = 24 * 60 * 60_000
 // The most names one request of the viewer's may ask about, and how long
 // all of them may take: those npm hasn't answered by then are left out.
 export const MAX_DOWNLOAD_COUNTS = 512
 const DEADLINE_MS = 60_000
 
-const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
 function rangeAt(now: number): string {
   const today = new Date(now)
   return `${isoDay(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 2, 1))}:${isoDay(now - DAY_MS)}`
-}
-
-// npm's answer for `names` over `range`, by name: null where npm has none;
-// given up on where `stop` says so.
-async function ask(range: string, names: string[], stop: AbortSignal): Promise<Map<string, NpmDownloads | null>> {
-  let res: Response
-  try {
-    res = await fetch(`${DOWNLOADS_API}/${range}/${names.map(name => name.replace('/', '%2f')).join(',')}`,
-      { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.any([stop, AbortSignal.timeout(API_TIMEOUT_MS)]) })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if (res.status === 404) { await res.body?.cancel(); return new Map(names.map(name => [name, null])) }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  let json: unknown
-  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
-  // One name is answered alone; many, each by its name.
-  if (names.length === 1) return new Map([[names[0]!, readDownloads(json)]])
-  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
-  return new Map(names.map(name => [name, json[name] == null ? null : readDownloads(json[name])]))
 }
 
 const recent = kept<NpmDownloads | null>(5000, undefined, 14 * DAY_MS)
@@ -67,7 +43,7 @@ export async function npmDownloadCounts(names: string[], now = Date.now()): Prom
   })
   const settle = async (group: string[]) => {
     try {
-      const found = await ask(range, group, stop)
+      const found = await askDownloadRange(range, group, stop)
       for (const name of group) waiting.get(name)!.resolve(found.get(name) ?? null)
     } catch (error) {
       for (const name of group) waiting.get(name)!.reject(error)
