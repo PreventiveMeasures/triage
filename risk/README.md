@@ -34,7 +34,7 @@ The package assessed is asked for with the npm token the environment has for a s
 Risk is bounded, however a package is made:
 
 - Of each file, it tells the first 100 places the file does each thing it runs or names each exfiltration service, the first 1,000 hosts it names, and how its lines are minified by its first 4 MiB.
-- An assessment past 32 MiB as JSON is refused (`package-too-large`).
+- An assessment past 16 MiB as JSON is refused (`package-too-large`), its files measured as they are read, for either version, so that no more is held.
 - Each request it makes of npm itself is given up on after 30 seconds, and a tarball upstream is still downloading once `signal` aborts.
 - It asks after the packages of at most 100 dependencies added, the rest left unknown.
 - It reads a package's document to 64 MiB, a tarball's tar stream to 96 MiB as it unpacks, and its files to 20,000 and 64 MiB, as the npm viewer does (`NpmRiskError` `upstream-too-large`, `package-too-large`).

@@ -17,10 +17,14 @@ import { npmFilesDiff } from './diff.js'
 // older reading is read anew.
 export const RISK_VERSION = 1
 
-// How long an assessment kept may be as JSON: one past it, of a package whose
-// files name thousands of hosts or do what they run on thousands of lines
-// each, is refused as too large rather than held, kept and answered.
-const MAX_ASSESSMENT_LENGTH = 32 * 1024 * 1024
+// How long an assessment kept may be as JSON, and what risk reads of either
+// version's files: a package past it, whose files name thousands of hosts or
+// do what they run on thousands of lines each, is refused as too large as its
+// files are read, before more of them is held (filesRisk), and the assessment
+// once told, rather than kept and answered. A package's files tell a few
+// hundred characters each, a few MiB for the most files npm's viewer reads.
+const MAX_ASSESSMENT_LENGTH = 16 * 1024 * 1024
+const tooLarge = what => new NpmRiskError('package-too-large', `what risk tells of ${what} is past ${MAX_ASSESSMENT_LENGTH} characters`)
 
 // A value as JSON holds it: a Map as an object, its keys as strings.
 const plain = value => value instanceof Map ? Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]))
@@ -31,6 +35,21 @@ const plain = value => value instanceof Map ? Object.fromEntries([...value].map(
 // rank a package is among (null past the last, unpopular) and its tint
 // (downloads.js npmTierLevel).
 const tierOf = tier => ({ tier: Number.isFinite(tier) ? tier : null, level: npmTierLevel(tier) })
+
+// Each of a version's files' stamps and what risk read of it (stamps.js
+// npmFileRisk), by path, as JSON holds them: read a file at a time and given
+// up on, as too large, once they are past MAX_ASSESSMENT_LENGTH as JSON
+// altogether, so that no more of them is held than that.
+function filesRisk(version, what) {
+  let length = 0
+  return Object.fromEntries(version.json.sources.map(path => {
+    const { readability, runsCode, exfiltration, hosts, stamps } = npmVersionFileRisk(version, path)
+    const risk = plain({ stamps, readability, runsCode, exfiltration, hosts })
+    length += path.length + JSON.stringify(risk).length
+    if (length > MAX_ASSESSMENT_LENGTH) throw tooLarge(what)
+    return [path, risk]
+  }))
+}
 
 // What of an assessment holds whatever the time, kept once a reading and pair:
 // what its files, dependencies, install scripts, publisher and provenance call
@@ -45,15 +64,14 @@ async function lasting(name, version, oldVersion, facts, context) {
   const [other, base] = await Promise.all([npmVersionFiles(name, version, facts.versions.get(version), context),
     oldVersion === null ? { kind: 'sourcemap', npm: { name, version: null, manifest: {} }, json: { version: 3, sources: [], sourcesContent: [] } }
       : npmVersionFiles(name, oldVersion, facts.versions.get(oldVersion), context)])
+  // Each version's files read within bounds before the findings read them all.
+  const files = filesRisk(other, `${name}@${version}`)
+  if (oldVersion !== null) filesRisk(base, `${name}@${oldVersion}`)
   const findings = oldVersion === null ? [...npmHeldFindings(other), ...npmDependencyFindings(base, other)]
     : npmCompareFindings(base, other, npmFilesDiff(base, other), { minimumReleaseAge: 0, published: null })
-  const files = Object.fromEntries(other.json.sources.map(path => {
-    const { readability, runsCode, exfiltration, hosts, stamps } = npmVersionFileRisk(other, path)
-    return [path, { stamps, readability, runsCode, exfiltration, hosts }]
-  }))
   const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
-  const kept = plain({ findings, files, dependencies: { added, changed } })
-  if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw new NpmRiskError('package-too-large', `what risk tells of ${name}@${version} is past ${MAX_ASSESSMENT_LENGTH} characters`)
+  const kept = { findings: plain(findings), files, dependencies: plain({ added, changed }) }
+  if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(`${name}@${version}`)
   if (context.cache) await context.cache.write('risk/npm/assessments', key, kept)
   return kept
 }
