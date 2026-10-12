@@ -51,8 +51,23 @@ function renderText(value) {
   return value == null || typeof value === 'symbol' || typeof value === 'function' ? '' : String(value)
 }
 
-function details(integrity, version, extra = {}) {
-  const v2 = version === 2
+// A source map's version, by its integrity and files; an npm version's where
+// it has a `manifest`.
+const version = (integrity, files, manifest = null) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+  ...manifest && { npm: { name: 'pkg', version: integrity, manifest } } })
+
+// Code comparing `base` with `other`, `fields` among its properties, ready to
+// render: `render(path)` its text with `path` open, `head(path)` its file's head.
+function compareOf(base, other, fields = {}) {
+  const element = Object.assign(new CompareCode(), { base, other, resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files, ...fields })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  return { element, render, head: path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1] }
+}
+
+function details(integrity, major, extra = {}) {
+  const v2 = major === 2
   const own = {
     ...extra,
     'src/api.js': v2 ? 'export const a = 2\nexport const b = 1\n' : 'export const a = 1\nexport const b = 1\n',
@@ -95,12 +110,7 @@ test('the Code tree keeps a package the base records across a root move, and a r
   }) }
   const sources = { 'src/a.js': 'a', 'src/b.js': 'b', 'src/crates/foo/lib.rs': 'fn b() {}\n', __prelude__: 'p' }
   const other = { integrity: 'other', kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources), mappings: '' } }
-  const element = new CompareCode()
-  element.base = base
-  element.other = other
-  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
-  element.resolutions = []
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const { element } = compareOf(base, other)
   assert.deepEqual(element.files.root, { base: '', other: 'src/' })
   assert.equal(element._tree().tree.dirs.get('src')?.dirs.get('crates')?.dirs.get('foo')?.package?.name, 'foo')
   assert.equal(element._format('src/old.png'), 'resource:base64')
@@ -113,12 +123,7 @@ test('the Code tree keeps a base package outside a stripped root where its files
   }) }
   const sources = { 'a.js': 'a2', 'b.js': 'b' }
   const other = { integrity: 'other', kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources), mappings: '' } }
-  const element = new CompareCode()
-  element.base = base
-  element.other = other
-  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
-  element.resolutions = []
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const { element } = compareOf(base, other)
   assert.deepEqual(element.files.root, { base: 'src/', other: '' })
   assert.deepEqual(element.files.onlyBase.map(row => row.path), ['../tools/crate/lib.rs'])
   assert.equal(element._tree().tree.dirs.get('..')?.dirs.get('tools')?.dirs.get('crate')?.package?.name, 'crate')
@@ -131,12 +136,7 @@ test('the Code tree keeps a base package where a colliding fallback placed its f
   }) }
   const sources = { 'a.js': 'a2', 'b.js': 'b', '../tools/crate/lib.rs': 'fn other() {}\n' }
   const other = { integrity: 'other', kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources), mappings: '' } }
-  const element = new CompareCode()
-  element.base = base
-  element.other = other
-  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
-  element.resolutions = []
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const { element } = compareOf(base, other)
   assert.deepEqual(element.files.onlyBase.map(row => row.path), ['../../tools/crate/lib.rs'])
   assert.equal(element._tree().tree.dirs.get('..')?.dirs.get('..')?.dirs.get('tools')?.dirs.get('crate')?.package?.name, 'crate')
 })
@@ -392,7 +392,6 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
 
 test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
-  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = version('a', { 'package.json': '{"dependencies":{"kept":"^1.0.0","gone":"1.0.0"}}\n', 'lib/package.json': '{}\n' })
   const other = version('b', { 'package.json': '{"dependencies":{"kept":"^1.1.0"},"peerDependencies":{"fresh":"2.0.0"}}\n', 'lib/package.json': '{"a":1}\n' })
   const opened = []
@@ -438,19 +437,12 @@ test('over the package\'s package.json, its dependencies\' changes as chips unde
 })
 
 test('a file is labelled where a package starts from it, a package.json with its install scripts, and the tree tags what can\'t be read', () => {
-  const version = (integrity, files, manifest) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
-    npm: { name: 'pkg', version: integrity, manifest } })
   const base = version('a', { 'index.js': 'module.exports = 1\n', 'package.json': '{"scripts":{"preinstall":"x","prepare":"tsc","postinstall":"node a.js"}}\n', 'bin/cli.js': '1\n',
     'LICENSE-MIT': 'MIT\n' }, { main: 'index.js', license: 'MIT' })
   const other = version('b', { 'index.js': 'module.exports = 2\n', 'package.json': '{"scripts":{"postinstall":"node setup.js","prepare":"tsc -b","test":"t"}}\n', 'bin/cli.js': '2\n',
     'dist/app.min.js': `${'var a=1;'.repeat(200)}\n`, 'LICENSE-MIT': 'MIT License\n' }, { main: './index', bin: { tool: './bin/cli.js' }, license: 'MIT',
     github: { github: 'org/pkg' }, gitHead: 'b'.repeat(40) })
-  const element = new CompareCode()
-  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
-    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
-  const render = path => { element.path = path; return renderText(element.render()) }
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const { element, render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
   const labels = (markup, kind) => [...markup.matchAll(new RegExp(`class="?bundle-compare-code-${kind}[^>]*>([^<]+)<`, 'gu'))].map(m => m[1])
   assert.match(head('index.js'), new RegExp(`class="bundle-code-github-link" href=https://github\\.com/org/pkg/blob/${'b'.repeat(40)}/index\\.js `, 'u'),
     'on GitHub at the commit the open version was published from')
@@ -479,15 +471,9 @@ test('a file is labelled where a package starts from it, a package.json with its
 test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
   const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
   const big = '// big\n'.repeat(40_000)
-  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = version('a', { 'lib/gone.js': obfuscated, 'lib/big.js': '// small\n', 'lib/plain.js': 'export const a = 1\n' })
   const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'lib/plain.js': 'export const a = 2\n' })
-  const element = new CompareCode()
-  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
-    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
-  const render = path => { element.path = path; return renderText(element.render()) }
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
   const flags = markup => [...markup.matchAll(/class="npm-flag-tag (is-\w+)"[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
   assert.deepEqual(flags(head('dist/payload.js')), ['Large is-notice', 'Obfuscated is-warn'])
   assert.match(head('dist/payload.js'), /Obfuscated<\/span>[^]*class=npm-encoding-tag is-notice[^>]*>Minified</u, 'before how it reads')
@@ -502,16 +488,9 @@ test('a file is tagged Large and Obfuscated in its head and the tree, as the npm
 })
 
 test('a file is labelled with what its code can run beyond itself, in its head and in the tree, a kind new since saying so', () => {
-  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
-    npm: { name: 'pkg', version: integrity, manifest: {} } })
-  const base = version('a', { 'index.js': 'module.exports = eval("1")\n', 'old.js': 'require("child_process")\n', 'plain.js': '1\n' })
-  const other = version('b', { 'index.js': 'module.exports = eval("2")\nnew Function("x")\n', 'run.js': 'require("child_process").exec("ls")\n', 'plain.js': '2\n' })
-  const element = new CompareCode()
-  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
-    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
-  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
-  const render = path => { element.path = path; return renderText(element.render()) }
-  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const base = version('a', { 'index.js': 'module.exports = eval("1")\n', 'old.js': 'require("child_process")\n', 'plain.js': '1\n' }, {})
+  const other = version('b', { 'index.js': 'module.exports = eval("2")\nnew Function("x")\n', 'run.js': 'require("child_process").exec("ls")\n', 'plain.js': '2\n' }, {})
+  const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
   const tags = markup => [...markup.matchAll(/class="npm-runs-code" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, tooltip, tag]) => [tag, tooltip])
   assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code (eval): line 1'], ['Function', 'Makes a function of a string (Function): line 2, new']],
     'as it is now, what it held before not new')
