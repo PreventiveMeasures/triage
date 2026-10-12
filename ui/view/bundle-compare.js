@@ -178,6 +178,19 @@ class BundleCompare extends LitElement {
     // pair changes, so unrelated re-renders don't re-walk every file.
     this._diff = null
     this._diffKey = null
+    // The body Packages' lists fit, watched for a new width or height.
+    this._fitBody = null
+    this._fitObserver = null
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    if (this._fitBody) this._fitObserver?.observe(this._fitBody)
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._fitObserver?.disconnect()
   }
 
   willUpdate(changed) {
@@ -202,6 +215,40 @@ class BundleCompare extends LitElement {
       if (this._targetIntegrity) this._choose(null)
       this._mode = 'overview'
     }
+  }
+
+  updated() {
+    // Code renders no body, and leaving it renders a new one.
+    const body = this.querySelector('.bundle-compare-body')
+    if (body !== this._fitBody && typeof ResizeObserver === 'function') {
+      this._fitObserver ??= new ResizeObserver(() => this._fitLists())
+      this._fitObserver.disconnect()
+      if (body) this._fitObserver.observe(body)
+      this._fitBody = body
+    }
+    this._fitLists()
+  }
+
+  // Packages' lists take the pane but for what sits around them (see
+  // .bundle-compare-rows--fill), which CSS can't add up, so it is measured
+  // here as `--compare-fill-around`: above a list, the section and card
+  // heads; below it, the card's foot, then each section after as it sits
+  // closed — Files and Import resolutions their headings, open or not — and
+  // the margins between, the last one's included as the pane scrolls it.
+  // None of it moves with a list's height, so setting it settles at once.
+  _fitLists() {
+    const body = this._fitBody
+    const list = body?.querySelector('.bundle-compare-rows--fill')
+    if (!list) return
+    const box = list.getBoundingClientRect()
+    const content = body.getBoundingClientRect().top + body.clientTop + parseFloat(getComputedStyle(body).paddingTop) - body.scrollTop
+    let around = box.top - content + list.parentElement.getBoundingClientRect().bottom - box.bottom
+    const section = list.closest('.bundle-compare-section')
+    for (let el = section; el; el = el.nextElementSibling) {
+      const closed = el === section ? 0 : (el.matches('details') ? el.querySelector(':scope > summary') : el).getBoundingClientRect().height
+      around += closed + parseFloat(getComputedStyle(el).marginBottom)
+    }
+    body.style.setProperty('--compare-fill-around', `${around}px`)
   }
 
   // The base bundle changed: compare it afresh, or after a swap, with the
