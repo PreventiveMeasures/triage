@@ -8,21 +8,24 @@ const version = (files, manifest = {}, number = '1.1.0') => ({
   json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) }, npm: { name: 'pkg', version: number, manifest },
 })
 
-// As npm-package-arg 12 resolves a dependency's spec, hosted-git-info reading
-// a repository's host for it: checked against it over every combination of
+// Specs npm fetches from elsewhere than its registry, with where from, as
+// npm-package-arg 12 resolves a dependency's spec, hosted-git-info reading a
+// repository's host for it: checked against it over every combination of
 // scheme, user, host and path, and random specs, before these were written.
+const FROM_ELSEWHERE = [
+  ['https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz', 'URL'], ['http://github.com/component/bind/archive/0.0.1.tar.gz', 'URL'],
+  ['https:example.com/pkg.tgz', 'URL'], ['HTTP:example.com/pkg.tgz', 'URL'], ['https://github.com/a/b/archive/v1.tar.gz', 'URL'],
+  ['git+https://example.com/x.git', 'git'], ['git://example.com/a/b.git#v1', 'git'], ['git+rsync://example.com/x.git', 'git'], ['git+ssh://git@example.com:a/b.git', 'git'],
+  // A repository on a host npm knows, named for it, in any of the forms it takes.
+  ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'GitHub'], ['git://github.com/a/b.git#v1', 'GitHub'], ['git+ssh://git@github.com:a/b.git', 'GitHub'],
+  ['ssh://git@github.com/org/repo.git', 'GitHub'], ['SSH://github.com/org/repo', 'GitHub'], ['ssh://git@www.github.com/org/repo.git', 'GitHub'], ['https://github.com/a/b', 'GitHub'],
+  ['git@github.com:a/b.git', 'GitHub'], ['github:web3-js/WebSocket-Node#polyfill/globalThis', 'GitHub'], ['GitHub:a/b', 'GitHub'], ['gitlab:a/b', 'GitLab'],
+  ['git@gitlab.com:group/sub/repo.git', 'GitLab'], ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['sourcehut:~user/repo', 'SourceHut'], ['git@git.sr.ht:~u/repo', 'SourceHut'],
+  ['git@gist.github.com:11081aaa281', 'Gist'], ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'], ['a/b', 'GitHub'], ['a/b#feat/x:y', 'GitHub'],
+]
+
 test('a dependency npm fetches from elsewhere than its registry is told by its spec', () => {
-  for (const [spec, source] of [
-    ['https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz', 'URL'], ['http://github.com/component/bind/archive/0.0.1.tar.gz', 'URL'],
-    ['https:example.com/pkg.tgz', 'URL'], ['HTTP:example.com/pkg.tgz', 'URL'], ['https://github.com/a/b/archive/v1.tar.gz', 'URL'],
-    ['git+https://example.com/x.git', 'git'], ['git://example.com/a/b.git#v1', 'git'], ['git+rsync://example.com/x.git', 'git'], ['git+ssh://git@example.com:a/b.git', 'git'],
-    // A repository on a host npm knows, named for it, in any of the forms it takes.
-    ['git+https://github.com/ethereumjs/ethereumjs-abi.git', 'GitHub'], ['git://github.com/a/b.git#v1', 'GitHub'], ['git+ssh://git@github.com:a/b.git', 'GitHub'],
-    ['ssh://git@github.com/org/repo.git', 'GitHub'], ['SSH://github.com/org/repo', 'GitHub'], ['ssh://git@www.github.com/org/repo.git', 'GitHub'], ['https://github.com/a/b', 'GitHub'],
-    ['git@github.com:a/b.git', 'GitHub'], ['github:web3-js/WebSocket-Node#polyfill/globalThis', 'GitHub'], ['GitHub:a/b', 'GitHub'], ['gitlab:a/b', 'GitLab'],
-    ['git@gitlab.com:group/sub/repo.git', 'GitLab'], ['bitbucket:a/b', 'Bitbucket'], ['gist:11081aaa281', 'Gist'], ['sourcehut:~user/repo', 'SourceHut'], ['git@git.sr.ht:~u/repo', 'SourceHut'],
-    ['LearnBoost/socket.io-parser.git#e2fb6e', 'GitHub'], ['a/b', 'GitHub'], ['a/b#feat/x:y', 'GitHub'],
-  ]) assert.equal(npmDependencySource(spec), source, spec)
+  for (const [spec, source] of FROM_ELSEWHERE) assert.equal(npmDependencySource(spec), source, spec)
   for (const spec of ['^1.2.3', '1.x', '>=1.0.0 <2', '1.0.0 || 2.0.0', '*', '', 'latest', 'npm:@scope/real@^1.0.0', 'npm:other', 'file:../x', 'link:../x',
     './x', '../x', '~/x', '/x', 'c:\\x', 'workspace:*', 'catalog:', '@scope/name', 'a/b/c', 'a/', 'a b/c',
     // Nor what npm doesn't install, or reads as a path: a git+ protocol it
@@ -45,8 +48,9 @@ test('a dependency npm installs from its registry is told by its spec, as npm-pa
     'workspace:*', 'link:../x', 'catalog:', 'jsr:@std/path', 'portal:../x']) {
     assert.equal(npmRegistrySpec(spec), false, spec)
   }
-  // Every one npm fetches from elsewhere (npmDependencySource) among them.
-  for (const spec of ['github:a/b', 'a/b', 'git@github.com:a/b.git', 'git+ssh://git@example.com:a/b.git', 'https://example.com/x.tgz', 'https:example.com/x.tgz']) assert.ok(npmDependencySource(spec), spec)
+  // Every one npm fetches from elsewhere (npmDependencySource) among them,
+  // as one reading of a spec answers both.
+  for (const [spec] of FROM_ELSEWHERE) assert.equal(npmRegistrySpec(spec), false, spec)
 })
 
 test('a dependency nothing of a version imports is one no code file names as an import would, nor an install script', () => {
