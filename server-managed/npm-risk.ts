@@ -11,21 +11,24 @@
 //   cache table, shared by every instance; a private one's in memory.
 // - `risk/npm/packages`, `risk/npm/public` and `risk/npm/downloads`, kept an
 //   hour or a day by risk itself: in memory.
-// - `npm/tarballs`: none kept, upstream reading npm's own cache first, as an
-//   assessment kept needs none.
+// - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
+//   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
+//   an assessment kept needs none.
 //
 // A cache failure is a miss, never a failed assessment. Packages' documents
 // are read as every other npm document here is, within their bounds and
-// shared budget (npm-packages.ts readNpmPackument), and assessments made at
-// once are bounded as the viewer's loads are, each unpacking up to two
-// tarballs: one past them is refused as busy.
+// shared budget (npm-packages.ts readNpmPackument), and tarballs as the
+// viewer's loads read them, bounded as they arrive and among the loads made
+// at once. Assessments made at once are bounded as those loads are, each
+// unpacking up to two tarballs: one past them is refused as busy.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
-import { NpmPackageError, readNpmPackument } from './npm-packages.ts'
+import { loadNpmTarball } from './npm-loads.ts'
+import { NpmPackageError, type NpmVersionDocument, readNpmPackument } from './npm-packages.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000
@@ -71,17 +74,28 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
   }
 }
 
-// `version` of package `name` assessed against `oldVersion`, where given:
-// trusted however new where a team lists its scope (`teamScoped`), its own
-// packages; else held to risk's minimum release age. Its documents are read
-// with npm's token where the reader may have it (`privileged`, as
-// readNpmVersion), its dependencies' without.
-export async function npmRisk(name: string, version: string, oldVersion: string | null,
-  { teamScoped, isPublic, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; isPublic: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
+// A version's tarball as the viewer's loads read it (npm-loads.ts), its bytes
+// held to the integrity its reader's document names.
+async function tarballOf(doc: NpmVersionDocument | undefined): Promise<Uint8Array> {
+  if (!doc) throw new NpmPackageError(502, 'upstream-invalid')
+  const load = loadNpmTarball(doc)
+  try { return await load.result } finally { load.release() }
+}
+
+// The version `doc` names assessed against `old`'s, where given, each as the
+// reader's readNpmVersion read it: trusted however new where a team lists its
+// scope (`teamScoped`), its own packages; else held to risk's minimum release
+// age. Its documents are read with npm's token where the reader may have it
+// (`privileged`, as readNpmVersion), its dependencies' without; what is kept
+// of it is shared only where neither version is private.
+export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
+  { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
   if (assessing >= MAX_ACTIVE_ASSESSMENTS) throw new NpmPackageError(429, 'npm-busy')
   assessing++
   try {
-    return await assessNpm(name, version, { oldVersion, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, cache: npmRiskCache(stores, isPublic), signal,
-      packument: (asked, { authorized }) => readNpmPackument(asked, privileged && authorized, signal) })
+    return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
+      cache: npmRiskCache(stores, !doc.private && !old?.private), signal,
+      packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
+      tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined) })
   } finally { assessing-- }
 }

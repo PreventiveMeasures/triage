@@ -175,6 +175,12 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   assert.equal((await h.send(riskPath({ version: '1.2.3' }), 'nobody')).status, 401)
   assert.equal((await h.send(riskPath({ version: '1.2.3', otherVersion: 'not a version' }))).status, 400)
   assert.equal((await h.send(riskPath({ version: '9.9.9' }))).status, 404)
+  const huge = packageOf('@pub/huge', '1.0.0', { 'package.json': '{}' })
+  huge.doc.dist.unpackedSize = 65 * 1024 * 1024
+  const calls = registry(t, [huge])
+  const refused = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@pub/huge', version: '1.0.0' })}`)
+  assert.deepEqual([refused.status, refused.json()], [413, { error: 'package-too-large' }], 'its tarball read as the viewer loads one, refused as it would be')
+  assert.ok(!calls.some(call => call.url === huge.doc.dist.tarball))
 })
 
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {

@@ -37,6 +37,10 @@ export interface AssessNpmOptions {
   // `authorized` whether it may be asked with the caller's npm token: the
   // package assessed, not its dependencies.
   packument?: (name: string, options: { authorized: boolean; signal: AbortSignal | undefined }) => Promise<Record<string, unknown> | null>
+  // Reads a version's tarball, gzipped, in place of upstream's getTarball, as
+  // the managed server does within its bounds: `version` the one assessed or
+  // `oldVersion`. What it throws is thrown as it is.
+  tarball?: (name: string, version: string, options: { signal: AbortSignal | undefined }) => Promise<Uint8Array>
   now?: number
   signal?: AbortSignal
   // Whether npm's downloads are asked for: the package's popularity, and its

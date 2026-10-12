@@ -128,9 +128,12 @@ test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its 
   const dependency = { name: 'dep-like', versions: [version('dep-like', '1.0.0', { 'package.json': '{}' }, {}, ago(31))] }
   const asked = npm(t, [own, dependency]), read = []
   const packument = (name, { authorized }) => { read.push([name, authorized]); return Promise.resolve(documentOf(name === 'hooked' ? own : dependency)) }
-  const assessment = await assessNpm('hooked', '1.0.0', { now: NOW, packument })
-  assert.deepEqual(read, [['hooked', true], ['dep-like', false]], 'the package assessed with the caller\'s token, its dependency without')
-  assert.ok(!asked.some(url => url.startsWith(`${REGISTRY}/hooked`) && !url.endsWith('.tgz')) && !asked.includes(`${REGISTRY}/dep-like`), 'npm\'s registry asked for tarballs alone')
+  const tarball = (name, number) => { read.push([`${name}@${number}`]); return Promise.resolve(own.versions[0].tgz) }
+  const assessment = await assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball })
+  assert.deepEqual(read, [['hooked', true], ['hooked@1.0.0'], ['dep-like', false]], 'the package assessed with the caller\'s token, its dependency without; its tarball the caller\'s')
+  assert.ok(!asked.some(url => url.startsWith(REGISTRY)), 'npm\'s registry asked nothing')
+  const busy = new Error('npm-busy')
+  await assert.rejects(assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball: () => Promise.reject(busy) }), error => error === busy, 'a caller\'s failure thrown as it is')
   assert.equal(assessment.dependencies.added[0].level, 'is-unpopular', 'its document read: public, none of its downloads counted')
 })
 

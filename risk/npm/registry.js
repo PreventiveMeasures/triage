@@ -20,11 +20,12 @@
 // environment has for a scoped one (PREVENTIVE_MEASURES_NPM_TOKEN,
 // STASIS_NPM_TOKEN or NPM_TOKEN), so a private one can be read; its
 // dependencies' public facts and downloads with none. A caller may ask for
-// packages' documents itself (`packument`), as the managed server does,
-// within the bounds it holds every read of npm to. What risk asks npm itself
-// is given up on after 30 seconds, and read no further than its bounds,
-// `upstream-too-large` past them, as is a tarball unpacking past tarball.js's,
-// `package-too-large`.
+// packages' documents (`packument`) and versions' tarballs (`tarball`)
+// itself, as the managed server does, within the bounds it holds every read
+// of npm to; else a tarball is upstream's getTarball's, bounded as upstream
+// bounds it. What risk asks npm itself is given up on after 30 seconds, and
+// read no further than its bounds, `upstream-too-large` past them, as is a
+// tarball unpacking past tarball.js's, `package-too-large`.
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
 import { npmTarballVersion } from './tarball.js'
@@ -131,10 +132,12 @@ export async function npmPackageFacts(name, versions, context) {
 }
 
 // A version's files, as compare.js takes a version, from its tarball
-// (tarball.js), with `npm` its `{ name, version, manifest, published }`.
-export async function npmVersionFiles(name, version, { manifest, published, dist }, { cache, signal }) {
+// (tarball.js): the caller's (`tarball`) where it gives one, its failures
+// thrown as they are, else upstream's; with `npm` its `{ name, version,
+// manifest, published }`.
+export async function npmVersionFiles(name, version, { manifest, published, dist }, { cache, tarball: read, signal }) {
   const what = `${name}@${version}`
-  const tarball = await getTarball(name, version, dist, cache === undefined ? {} : { cache }).catch(error => {
+  const tarball = read ? await read(name, version, { signal }) : await getTarball(name, version, dist, cache === undefined ? {} : { cache }).catch(error => {
     throw signal?.aborted ? error : new NpmRiskError('upstream-unavailable', `npm's tarball of ${what} couldn't be had: ${error.message}`)
   })
   try { return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) } } catch (error) {

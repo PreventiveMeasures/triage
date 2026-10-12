@@ -2575,8 +2575,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
-      const assessment = await npmRisk(name, doc.version, old?.version ?? null,
-        { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, isPublic: !doc.private && !old?.private, privileged, signal: controller.signal })
+      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, privileged, signal: controller.signal })
       await reply(doc.private, { ...assessment })
       return
     }
