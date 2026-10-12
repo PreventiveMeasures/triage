@@ -1,17 +1,25 @@
 import { LitElement, html, nothing } from 'lit'
-import { summarizeReview } from '../../common/dependency-reviews.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { discardDependencyReview, myDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './dialogs/discard-review-dialog.js'
 import { managedHistory } from './managed-history.js'
-import { reviewBadge, reviewDate, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { NEXT_ICON } from './lit-icons.js'
+import { reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
   ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }) })
 
+const compactDate = time => {
+  const date = new Date(time)
+  return html`<time datetime=${date.toISOString()} data-tooltip=${date.toLocaleString()}>${date.toLocaleDateString(undefined,
+    { month: 'short', day: 'numeric', ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) })}
+    <span>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span></time>`
+}
+
 export class DependencyReviewList extends LitElement {
-  static properties = { session: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true }, _next: { state: true }, _discarding: { state: true } }
-  constructor() { super(); this._reviews = []; this._next = null; this._controller = new AbortController() }
+  static properties = { session: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
+    _next: { state: true }, _discarding: { state: true }, _expanded: { state: true } }
+  constructor() { super(); this._reviews = []; this._next = null; this._expanded = new Set(); this._controller = new AbortController() }
   createRenderRoot() { return this }
   disconnectedCallback() { super.disconnectedCallback(); this._controller.abort(); this._key = null }
   _canDiscard(review) { return review.publishedAt === null && review.user === this.session?.id && ['triage', 'manage', 'admin'].includes(this.session?.role) }
@@ -41,28 +49,49 @@ export class DependencyReviewList extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) this._loading = false }
   }
+  _toggleDetails(id) {
+    const expanded = new Set(this._expanded)
+    if (expanded.has(id)) expanded.delete(id); else expanded.add(id)
+    this._expanded = expanded
+  }
+  _details(review) {
+    return html`<section id=${`review-details-${review.id}`} class="dependency-review-details" aria-label=${`Details for ${reviewTitle(review)}`}>
+      ${review.teams.length > 0 ? html`<p class="dependency-review-recipients">Published to ${review.teams.map(team => team.name).join(', ')}</p>` : nothing}
+      ${review.comment ? html`<div class="dependency-review-final-note"><strong>Final note</strong>${reviewNote(review.comment)}</div>` : nothing}
+      ${review.entries.length > 0 ? html`<ul class="dependency-review-entries">${review.entries.map(entry => html`<li>
+        <div class="dependency-review-entry-head"><span>${entry.file ?? 'Review note'}</span>${entry.status ? verdictLabel(entry.status) : nothing}</div>
+        ${reviewNote(entry.comment)}</li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
+    </section>`
+  }
   _row(review) {
     const route = dependencyReviewRoute(review)
-    const published = review.publishedAt !== null
+    const expanded = this._expanded.has(review.id), published = review.publishedAt !== null
     const checked = new Set(review.entries.filter(entry => entry.file !== null && entry.status).map(entry => entry.file)).size
+    const notes = review.entries.filter(entry => entry.comment.trim()).length + Number(Boolean(review.comment.trim()))
     const open = event => {
         if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {
           event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
         }
     }
-    return html`<li class="dependency-review-row"><div class="dependency-review-row-main"><div>
-      <a href=${managedRoutePath(route)} @click=${open}>${review.package}</a>
-      <p>${review.basePackage === null ? review.version : `${review.basePackage === review.package ? '' : `${review.basePackage} `}${review.baseVersion} → ${review.version}`}</p>
-      <p>${reviewDate(review.publishedAt ?? review.time)}</p></div>
-      <div>${published ? verdictLabel(review.status) : html`<strong>In progress</strong>`}<p>${published ? `${review.coverage === 'full' ? 'Full' : 'Partial'} · ${review.checkedFiles}/${review.totalFiles} files checked`
-        : `${checked} files checked · ${verdictLabels[summarizeReview(review.entries, null).verdictLimit]}`}</p></div>
-      <div>${reviewBadge(review)}<p>${published ? review.teams.map(team => team.name).join(', ') : 'Not shared'}</p></div>
-      <div class="dependency-review-row-actions"><a href=${managedRoutePath(route)} @click=${open}>${published ? 'View review' : 'Continue'} →</a>
+    return html`<li class=${`dependency-review-row${expanded ? ' is-expanded' : ''}`}><div class="dependency-review-row-main">
+      <button type="button" class="dependency-review-expand" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
+        aria-label=${`${expanded ? 'Hide' : 'Show'} details for ${reviewTitle(review)}`} @click=${() => this._toggleDetails(review.id)}>${NEXT_ICON}</button>
+      <div class="dependency-review-identity"><a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>
+        ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
+        <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}</span></a>
+        <div class="dependency-review-meta">${compactDate(review.publishedAt ?? review.time)}
+          ${published && review.teams.length > 0 ? html`<span class="dependency-review-teams">${review.teams.map(team => team.name).join(', ')}</span>` : nothing}
+          ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
+          ${review.revokedAt === null ? nothing : reviewBadge(review)}</div></div>
+      <div class="dependency-review-result">${published ? verdictLabel(review.status) : html`<span class="dependency-review-checked">${checked} ${checked === 1 ? 'file' : 'files'} checked</span>`}
+        <span class="dependency-review-coverage">${published ? `${review.coverage === 'full' ? 'Full' : 'Partial'} · ${review.checkedFiles}/${review.totalFiles} files checked`
+          : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</span></div>
+      <div class="dependency-review-row-actions">
         <review-audit-copy .review=${review}></review-audit-copy>
-        ${this._canDiscard(review) ? html`<button type="button" class="npm-review-danger" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._discard(review)}>Discard</button>` : nothing}</div></div>
-      <details><summary>${review.entries.length} file reviews and notes${review.comment ? ' · Final note' : ''}</summary>
-        ${reviewNote(review.comment)}<ul>${review.entries.map(entry => html`<li><strong>${entry.file ?? 'Whole diff'}</strong> · ${verdictLabels[entry.status] ?? 'Note'}${reviewNote(entry.comment)}</li>`)}</ul>
-      </details>
+        ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._discard(review)}>Discard</button>` : nothing}
+        <a class="dependency-review-open" href=${managedRoutePath(route)} @click=${open} aria-label=${`${published ? 'Open' : 'Continue'} review for ${reviewTitle(review)}`}
+          data-tooltip=${published ? 'Open review' : 'Continue review'}><span aria-hidden="true">→</span></a></div></div>
+      ${expanded ? this._details(review) : nothing}
     </li>`
   }
   render() {
@@ -74,6 +103,7 @@ export class DependencyReviewList extends LitElement {
       this._reviews = []
       this._next = null
       this._discarding = null
+      this._expanded = new Set()
       void this._load()
     }
     return html`<section class="dependency-review-list">
