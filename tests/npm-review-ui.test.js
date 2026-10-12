@@ -166,6 +166,10 @@ test('only a sole eligible team is selected initially; Publish requires at least
   page._beginPublish()
   assert.equal(page._finalStatus, 'request-changes')
   assert.match(text(page._confirmation(review)), /Partial review/u)
+  assert.doesNotMatch(text(page._confirmation(review)), /Only teams|Select at least one team/u, 'nothing said under the teams while one is selected')
+  page._selectedTeams = new Set()
+  assert.match(text(page._confirmation(review)), /Select at least one team to publish\./u)
+  page._selectedTeams = new Set(['two'])
   page._finalStatus = 'accept'
   await page._publish()
   assert.equal(requests.length, 0, 'final verdict cannot override file concerns')

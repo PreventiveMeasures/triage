@@ -91,8 +91,8 @@ export function renderReviewConfirmation(page, review) {
       <fieldset class="npm-review-team-options"><legend>Publish to teams</legend>${page._teams.map(team => html`<mode-switch label=${team.name}
         .checked=${page._selectedTeams.has(team.id)} .disabled=${busy(page)} @click=${() => { if (busy(page)) return; const selected = new Set(page._selectedTeams);
           if (selected.has(team.id)) selected.delete(team.id); else selected.add(team.id); page._selectedTeams = selected }}></mode-switch>`)}
-        <p class=${page._selectedTeams.size > 0 ? 'npm-review-help' : 'npm-review-error'}>${page._teams.length === 0 ? 'No teams you belong to have dependency review enabled.'
-          : page._selectedTeams.size > 0 ? 'Only teams with dependency review enabled are listed.' : 'Select at least one team to publish.'}</p></fieldset>
+        ${page._selectedTeams.size > 0 ? nothing : html`<p class="npm-review-error">${page._teams.length === 0 ? 'No teams you belong to have dependency review enabled.'
+          : 'Select at least one team to publish.'}</p>`}</fieldset>
       ${errorMessage(page)}</div>
     <footer class="npm-review-dialog-footer"><p>Publishing freezes your verdicts and notes.<br>You can continue in a new review to make changes.</p>
       <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
