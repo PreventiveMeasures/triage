@@ -740,7 +740,9 @@ test('npm\'s provenance for a public version: where it was built, read only from
     { predicateType, bundle: { verificationMaterial: { tlogEntries: [{ logIndex: '42' }] }, dsseEnvelope: { payload: Buffer.from(JSON.stringify({
       subject: [{ name: `pkg:npm/${doc.name.replace(/^@/u, '%40')}@${doc.version}`, digest: { sha512: digest } }], predicate })).toString('base64') } } },
   ] })
+  // Its build's parameters long enough that the statement passes 2,048 characters, as one may.
   const v1 = { buildDefinition: { externalParameters: { workflow: { repository: 'https://github.com/org/repo', path: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0' } },
+    internalParameters: { github: { event_name: 'push', repository_id: '1'.repeat(2000) } },
     resolvedDependencies: [{ uri: 'git+https://github.com/org/repo@refs/tags/v1.0.0', digest: { gitCommit: 'b'.repeat(40) } }] },
     runDetails: { builder: { id: 'https://github.com/actions/runner/github-hosted' }, metadata: { invocationId: 'https://github.com/org/repo/actions/runs/7/attempts/1' } } }
   const v02 = { builder: { id: 'https://github.com/actions/runner' }, invocation: { configSource: { uri: 'git+https://github.com/org/repo@refs/heads/main', digest: { sha1: 'c'.repeat(40) },
@@ -759,6 +761,7 @@ test('npm\'s provenance for a public version: where it was built, read only from
   const provenanceOf = async (name, who) => (await h.send(`/api/npm/provenance?name=${encodeURIComponent(name)}&version=1.0.0`, who)).json()
   assert.equal((await h.send(packagePath('attested', '1.0.0'))).json().manifest.provenance, true, 'its manifest says npm keeps provenance for it')
   assert.equal((await h.send(packagePath('unattested', '1.0.0'))).json().manifest.provenance, undefined)
+  assert.ok(envelope(pkg.doc, 'https://slsa.dev/provenance/v1', v1).attestations[1].bundle.dsseEnvelope.payload.length > 2048)
   assert.deepEqual(await provenanceOf('attested'), { name: 'attested', version: '1.0.0', provenance: {
     repository: 'https://github.com/org/repo', commit: 'b'.repeat(40), workflow: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0',
     builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42 } })

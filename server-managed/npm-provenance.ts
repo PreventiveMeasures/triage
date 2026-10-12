@@ -86,8 +86,11 @@ async function askProvenance(name: string, version: string, integrity: string): 
   const attestations: unknown[] = Array.isArray(field(json, 'attestations')) ? field(json, 'attestations') as unknown[] : []
   const slsa = attestations.find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
   if (!slsa) return null
+  // The statement, whatever its length (the answer is bounded as a whole),
+  // unlike the fields read out of it.
+  const payload = field(slsa, 'bundle', 'dsseEnvelope', 'payload')
   let statement: unknown
-  try { statement = JSON.parse(Buffer.from(text(field(slsa, 'bundle', 'dsseEnvelope', 'payload')) ?? '', 'base64').toString('utf8')) } catch { return null }
+  try { statement = JSON.parse(Buffer.from(typeof payload === 'string' ? payload : '', 'base64').toString('utf8')) } catch { return null }
   // Only one naming this version's tarball: its purl, and its digest as the
   // version's integrity has it.
   const purl = `pkg:npm/${name.replace(/^@/u, '%40')}@${version}`
