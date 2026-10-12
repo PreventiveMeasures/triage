@@ -6,25 +6,31 @@
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { npmVersionFileRisk } from '../../risk/npm/files.js'
-import { NPM_LONG_LINE, OBFUSCATED_COUNTED, OBFUSCATED_NAMES, READABILITY, charactersOf, npmFileReadability, npmLabelMark, npmLargeCode, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'
+import { fileRiskOf } from './file-risk.js'
+import { NPM_LONG_LINE, OBFUSCATED_COUNTED, OBFUSCATED_NAMES, READABILITY, charactersOf, npmFileReadability, npmLabelMark, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'
 
-export { NPM_LARGE_CODE, NPM_LONG_LINE, NPM_PROSE, READABILITY, npmBecameUnreadable, npmFileReadability, npmLabelMark, npmLargeCode, npmObfuscation, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'
-export { JS_STRING_OR_COMMENT } from '../../risk/files/script.js'
-export { npmTextEncoding } from '../../risk/files/characters.js'
+export { READABILITY, npmLabelMark, npmReadabilityLabels, npmTaggedCategory } from '../../risk/files/readability.js'
 
 // What a fingerprint holds, as a tooltip says it.
 export const npmObfuscationFound = ({ names, loop }) => [names >= OBFUSCATED_NAMES
   && `${names.toLocaleString('en')}${names === OBFUSCATED_COUNTED ? ' or more' : ''} names such as _0x1a2b`, loop && 'while(!![])'].filter(Boolean).join(', and ')
 
-// A file's readability (npmFileReadability), read once a version (`details`)
-// and path, whoever asks: the Overview's lists, Compare's tags and whether a
-// file can be pretty-printed alike, as risk reads the version's own file
-// (risk/npm/compare.js npmVersionFileRisk). Read apart for another text, as
-// Compare gives one side's for both where an importer was captured on one.
-const readByVersion = new WeakMap()
+// How a file of a version (`details`) reads, as the Overview's lists and
+// Compare's tags show it: as risk read the version's own file (file-risk.js
+// fileRiskOf), the server's for an npm version, null until it arrives; read
+// here for another text (npmFileReadabilityRead), as Compare gives one side's
+// for both where an importer was captured on one.
 export function npmFileReadabilityOf(details, path, text) {
-  if (text === bundleFilesAsMap(details).get(path) && typeof text === 'string') return npmVersionFileRisk(details, path).readability
+  if (text === bundleFilesAsMap(details).get(path) && typeof text === 'string') return fileRiskOf(details, path).readability
+  return npmFileReadabilityRead(details, path, text)
+}
+
+// How a text of a file reads (npmFileReadability), read here, once a version
+// (`details`) and path: for what the viewer does with a file, whether it
+// pretty-prints it or hides a minifier's renames in it, not for what calls
+// for a look, which npmFileReadabilityOf shows.
+const readByVersion = new WeakMap()
+export function npmFileReadabilityRead(details, path, text) {
   let files = readByVersion.get(details)
   if (!files) readByVersion.set(details, files = new Map())
   const kept = files.get(path)
@@ -96,12 +102,14 @@ export function npmListedReadabilityTag(readability) {
 // long lines, where it has them, then its tag.
 export const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlags(readability)}${npmEncodingTag(readability)}` : nothing
 
-// What a file is beyond how it reads, before its tag: Large, a code file of
+// What a file of a version (`details`) is beyond how it reads, as risk read
+// it (file-risk.js fileRiskOf), before its tag: Large, a code file of
 // NPM_LARGE_CODE or more (`bytes` its size), which says little of a file
 // alone, as `notice`; and Obfuscated, one with an obfuscator's fingerprint
 // (npmObfuscation), as `warn`. Nothing for neither.
-export function npmFileFlagTags(path, readability, bytes) {
-  const large = npmLargeCode(path, bytes)
+export function npmFileFlagTags(details, path, bytes) {
+  const { stamps, readability } = fileRiskOf(details, path)
+  const large = stamps.some(({ name }) => name === 'Large')
   const obfuscation = readability?.obfuscation
   if (!large && !obfuscation) return nothing
   return html`${large ? html`<span class="npm-flag-tag is-notice" data-tooltip=${`A code file of ${formatBytes(bytes)}, 256 KiB or more`}>Large</span>` : nothing}${

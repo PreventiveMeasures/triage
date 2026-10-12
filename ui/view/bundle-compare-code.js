@@ -37,7 +37,7 @@ import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
 import { PRETTY_ICON, keptPrettyCopy, prettyCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
@@ -122,9 +122,10 @@ const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bu
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 export const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
-// Whether a text was minified (file-readability.js), its short names then a
-// minifier's, not its author's.
-const minified = (details, path, text) => npmFileReadabilityOf(details, path, text).category === 'minified'
+// Whether a text was minified, as read here (file-readability.js
+// npmFileReadabilityRead), its short names then a minifier's, not its
+// author's.
+const minified = (details, path, text) => npmFileReadabilityRead(details, path, text).category === 'minified'
 
 // The files a bundle or package version starts from, by path, each with what
 // names it: a Stasis bundle's entries, an npm version's main, module, types
@@ -1158,8 +1159,7 @@ export class BundleCompareCode extends LitElement {
   // (file-readability.js npmFileFlagTags), in its head and the tree: as it is
   // now, or was, for one removed.
   _flagTags(path, entry) {
-    const { was, now } = this._reads(path, entry)
-    return now ? npmFileFlagTags(path, now, entry.otherBytes) : npmFileFlagTags(entry.basePath ?? path, was, entry.baseBytes)
+    return entry.kind === 'removed' ? npmFileFlagTags(this.base, entry.basePath ?? path, entry.baseBytes) : npmFileFlagTags(this.other, path, entry.otherBytes)
   }
 
   // The tree tags a file as its head does where it can be hard to review by

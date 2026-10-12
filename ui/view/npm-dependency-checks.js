@@ -4,8 +4,8 @@
 // dependencies over its package.json (bundle-compare-code.js) flag them.
 import { html } from 'lit'
 
-export { NPM_DEPENDENCY_KINDS, npmDependencies, npmDependencyChanges, npmDependencyFlags, npmDependencySpecs, npmDependencyUnimported, npmFlagDependencyChanges } from '../../risk/npm/dependencies.js'
-export { npmAlias, npmDependencySource, npmRegistrySpec } from '../../risk/npm/specs.js'
+export { npmDependencies, npmDependencyChanges } from '../../risk/npm/dependencies.js'
+export { npmAlias } from '../../risk/npm/specs.js'
 
 // A dependency's flags, as tags in its warning's color, each saying why in
 // its tooltip: in the Overview's Dependencies column (npm-package.js), and

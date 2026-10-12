@@ -144,9 +144,10 @@ export const npmDependencySpecs = manifest => new Map(NPM_DEPENDENCY_KINDS.flatM
 
 // Two versions' dependency changes (npm-package.js npmDependencyChanges),
 // each the open version (`other`) adds or changes with its `flags`
-// (npmDependencyFlags) against the one compared with (`base`).
+// (npmDependencyFlags) against the one compared with (`base`), or alone,
+// none given.
 export function npmFlagDependencyChanges({ removed, added, changed }, base, other) {
-  const was = npmDependencySpecs(base?.npm?.manifest)
+  const was = base ? npmDependencySpecs(base.npm?.manifest) : null
   const flag = row => ({ ...row, flags: npmDependencyFlags(other, row, was) })
   return { removed, added: added.map(flag), changed: changed.map(flag) }
 }

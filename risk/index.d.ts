@@ -80,6 +80,9 @@ export interface DependencyRisk {
   flags: { check: string; label: string; tooltip: string }[]
   tier?: number | null
   level?: string
+  // Its last whole month's downloads, by what its tier goes by: none where
+  // npm counts none of them.
+  month?: { total: number; from: string }
   created?: string
   gap?: number
 }
@@ -95,6 +98,14 @@ export interface NpmAssessment {
 }
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
+
+// What of an assessment holds whatever the time, of versions held as the
+// viewer holds one, the open one against another, or alone.
+export function npmLastingRisk(other: unknown, base?: unknown): Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>
+
+// An assessment of that and what is told fresh: the open version's own
+// findings, and its dependencies added, as the managed server tells them.
+export function npmAssessmentOf(kept: Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>, own: Finding[], added?: DependencyRisk[]): Pick<NpmAssessment, 'findings' | 'files' | 'dependencies'>
 
 export function npmTooNew(published: string, options?: { minimumReleaseAge?: number; now?: number }): boolean
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown

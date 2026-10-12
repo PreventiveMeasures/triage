@@ -24,12 +24,12 @@ import { npmInstallScripts } from '../../risk/npm/install-scripts.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmTooNew } from '../../risk/npm/release.js'
 import { DAY_MS, fullDate } from './npm-downloads-chart.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { npmAlias, npmDependencies, npmDependencyChanges, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges } from './npm-dependency-checks.js'
+import { npmAlias, npmDependencies, npmDependencyChanges, npmDependencyFlagTags } from './npm-dependency-checks.js'
+import { npmRisk } from './npm-risk.js'
 
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
-export { npmDependencies, npmDependencyChanges } from '../../risk/npm/dependencies.js'
 
 const NPM_PACKAGE_URL = /^https?:\/\/(?:www\.)?npmjs\.(?:com|org)\/package\/((?:@[^/]+\/)?[^/?#]+)(?:\/v\/([^/?#]+))?\/?(?:[?#].*)?$/u
 
@@ -88,6 +88,8 @@ export function npmPackageDetails(entry, data) {
     npmBinaries: new Map(files.filter(([, , text, digest]) => typeof text !== 'string' && typeof digest === 'string')
       .map(([path, size, , digest]) => [path, { size, digest }])),
     npmEntries: npmPackageEntries(entry.npm.manifest, sources),
+    // What the server's risk tells of it, once it arrives (file-risk.js).
+    risk: () => npmRisk(entry.npm),
   }
 }
 
@@ -450,17 +452,27 @@ export function renderNpmLookup() {
 }
 
 // What two versions' dependencies differ in (npmDependencyChanges), `base`
-// and `other` each one's details, those the open one adds or changes flagged
-// where they call for a look (npm-dependency-checks.js): Compare's in place
-// of Packages, and its chips (npm-overview.js). Each it adds carries the two
+// and `other` each one's details, those the open one adds or changes as the
+// server's risk tells them (npm-risk.js npmRisk), flagged where they call for
+// a look, a new one's package's tier and age with them, none flagged until
+// it arrives: Compare's in place of Packages. Each it adds carries the two
 // versions (`compared`, their `{ name, version, published }`), for when its
 // package was first published beside them (npm-overview.js
 // npmDependencyTags).
 export function npmFlaggedDependencyChanges(base, other) {
-  const changes = npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other)
+  const changes = npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest)
+  const told = base?.npm && other?.npm ? npmRisk(other.npm, base.npm.version)?.dependencies : null
   const compared = [base?.npm, other?.npm]
-  return { ...changes, added: changes.added.map(row => ({ ...row, compared })) }
+  const flagged = (rows, of) => rows.map(row => ({ flags: [], ...of?.find(({ key }) => key === row.key), ...row }))
+  return { removed: changes.removed, added: flagged(changes.added, told?.added).map(row => ({ ...row, compared })), changed: flagged(changes.changed, told?.changed) }
 }
+
+// Each dependency of a version (`npm`) flagged where it calls for a look, as
+// the server's risk tells it of the version alone (npm-risk.js npmRisk,
+// npm-dependency-checks.js): its flags by its key (npmDependencyChanges),
+// none until it arrives.
+const dependencyFlags = npm => new Map((npmRisk(npm)?.dependencies.added ?? []).map(({ key, flags }) => [key, flags]))
+const keyOf = ({ kind, name }) => `${kind ?? ''}\0${name}`
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
@@ -481,14 +493,14 @@ function openDependency({ opens, from, to }) {
 // The Overview's Dependencies column, in place of the Packages one a single
 // package has no use for, where it has any (npmOverviewExtras says where it
 // has none). Each dependency opens in the viewer, at its latest, flagged
-// where it calls for a look, nothing of the version importing it once its
-// files (`details`) are read.
-export function npmDependenciesColumn(entry, details = null) {
+// where it calls for a look, as the server's risk tells it (dependencyFlags).
+export function npmDependenciesColumn(entry) {
   const rows = npmDependencies(entry.npm.manifest)
   if (rows.length === 0) return nothing
+  const told = dependencyFlags(entry.npm)
   return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list npm-dependency-list">${rows.map(row => {
       const { name, range, kind, opens } = row
-      const flags = npmDependencyFlags(details, row)
+      const flags = told.get(keyOf(row)) ?? []
       const content = html`<span class="npm-dependency-name"><span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>${npmDependencyFlagTags(flags)}</span>
         ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
         <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
@@ -502,13 +514,14 @@ export function npmDependenciesColumn(entry, details = null) {
 // as the Overview counts them.
 const DEPENDENCY_CHECKS = [['source', 'Non-registry', () => 'From elsewhere than npm\'s registry'], ['unimported', 'Unimported', version => `Imported by nothing of ${version}`]]
 
-// Beside how many dependencies a version has, a chip for each check any of
-// them is flagged by (npmDependencyFlags), counting them, which in its
+// Beside how many dependencies a version (`npm`) has, a chip for each check
+// any of them is flagged by (dependencyFlags), counting them, which in its
 // tooltip.
-export function npmDependencyChecks({ version, manifest }, details) {
-  const flagged = Map.groupBy(npmDependencies(manifest).flatMap(row => npmDependencyFlags(details, row).map(({ check }) => ({ ...row, check }))), ({ check }) => check)
+export function npmDependencyChecks(npm) {
+  const told = dependencyFlags(npm)
+  const flagged = Map.groupBy(npmDependencies(npm.manifest).flatMap(row => (told.get(keyOf(row)) ?? []).map(({ check }) => ({ ...row, check }))), ({ check }) => check)
   return DEPENDENCY_CHECKS.filter(([check]) => flagged.has(check)).map(([check, label, note]) => html`<span class="npm-extension is-warn npm-dependency-check"
-    data-tooltip=${`${note(version)}: ${flagged.get(check).map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
+    data-tooltip=${`${note(npm.version)}: ${flagged.get(check).map(({ name, range }) => `${name} ${range}`).join(', ')}`}>
     <span>${label}</span><span class="npm-extension-count">${flagged.get(check).length}</span></span>`)
 }
 
@@ -626,7 +639,7 @@ export function npmOverviewExtras(entry, files = null, details = null) {
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="npm-install-scripts">${scripts.length === 0 ? 'Yes'
       : scripts.map(([script, command]) => html`<div class="npm-install-script"><span class="npm-install-script-name">${script}</span><code>${scriptCommand(command, files)}</code></div>`)}</dd>` : nothing}
-    <dt>Dependencies</dt><dd class="npm-dependencies-fact">${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}${npmDependencyChecks(entry.npm, details)}</dd>`
+    <dt>Dependencies</dt><dd class="npm-dependencies-fact">${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}${npmDependencyChecks(entry.npm)}</dd>`
 }
 
 // The version shown, in the header, with the package's other versions to

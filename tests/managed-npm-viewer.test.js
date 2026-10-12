@@ -7,6 +7,7 @@ import { createManagedHistory } from '../ui/view/managed-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 import { browserAt } from './_managed-browser.js'
 import { templateText as text } from './_lit.js'
+import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 const state = {}
 const renders = [], requests = [], versionRequests = []
@@ -21,10 +22,13 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
   fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
+  fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion)),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependenciesColumn, npmDependencyChanges, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 const { npmEntryFile } = await import('../ui/view/npm-entries.js')
+const { npmDependencies, npmDependencyChanges } = await import('../risk/npm/dependencies.js')
+const { npmRisk } = await import('../ui/view/npm-risk.js')
 const { npmInstallScripts } = await import('../risk/npm/install-scripts.js')
 
 const data = {
@@ -76,18 +80,19 @@ test('Dependencies list every kind by name, and an alias opens the package it na
   assert.deepEqual(npmDependencies({}), [])
 })
 
-test('the Overview flags a dependency from elsewhere than the registry, and one nothing of the version imports, in its column and beside its count', () => {
+test('the Overview flags a dependency from elsewhere than the registry, and one nothing of the version imports, in its column and beside its count', async () => {
   const manifest = { dependencies: { 'ethereumjs-abi': 'git+https://github.com/ethereumjs/ethereumjs-abi.git', 'ethereumjs-util': '^5.1.1', touch: '^3.1.0' },
     peerDependencies: { react: '>=18' } }
   const entry = npmPackageEntry({ ...data, name: 'eth-sig-util', version: '1.4.2', manifest })
-  const details = npmPackageDetails(entry, { ...data, files: [['index.js', 60, 'const abi = require(\'ethereumjs-abi\')\nconst util = require(\'ethereumjs-util\')']] })
-  const rows = text(npmDependenciesColumn(entry, details)).split('<li>').slice(1)
+  const details = holdVersion(npmPackageDetails(entry, { ...data, files: [['index.js', 60, 'const abi = require(\'ethereumjs-abi\')\nconst util = require(\'ethereumjs-util\')']] }), npmRisk)
+  assert.doesNotMatch(text(npmDependenciesColumn(entry)), /npm-dependency-flag/u, 'none until the server\'s risk arrives')
+  await setImmediate()
+  const rows = text(npmDependenciesColumn(entry)).split('<li>').slice(1)
   assert.match(rows[0], /^<div class="bundles-source-row npm-dependency-row is-resource"><span class="npm-dependency-name"><span class="bundles-source-path"[^>]*>ethereumjs-abi<\/span><span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm's registry: git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>non-registry<\/span><\/span>/u,
     'its flag after its name, opening nothing')
   assert.doesNotMatch(rows[1], /npm-dependency-flag/u, 'ethereumjs-util')
   assert.match(rows[2], /data-npm-dependency=react[^]*>react<\/span><\/span>\s*<span class="npm-dependency-kind">peer</u, 'a peer one isn\'t asked about')
   assert.match(rows[3], /data-npm-dependency=touch[^]*>touch<\/span><span class=npm-dependency-flag is-unimported data-tooltip=Nothing of 1\.4\.2 imports it[^>]*>unimported</u)
-  assert.doesNotMatch(text(npmDependenciesColumn(entry)), /is-unimported/u, 'not until its files are read')
   const fact = /<dt>Dependencies<\/dt>([^]*)$/u.exec(text(npmOverviewExtras(entry, null, details)))[1]
   assert.match(fact, /npm-sized is-medium>4<\/span><span class="npm-extension is-warn npm-dependency-check"\s+data-tooltip=From elsewhere than npm's registry: ethereumjs-abi git\+https:\/\/github\.com\/ethereumjs\/ethereumjs-abi\.git>\s*<span>Non-registry<\/span><span class="npm-extension-count">1<\/span>/u)
   assert.match(fact, /data-tooltip=Imported by nothing of 1\.4\.2: touch \^3\.1\.0>\s*<span>Unimported<\/span><span class="npm-extension-count">1</u)

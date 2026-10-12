@@ -9,6 +9,8 @@ import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
+import { npmAddedDependency } from '../risk/npm/new-dependency.js'
+import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
 const DAY = 24 * 60 * 60_000
@@ -200,6 +202,19 @@ test('an assessment given up on as its signal aborts, upstream\'s download still
   controller.abort(new Error('caller gone'))
   await assert.rejects(assessed, /caller gone/u)
   arrive()
+})
+
+test('a new dependency\'s package told by its downloads but its latest two weeks\', and its age where it is new since the version compared with', () => {
+  const now = Date.parse('2026-10-12T12:00:00Z')
+  const days = (perDay, latest = perDay) => ({ start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, (_, i) => i < 58 ? perDay : latest) })
+  assert.deepEqual(npmSettledDownloads(days(100, 1e6), now), { start: '2026-08-01', end: '2026-09-27', days: Array.from({ length: 58 }, () => 100) }, 'to the day before its latest two weeks')
+  assert.equal(npmAddedDependency({ downloads: days(100, 1e6) }, now).tier, Infinity, 'just pulled in, 1M a day of late: unpopular as it was')
+  assert.deepEqual([npmAddedDependency({ downloads: days(4e6) }, now)].map(({ tier, wanted }) => [tier, wanted]), [[2000, false]], 'in the top 20,000: its age not asked')
+  const axios = ['2026-03-27T19:01:40.000Z', '2026-03-31T00:21:58.000Z']
+  assert.deepEqual(npmAddedDependency({ downloads: null, listed: { created: '2026-03-30T05:57:32.867Z', private: false }, published: axios }, now),
+    { tier: Infinity, wanted: true, created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, 'none counted: unpopular, and new since the version compared with')
+  assert.equal(npmAddedDependency({ downloads: null, listed: { created: '2026-03-30T05:57:32.867Z', private: true }, published: axios }, now).tier, null, 'a private one: not told')
+  assert.equal(npmAddedDependency({ downloads: days(0), listed: { created: '2020-01-01T00:00:00.000Z', private: false }, published: axios }, now).created, null, 'not one that existed before')
 })
 
 test('a version document read for what risk reads of it', () => {

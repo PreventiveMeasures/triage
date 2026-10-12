@@ -1614,7 +1614,9 @@ reader is in, and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/risk?name=&version=&otherVersion=` returns what calls for a
 look at a version, as risk tells it (risk/README.md, `assessNpm`), against
 `otherVersion` where given: `{ name, version, oldVersion, published, findings,
-files, dependencies }`. Risk is told on this server alone; a team's own scopes
+files, dependencies }`. Risk is told on this server alone, and the npm viewer
+shows it as told, computing none of it: the Overview a version's own, Compare
+the pair's and each side's files'. A team's own scopes
 are trusted however new (a minimum release age of 0), any other version held
 to two weeks. What it reads is kept by type (npm-risk.ts): a public package's
 assessment in the public npm cache, its versions' documents in the upstream

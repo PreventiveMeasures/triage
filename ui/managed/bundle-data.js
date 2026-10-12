@@ -110,12 +110,6 @@ export function fetchNpmStats(name, { signal } = {}) {
   return requestNpm('stats', { name }, signal)
 }
 
-// Its commas as they are, not `%2C`: the request line is what a long list
-// is bound by (npm-overview.js askDownloadCounts).
-export function fetchNpmDownloadCounts(names, { signal } = {}) {
-  return request(`/api/npm/download-counts?names=${names.map(encodeURIComponent).join(',')}`, NPM_ERRORS, response => response.json(), signal)
-}
-
 export function fetchNpmAdvisories(name, { signal } = {}) {
   return requestNpm('advisories', { name }, signal)
 }
@@ -126,6 +120,13 @@ export function fetchNpmTags(name, version, { signal } = {}) {
 
 export function fetchNpmSocket(name, version, { signal } = {}) {
   return requestNpm('socket', { name, version }, signal)
+}
+
+// What calls for a look at a version, against `otherVersion` where given, as
+// the server's risk tells it (server-managed/npm-risk.ts): the viewer reads
+// risk from here alone, telling none of it itself.
+export function fetchNpmRisk(name, version, otherVersion = null, { signal } = {}) {
+  return requestNpm('risk', { name, version, ...otherVersion === null ? {} : { otherVersion } }, signal)
 }
 
 export function fetchNpmProvenance(name, version, { signal } = {}) {

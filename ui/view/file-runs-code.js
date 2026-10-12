@@ -4,14 +4,13 @@
 import { html, nothing } from 'lit'
 import { RUNS_CODE } from '../../risk/files/runs-code.js'
 import { NPM_MAX_FOUND } from '../../risk/files/script.js'
-import { npmVersionFileRisk } from '../../risk/npm/files.js'
+import { fileRiskOf } from './file-risk.js'
 
-export { RUNS_CODE, npmFoundAdded, npmRunsCode, npmRunsCodeFlags, npmRunsCodeKinds, npmRunsCodeWithout } from '../../risk/files/runs-code.js'
-export { lineOf, npmIsScript } from '../../risk/files/script.js'
+export { npmRunsCodeKinds } from '../../risk/files/runs-code.js'
 
-// What a version's file runs beyond itself, as risk read it, once a version
-// (risk/npm/compare.js npmVersionFileRisk).
-export const npmFileRunsCode = (details, path) => npmVersionFileRisk(details, path).runsCode
+// What a version's file runs beyond itself, as risk read it (file-risk.js
+// fileRiskOf).
+export const npmFileRunsCode = (details, path) => fileRiskOf(details, path).runsCode
 
 // Its first lines, and how many more: some more yet where as many as risk
 // keeps were found (NPM_MAX_FOUND).

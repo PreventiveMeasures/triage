@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmDependencySource, npmDependencyUnimported, npmFlagDependencyChanges, npmRegistrySpec } from '../ui/view/npm-dependency-checks.js'
+import { npmDependencyFlagTags } from '../ui/view/npm-dependency-checks.js'
+import { npmDependencyFlags, npmDependencyUnimported, npmFlagDependencyChanges } from '../risk/npm/dependencies.js'
+import { npmAlias, npmDependencySource, npmRegistrySpec } from '../risk/npm/specs.js'
 import { templateText as text } from './_lit.js'
 
 // A version's details: its files, by path, and its manifest.
