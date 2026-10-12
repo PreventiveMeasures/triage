@@ -409,13 +409,13 @@ test('Files lines up under Packages\' lanes, or lays out its own when it lists a
     view._otherDetails = side('other', other)
     view._diffKey = null
     view._openSections = new Set(['files'])
-    return [...renderText(view._renderDiff()).matchAll(/class="bundle-compare-cols" data-lanes=(\d)/gu)].map(m => m[1])
+    return [...renderText(view._renderDiff()).matchAll(/class="bundle-compare-cols" data-lanes=(\d) data-section=(\w+)/gu)].map(m => `${m[2]} ${m[1]}`)
   }
   // Packages: Removed (gone) | Changed (own source); Files the same kinds,
   // laid out in Packages' lanes.
-  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two' }), ['2', '2'])
+  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two' }), ['packages 2', 'files 2'])
   // Files also adds one: Packages keeps its two lanes, Files lays out three.
-  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two', 'src/new.js': 'n' }), ['2', '3'])
+  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two', 'src/new.js': 'n' }), ['packages 2', 'files 3'])
 })
 
 test('the Overview lists a renamed file under Changed as `{old → new}`, and the summary counts it there', () => {

@@ -603,7 +603,7 @@ class BundleCompare extends LitElement {
       ${this._cols(lanes, html`
         ${this._depGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
         ${this._depGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
-        ${this._depGroup('Changed', rows.changed, 'changed', lanes)}`)}
+        ${this._depGroup('Changed', rows.changed, 'changed', lanes)}`, 'dependencies')}
     </section>`
   }
 
@@ -617,16 +617,17 @@ class BundleCompare extends LitElement {
       ${this._cols(lanes, html`
         ${this._pkgGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
         ${this._pkgGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
-        ${this._pkgGroup('Changed', rows.changed, 'changed', lanes)}`)}
+        ${this._pkgGroup('Changed', rows.changed, 'changed', lanes)}`, 'packages')}
     </section>`
   }
 
   // Removed | Added | Changed columns, one lane per kind in `lanes`
   // (Changed's the widest). Files takes Packages' lanes to line up under
   // them when it can (see _renderDiff), an empty lane where it lacks a kind.
-  _cols(lanes, groups) {
+  // `section` names whose lanes they are, for the stylesheet.
+  _cols(lanes, groups, section) {
     const template = lanes.map(kind => kind === 'changed' ? 'minmax(0, 5fr)' : 'minmax(0, 4fr)').join(' ')
-    return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} style=${styleMap({ '--compare-lanes': template })}>${groups}</div>`
+    return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} data-section=${section} style=${styleMap({ '--compare-lanes': template })}>${groups}</div>`
   }
 
   // A section that opens on demand, its heading the disclosure (with an
@@ -986,7 +987,7 @@ class BundleCompare extends LitElement {
         : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
             ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
             ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
-            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), root.from ? `${root.from} → ${root.to}` : prefix)}
+            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`, 'files'), root.from ? `${root.from} → ${root.to}` : prefix)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }
