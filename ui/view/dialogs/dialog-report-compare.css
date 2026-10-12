@@ -75,7 +75,7 @@ li { border-top: 1px solid var(--border); padding: .7rem .8rem; }
 .identical { color: var(--green); font-size: .82rem; padding-block: .5rem; }
 .error, .warning { font-size: .75rem; line-height: 1.5; margin-top: .5rem; overflow-wrap: anywhere; }
 .error { color: var(--critical); }
-.warning { color: var(--medium); }
+.warning { color: var(--yellow); }
 dialog > .error { padding: 0 1.3rem .6rem; }
 @media (width <= 650px) {
   .pickers { gap: .5rem; padding-inline: .8rem; }

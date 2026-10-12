@@ -3391,7 +3391,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
    or not (npm-package.js npmAccount). */
 .bundles-detail-meta .npm-account {
   &.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
-  &.is-unknown { color: var(--medium); }
+  &.is-unknown { color: var(--yellow); }
 }
 .bundles-detail-meta .npm-trusted-publisher { color: var(--muted); }
 .bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
@@ -3494,7 +3494,7 @@ npm-downloads-chart {
 
   &.is-solid { color: var(--bg); background: var(--green); border-color: var(--green); }
   &.is-top { --tier: var(--green); }
-  &.is-mid { --tier: var(--medium); }
+  &.is-mid { --tier: var(--yellow); }
   &.is-low { --tier: var(--high); }
   &.is-unpopular { --tier: var(--critical); }
   /* In Compare's badges, as tall as the chips beside it. */
@@ -3736,7 +3736,7 @@ a.npm-compare-publisher {
 
   &.sev-critical { --sev: var(--critical); }
   &.sev-high { --sev: var(--high); }
-  &.sev-moderate { --sev: var(--medium); }
+  &.sev-moderate { --sev: var(--yellow); }
   &.sev-low { --sev: var(--low); }
   &.is-cleared { --sev: var(--green); }
   & .npm-extension-count { color: color-mix(in srgb, var(--sev) 70%, var(--text)); }

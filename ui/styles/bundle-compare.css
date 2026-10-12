@@ -155,7 +155,7 @@
 }
 .bundle-compare-chip.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
 .bundle-compare-chip.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-.bundle-compare-chip.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+.bundle-compare-chip.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
 .bundle-compare-chip.unchanged { color: var(--muted); background: rgb(from var(--muted) r g b / .14); }
 
 /* Scrolling body — caption + package/file diff sections. */
@@ -321,7 +321,7 @@
 .bundle-compare-changed .bundle-compare-dot { background: var(--medium); }
 .bundle-compare-added .bundle-compare-group-title { color: var(--green); }
 .bundle-compare-removed .bundle-compare-group-title { color: var(--critical); }
-.bundle-compare-changed .bundle-compare-group-title { color: var(--medium); }
+.bundle-compare-changed .bundle-compare-group-title { color: var(--yellow); }
 
 .bundle-compare-rows {
   margin: 0;
@@ -446,7 +446,7 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-ver-to.down,
 .bundle-compare-ver-dir.down { color: var(--critical); }
 .bundle-compare-ver-to.changed,
-.bundle-compare-ver-dir.changed { color: var(--medium); }
+.bundle-compare-ver-dir.changed { color: var(--yellow); }
 /* Version label on an added / removed dependency row, as wide as its
    group's longest (`--compare-version-width`) so the column lines up. */
 .bundle-compare-dep-ver {
@@ -584,7 +584,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed { color: var(--info); background: rgb(from var(--info) r g b / .16); }
   &[aria-pressed='false'] {
     color: var(--muted);
@@ -604,7 +604,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); }
   &.removed { color: var(--critical); }
-  &.changed, &.renamed { color: var(--medium); }
+  &.changed, &.renamed { color: var(--yellow); }
   /* A rename with its contents as they were. */
   &.renamed.pure { color: var(--info); }
 }
@@ -671,7 +671,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed, &.renamed { color: var(--yellow); background: rgb(from var(--medium) r g b / .18); }
   &.renamed.pure { color: var(--info); background: rgb(from var(--info) r g b / .16); }
 }
 .bundle-compare-code-counts {
@@ -988,7 +988,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   font: inherit; font-size: .72rem; line-height: 1.45;
 
   &.is-added { --dep: var(--green); }
-  &.is-changed { --dep: var(--medium); }
+  &.is-changed { --dep: var(--yellow); }
   &.is-removed { --dep: var(--critical); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }
