@@ -288,8 +288,10 @@ test('the Diff view draws its files 40 at a time, more on asking or as one past 
   all._more()
   assert.deepEqual(drawn().files.length, 80)
   assert.equal(drawn().more, '15')
+  all._current = 'lib/f75.js'
   all.willUpdate(new Map([['files']]))
-  assert.equal(drawn().files.length, 40, 'a comparison anew from 40')
+  assert.equal(drawn().files.length, 40, 'a comparison anew from 40, not from the file the last one was at')
+  assert.equal(all._current, 'lib/f00.js', 'its first file the rail\'s')
   all.path = 'lib/f85.js'
   all.willUpdate(new Map([['path']]))
   assert.deepEqual(drawn(), { files: names, more: null, title: '95 files changed' }, 'the batches up to a file opened past them')
