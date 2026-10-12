@@ -28,14 +28,39 @@ import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
 // Tests run sequentially. Reuse the engine and migrated schema, resetting all
 // rows and sequences to their initial state. A test that changes DDL invalidates
-// the schema so the next fixture also recreates its functions and triggers.
+// the schema so the next fixture also recreates its functions and triggers,
+// unless the catalog still matches the migrated one: upgrade tests drop what a
+// migration adds and then run it again.
 let sharedPg
 let schemaChanged = true
 let initialTables
+let migratedSchema
 after(async () => { await sharedPg?.close() })
+
+// Everything a migration defines, column order included, and the versions applied.
+const schemaSql = `SELECT md5(string_agg(x, E'\\n' ORDER BY x)) AS hash FROM (
+  SELECT 'column ' || c.relname || ' ' || a.attnum || ' ' || a.attname || ' ' || format_type(a.atttypid, a.atttypmod)
+    || ' ' || a.attnotnull::text || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), '')
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+  WHERE c.relnamespace = 'public'::regnamespace AND a.attnum > 0 AND NOT a.attisdropped
+  UNION ALL SELECT 'relation ' || relname || ' ' || relkind::text FROM pg_class WHERE relnamespace = 'public'::regnamespace
+  UNION ALL SELECT 'constraint ' || conrelid::regclass::text || ' ' || conname || ' ' || pg_get_constraintdef(oid)
+  FROM pg_constraint WHERE connamespace = 'public'::regnamespace
+  UNION ALL SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public'
+  UNION ALL SELECT 'trigger ' || pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+  WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace
+  UNION ALL SELECT 'function ' || pg_get_functiondef(oid) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND prokind = 'f'
+  UNION ALL SELECT 'view ' || viewname || ' ' || definition FROM pg_views WHERE schemaname = 'public'
+  UNION ALL SELECT 'version ' || version::text FROM managed_schema_version
+) AS schema(x)`
+async function schemaHash(pg) {
+  try { return (await pg.query(schemaSql)).rows[0].hash } catch { return null }
+}
 
 async function database(t, options = {}) {
   const pg = sharedPg ??= new PGlite()
+  if (schemaChanged && migratedSchema && await schemaHash(pg) === migratedSchema) schemaChanged = false
   if (schemaChanged) await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   else {
     await pg.exec(`TRUNCATE ${initialTables.map(table => table.name).join(', ')} RESTART IDENTITY`)
@@ -93,6 +118,7 @@ async function database(t, options = {}) {
       const { rows } = await pg.query(`SELECT * FROM ${name}`)
       initialTables.push({ name, rows })
     }
+    migratedSchema = await schemaHash(pg)
     schemaChanged = false
   }
   return { db, connect, queries, faults }

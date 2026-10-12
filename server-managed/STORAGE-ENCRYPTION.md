@@ -293,7 +293,7 @@ contents are immutable, and cached derivatives can be rebuilt.
 
 Tests exercise disk and Blob SDK fixtures, SQLite and PostgreSQL semantics
 (PGlite), API uploads/downloads, automatic startup activation, migration interruptions,
-concurrent keys/deletions, token encryption and a generated 115 MiB payload.
+concurrent keys/deletions, token encryption and a generated 16 MiB payload.
 
 ## Deduplication reports
 
