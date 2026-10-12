@@ -113,6 +113,7 @@ const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}
 // between other characters or taken from between them still show. The toggle
 // says it in a few words, and why a file whose changes it would hide shows
 // them all (_fileState).
+const HIDE_WHITESPACE = 'Hide whitespace changes'
 const WHITESPACE_KEPT = {
   mixed: 'Mixed whitespace',
   unlisted: 'Whitespace is significant',
@@ -1404,11 +1405,12 @@ export class BundleCompareCode extends LitElement {
 
   // Hiding whitespace changes, as diff -b: off for a file whose changes it may
   // not hide (`whitespace` other than `hideable`, see _fileState), all of
-  // which show.
+  // which show. Named for what it does in every state; where it is off, why
+  // is its tooltip and accessible description.
   _whitespaceToggle(whitespace) {
-    const kept = WHITESPACE_KEPT[whitespace], label = kept ?? 'Hide whitespace changes'
+    const kept = WHITESPACE_KEPT[whitespace]
     return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace && !kept)} aria-disabled=${kept ? 'true' : nothing}
-      aria-label=${label} data-tooltip=${label} @click=${() => { if (!kept) this._setWhitespace(!prefs.ignoreWhitespace) }}>
+      aria-label=${HIDE_WHITESPACE} aria-description=${kept ?? nothing} data-tooltip=${kept ?? HIDE_WHITESPACE} @click=${() => { if (!kept) this._setWhitespace(!prefs.ignoreWhitespace) }}>
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
     </button>`
   }
