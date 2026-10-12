@@ -167,7 +167,12 @@ export function diffRows(model, expansion = new Map(), { context = DIFF_CONTEXT,
 // line paired with the added line it was edited into (pairLines), the lines
 // left between pairs sharing rows by position, unpaired.
 function alignBlock(model, block) {
-  const { a, b } = model
+  return alignLines(model.a, model.b, block)
+}
+
+// The same, of a block between two texts' lines `a` and `b`, as a split diff
+// draws its rows (and Compare's code search lists their hits).
+export function alignLines(a, b, block) {
   const pairs = pairLines(a.slice(block.a0, block.a1), b.slice(block.b0, block.b1)).map(([i, j]) => [block.a0 + i, block.b0 + j])
   const rows = []
   let i = block.a0, j = block.b0
@@ -182,8 +187,10 @@ function alignBlock(model, block) {
   return rows
 }
 
-// Alignments are kept on the model: a fold opening re-lists every row.
-function alignedBlock(model, run) {
+// Alignments are kept on the model: a fold opening re-lists every row, and
+// Compare's code search lists a block's hits in them. `model` any holder of
+// lines `a` and `b` and their `blocks`, `run` the block's index there.
+export function alignedBlock(model, run) {
   model.aligned ??= new Map()
   if (!model.aligned.has(run)) model.aligned.set(run, alignBlock(model, model.blocks[run]))
   return model.aligned.get(run)

@@ -104,22 +104,31 @@ class BundleCompareAll extends BundleCompareCode {
       this._shownPath = this._current
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
     }
+    this._scrollSought()
   }
 
-  // A file picked in the rail: the list scrolls to it, its head at the top,
-  // and it stays the rail's while it is in view, though the list ends too
-  // soon to bring it to the top.
-  _select(path) {
+  // A file picked in the rail: the list scrolls to it, its head at the top
+  // (unless `scroll` is false, a search hit scrolling to its line), and it
+  // stays the rail's while it is in view, though the list ends too soon to
+  // bring it to the top.
+  _select(path, scroll = true) {
     if (!path) return
     this._current = this._picked = path
     this.requestUpdate()
-    void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
+    if (scroll) void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
   }
 
   _more() {
     this._fileLimit += FILE_BATCH
     this.requestUpdate()
+  }
+
+  // The list draws a diff alone, never a file's source: a file whose only
+  // change is a repointed import lists its imports there, and one whose bytes
+  // are the same says so, so neither is searched.
+  _searchable(entry) {
+    return entry.modified !== false && entry.kind !== 'repointed'
   }
 
   _section(path) {
@@ -176,6 +185,8 @@ class BundleCompareAll extends BundleCompareCode {
     if (at >= this._fileLimit) this._fileLimit = Math.ceil((at + 1) / FILE_BATCH) * FILE_BATCH
     const entries = order.map(path => [path, this._entries.get(path)])
     const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
+    // As the rail's search asks (_prettyShown).
+    this._prettyAllowed = prettyAllowed
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)

@@ -377,6 +377,9 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
   assert.match(bar, /aria-label="Mark renamed lines"/u)
+  all._mode = 'code'
+  all._query = 'q(X)'
+  assert.match(renderText(all.render()), /bundle-code-search-empty">No matches\./u, 'its lines aren\'t listed: its diff draws no row to open')
 })
 
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
@@ -385,6 +388,479 @@ test('the kind filters hide files, keeping a modified file under Repointed when 
   element._toggleKind('added')
   element._toggleKind('removed')
   assert.deepEqual(Object.keys(fileMarks(renderText(element.render()))), ['src/server.js'])
+})
+
+test('the rail\'s Code mode searches the code the diffs show, each hit signed and numbered as its diff has it, the tree no longer filtered by path', () => {
+  const element = view()
+  element._query = 'export'
+  assert.deepEqual(element._railState().order, [], 'Files mode filters paths, and none holds the query')
+  element._mode = 'code'
+  assert.equal(element._railState().order.length, 7, 'Code mode filters none')
+  const markup = renderText(element.render())
+  assert.doesNotMatch(markup, /class=bundle-code-tree-link/u, 'results in place of the tree')
+  // Each file's hits as `sign line`, in the order its diff shows them.
+  const found = Object.fromEntries([...markup.matchAll(/data-tooltip=([^\s>]+) @click=>[^<]*<\/button>\s*<ul class="bundle-code-search-hits">([^]*?)<\/ul>/gu)].map(([, path, hits]) =>
+    [path, [...hits.matchAll(/bundle-code-search-hit-ln">(\d+)<\/span>\s*<span class=bundle-compare-search-sign (\w*) aria-hidden="true">/gu)].map(([, line, sign]) => `${sign} ${line}`)]))
+  assert.deepEqual(found, {
+    'src/api.js': ['del 1', 'add 1', 'ctx 2'],
+    'src/features/search.js': ['add 1'],
+    'src/legacy.js': ['del 1'],
+    'src/server.js': ['ctx 2'],
+    'node_modules/left-pad/index.js': ['del 1'],
+    'node_modules/zod/index.js': ['add 1'],
+  })
+  assert.match(markup, /8 hits in 6 files/u)
+  assert.match(markup, /<mark class="bundle-search-mark">export<\/mark>/u)
+  element._query = 'nothing like it'
+  assert.match(renderText(element.render()), /No matches\./u)
+})
+
+test('the search diffs a changed file as the view does: a long one\'s removed lines found, a large one\'s once its diff is asked for', () => {
+  const text = (lines, line) => Array.from({ length: lines }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
+  const hits = (element, path) => element._searchResults(element._railState().order).files.find(file => file.path === path)?.hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)
+  // Past the tree's line counts (20,000 lines), short of a diff too large to show unasked.
+  const long = view(null, [{ 'src/long.js': text(25_000, 'fetch(old)') }, { 'src/long.js': text(25_000, 'fetch(new)') }])
+  long._mode = 'code'
+  long._query = 'fetch('
+  assert.deepEqual(hits(long, 'src/long.js'), ['−a7', '+b7'])
+  // Too large to diff unasked (isLargeDiff): its new text alone, said so, until asked for.
+  const large = view(null, [{ 'src/large.js': text(60_000, 'fetch(old)') }, { 'src/large.js': text(60_000, 'fetch(new)') }])
+  large._mode = 'code'
+  large._query = 'fetch('
+  assert.deepEqual(hits(large, 'src/large.js'), ['?b7'])
+  assert.match(renderText(large.render()), /A large diff, not shown yet: the lines it removed aren't searched\./u)
+  large._forced.add('src/large.js')
+  assert.deepEqual(hits(large, 'src/large.js'), ['−a7', '+b7'], 'asked for, it is diffed, and the results with it')
+  assert.doesNotMatch(renderText(large.render()), /A large diff, not shown yet/u)
+})
+
+test('the search signs a line as the diff shows it with whitespace changes hidden: re-indented, it is unchanged', t => {
+  t.after(() => view()._setWhitespace(false))
+  const element = view(null, [{ 'src/indent.js': 'if (a) {\n  fetch(x)\n}\nfetch(old)\n' }, { 'src/indent.js': 'if (a) {\n    fetch(x)\n}\nfetch(new)\n' }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.find(file => file.path === 'src/indent.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`)
+  assert.deepEqual(signs(), ['−a1', '+b1', '−a3', '+b3'])
+  element._setWhitespace(true)
+  assert.deepEqual(signs(), [' b1', '−a3', '+b3'], 'as its diff has it, the re-indented line unchanged')
+  // A file only re-indented shows no rows with them hidden, so isn't listed.
+  const only = view(null, [{ 'src/only.js': 'if (a) {\n  fetch(x)\n}\n' }, { 'src/only.js': 'if (a) {\n    fetch(x)\n}\n' }])
+  only._mode = 'code'
+  only._query = 'fetch('
+  only._setWhitespace(false)
+  assert.ok(only._searchResults(only._railState().order).files.some(file => file.path === 'src/only.js'))
+  only._setWhitespace(true)
+  assert.ok(!only._searchResults(only._railState().order).files.some(file => file.path === 'src/only.js'))
+})
+
+test('a hit in a diff too large to show unasked asks for it, and opens at its line', () => {
+  const text = line => Array.from({ length: 60_000 }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
+  const element = view('src/large.js', [{ 'src/large.js': text('fetch(old)') }, { 'src/large.js': text('fetch(new)') }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const markup = renderText(element.render())
+  assert.match(markup, /This diff is large/u)
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/large.js')
+  element._seek('src/large.js', hit)
+  const shown = renderText(element.render())
+  assert.ok(element._forced.has('src/large.js'), 'its diff asked for')
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(<mark class="diff-word">new/u)
+})
+
+test('a hit in a file added too large to show unasked asks for its diff too, and opens at its line', () => {
+  const text = Array.from({ length: 120_000 }, (_, i) => i === 7 ? 'fetch(new)' : `line ${i}`).join('\n') + '\n'
+  const element = view('src/added-large.js', [{}, { 'src/added-large.js': text }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  assert.match(renderText(element.render()), /This diff is large/u)
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/added-large.js')
+  assert.deepEqual([hit.sign, hit.line], ['+', 7])
+  element._seek('src/added-large.js', hit)
+  const shown = renderText(element.render())
+  assert.ok(element._forced.has('src/added-large.js'))
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(new\)/u)
+})
+
+test('a hit in a file whose printed copies make a diff too large to show unasked asks for it, and opens at its line', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/grown.min.js', [{ 'dist/grown.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/grown.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(1);\n` }])
+  element.base.managedId = 'b21'
+  element.other.managedId = 'b22'
+  const printed = last => `${Array.from({ length: 60_000 }, (_, i) => `q(${i});`).join('\n')}\n${last}`
+  pretty.set('b21:dist/grown.min.js', printed(''))
+  pretty.set('b22:dist/grown.min.js', printed('fetch(1);\n'))
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 400 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /This diff is large/u, 'large as printed, though small as published')
+  element._mode = 'code'
+  element._query = 'fetch('
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/grown.min.js')
+  element._seek('dist/grown.min.js', hit)
+  const shown = renderText(element.render())
+  assert.ok(element._forced.has('dist/grown.min.js'))
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">60001<\/span>[^]*fetch\(1\)/u)
+})
+
+test('a file whose diff is of its pretty-printed copies lists its lines as published, unsigned, saying so', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/printed.min.js': `var Y=1;${'q(Y);'.repeat(250)}fetch(1);\n` }, { 'dist/printed.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  // Managed, as the server pretty-prints a managed bundle's files.
+  element.base.managedId = 'b9'
+  element.other.managedId = 'b10'
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.find(file => file.path === 'dist/printed.min.js').hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)
+  assert.deepEqual(signs(), ['−a0', '+b0'], 'as published while it is diffed so')
+  state.bundleSourcePretty = true
+  assert.deepEqual(signs(), ['?b0'])
+  assert.match(renderText(element.render()), /Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched\./u)
+})
+
+test('an added file shown pretty-printed lists its lines signed, numbered as published, saying so', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{}, { 'dist/added.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  element.base.managedId = 'b11'
+  element.other.managedId = 'b12'
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'fetch('
+  const found = element._searchResults(element._railState().order)
+  assert.deepEqual(found.files.find(file => file.path === 'dist/added.min.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`), ['+b0'])
+  assert.equal(found.unsigned.get('dist/added.min.js'), 'numbered')
+  assert.match(renderText(element.render()), /Shown pretty-printed: its lines numbered as published\./u)
+})
+
+test('a hit opens at the same match pretty-printed where the printer respaced an earlier one but kept a later', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/mixed.min.js', [{ 'dist/mixed.min.js': `var x=a-b;s="a+b";${'q(x);'.repeat(250)}\n` },
+    { 'dist/mixed.min.js': `var x=a+b;s="a+b";${'q(x);'.repeat(250)}\n` }])
+  element.base.managedId = 'b13'
+  element.other.managedId = 'b14'
+  pretty.set('b13:dist/mixed.min.js', 'var x = a - b;\ns = "a+b";\nq(x);\n')
+  pretty.set('b14:dist/mixed.min.js', 'var x = a + b;\ns = "a+b";\nq(x);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'a+b'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/mixed.min.js')
+  assert.deepEqual(hit.ranges[0], [6, 9], 'the expression\'s, the first on the line')
+  element._seek('dist/mixed.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">1<\/span>[^]*var x = /u, 'the expression\'s line, not the string\'s')
+})
+
+test('the search diffs a file anew where another scope pairs it with another old file', () => {
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
+  const now = `${lines}\nfetch(3)\n`, old1 = `${lines}\nfetch(1)\n`, old2 = `fetch(2)\n${lines}\nfetch(3)\n`
+  const element = view(null, [{ 'lib/old1.js': old1, 'lib/old2.js': old2 }, { 'lib/new.js': now }])
+  // As Compare's scopes list the files: each with one of the two old ones.
+  const scoped = path => computeBundleDiff(new Map([[path, path === 'lib/old1.js' ? old1 : old2]]), new Map([['lib/new.js', now]]), () => '__own__').files
+  element._mode = 'code'
+  element._query = 'fetch('
+  const hits = () => element._searchResults(element._railState().order).files.find(file => file.path === 'lib/new.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`)
+  element.files = scoped('lib/old1.js')
+  element.willUpdate(new Map([['files']]))
+  assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old1.js')
+  assert.deepEqual(hits(), ['−a20', '+b20'])
+  // A hit picked there, still to be sought as the scope changes, isn't sought in old2.
+  const [removed] = element._searchResults(element._railState().order).files.find(file => file.path === 'lib/new.js').hits
+  element._seek('lib/new.js', removed)
+  element.files = scoped('lib/old2.js')
+  element.willUpdate(new Map([['files']]))
+  assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old2.js')
+  assert.deepEqual(hits(), ['−a0', ' b20'], 'old2\'s first line removed, the new last line unchanged')
+  assert.equal(element._sought, null)
+  element.path = 'lib/new.js'
+  element.render()
+  assert.equal(element._soughtRow, null, 'no row of old2 sought for old1\'s line')
+})
+
+test('a query of blanks alone lists no file shown pretty-printed, whose blanks the printer respaces, and does one shown as published', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{}, { 'dist/blank.min.js': `var X = 1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b29'
+  element.other.managedId = 'b30'
+  element._mode = 'code'
+  element._query = ' '
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/blank.min.js')
+  assert.equal(listed(), true)
+  state.bundleSourcePretty = true
+  assert.equal(listed(), false)
+  element._query = 'X = 1'
+  assert.equal(listed(), true, 'a query with more than blanks still is')
+})
+
+test('a file\'s diff drawn keeps its blocks for the search, which doesn\'t diff it again', () => {
+  const element = view('src/api.js')
+  element._mode = 'code'
+  element._query = 'export'
+  element.render()
+  const { model } = element._fileState('src/api.js', element._entries.get('src/api.js'))
+  assert.equal(element._blocks.get('false\0src/api.js'), model.blocks, 'the diff\'s own blocks, not another finding of them')
+  assert.deepEqual(element._searchResults(element._railState().order).files.find(file => file.path === 'src/api.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`),
+    ['−a0', '+b0', ' b1'])
+})
+
+test('split, the search lists a drawn diff\'s hits in the rows that diff aligned, aligning no block again', async t => {
+  const { prefs } = await import('../ui/view/bundle-compare-code.js')
+  t.after(() => { prefs.layout = 'unified' })
+  prefs.layout = 'split'
+  const element = view('src/api.js')
+  element.render()
+  const { model } = element._fileState('src/api.js', element._entries.get('src/api.js'))
+  assert.equal(model.aligned?.size, 1, 'drawn split, its one block aligned')
+  // Rows the diff could have aligned otherwise, to tell them from another aligning: the added line first.
+  model.aligned.set(0, [[null, 0, false], [0, null, false]])
+  element._mode = 'code'
+  element._query = 'export const a'
+  assert.deepEqual(element._searchResults(element._railState().order).files.find(file => file.path === 'src/api.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`),
+    ['+b0', '−a0'])
+})
+
+test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const published = `var X=1;${'x(1);y(22);'.repeat(40_000)}\n`
+  const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);y(22);'.repeat(40_000)}\n` }, { 'dist/common.min.js': published }])
+  element.base.managedId = 'b27'
+  element.other.managedId = 'b28'
+  pretty.set('b27:dist/common.min.js', `var Y = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
+  pretty.set('b28:dist/common.min.js', `var X = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
+  state.bundleSourcePretty = true
+  element.path = 'dist/common.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const { pretty: copies, model } = element._fileState('dist/common.min.js', element._entries.get('dist/common.min.js'))
+  element._sought = { path: 'dist/common.min.js', side: 'b', line: 0, at: 30, query: 'x(1)' }
+  const indexOf = t.mock.method(String.prototype, 'indexOf'), toLowerCase = t.mock.method(String.prototype, 'toLowerCase')
+  let at
+  try {
+    at = element._soughtLine('dist/common.min.js', element._entries.get('dist/common.min.js'), copies, model)
+  } finally {
+    indexOf.mock.restore()
+    toLowerCase.mock.restore()
+  }
+  element._sought = null
+  // Its third match, after `var X=1;x(1);y(22);x(1);y(22);`: the copy's line 3.
+  assert.deepEqual(at, { side: 'b', line: 3 })
+  assert.ok(indexOf.mock.calls.filter(call => call.arguments[0] === 'x(1)').length < 20, 'matches past its own not looked for')
+  const folded = toLowerCase.mock.calls.reduce((sum, call) => sum + call.this.length, 0)
+  assert.ok(folded < published.length / 3, `the texts read no further than a piece past it (${folded} characters)`)
+})
+
+test('a file whose printed copy failed shows, and is searched, as published', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/failed.min.js': `var Y=1;${'q(Y);'.repeat(250)}fetch(1);\n` }, { 'dist/failed.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  element.base.managedId = 'b15'
+  element.other.managedId = 'b16'
+  pretty.set('b15:dist/failed.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  pretty.set('b16:dist/failed.min.js', 'var X = 1;\nfetch(2);\n')
+  state.bundleSourcePretty = true
+  element.path = 'dist/failed.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /is-error/u, 'its copy failed')
+  element._mode = 'code'
+  element._query = 'fetch('
+  const found = element._searchResults(element._railState().order)
+  assert.deepEqual(found.files.find(file => file.path === 'dist/failed.min.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`), ['−a0', '+b0'])
+  assert.equal(found.unsigned.has('dist/failed.min.js'), false)
+})
+
+test('a file whose printed copies are the same isn\'t listed once they are kept: its diff draws no change to seek', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(1);\n` }, { 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}fetch( 1 );\n` }])
+  element.base.managedId = 'b23'
+  element.other.managedId = 'b24'
+  pretty.set('b23:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
+  pretty.set('b24:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'fetch('
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/same.min.js')
+  assert.ok(listed(), 'listed, unsigned, while its copies aren\'t kept: none is asked for to search it')
+  element.path = 'dist/same.min.js'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /The contents are the same\./u)
+  assert.equal(listed(), false)
+})
+
+test('a file whose only changes are renamed names, hidden, isn\'t listed once drawn so, and is again as they show', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view(null, [{ 'dist/renamed.min.js': `(function(){var Y=1;${'q(Y);'.repeat(250)}})();\n` },
+    { 'dist/renamed.min.js': `(function(){var X=1;${'q(X);'.repeat(250)}})();\n` }])
+  element.base.managedId = 'b25'
+  element.other.managedId = 'b26'
+  pretty.set('b25:dist/renamed.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n})();\n')
+  pretty.set('b26:dist/renamed.min.js', '(function () {\n  var X = 1;\n  q(X);\n})();\n')
+  state.bundleSourcePretty = true
+  element._setRenames(true)
+  element._mode = 'code'
+  element._query = 'q(X)'
+  const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/renamed.min.js')
+  assert.ok(listed(), 'listed, unsigned, until its diff is drawn')
+  element.path = 'dist/renamed.min.js'
+  for (let i = 0; i < 200 && /is-loading|Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /Only renamed names changed in this file\./u)
+  assert.equal(listed(), false)
+  element._setRenames(false)
+  assert.match(renderText(element.render()), /aria-label="Diff"/u)
+  assert.equal(listed(), true)
+})
+
+test('a hit in a file whose printed copy is still coming is sought again in the copy once it comes', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('src/api.js', [{ 'dist/coming.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/coming.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
+  element.base.managedId = 'b17'
+  element.other.managedId = 'b18'
+  pretty.set('b17:dist/coming.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b18:dist/coming.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  element._mode = 'code'
+  element._query = 'Z(1)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/coming.min.js')
+  element._seek('dist/coming.min.js', hit)
+  element.path = 'dist/coming.min.js'
+  // Opened while its copies are asked for: the published diff's row, the seek kept.
+  assert.match(renderText(element.render()), /is-loading/u)
+  // As the view does once drawn, the row's scrolling aside (there is no DOM here).
+  element._soughtRow = null
+  element._scrollSought()
+  assert.ok(element._sought, 'kept while the copies come')
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">6<\/span>[^]*Z\(1\)/u, 'the copy\'s line 6')
+  element._soughtRow = null
+  element._scrollSought()
+  assert.equal(element._sought, null, 'and done with once found there')
+})
+
+test('a hit in a file whose renamed names failed to hide waits, and opens at its line once they are shown', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/unhidden.min.js', [{ 'dist/unhidden.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/unhidden.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b19'
+  element.other.managedId = 'b20'
+  pretty.set('b19:dist/unhidden.min.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b20:dist/unhidden.min.js', 'var X = 1;\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  pretty.set('b19:dist/unhidden.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /Couldn't hide renamed names/u)
+  element._mode = 'code'
+  element._query = 'q(X)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/unhidden.min.js')
+  element._seek('dist/unhidden.min.js', hit)
+  element.render()
+  // As the view does once drawn, the row's scrolling aside (there is no DOM here).
+  element._soughtRow = null
+  element._scrollSought()
+  assert.ok(element._sought, 'kept: its diff isn\'t drawn')
+  element._setRenames(false)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">2<\/span>[^]*q\(<mark class="diff-word">X/u, 'shown, at the copy\'s line 2')
+})
+
+test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
+  // Every reading of the clock past the budget: the scan alone outlasts it.
+  let clock = 0
+  t.mock.method(performance, 'now', () => (clock += 1000))
+  const element = view(null, [{ 'src/one.js': 'a\nfetch(1)\n', 'src/two.js': 'b\nfetch(2)\n' }, { 'src/one.js': 'a\nfetch(10)\n', 'src/two.js': 'b\nfetch(20)\n' }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.map(file => file.hits.map(hit => hit.sign ?? '?').join(''))
+  assert.deepEqual(signs(), ['−+', '?'], 'the first file diffed, the next left for another render')
+  assert.deepEqual(signs(), ['−+', '−+'])
+  clearTimeout(element._searchLater)
+})
+
+test('the one list\'s search leaves out a file it shows only the imports of: its source isn\'t there to open at', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const code = view()
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'resolutions', 'baseName', 'otherName']) all[name] = code[name]
+  all.models = combinedDiffRows(code.base, code.other, code.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  for (const element of [code, all]) {
+    element._mode = 'code'
+    element._query = 'export'
+  }
+  const found = element => element._searchResults(element._railState().order).files.map(file => file.path)
+  assert.ok(found(code).includes('src/server.js'), 'a file at a time, its source shows, and is searched')
+  assert.ok(!found(all).includes('src/server.js'))
+  assert.ok(found(all).includes('src/api.js'))
+})
+
+test('a search hit in an unchanged run opens its fold to it, and its row is the one scrolled to', () => {
+  const long = (marker, change) => Array.from({ length: 60 }, (_, i) => i === 30 ? `const needle = ${marker}` : i === 59 ? `tail ${change}` : `line ${i}`).join('\n') + '\n'
+  const element = view('src/long.js', [{ 'src/long.js': long(1, 'a') }, { 'src/long.js': long(1, 'b') }])
+  const numbers = markup => [...markup.slice(markup.indexOf('aria-label="Diff"')).matchAll(/<span class="diff-num">(\d+)<\/span>/gu)].map(m => Number(m[1]))
+  assert.ok(!numbers(renderText(element.render())).includes(31), 'line 31 starts folded away')
+  element._mode = 'code'
+  element._query = 'needle'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/long.js')
+  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 30, ' '])
+  element._seek('src/long.js', hit)
+  const shown = numbers(renderText(element.render()))
+  assert.ok(shown.includes(31), 'its fold opened to it')
+  assert.ok(!shown.includes(5), 'and no further than a margin past it')
+  const { index } = element._soughtRow
+  const rows = renderText(element.render()).slice(renderText(element.render()).indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[index], /<span class="diff-num">31<\/span>/u, 'the row scrolled to is line 31')
+})
+
+test('a search hit in a minified file opens, pretty-printed, at the line holding the same match', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/search.min.js', [{ 'dist/search.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/search.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
+  element.base.managedId = 'b1'
+  element.other.managedId = 'b2'
+  pretty.set('b1:dist/search.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b2:dist/search.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'Z(1)'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/search.min.js')
+  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 0, null], 'found on the one line of the file as published, unsigned: its diff is of the copies')
+  element._seek('dist/search.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">6<\/span>[^]*Z\(1\)/u, 'the pretty-printed copy\'s line 6, Z(1);')
+})
+
+test('a search hit whose match pretty-printing spaces opens at the line its first character falls on', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/spaced.min.js', [{ 'dist/spaced.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/spaced.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}module.exports=Z;\n` }])
+  element.base.managedId = 'b7'
+  element.other.managedId = 'b8'
+  pretty.set('b7:dist/spaced.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b8:dist/spaced.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'X+n'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/spaced.min.js')
+  element._seek('dist/spaced.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">3<\/span>[^]*return [^]*X[^]* \+ n;/u, 'the copy\'s line 3, return X + n')
 })
 
 test('a repointed file stays a source view with its line links while whitespace changes are hidden', t => {

@@ -571,6 +571,34 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
     font-size: .75rem;
   }
 }
+/* Code mode's hits (bundle-compare-code.js _renderSearch): a line's sign
+   between its number and its text, as its diff signs it. */
+.bundle-compare-search-sign {
+  flex: none;
+  width: 1ch;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .68rem;
+  font-weight: 700;
+
+  &.add { color: var(--green); }
+  &.del { color: var(--critical); }
+}
+/* Under a file whose diff is too large to have found unasked, that its
+   removed lines aren't searched. */
+.bundle-compare-search-note {
+  margin: 0;
+  padding: .1rem .35rem .2rem .6rem;
+  color: var(--muted);
+  font-size: .66rem;
+  font-style: italic;
+}
+/* The row a hit opened, ringed a moment as the list scrolls to it, clear of
+   the Diff view's sticky file head where it is scrolled to the top. */
+.bundle-compare-diff-table > .diff-row.is-sought { animation: link-target-flash 1.6s ease-out; }
+.bundle-compare-all-file .diff-row { scroll-margin-top: 2.5rem; }
+@media (prefers-reduced-motion: reduce) {
+  .bundle-compare-diff-table > .diff-row.is-sought { animation-duration: 0s; }
+}
 .bundle-compare-code-kinds {
   display: flex;
   flex-wrap: wrap;

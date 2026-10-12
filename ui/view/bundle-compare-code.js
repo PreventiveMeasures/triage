@@ -11,6 +11,9 @@
 // importers are listed too, with each import's old and new target — and
 // `path` the selected file, which the slide owns so the Overview's
 // file rows can open one here. A pick dispatches `compare-code-select`.
+// The rail's search filters the tree by path, or, as the Code tab's does in
+// its Code mode, searches the code the diffs show (bundle-compare-search.js),
+// a hit opening its file at its line.
 // Light DOM, like the slide, so the tree takes the Code tab's styles and
 // the copy button reaches the document-level [data-copy-path] delegate.
 import { LitElement, html, nothing } from 'lit'
@@ -28,8 +31,12 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
-import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { changeBlocks } from '../../common/line-diff.js'
+import { buildSearchMatcher } from './bundle-search-scan.js'
+import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
+import { railHitText } from './search-marks.js'
+import { PRETTY_ICON, keptPrettyCopy, prettyCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -40,7 +47,7 @@ import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
+import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -67,13 +74,39 @@ const MAX_IMPORT_LINES = 3
 // Directories all start open (a review reads every change) unless the
 // tree is too long to scan that way.
 const OPEN_ALL_MAX = 300
-// Time a render of the tree spends counting its files' lines (_lineCounts)
-// before leaving the rest to the next.
+// Time a render of the tree spends counting its files' lines (_lineCounts),
+// or a search diffing the files it found (_searchResults), before leaving
+// the rest to the next.
 const COUNT_BUDGET_MS = 30
+// The rail search's modes, as the Code tab's rail names them
+// (bundle-code-search.js): filter the tree by path, or search code.
+const SEARCH_MODES = [
+  { mode: 'files', label: 'Filter files', placeholder: 'Filter changed files', icon: FILES_MODE_ICON },
+  { mode: 'code', label: 'Search code', placeholder: 'Search changed code', icon: CODE_MODE_ICON },
+]
+// Lines a hit opens its fold by past itself, so it isn't at the fold's edge.
+const SEEK_MARGIN = EXPAND_STEP / 2
+// Characters of a minified line a hit's match is looked for in at a time,
+// in a pretty-printed copy's text as published (_soughtLine).
+const SEEK_CHUNK = 65_536
+// Why a file's hits aren't as its diff shows them (_searchResults): a changed
+// file's unsigned, the lines it removed not searched, its diff too large to
+// show unasked or of its pretty-printed copies, whose lines and changes
+// differ from the file's; another's numbered as published, where it shows
+// pretty-printed.
+const UNSIGNED = {
+  large: 'A large diff, not shown yet: the lines it removed aren\'t searched.',
+  printed: 'Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched.',
+  numbered: 'Shown pretty-printed: its lines numbered as published.',
+}
+// A search hit's sign as its row is classed and read.
+const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', label: 'Removed' }, ' ': { name: 'ctx', label: 'Unchanged' } }
 
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
 export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, markRenames: false }
+// The settings whether a diff of printed copies has rows depends on (_noteRowless).
+const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.markRenames}`
 // What hiding whitespace changes hides, as diff -b; and why a file whose
 // changes it would hide shows them all (_fileState).
 const HIDE_WHITESPACE = 'Hide whitespace changes, in code whose whitespace means nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with blanks added to a run of them or at its end, reads as unchanged; blanks put between other characters or taken from between them still show'
@@ -198,6 +231,11 @@ export const diffCounts = (additions, deletions) => html`<span class="bundle-com
 
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
+// Whether a file reads as its source in place of a diff, a file at a time:
+// its only change a repointed import, moved there by a rename or not, its
+// record the same (see _renderFile).
+const readsAsSource = entry => entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
+
 function dirOrder([a, an], [b, bn]) {
   return sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path)
 }
@@ -258,6 +296,8 @@ export class BundleCompareCode extends LitElement {
     path: {},
     _query: { state: true },
     _kinds: { state: true },
+    // 'files' (the query filters the tree) or 'code' (it searches code).
+    _mode: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -274,6 +314,26 @@ export class BundleCompareCode extends LitElement {
     this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
+    this._mode = 'files'
+    // A changed file's change blocks, as the search found them, by whitespace
+    // setting and path; and its last results (_searchResults).
+    this._blocks = new Map()
+    this._found = null
+    // Path → the settings a diff of its printed copies was last drawn under
+    // without rows, which the search can't diff itself (_noteRowless); and
+    // a count of its changes, for the results to be found again.
+    this._rowless = new Map()
+    this._rowlessCount = 0
+    // A changed file's blocks, as the search kept them → what their split
+    // rows are kept on (alignedBlock): the diff drawn of them, or else the
+    // search's own `{ a, b, blocks }`, so no block is aligned twice.
+    this._aligned = new WeakMap()
+    // A search hit picked, `{ path, side, line, at, query, key }`, until its
+    // file's diff draws (`key` the model last sought in), and while what it
+    // draws is still coming (`_soughtSettling`); then that row, `{ path,
+    // index }`, until it is scrolled to.
+    this._sought = null
+    this._soughtRow = null
     // Directory path → open, for the disclosures the user toggled.
     this._open = new Map()
     this._models = new Map()
@@ -305,6 +365,13 @@ export class BundleCompareCode extends LitElement {
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = this._buildEntries()
       this._counted = new Map()
+      // A path may name another pair of files now (another scope pairs a
+      // renamed file anew), so what the search kept of it is found again,
+      // and a hit still sought in the files as they were is let go.
+      this._blocks.clear()
+      this._rowless.clear()
+      this._sought = this._soughtRow = null
+      this._soughtSettling = false
     }
   }
 
@@ -316,6 +383,28 @@ export class BundleCompareCode extends LitElement {
       if (body) body.scrollTop = 0
       this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
     }
+    this._scrollSought()
+  }
+
+  // The row of a search hit picked (see _seek), once drawn, scrolled into
+  // view and flashed; a hit whose file drew no diff, dropped, but while that
+  // diff is still to be drawn (_soughtSettling): the diff drawn then seeks it
+  // again.
+  _scrollSought() {
+    if (this._sought?.path === this._current && !this._soughtSettling) this._sought = null
+    if (!this._soughtRow) return
+    const { path, index } = this._soughtRow
+    this._soughtRow = null
+    const table = [...this.querySelectorAll('.bundle-compare-diff-table')].find(element => element.dataset.path === path)
+    const row = table?.children[index]
+    if (!row) return
+    // A line taller than half the view (a long one, wrapped) shows from its top.
+    const view = row.closest('.bundle-compare-diff')
+    row.scrollIntoView({ block: view && row.offsetHeight > view.clientHeight / 2 ? 'start' : 'center' })
+    row.classList.remove('is-sought')
+    void row.offsetWidth
+    row.classList.add('is-sought')
+    row.addEventListener('animationend', () => row.classList.remove('is-sought'), { once: true })
   }
 
   // fileEntries, and every file that imports something that now resolves
@@ -400,13 +489,13 @@ export class BundleCompareCode extends LitElement {
   // the order it lists them.
   _railState() {
     const { prefix, root, tree, shown } = this._tree()
-    const filtered = this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
+    const filtered = this._mode === 'files' && this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
     return { prefix, root, tree, shown, filtered, order: filtered ? orderedFiles(filtered) : [] }
   }
 
   // The rail: the files that differ as a tree, filtered by path and kind,
   // `current` marked, and the splitter beside it. Picking a file is _select.
-  _renderRail({ prefix, root, tree, shown, filtered }, current) {
+  _renderRail({ prefix, root, tree, shown, filtered, order }, current) {
     this._countUntil = null
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
@@ -414,13 +503,14 @@ export class BundleCompareCode extends LitElement {
       if (entry.modified) counts.changed++
       if (entry.repointed) counts.repointed++
     }
+    const search = SEARCH_MODES.find(({ mode }) => mode === this._mode)
     return html`<aside class="bundle-code-rail">
         <div class="bundle-code-rail-head">
           <span class="bundle-code-rail-label">Changes</span>
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
           <span class="bundle-code-rail-actions">
             <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
-              ?disabled=${!!this._query || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
+              ?disabled=${this._mode !== 'files' || !!this._query || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
               ${COLLAPSE_DIRS_ICON}
             </button>
           </span>
@@ -430,7 +520,12 @@ export class BundleCompareCode extends LitElement {
         <div class="bundle-compare-code-filter">
           <label class="bundle-compare-code-search">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
-            <input type="search" placeholder="Filter changed files" aria-label="Filter changed files" .value=${live(this._query)} @input=${e => { this._query = e.target.value }}>
+            <input type="search" placeholder=${search.placeholder} aria-label=${search.placeholder} spellcheck="false" autocomplete="off"
+              .value=${live(this._query)} @input=${e => { this._query = e.target.value }}>
+            <span class="bundle-code-search-modes" role="tablist">
+              ${SEARCH_MODES.map(({ mode, label, icon }) => html`<button type="button" class=${classMap({ 'bundle-code-search-mode': true, active: mode === this._mode })}
+                role="tab" aria-selected=${String(mode === this._mode)} aria-label=${label} data-tooltip=${label} @click=${() => { this._mode = mode }}>${icon}</button>`)}
+            </span>
           </label>
           <div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
             ${KINDS.filter(({ kind }) => counts[kind] > 0).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
@@ -439,7 +534,8 @@ export class BundleCompareCode extends LitElement {
           </div>
         </div>
         <div class="bundle-code-rail-body bundle-compare-code-tree">
-          ${filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= OPEN_ALL_MAX) : html`<div class="bundle-code-search-empty">No changed files match.</div>`}
+          ${this._mode === 'code' ? this._renderSearch(order, current, prefix)
+            : filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= OPEN_ALL_MAX) : html`<div class="bundle-code-search-empty">No changed files match.</div>`}
         </div>
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
@@ -452,10 +548,12 @@ export class BundleCompareCode extends LitElement {
     if (current && current !== this._current) this._reveal(current, rail.prefix)
     this._current = current
     this._order = rail.order
+    // The file before the rail, so its search knows how its diff drew (_noteRowless).
+    const main = current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
     return html`<div class="bundle-code-view bundle-compare-code">
       ${this._renderRail(rail, current)}
       <div class="bundle-code-main">
-        ${current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`}
+        ${main}
       </div>
     </div>`
   }
@@ -474,6 +572,225 @@ export class BundleCompareCode extends LitElement {
     }
     walk(tree)
     this.requestUpdate()
+  }
+
+  // ── Code search ──────────────────────────────────────────────────
+
+  // Code mode's results: each file with lines that match, under its name,
+  // each line with its number and sign as its diff shows them (a line removed
+  // numbered in the old text); a pick opens the file there (_seek).
+  _renderSearch(order, current, prefix) {
+    if (!this._query) return html`<div class="bundle-code-search-hint">Type to search the code of the changed files.</div>`
+    const { files, hits, truncated, unsigned } = this._searchResults(order)
+    if (files.length === 0) return html`<div class="bundle-code-search-empty">No matches.</div>`
+    const strip = path => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+    return html`<div class="bundle-code-search-results bundle-compare-search">
+      <div class="bundle-code-search-summary">${hits.toLocaleString()} ${hits === 1 ? 'hit' : 'hits'} in ${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'}${truncated ? `, the first ${SEARCH_MAX_FILES}` : ''}</div>
+      ${repeat(files, file => file.path, ({ path, hits: lines }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: path === current })}>
+        <button type="button" class=${`bundle-code-search-file-name bundle-compare-code-name ${this._entries.get(path).kind}`}
+          data-tooltip-truncated data-tooltip=${path} @click=${() => this._select(path)}>${strip(path)}</button>
+        ${unsigned.has(path) ? html`<p class="bundle-compare-search-note">${UNSIGNED[unsigned.get(path)]}</p>` : nothing}
+        <ul class="bundle-code-search-hits">
+          ${lines.map(hit => html`<li class="bundle-code-search-hit">
+            <button type="button" class="bundle-code-search-hit-link" aria-label=${`${SIGNS[hit.sign]?.label ?? 'Line'} ${hit.line + 1}${hit.side === 'a' ? ' of the old text' : ''}: ${hit.text.trim().slice(0, 80)}`}
+              @click=${() => this._seek(path, hit)}>
+              <span class="bundle-code-search-hit-ln">${hit.line + 1}</span>
+              <span class=${`bundle-compare-search-sign ${SIGNS[hit.sign]?.name ?? ''}`} aria-hidden="true">${hit.sign ?? ''}</span>
+              <span class="bundle-code-search-hit-text mono">${railHitText(hit.text, hit.ranges)}</span>
+            </button>
+          </li>`)}
+        </ul>
+      </div>`)}
+    </div>`
+  }
+
+  // The search's results over the files the rail lists (`order`) whose text
+  // this view shows (_searchable), as searchCompareFiles finds them there.
+  // Kept while the query, the files and the kinds shown are, the large diffs
+  // asked for, the layout, the whitespace and pretty-print settings, and the
+  // printed copies come or failed. A changed file is diffed as this view
+  // diffs it, its whitespace changes hidden where the
+  // view hides them; but one whose diff here is of its pretty-printed copies
+  // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
+  // for, lists its new text's lines alone, unsigned, so the rail claims no
+  // sign nor removed line its diff doesn't show, and none at all where that
+  // diff, drawn under the settings it is searched under, has no rows
+  // (_noteRowless); and an added or removed file shown pretty-printed lists
+  // its lines numbered as published. The
+  // reason is in `unsigned` by path (UNSIGNED). Diffs are found a little at a time, as the
+  // tree's line counts are, a render's budget counted from its first: a file
+  // past it lists its new text's lines unsigned, and another render signs
+  // them.
+  _searchResults(order) {
+    const drawn = rowlessSettings()
+    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
+    if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
+    // Counted from the first diff, not the scan, so each render finds one.
+    let until = null
+    let complete = true
+    const unsigned = new Map()
+    const blocksOf = (path, before, after) => {
+      if (unsigned.get(path) === 'printed') return null
+      const kept = `${prefs.ignoreWhitespace}\0${path}`
+      if (this._blocks.has(kept)) return this._blocks.get(kept)
+      if (!this._forced.has(path) && isLargeDiff(before, after)) {
+        unsigned.set(path, 'large')
+        return null
+      }
+      const now = performance.now()
+      until ??= now + COUNT_BUDGET_MS
+      if (now > until) {
+        complete = false
+        return null
+      }
+      // As _fileState diffs it: whitespace changes hidden where the setting and
+      // the file's language hide them, but for blanks of more than one kind.
+      const hide = prefs.ignoreWhitespace && !this._unlisted(path, this._entries.get(path), { before, after })
+      let blocks = changeBlocks(before, after, hide)
+      if (hide && hidesMixedWhitespace(before, after, blocks)) blocks = changeBlocks(before, after)
+      this._blocks.set(kept, blocks)
+      return blocks
+    }
+    const files = order.flatMap(path => {
+      const entry = this._entries.get(path)
+      if (!this._searchable(entry)) return []
+      const contents = fileContents(this.base, this.other, path, entry)
+      const { before, after } = contents
+      if (this._prettyShown(path, entry, contents)) {
+        // Blanks alone are what the printer respaces: a match of them
+        // as published has no place in the copy to be found at.
+        if (!/\S/u.test(this._query)) return []
+        const changed = before !== '' && after !== '' && before !== after
+        // Its diff here drawn without rows, as these settings draw it: no change to seek.
+        if (changed && this._rowless.get(path) === drawn) return []
+        unsigned.set(path, changed ? 'printed' : 'numbered')
+      }
+      return [{ path, ...contents }]
+    })
+    const align = (a, b, blocks, block) => {
+      let held = this._aligned.get(blocks)
+      if (!held) this._aligned.set(blocks, held = { a, b, blocks })
+      return alignedBlock(held, blocks.indexOf(block))
+    }
+    const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split', align }), unsigned }
+    if (complete) this._found = { key, entries: this._entries, result }
+    else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
+    return result
+  }
+
+  // Whether a file's text shows here, to be searched: its diff, where its
+  // bytes changed, or its source, where it reads as one (readsAsSource).
+  _searchable(entry) {
+    return entry.modified !== false || readsAsSource(entry)
+  }
+
+  // Whether a file's diff here is of its pretty-printed copies (_pretty), the
+  // toggle on and the view printing it (the one list prints only a few):
+  // not where a copy kept of either side failed, when the diff is of the
+  // file as published.
+  _prettyShown(path, entry, contents) {
+    if (!state.bundleSourcePretty || this._prettyAllowed === false || !this._printable(path, entry, contents)) return false
+    const { basePath = path } = entry
+    return ![[this.base, basePath, contents.before], [this.other, path, contents.after]]
+      .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
+  }
+
+  // A diff of a file's printed copies drawn (_fileState), noted where it has
+  // no rows (`rowless`), the copies the same or their changes all hidden (as
+  // whitespace or renamed names), with the settings it was drawn under, for
+  // the search to leave the file out while they hold (_searchResults).
+  _noteRowless(path, rowless) {
+    const drawn = rowless ? rowlessSettings() : undefined
+    if (this._rowless.get(path) === drawn) return
+    if (drawn === undefined) this._rowless.delete(path)
+    else this._rowless.set(path, drawn)
+    this._rowlessCount++
+  }
+
+  // A search hit picked: its file opened, its line brought into view where
+  // the file's diff draws (see _seekRows), asked for there where it is too
+  // large to show unasked (_fileState).
+  _seek(path, hit) {
+    this._sought = { path, side: hit.side, line: hit.line, at: hit.ranges[0]?.[0] ?? 0, query: this._query }
+    if (path === this._current) this.requestUpdate()
+    else this._select(path, false)
+  }
+
+  // The line a hit names in the text a file's diff shows, `{ side, line }`:
+  // in a pretty-printed copy, the line holding the same match, counted in
+  // order on its side with whitespace taken out of the query and both texts,
+  // which pretty-printing respaces (`a+b` as `a + b`, a string's `"a+b"` as
+  // it was); where the printer changed the match itself, the line its first
+  // character falls on, counted the same way, in the characters it moves but
+  // keeps; null past the copy's end.
+  _soughtLine(path, entry, pretty, model) {
+    const { side, line, at, query } = this._sought
+    if (pretty?.status !== 'ready') return { side, line }
+    const solid = text => text.replaceAll(/\s+/gu, '')
+    const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
+    const offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text).length, 0) + solid(raw[line]?.slice(0, at) ?? '').length
+    const needle = solid(query).toLowerCase()
+    // The first match in a text's characters other than whitespace, case
+    // folded as the search matches, that `found(index, start)` takes, its
+    // `{ index, start }`: read a piece at a time (a line, or SEEK_CHUNK of a
+    // minified one), so neither read nor folded further, however common the
+    // query or large the text. Kept of what was read: what a match may
+    // still start in (`text`, from `past`).
+    const first = (lines, found) => {
+      if (!needle) return null
+      let from = 0, index = 0, past = 0, text = ''
+      for (const read of lines) {
+        for (let piece = 0; piece < read.length; piece += SEEK_CHUNK) {
+          text += solid(read.slice(piece, piece + SEEK_CHUNK)).toLowerCase()
+          for (let i = text.indexOf(needle, from); i !== -1; i = text.indexOf(needle, from), index++) {
+            if (found(index, past + i)) return { index, start: past + i }
+            from = i + needle.length
+          }
+          const kept = Math.max(from, text.length - needle.length + 1)
+          text = text.slice(kept)
+          past += kept
+          from = Math.max(0, from - kept)
+        }
+      }
+      return null
+    }
+    const hit = first(raw, (_, start) => start >= offset)
+    let target = (hit && first(model[side], index => index === hit.index)?.start) ?? offset
+    for (let i = 0; i < model[side].length; i++) {
+      target -= solid(model[side][i]).length
+      if (target < 0) return { side, line: i }
+    }
+    return null
+  }
+
+  // A sought line's row among a diff's `rows`, a fold it is in opened past
+  // it, and the rows shown taken to it: `{ rows, index }`, `index` -1 where
+  // it isn't among them. `key` names the diff's model, as its expansions and
+  // limit are kept.
+  _seekRows(key, model, { side, line }, split) {
+    const shows = row => side === 'b'
+      ? ((row.kind === 'ctx' || row.kind === 'add') && row.b === line) || (row.kind === 'change' && row.right === line)
+      : ((row.kind === 'ctx' || row.kind === 'del') && row.a === line) || (row.kind === 'change' && row.left === line)
+    let expansion = this._expansions.get(key) ?? new Map()
+    let rows = diffRows(model, expansion, { split })
+    let index = rows.findIndex(shows)
+    if (index === -1) {
+      const fold = rows.find(row => row.kind === 'fold' && line >= row[side] && line < row[side] + row.count)
+      if (fold) {
+        // Opened from its top where it has one to open (a run after a change),
+        // else from its bottom (the run before the first), else whole.
+        const open = expansion.get(fold.run) ?? {}
+        const depth = line - fold[side]
+        expansion = new Map(expansion).set(fold.run, fold.down ? { ...open, top: (open.top ?? 0) + depth + 1 + SEEK_MARGIN }
+          : fold.up ? { ...open, bottom: (open.bottom ?? 0) + fold.count - depth + SEEK_MARGIN } : { all: true })
+        this._expansions.set(key, expansion)
+        rows = diffRows(model, expansion, { split })
+        index = rows.findIndex(shows)
+      }
+    }
+    const limit = this._limits.get(key) ?? ROW_LIMIT
+    if (index >= limit) this._limits.set(key, Math.ceil((index + 1) / ROW_LIMIT) * ROW_LIMIT)
+    return { rows, index }
   }
 
   _renderTree(node, current, depth, openAll) {
@@ -601,6 +918,9 @@ export class BundleCompareCode extends LitElement {
     // Marked rather than hidden where the viewer asks: the diff of the files
     // as they are, the blocks that differ in renamed names alone drawn apart.
     const marking = renames && prefs.markRenames
+    // A hit sought here asks for a diff too large to show unasked, as "Show
+    // diff" does: large as the texts it shows are, printed or as published.
+    if (textual && this._sought?.path === path && !this._forced.has(path) && isLargeDiff(before, after)) this._forced.add(path)
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
@@ -624,12 +944,18 @@ export class BundleCompareCode extends LitElement {
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
     // where that would hide blanks of more than one kind changing
     // (hidesMixedWhitespace): others are diffed with them shown.
-    const unlisted = !whitespaceInsensitive(path, contents.after, stasisFormat(this.other, path))
-      || !whitespaceInsensitive(basePath, contents.before, stasisFormat(this.base, basePath))
+    const unlisted = this._unlisted(path, entry, contents)
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
     const { key, changes, reading, hiding, shown, model } = found
+    if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
+    // The texts as published diffed as the search diffs them (_searchResults):
+    // their blocks kept for it, not found again, however large.
+    else if (model) {
+      this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
+      this._aligned.set(model.blocks, model)
+    }
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
     // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it
@@ -640,7 +966,18 @@ export class BundleCompareCode extends LitElement {
       : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
+    // A hit sought here waits while its diff isn't drawn yet: its printed
+    // copies or renamed names still coming, or its renamed names failed to
+    // hide, until they are shown (see _scrollSought).
+    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || changes?.status === 'loading' || changes?.status === 'error'
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, whitespace }
+  }
+
+  // Whether a file's whitespace may mean something on either side, so its
+  // whitespace changes show whatever the setting (see _fileState).
+  _unlisted(path, { basePath = path }, { before, after }) {
+    return !whitespaceInsensitive(path, after, stasisFormat(this.other, path))
+      || !whitespaceInsensitive(basePath, before, stasisFormat(this.base, basePath))
   }
 
   // What diff -b would hide between the texts a file shows (whitespaceHidden),
@@ -876,7 +1213,7 @@ export class BundleCompareCode extends LitElement {
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
     // its two sides are one text. One whose record changed too says how.
-    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
+    const asSource = readsAsSource(entry)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
@@ -1038,9 +1375,17 @@ export class BundleCompareCode extends LitElement {
     const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready' ? 'pretty' : '') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
+    // A search hit picked in this file: its line, shown, to scroll to, once
+    // for each model it is drawn from.
+    const sought = this._sought?.path === path && this._sought.key !== modelKeyed ? this._soughtLine(path, this._entries.get(path), pretty, model) : null
+    if (this._sought?.path === path) this._sought.key = modelKeyed
+    if (sought && sought.line < model.b.length) {
+      if (sought.line >= (this._limits.get(key) ?? ROW_LIMIT)) this._limits.set(key, Math.ceil((sought.line + 1) / ROW_LIMIT) * ROW_LIMIT)
+      this._soughtRow = { path, index: sought.line }
+    }
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const lines = model.b.length > limit ? model.b.slice(0, limit) : model.b
-    return html`<div class="bundle-compare-diff-table single"
+    return html`<div class="bundle-compare-diff-table single" data-path=${path}
         style=${styleMap({ '--diff-num-width': `${String(model.b.length).length + 1}ch` })} role="table" aria-label="Source">
         ${repeat(lines, (_, i) => i, (_, i) => html`<div class=${classMap({ 'diff-row': true, ctx: true, 'is-import': marked.has(i) })} role="row" data-line=${i + 1}>
           <span class="diff-num">${i + 1}</span>${this._codeCell(lit, 'b', i, null)}
@@ -1092,10 +1437,17 @@ export class BundleCompareCode extends LitElement {
     this.requestUpdate()
   }
 
-  _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty, changes, hiding, reading }) {
-    const expansion = this._expansions.get(key) ?? new Map()
+  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, reading }) {
+    const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
-    const rows = diffRows(model, expansion, { split })
+    // A search hit picked in this file: its row, opened and shown, to scroll
+    // to, once for each model it is drawn from.
+    const sought = this._sought?.path === path && this._sought.key !== key ? this._soughtLine(path, entry, pretty, model) : null
+    if (this._sought?.path === path) this._sought.key = key
+    const seek = sought ? this._seekRows(key, model, sought, split) : null
+    if (seek?.index >= 0) this._soughtRow = { path, index: seek.index + (split ? 1 : 0) }
+    const expansion = this._expansions.get(key) ?? new Map()
+    const rows = seek?.rows ?? diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
     const lit = {
@@ -1113,7 +1465,7 @@ export class BundleCompareCode extends LitElement {
     const digits = String(Math.max(model.a.length, model.b.length, 1)).length
     return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${reading && !prefs.markRenames ? html`<p class="bundle-compare-code-note">Renamed lines are marked rather than hidden: the file reads names (${changes.reads.map(read => `.${read}`).join(', ')}), which a rename changes.</p>` : nothing}
-      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })}
+      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
           <span class="diff-half">Before<strong data-tooltip-truncated data-tooltip=${this.baseName}>${this.baseName}</strong></span>
