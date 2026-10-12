@@ -31,6 +31,7 @@ import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLongLinesTag } from './file-readability.js'
+import { npmRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -98,6 +99,14 @@ function readability(details, path, text) {
   return files.get(path)
 }
 const minified = (details, path, text) => readability(details, path, text).category === 'minified'
+// What a script can run beyond itself (file-runs-code.js), by bundle and path.
+const runTexts = new WeakMap()
+function runsCode(details, path, text) {
+  let files = runTexts.get(details)
+  if (!files) runTexts.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, npmRunsCode(path, text))
+  return files.get(path)
+}
 
 // The files a bundle or package version starts from, by path, each with what
 // names it: a Stasis bundle's entries, an npm version's main, module, types
@@ -514,7 +523,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._alertTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
+            ${this._alertTags(full, this._entries.get(full))}${this._runsTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
             ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
@@ -726,7 +735,7 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one
@@ -742,6 +751,18 @@ export class BundleCompareCode extends LitElement {
   _alertTags(path, { kind, basePath = path }) {
     const alerts = kind === 'removed' ? this.baseAlerts?.get(basePath) : this.otherAlerts?.get(path)
     return alerts?.length > 0 && this.alertTags ? this.alertTags(alerts) : nothing
+  }
+
+  // What a file's code can run beyond itself (file-runs-code.js: eval,
+  // Function, child_process), in its head and in the tree: as it is now (as
+  // it was, for one removed), each kind the one compared with didn't hold
+  // saying so, all of an added file's.
+  _runsTags(path, entry) {
+    const { kind, basePath = path } = entry
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    const was = kind === 'added' ? null : before === undefined ? undefined : runsCode(this.base, basePath, before)
+    if (kind === 'removed') return npmRunsCodeTags(was)
+    return npmRunsCodeTags(after === undefined ? null : runsCode(this.other, path, after), was)
   }
 
   // A file the open bundle or version starts from (for one removed, the one

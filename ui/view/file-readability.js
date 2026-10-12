@@ -76,6 +76,9 @@ const CSS = {
   needed: (code, index, run, depth) => /[+~]/u.test(code[index - 1] + code[index + run.length])
     && (depth > 0 || /^\s*--[^:]*:/u.test(code.slice(Math.max(...['{', ';', '}'].map(end => code.lastIndexOf(end, index))) + 1, index))),
 }
+// JavaScript's strings and regular expressions (the first group) and its
+// comments, for a reader that sets them aside (file-runs-code.js).
+export const JS_STRING_OR_COMMENT = JS.stringOrComment
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
 // Its code's lines' average length where they are minified into short ones, else 0.
 function minifiedAverage(text, { stringOrComment, droppable, needed }) {

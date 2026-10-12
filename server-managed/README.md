@@ -231,6 +231,13 @@ a local or git install, and `node-gyp rebuild` beside a binding.gyp) are marked 
 the tree, each with its command, one new or changed saying so, and in its
 head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
+A script is labelled with what its code can run beyond itself, in its head
+and in the tree: `eval`, `new Function` and `Function`, a string run as code,
+and `child_process`, other programs, each with the lines it is on, one the
+version compared with didn't hold (all of an added file's) saying so. A
+quick read, not a parse: its strings, regular expressions and comments set
+aside, `child_process` told by the string naming the module, and a
+declaration file read for none.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
 `module`, `commonjs` and the rest, run as code, as is a file it records no
@@ -1273,7 +1280,9 @@ control. A version shows in the bundle view with four tabs:
   Socket's note, left out on npm's placeholder, which holds nothing but the
   files every package has. A file an alert names is labelled with it, in
   its severity's color, in the Files list and in Compare's file heads and
-  tree, each version by its own report. Under the facts, its languages, then its readable files
+  tree, each version by its own report; and a script with what its code can
+  run beyond itself (`eval`, `new Function`, `Function`, `child_process`), as
+  Compare labels it, its lines in the tooltip. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
