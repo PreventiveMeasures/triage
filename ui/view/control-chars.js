@@ -4,10 +4,14 @@
 // characters (Cf: the zero-width ones, the bidi controls that reorder what a
 // line reads as, tags), lone surrogates (Cs), private use characters (Co),
 // whose glyph is whatever a font puts there, and unassigned code points and
-// noncharacters (Cn); and the line and paragraph separators, which end a
-// line in JavaScript but not in the viewer. A CR stays as it is where it
-// ends a line with the LF after it, and so do the joiners and tags that
-// spell an emoji.
+// noncharacters (Cn); the line and paragraph separators, which end a line
+// in JavaScript but not in the viewer; and what reads as a space, or as
+// nothing, though it is another character: Unicode's other spaces (no-break,
+// en and em, thin, ideographic), the default-ignorable characters (Hangul
+// fillers, variation selectors, the grapheme joiner), each a different name
+// in code from the one it looks like, and the Braille blank. A CR stays as
+// it is where it ends a line with the LF after it, and so do the joiners,
+// tags and variation selectors that spell an emoji.
 //
 // The box is a label in place of the character, which leaves the DOM: in
 // highlighted markup the HTML parser drops a NUL and reads a lone CR as a
@@ -18,7 +22,7 @@ import { html } from 'lit'
 // The characters, a pair of surrogates read as the one it spells (`u`), so
 // \p{Cs} is only ever a lone one. A candidate, not yet one to show: see shown.
 // eslint-disable-next-line no-control-regex
-const CANDIDATE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u
+const CANDIDATE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u2800\u3000\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}]/u
 const CANDIDATES = new RegExp(CANDIDATE.source, 'gu')
 
 // Labels and names of the ones a viewer meets, the rest labelled by number.
@@ -86,9 +90,27 @@ const NAMED = new Map(`
 009D OSC OPERATING SYSTEM COMMAND
 009E PM PRIVACY MESSAGE
 009F APC APPLICATION PROGRAM COMMAND
+00A0 NBSP NO-BREAK SPACE
 00AD SHY SOFT HYPHEN
+034F CGJ COMBINING GRAPHEME JOINER
 061C ALM ARABIC LETTER MARK
+115F HCF HANGUL CHOSEONG FILLER
+1160 HJF HANGUL JUNGSEONG FILLER
+1680 OSM OGHAM SPACE MARK
+17B4 KIVAQ KHMER VOWEL INHERENT AQ
+17B5 KIVAA KHMER VOWEL INHERENT AA
 180E MVS MONGOLIAN VOWEL SEPARATOR
+2000 NQSP EN QUAD
+2001 MQSP EM QUAD
+2002 ENSP EN SPACE
+2003 EMSP EM SPACE
+2004 3/MSP THREE-PER-EM SPACE
+2005 4/MSP FOUR-PER-EM SPACE
+2006 6/MSP SIX-PER-EM SPACE
+2007 FSP FIGURE SPACE
+2008 PSP PUNCTUATION SPACE
+2009 THSP THIN SPACE
+200A HSP HAIR SPACE
 200B ZWSP ZERO WIDTH SPACE
 200C ZWNJ ZERO WIDTH NON-JOINER
 200D ZWJ ZERO WIDTH JOINER
@@ -101,6 +123,8 @@ const NAMED = new Map(`
 202C PDF POP DIRECTIONAL FORMATTING
 202D LRO LEFT-TO-RIGHT OVERRIDE
 202E RLO RIGHT-TO-LEFT OVERRIDE
+202F NNBSP NARROW NO-BREAK SPACE
+205F MMSP MEDIUM MATHEMATICAL SPACE
 2060 WJ WORD JOINER
 2061 FA FUNCTION APPLICATION
 2062 IT INVISIBLE TIMES
@@ -110,7 +134,11 @@ const NAMED = new Map(`
 2067 RLI RIGHT-TO-LEFT ISOLATE
 2068 FSI FIRST STRONG ISOLATE
 2069 PDI POP DIRECTIONAL ISOLATE
+2800 BLANK BRAILLE PATTERN BLANK
+3000 IDSP IDEOGRAPHIC SPACE
+3164 HF HANGUL FILLER
 FEFF BOM ZERO WIDTH NO-BREAK SPACE
+FFA0 HWHF HALFWIDTH HANGUL FILLER
 E0001 LANG LANGUAGE TAG
 E0020 SP TAG SPACE
 E007F CANCEL CANCEL TAG
@@ -122,7 +150,8 @@ E007F CANCEL CANCEL TAG
 const hex = code => `U+${code.toString(16).toUpperCase().padStart(4, '0')}`
 
 // A character's label, and the tooltip naming it. A tag stands for the ASCII
-// character it is offset from, the text it hides read off the labels.
+// character it is offset from, the text it hides read off the labels; a
+// variation selector is numbered as Unicode numbers them.
 function describe(code) {
   const named = NAMED.get(code)
   if (named) return { label: named.label, title: `${hex(code)} ${named.name}` }
@@ -130,6 +159,8 @@ function describe(code) {
     const ascii = String.fromCodePoint(code - 0xe0000)
     return { label: ascii, title: `${hex(code)} TAG ${ascii}` }
   }
+  const selector = code >= 0xfe00 && code <= 0xfe0f ? code - 0xfe00 + 1 : code >= 0xe0100 && code <= 0xe01ef ? code - 0xe0100 + 17 : 0
+  if (selector) return { label: `VS${selector}`, title: `${hex(code)} VARIATION SELECTOR-${selector}` }
   return { label: hex(code), title: `${hex(code)} ${kind(code)}` }
 }
 
@@ -137,21 +168,27 @@ function describe(code) {
 // noncharacters, the private use planes' too, and so is a block of 32 in
 // Arabic Presentation Forms-A.
 const FORMAT = /\p{Cf}/u
+const IGNORABLE = /\p{Default_Ignorable_Code_Point}/u
+const UNASSIGNED = /\p{Cn}/u
 function kind(code) {
   if (code >= 0xd800 && code < 0xe000) return 'lone surrogate'
   if ((code & 0xfffe) === 0xfffe || code >= 0xfdd0 && code <= 0xfdef) return 'noncharacter'
   if (code >= 0xe000 && code <= 0xf8ff || code >= 0xf0000) return 'private use character'
-  return FORMAT.test(String.fromCodePoint(code)) ? 'format character' : 'unassigned code point'
+  const char = String.fromCodePoint(code)
+  return FORMAT.test(char) ? 'format character' : IGNORABLE.test(char) && !UNASSIGNED.test(char) ? 'invisible character' : 'unassigned code point'
 }
 
 const EMOJI_BEFORE = /\p{Extended_Pictographic}(?:\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?$/u
 const EMOJI_AFTER = /^\p{Extended_Pictographic}/u
+const PICTOGRAPH_BEFORE = /\p{Extended_Pictographic}$/u
 const isTag = code => code >= 0xe0020 && code <= 0xe007f
 
 // The characters in `text` to show, in order, as [at, code point]. A CR before
 // a newline is part of the line end, as is one that ends `text` where
 // `lineEnd` says a newline follows it. A joiner between two emoji joins them
-// into one, and a black flag's tags, up to the cancel tag, name its region.
+// into one, a black flag's tags, up to the cancel tag, name its region, and
+// the text or emoji presentation selector after a pictograph, or before a
+// keycap's mark, draws it; after a letter or a digit it is another name.
 function shown(text, lineEnd) {
   const found = []
   CANDIDATES.lastIndex = 0
@@ -160,6 +197,7 @@ function shown(text, lineEnd) {
     const code = match[0].codePointAt(0)
     if (code === 0x0d && (text[at + 1] === '\n' || lineEnd && at + 1 === text.length)) continue
     if (code === 0x200d && EMOJI_BEFORE.test(text.slice(Math.max(0, at - 4), at)) && EMOJI_AFTER.test(text.slice(at + 1, at + 3))) continue
+    if ((code === 0xfe0e || code === 0xfe0f) && (PICTOGRAPH_BEFORE.test(text.slice(Math.max(0, at - 2), at)) || text[at + 1] === '\u20E3')) continue
     if (isTag(code) && !isTag(text.codePointAt(at - 2))) {
       let end = at
       while (isTag(text.codePointAt(end))) end += 2
