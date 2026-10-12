@@ -484,6 +484,10 @@ export function npmDependencyChanges(base, other) {
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
 const RANGE_VERSION = /^(?:npm:(?:@[^/@]+\/)?[^/@]+@)?(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
 export const npmRangeVersion = range => RANGE_VERSION.exec(range.trim())?.[1] ?? null
+// Whether npm installs a range from the registry: a version, a range, a
+// dist-tag or an `npm:` alias's, none of which holds a `/` or a `:`, where
+// a git, file, URL or workspace one holds one or the other.
+export const npmRegistryRange = range => /^npm:|^[^/:]*$/u.test(range)
 const aliasOf = range => /^npm:((?:@[^/@]+\/)?[^/@]+)@/u.exec(range)?.[1] ?? null
 
 // A dependency Compare lists opens its package, as the Overview's do; a

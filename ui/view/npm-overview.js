@@ -9,7 +9,7 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmDownloadCounts, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, factFile, npmAge, npmDeprecation, npmInstallScripts, npmPackageAsked, npmPackageData, npmPublishedOn, npmRecentRelease, npmRegistryRange, npmVersionList } from './npm-package.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
@@ -692,8 +692,10 @@ function popularityBadge(name) {
 // its package's tier, whatever it is, by its downloads (npmDownloadsOf) but
 // its latest two weeks' (npmSettledDownloads). Nothing for one changed or
 // removed, which the version compared with already had, nor one that names
-// no package in the registry (a git or file one).
-export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing
+// no package in the registry, nor one installed from elsewhere (a git, file
+// or URL one), whose registry namesake's downloads aren't its own.
+export const npmDependencyTier = (row, kind) => kind === 'added' && row.opens && npmRegistryRange(row.range)
+  ? tierTag(npmSettledDownloads(ready(npmDownloadsOf(row.opens)))) : nothing
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {

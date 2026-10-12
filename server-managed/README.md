@@ -1332,7 +1332,9 @@ control. A version shows in the bundle view with four tabs:
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those; one
-  the open version adds is tagged with its package's tier by downloads,
+  the open version adds from the registry (not from git, a file or a URL,
+  whose registry namesake's downloads aren't its own) is tagged with its
+  package's tier by downloads,
   whatever it is, tinted as the package's own is, by its downloads to the
   day before its latest two weeks (which a package a release just pulled in
   could owe to that release alone), the downloads of new ones the session

@@ -453,7 +453,7 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   assert.deepEqual(await show('dep-figured'), [])
   assert.match(text(npmDependencyTier({ name: 'dep-figured', opens: 'dep-figured' }, 'added')), />top 2,000</u)
   const tag = async (row, kind = 'added') => { npmDependencyTier(row, kind); await settle(); return text(npmDependencyTier(row, kind)) }
-  assert.match(await tag({ name: 'alias', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
+  assert.match(await tag({ name: 'alias', range: 'npm:new-low@^1.0.0', opens: 'new-low' }), /<span class=npm-downloads-tier is-low data-tooltip=15,500 downloads\/month, August 2026[^]*downloads\/month<\/div>[^]*>top 100,000<\/span>/u,
     'the package it opens, an alias\'s too, to Sep 27: its last whole month August')
   // A package just pulled in, its latest two weeks' downloads 1M a day, but
   // 100 a day before them: unpopular, as it was.
@@ -465,6 +465,12 @@ test('a dependency Compare lists new is tagged with its package\'s tier by downl
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'changed'), '', 'not one the version compared with had')
   assert.equal(await tag({ name: 'new-low', opens: 'new-low' }, 'removed'), '')
   assert.equal(await tag({ name: 'local', opens: null }), '', 'nor one naming no package in the registry')
+  countsAsked.length = 0
+  for (const range of ['github:someone/new-top', 'someone/new-top#main', 'git+ssh://git@example.com/new-top.git', 'https://example.com/new-top.tgz', 'file:../new-top', '../new-top', 'workspace:*', 'link:../new-top']) {
+    assert.equal(await tag({ name: 'new-top', range, opens: 'new-top' }), '', `nor one installed from elsewhere, its registry namesake's downloads not its own: ${range}`)
+  }
+  for (const range of ['^1.0.0', '1.2.3 - 2', '>=1 <2 || 3.x', '*', '', 'latest']) assert.match(await tag({ name: 'new-top', range, opens: 'new-top' }), />top 2,000</u, range)
+  assert.deepEqual(countsAsked, [], 'and nothing asked for them')
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
