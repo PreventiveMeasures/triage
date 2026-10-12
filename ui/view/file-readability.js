@@ -148,7 +148,8 @@ export function npmBecameUnreadable(path, was, now) {
 // `longLines`, its code's lines' `average` length where it is minified into
 // short ones (strings and comments aside, see MINIFIED_AVERAGE; 0 otherwise),
 // how long its inline map is (`inlineMap`, 0 for none), and its obfuscator
-// fingerprint (`obfuscation`, npmObfuscation's; null for none).
+// fingerprint (`obfuscation`, npmObfuscation's; null for none, and for prose
+// or a source map).
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
   if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0, obfuscation: null }
@@ -167,7 +168,10 @@ export function npmFileReadability(path, text) {
     }
     at = end + 1
   }
-  const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation: npmObfuscation(text) }
+  // A source map holds the names and sources of the code it maps, and prose
+  // its examples: neither runs.
+  const obfuscation = PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
+  const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }

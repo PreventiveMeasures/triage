@@ -1302,7 +1302,8 @@ control. A version shows in the bundle view with four tabs:
   (not a declaration file), which says little of a file alone, and
   Obfuscated, as a warning, on one with an obfuscator's fingerprint (20
   names or more such as `_0x1a2b`, `_0x` and four to six hex digits, or the
-  loop `while(!![])`, as javascript-obfuscator writes); and, where the
+  loop `while(!![])`, as javascript-obfuscator writes; not prose, nor a
+  source map, which holds the names of the code it maps); and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names,
   each file's head linking it on GitHub at the commit the version was

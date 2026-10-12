@@ -220,6 +220,9 @@ test('an obfuscator\'s fingerprint is 20 of its _0x names or more, or the loop i
   assert.deepEqual(npmFileReadability('dist/a.js', obfuscated(25)).obfuscation, { names: 25, loop: false }, 'as a file reads')
   assert.equal(npmFileReadability('lib/a.js', 'const a = 1\n').obfuscation, null)
   assert.equal(npmFileReadability('lib/a.png', null).obfuscation, null)
+  for (const path of ['dist/a.js.map', 'README.md', 'docs/deobfuscate.md', 'CHANGELOG']) {
+    assert.equal(npmFileReadability(path, `${obfuscated(25)}while(!![]){}`).obfuscation, null, `${path}: no code that runs`)
+  }
 })
 
 test('a large code file is JavaScript or TypeScript of 256 KiB or more, not a declaration file', () => {
