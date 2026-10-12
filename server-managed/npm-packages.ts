@@ -237,9 +237,11 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
 
 // The package's dist-tags and versions, newest published first, from its
 // abbreviated document; with `times`, from its whole one, which alone has
-// when each was published, `times` by version (ISO dates); with `spare`, as
-// a read no reader waits on (withDocumentBudget). Null where the registry has
-// none for this reader.
+// when each was published, `times` by version (ISO dates), and `created`,
+// when its first version was, one since unpublished among them: the earliest
+// time it lists, which npm's own `created` can postdate, as a placeholder's
+// does for a package npm took down. With `spare`, as a read no reader waits
+// on (withDocumentBudget). Null where the registry has none for this reader.
 export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal, { times = false, spare = false } = {}) {
   if (!isNpmPackageName(name)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
   return withDocumentBudget(PACKUMENT_BYTES, async () => {
@@ -256,7 +258,9 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
     const published = Object.fromEntries(versions.filter(version => isPublishTime(time[version])).map(version => [version, time[version]!]))
     for (const [version, at] of Object.entries(published)) publishTimes.set(`${name}@${version}`, at)
     while (publishTimes.size > PUBLISH_TIMES) publishTimes.delete(publishTimes.keys().next().value!)
-    return { ...listed, times: published }
+    const listedAt = Object.entries(time).filter(([key, at]) => key !== 'modified' && isPublishTime(at)).map(([, at]) => at)
+    const created = listedAt.reduce<string | null>((first, at) => first === null || Date.parse(at) < Date.parse(first) ? at : first, null)
+    return { ...listed, times: published, created }
   }, spare)
 }
 

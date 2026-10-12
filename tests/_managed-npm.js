@@ -39,6 +39,7 @@ export function packageOf(name, version, files, extra = {}) {
 }
 
 // The registry: public packages answer anyone; private ones only the token.
+// A package's `time` adds to, or replaces, what its whole document lists.
 export function registry(t, packages) {
   const calls = []
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
@@ -46,14 +47,14 @@ export function registry(t, packages) {
     const headers = new Headers(init.headers)
     const auth = headers.get('authorization')
     calls.push({ url, auth })
-    for (const { doc, tgz, private: secret, versions } of packages) {
+    for (const { doc, tgz, private: secret, versions, time: times = {} } of packages) {
       if (secret && auth !== `Bearer ${process.env['NPM_TOKEN']}`) continue
       if (url === `${REGISTRY}/${doc.name}/${encodeURIComponent(doc.version)}` || url === `${REGISTRY}/${doc.name}/latest`) return Promise.resolve(Response.json(doc))
       if (url === `${REGISTRY}/${doc.name}`) {
         const listed = versions ?? [doc.version]
         // The whole document has when each was published, the abbreviated one not.
         const time = headers.get('accept') === 'application/json'
-          ? { time: { created: '2020-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z', ...Object.fromEntries(listed.map((v, i) => [v, `2025-0${i + 1}-01T00:00:00.000Z`])) } } : {}
+          ? { time: { created: '2020-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z', ...Object.fromEntries(listed.map((v, i) => [v, `2025-0${i + 1}-01T00:00:00.000Z`])), ...times } } : {}
         return Promise.resolve(Response.json({ name: doc.name, 'dist-tags': { latest: doc.version, next: '9.9.9' }, versions: Object.fromEntries(listed.map(v => [v, {}])), ...time }))
       }
       if (url === doc.dist.tarball) return Promise.resolve(new Response(tgz))

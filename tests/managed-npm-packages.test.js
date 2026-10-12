@@ -150,7 +150,7 @@ test('anyone with workspace access opens a public version, asked of the registry
   }
   const versions = await h.send('/api/npm/versions?name=%40pub%2Fpkg')
   assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' },
-    teamScoped: false }, 'tags of unlisted versions are left out; when each was published, from the whole document')
+    created: '2020-01-01T00:00:00.000Z', teamScoped: false }, 'tags of unlisted versions are left out; when each was published, and its first was, from the whole document')
   assert.equal((await h.send(packagePath('@pub/pkg', '1.2.3'))).json().published, '2025-01-01T00:00:00.000Z', 'kept, once a whole document said it, for the version to carry')
   const download = await h.send('/api/npm/download?name=%40pub%2Fpkg&version=1.2.3')
   assert.equal(download.status, 200)
@@ -417,6 +417,17 @@ test('registry documents read at once are held to a budget: four version lists, 
   gate.resolve()
   assert.deepEqual((await Promise.all(lists)).map(list => list.versions), [['1.0.0'], ['1.0.0'], ['1.0.0'], ['1.0.0']])
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
+})
+
+test('a package\'s first version was published when the earliest time its whole document lists says, one since unpublished among them', async t => {
+  // As plain-crypto-js's, once npm took it down: its placeholder listed,
+  // npm's `created` the placeholder's, the versions it replaced timed still.
+  registry(t, [{ ...packageOf('taken-down', '0.0.1-security', { 'index.js': '' }), time: { created: '2026-03-31T04:26:32.907Z', modified: '2026-03-31T04:26:33.055Z',
+    '4.2.0': '2026-03-30T05:57:32.867Z', '4.2.1': '2026-03-30T23:59:12.278Z', '0.0.1-security': '2026-03-31T03:25:11.636Z', unpublished: { time: '2026-03-31T03:25:11.636Z' } } }])
+  const list = await readNpmVersions('taken-down', false, new AbortController().signal, { times: true })
+  assert.equal(list.created, '2026-03-30T05:57:32.867Z')
+  assert.deepEqual(list.times, { '0.0.1-security': '2026-03-31T03:25:11.636Z' }, 'times only for the versions it lists')
+  assert.equal((await readNpmVersions('taken-down', false, new AbortController().signal)).created, undefined, 'none from the abbreviated document')
 })
 
 test('a read no reader waits on leaves room for two version lists of readers\' own', async t => {

@@ -212,11 +212,13 @@ function repaint() {
   queueMicrotask(() => { repaintQueued = false; render() })
 }
 
-// A package's versions, newest first, and dist-tags, and whether a team
-// lists its scope (`teamScoped`).
+// A package's versions, newest first, and dist-tags, when each was
+// published (`times`) and its first was (`created`, null where the server
+// didn't say), and whether a team lists its scope (`teamScoped`).
 export function npmVersionList(name) {
   return npmPackageData('versions', name, () => fetchNpmVersions(name),
-    data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, teamScoped: data.teamScoped === true }))
+    data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, created: typeof data.created === 'string' ? data.created : null,
+      teamScoped: data.teamScoped === true }))
 }
 
 function tagsByVersion(distTags = {}) {
@@ -266,7 +268,8 @@ export function npmAge(time, now = Date.now()) {
   const minutes = Math.max(0, Math.floor((now - Date.parse(time)) / 60_000))
   return minutes < 60 ? since.format(-minutes, 'minute') : minutes < 24 * 60 ? since.format(-Math.floor(minutes / 60), 'hour') : since.format(-Math.floor(minutes / (24 * 60)), 'day')
 }
-export const npmPublishedOn = time => `Published on ${publishedDate.format(Date.parse(time))}`
+export const npmPublishedDay = time => publishedDate.format(Date.parse(time))
+export const npmPublishedOn = time => `Published on ${npmPublishedDay(time)}`
 
 // What Compare offers a package version (bundle-compare.js `source`): the
 // package's other versions, newest first, compared with by their numbers,
@@ -484,8 +487,15 @@ export function npmDependencyChanges(base, other) {
 // What two versions' dependencies differ in (npmDependencyChanges), `base`
 // and `other` each one's details, those the open one adds or changes flagged
 // where they call for a look (npm-dependency-checks.js): Compare's in place
-// of Packages, and its chips (npm-overview.js).
-export const npmFlaggedDependencyChanges = (base, other) => npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other)
+// of Packages, and its chips (npm-overview.js). Each it adds carries the two
+// versions (`compared`, their `{ name, version, published }`), for when its
+// package was first published beside them (npm-overview.js
+// npmDependencyTags).
+export function npmFlaggedDependencyChanges(base, other) {
+  const changes = npmFlagDependencyChanges(npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest), base, other)
+  const compared = [base?.npm, other?.npm]
+  return { ...changes, added: changes.added.map(row => ({ ...row, compared })) }
+}
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
