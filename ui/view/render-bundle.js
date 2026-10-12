@@ -39,7 +39,7 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareFiles, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmReadabilityTag, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2096,7 +2096,7 @@ function renderBundleSlide(entry) {
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details, entry)],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-                .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles } : null}></bundle-compare>`],
+                .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges } : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

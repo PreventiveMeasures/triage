@@ -444,6 +444,7 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
       const id = decodeURIComponent(badge[1])
       asked.push(['badge', id, auth])
       const shown = badges[id]
+      if (shown instanceof Response) return Promise.resolve(shown)
       return Promise.resolve(new Response(`<svg role="img" aria-label="Socket: ${shown ?? 'not found'}"><title>Socket: ${shown ?? 'not found'}</title></svg>`,
         { status: shown === undefined ? 404 : 200, headers: { 'content-type': 'image/svg+xml' } }))
     }
@@ -655,6 +656,20 @@ test('Socket\'s scores and alerts for a public version, the file each names as t
     [['pkg:npm/scored@1.0.0', null], ['pkg:npm/@pub/scored@2.0.0', null], ['pkg:npm/capped@1.0.0', null], ['pkg:npm/unseen@1.0.0', null]], 'asked without credentials, and kept')
   assert.deepEqual(asked.filter(([what]) => what === 'badge').map(([, id, auth]) => [id, auth]),
     [['scored/1.0.0', null], ['@pub/scored/2.0.0', null], ['capped/1.0.0', null], ['unseen/1.0.0', null]], 'its badge too, kept with it')
+})
+
+test('a report whose badge couldn\'t be had is answered with Socket\'s own score, and asked again next time', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('flaky', '1.0.0', { 'index.js': '' })])
+  const score = { overall: 0.79, supplyChain: 0.79, vulnerability: 1, quality: 0.99, maintenance: 0.82, license: 1 }
+  const badges = { 'flaky/1.0.0': new Response('', { status: 429 }) }
+  const asked = insights(t, { badges, socket: { 'pkg:npm/flaky@1.0.0': { id: '1', type: 'npm', name: 'flaky', version: '1.0.0', score, alerts: [] } } })
+  const supplyChain = async () => (await h.send('/api/npm/socket?name=flaky&version=1.0.0')).json().socket.scores.supplyChain
+  assert.equal(await supplyChain(), 0.79, 'Socket\'s own, a point low at most')
+  badges['flaky/1.0.0'] = 80
+  assert.equal(await supplyChain(), 0.8, 'as the badge rounds it, once it answers')
+  assert.equal(await supplyChain(), 0.8)
+  assert.equal(asked.filter(([what]) => what === 'socket').length, 2, 'kept from then on')
 })
 
 test('a version carries what is kept about its package, each part as its own route answers it, and asks for the rest as it loads', async t => {

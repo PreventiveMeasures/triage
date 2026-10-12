@@ -1210,8 +1210,9 @@ control. A version shows in the bundle view with four tabs:
   their lines of code in its tooltip; then Socket's scores for a public
   package (supply chain, vulnerability, quality, maintenance and license, out
   of 100, as Socket's page shows them; its overall score is only the lowest), each a small chip as wide as its text after a ring
-  gauge filled to it, tinted for 80 and over, 50 and over, and under 50,
-  that one in red, a full score's number green. Each category's chip, and each file type's, narrows
+  gauge filled to it, tinted for 80 and over (85 for supply chain and
+  vulnerability), 50 and over, and under 50, that one in red, a full score's
+  number green. Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
@@ -1240,7 +1241,23 @@ control. A version shows in the bundle view with four tabs:
   alone is colored by extension. Any bundle of a single package is colored
   the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
-  picked from its versions newest first, each with the day it was published. Its Dependencies section, in place
+  picked from its versions newest first, each with the day it was published.
+  At the end of its picker row, once the two are compared, chips flag what
+  calls for a look: the advisories affecting either version, counted from
+  the one compared with to the open one (`2 → 1`, one number where they
+  match), tinted by the worst still affecting the open one, or green where
+  none does, each side's severities in its tooltip; for a public package,
+  each of Socket's scores either version has under its bar, from one to the
+  other and tinted as on the Overview: supply chain under 85; vulnerability
+  under 85 where it tells of worse than the advisories found affecting the
+  version (Socket's score counts much the same advisories: under 85 for a
+  high one, 84 for one alone, and 25, its floor, for a critical one or many
+  high), as where none are found, or a moderate one next to its 84; quality under 70 (a sabotaged release such as faker's 6.6.6 scores 38;
+  most widely used packages 70 and up), maintenance under 70 (a deprecated or
+  abandoned package's 50; a finished one's 75 and up) and license under 80
+  (a copyleft or unusual license's 70, as AGPL's or WTFPL's); and the
+  package's tier by downloads where it is orange or red (past the top
+  20,000), its last complete month's downloads in its tooltip. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed, each opening its package, and a changed one whose ranges
   each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
@@ -1360,7 +1377,9 @@ report on the version, as Socket Firewall asks it (no key), `{ scores,
 alerts }`, `scores` each 0 to 1 (`overall`, `supplyChain`, `vulnerability`,
 `quality`, `maintenance`, `license`), cut to two decimals, `supplyChain` as
 the version's Socket badge rounds it where that is lower or at most 0.01
-higher and `alerts` most severe first, each
+higher (where the badge can't be had, as while Socket limits how often it's
+asked, the report is answered as Socket gives it and asked for again next
+time) and `alerts` most severe first, each
 `{ type, severity, category, file, note }`, `file` its path in the package;
 null where Socket has none. Socket is asked only about a version npm answers
 for without a token: a private package's name never leaves for it. `GET

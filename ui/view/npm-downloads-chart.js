@@ -82,10 +82,9 @@ export function npmDownloadTier(downloads) {
 // A tier's name, and its tint: solid green to the top 200, green to the top
 // 5,000, yellow to the top 20,000, orange to the top 100,000, and red for
 // the unpopular, a package few would notice changing.
-function tierChip(tier) {
-  const level = tier <= 200 ? 'is-solid' : tier <= 5000 ? 'is-top' : tier <= 20_000 ? 'is-mid' : tier <= 100_000 ? 'is-low' : 'is-unpopular'
-  return html`<dd class=${`npm-downloads-tier ${level}`}>${tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`}</dd>`
-}
+export const npmTierLevel = tier => tier <= 200 ? 'is-solid' : tier <= 5000 ? 'is-top' : tier <= 20_000 ? 'is-mid' : tier <= 100_000 ? 'is-low' : 'is-unpopular'
+export const npmTierName = tier => tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`
+const tierChip = tier => html`<dd class=${`npm-downloads-tier ${npmTierLevel(tier)}`}>${npmTierName(tier)}</dd>`
 
 const PERIODS = {
   week: { label: 'Weekly', of: downloads => npmDownloadWeeks(downloads).slice(-52), name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
@@ -94,6 +93,13 @@ const PERIODS = {
 
 // `1,229 downloads, Oct 2 – Oct 8, 2026`.
 const downloadsIn = (count, when) => `${whole.format(count)} downloads, ${when}`
+
+// The downloads in the last complete month, as the chart's readout has them;
+// null without one.
+export function npmLastMonthDownloads(downloads) {
+  const last = npmDownloadMonths(downloads).at(-1)
+  return last ? downloadsIn(last.total, monthName(last.from)) : null
+}
 
 // A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
 // times a power of ten.

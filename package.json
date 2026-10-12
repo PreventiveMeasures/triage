@@ -307,7 +307,7 @@
     "@preventive/diff": "^1.0.1",
     "@preventive/report": "1.0.0-alpha.9",
     "@preventive/sourcemap": "1.0.0-alpha.1",
-    "@preventive/upstream": "1.0.0-alpha.12",
+    "@preventive/upstream": "1.0.0",
     "oxc-minify": "^0.152.0",
     "oxc-parser": "^0.152.0",
     "oxfmt": "^0.72.0",

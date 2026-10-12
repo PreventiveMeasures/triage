@@ -127,24 +127,27 @@ export interface NpmSocketReport { scores: Record<typeof SOCKET_SCORES[number], 
 const text = (value: unknown) => typeof value === 'string' && value !== '' ? value : null
 
 // The supply chain score, out of 100, that the version's badge shows; null
-// where it shows none, or can't be had.
-async function askSocketBadge(name: string, version: string): Promise<number | null> {
+// where it shows none, and undefined where it can't be had, as while Socket
+// limits how often it's asked.
+async function askSocketBadge(name: string, version: string): Promise<number | null | undefined> {
   try {
     const res = await fetch(`${SOCKET_BADGE}/${name}/${encodeURIComponent(version)}`,
       { headers: { accept: 'image/svg+xml' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
-    if (!res.ok) { await res.body?.cancel(); return null }
+    if (!res.ok) { await res.body?.cancel(); return res.status === 429 || res.status >= 500 ? undefined : null }
     const shown = /<title>Socket: (\d{1,3})<\/title>/u.exec((await readLimited(res, BADGE_BYTES)).toString('utf8'))
     return shown ? Number(shown[1]) : null
-  } catch { return null }
+  } catch { return undefined }
 }
+
+// Scores the badge couldn't round: Socket's own, a point low at most, their
+// report answered but not kept, so the next view asks again.
+const unbadged = new WeakSet<object>()
 
 async function askSocket(name: string, version: string): Promise<NpmSocketReport | null> {
   const badge = askSocketBadge(name, version)
-  let res: Response
-  try {
-    res = await fetch(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
-      { headers: { accept: 'application/x-ndjson' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
+  const res = await fetch(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
+    { headers: { accept: 'application/x-ndjson' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
+    .catch(() => { throw new NpmPackageError(502, 'upstream-unavailable') })
   if (res.status === 404) { await res.body?.cancel(); return null }
   if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
   // One line, as one purl was asked.
@@ -161,7 +164,8 @@ async function askSocket(name: string, version: string): Promise<NpmSocketReport
   // score cut to two decimals; lower where the badge is, as when the score
   // has fallen since.
   const shown = await badge
-  if (scores && shown !== null) scores.supplyChain = Math.min(Math.round(scores.supplyChain * 100) + 1, shown) / 100
+  if (scores && typeof shown === 'number') scores.supplyChain = Math.min(Math.round(scores.supplyChain * 100) + 1, shown) / 100
+  else if (scores && shown === undefined) unbadged.add(scores)
   const alerts = (Array.isArray(json['alerts']) ? json['alerts'] : [])
     .filter((alert): alert is Record<string, unknown> => plainObject(alert) && text(alert['type']) !== null && typeof alert['severity'] === 'string' && alert['severity'] in SOCKET_SEVERITY_RANK)
     .slice(0, SOCKET_ALERTS)
@@ -174,7 +178,7 @@ async function askSocket(name: string, version: string): Promise<NpmSocketReport
   return scores === null && alerts.length === 0 ? null : { scores, alerts }
 }
 
-const socketReports = kept<NpmSocketReport | null>(1000)
+const socketReports = kept<NpmSocketReport | null>(1000, report => !report?.scores || !unbadged.has(report.scores))
 
 // Socket's report on a version of a public package; null where Socket has
 // none. Its name goes to Socket: never ask it about a private one.
