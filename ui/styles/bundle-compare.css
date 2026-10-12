@@ -925,6 +925,13 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
 /* Repointed imports of the open file, above its diff: the specifier, the
    old and new target, and the line importing it. */
+/* Over package.json's diff, the dependencies the open version adds and
+   updates, in the cards Compare's Overview lists them in, side by side where
+   they fit. */
+.bundle-compare-code-deps {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); align-items: start; gap: .5rem;
+  margin: .75rem;
+}
 .bundle-compare-code-repointed {
   margin: .75rem;
   padding: .55rem .7rem;

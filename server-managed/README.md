@@ -1277,7 +1277,10 @@ control. A version shows in the bundle view with four tabs:
   are pickers in the same order as for bundles, the version compared with
   first: picking the open side's opens that version compared with the same
   one, and picking the other side's swaps them. Code
-  reviews the changes as for bundles: with the pretty-print toggle
+  reviews the changes as for bundles, over the package's package.json the
+  dependencies the open version adds and those whose range it changes
+  (plain, peer and optional ones, not dev ones), as the Dependencies section
+  lists them and opening alike: with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
   without JSX) minified on both sides, its names a minifier's, with the old

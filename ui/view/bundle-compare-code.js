@@ -35,6 +35,7 @@ import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.j
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
+import { compareDependencyRow } from './compare-dependency-row.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -232,6 +233,10 @@ export class BundleCompareCode extends LitElement {
     baseAlerts: { attribute: false },
     otherAlerts: { attribute: false },
     alertTags: { attribute: false },
+    // A source's dependency changes, `{ removed, added, changed }`
+    // (npm-package.js npmDependencyChanges), and what opens one.
+    dependencies: { attribute: false },
+    openDependency: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -759,6 +764,7 @@ export class BundleCompareCode extends LitElement {
         ${this._toggles(diffable, file.pretty, file.generated, file.mixedWhitespace, file.reading)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
+        ${this._dependencyChanges(path)}
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
         ${body}
       </div>`
@@ -807,6 +813,26 @@ export class BundleCompareCode extends LitElement {
   // The file's repointed imports: the specifier and its conditions, the
   // target it resolved to before and after, and the lines importing it —
   // links to them when the source shows below.
+  // Over the package's own package.json, where a source lists what its
+  // dependencies changed (`dependencies`): those the open version adds and
+  // those whose range it changes, plain, peer and optional ones (dev ones
+  // aren't listed), in the cards Compare's Overview lists them in, each
+  // opening as there.
+  _dependencyChanges(path) {
+    if (path !== 'package.json' || !this.dependencies) return nothing
+    const groups = [['added', 'New dependencies', this.dependencies.added], ['changed', 'Updated dependencies', this.dependencies.changed]]
+      .filter(([, , rows]) => rows.length > 0)
+    if (groups.length === 0) return nothing
+    return html`<div class="bundle-compare-code-deps">${groups.map(([kind, title, rows]) => html`<section class=${`bundle-compare-group bundle-compare-${kind}`} aria-label=${title}>
+      <header class="bundle-compare-group-head">
+        <span class="bundle-compare-dot" aria-hidden="true"></span>
+        <span class="bundle-compare-group-title">${title}</span>
+        <span class="bundle-compare-group-count">${rows.length}</span>
+      </header>
+      <ul class="bundle-compare-rows">${rows.map(row => html`<li>${compareDependencyRow(row, this.openDependency)}</li>`)}</ul>
+    </section>`)}</div>`
+  }
+
   _renderRepointed(path, rows, text, linked) {
     const lines = text ? text.split('\n') : []
     const markup = text ? this._highlighted(this._textSide(path), path, text) : null
