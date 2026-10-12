@@ -1302,7 +1302,17 @@ control. A version shows in the bundle view with four tabs:
   month (the last twelve complete ones), with the switch between the two at its top
   right and under it the hovered period's downloads; and under it the
   version's pages on npmjs.com and, for a public package, Socket, beside the
-  tarball download. Over the facts, where npm's security team took the
+  tarball download; under those, what calls for a look at the version on
+  its own, as Compare's chips do but for those only a change from one
+  version to another tells (a publisher, provenance lost, files and hosts
+  new): its deprecation, its install scripts (named, their commands in the
+  tooltip), dependencies from elsewhere than npm's registry or imported by
+  nothing of it, in orange what any of its files runs beyond itself (`Runs
+  code`, the kinds named), an exfiltration host one names (the services
+  named) and an obfuscator's fingerprint, each listing its files and their
+  lines in its tooltip, its age under two weeks, the advisories affecting
+  it, tinted by the worst, Socket's scores under their bars, and its tier by
+  downloads where it is orange or red. Over the facts, where npm's security team took the
   package down (npm's "security holding package" placeholder, told by its
   description or its npm/security-holder repository with npm as its
   publisher, or with a `-security` version as npm's staff publish it), a
