@@ -2044,7 +2044,8 @@ function renderBundleSlide(entry) {
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details, entry)],
-              ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}></npm-review>`],
+              ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+                .source=${{ ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges }}></npm-review>`],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
                 .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, dependencyTags: npmDependencyTags } : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],

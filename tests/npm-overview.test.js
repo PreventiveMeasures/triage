@@ -637,6 +637,15 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
+
+  const empty = { integrity: '(empty)' }
+  const added = await badges(empty, side('flagged', '2.0.0'))
+  assert.match(added, /data-tooltip=Advisories affecting Empty package: 0, 2\.0\.0: 1/u)
+  assert.match(added, />License<[^]*>– → 70</u)
+  assert.match(added, />top 100,000</u)
+  assert.ok(!socketAsked.some(asked => asked.endsWith('@Empty package')), 'an empty review baseline never fetches a Socket report')
+  npmCompareBadges(empty, side('flagged', '2.0.0')).values[0][0].values.find(value => typeof value === 'function')()
+  assert.deepEqual(comparedAdvisories.at(-1).groups.map(({ status, rows }) => [status, rows.length]), [['new', 1]])
 })
 
 test('a dependency Compare lists new is tagged as the server\'s risk tells of its package: its tier, its last whole month\'s downloads in its tooltip, and how old it was where new', () => {

@@ -24,7 +24,7 @@ const dependency = (name, spec) => `${name}@${spec ?? 'latest'}`
 
 export class NpmReview extends LitElement {
   static properties = {
-    entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false },
+    entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false }, source: { attribute: false },
     _teams: { state: true }, _selectedTeams: { state: true }, _additionalTeams: { state: true },
     _reviews: { state: true }, _loading: { state: true }, _error: { state: true }, _saving: { state: true }, _saveBlocked: { state: true },
     _file: { state: true }, _comment: { state: true }, _status: { state: true }, _edit: { state: true },

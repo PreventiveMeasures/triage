@@ -6,14 +6,16 @@ npm-review {
   container-type: inline-size; container-name: dependency-review;
 }
 npm-review *, .dependency-review-list * { box-sizing: border-box; }
-npm-review button:not([class^='bundle-'], .focus-code-nav-btn, :where(.diff-fold-actions button, .bundle-compare-code-layout button)),
+npm-review button:not([class^='bundle-'], .npm-extension, .focus-code-nav-btn,
+  :where(.diff-fold-actions button, .bundle-compare-code-layout button)),
 .dependency-review-list button:not(.bundle-code-copy-path) {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   padding: .35rem .65rem; min-height: 1.9rem; border: 1px solid var(--border);
   border-radius: var(--ui-radius, 5px); background: var(--surface); color: var(--text); font: inherit;
 }
 npm-review button:disabled, .dependency-review-list button:disabled { opacity: .45; }
-npm-review button:not(:disabled):hover, .dependency-review-list button:not(:disabled):hover { background: var(--surface-active); }
+npm-review button:not(:disabled, .npm-extension):hover,
+.dependency-review-list button:not(:disabled):hover { background: var(--surface-active); }
 npm-review button:focus-visible, .dependency-review-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 npm-review button.npm-review-primary {
   background: var(--action-bg);

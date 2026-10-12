@@ -38,7 +38,8 @@ mock.module('../ui/view/bundle-compare-all.js', { namedExports: {} })
 mock.module('../ui/view/npm-review-diff.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
-const { NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
+const { EMPTY_REVIEW_BASE, NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
+const { renderReview } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { NpmReviewTree, reviewTree } = await import('../ui/view/npm-review-tree.js')
@@ -64,6 +65,30 @@ function component() {
   page._reviews = [review]
   return page
 }
+
+test('Review uses the current comparison source for badges and file alerts in both diff modes', () => {
+  const called = [], page = component()
+  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['export const value = 1\n'] } }
+  page._target = '(empty)'
+  page._base = EMPTY_REVIEW_BASE
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  page.source = { choices: [], options: [], widest: { name: '0.0.0', detail: 'latest' },
+    badges: (...sides) => { called.push(sides); return 'Shared comparison chips' },
+    files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
+  }
+  for (const mode of ['code', 'diff']) {
+    page._mode = mode
+    const rendered = text(renderReview(page))
+    assert.match(rendered, /bundle-compare-picker is-versions/u)
+    assert.match(rendered, /Shared comparison chips/u)
+    assert.match(rendered, /\.baseAlerts=Base alerts \.otherAlerts=Version alerts/u)
+    assert.deepEqual(called.at(-1), [EMPTY_REVIEW_BASE, page.details])
+  }
+  page._base = base
+  page.source = { ...page.source, badges: (...sides) => { called.push(sides); return 'Loaded comparison chips' } }
+  assert.match(text(renderReview(page)), /Loaded comparison chips/u)
+  assert.deepEqual(called.at(-1), [base, page.details])
+})
 
 test('review URLs round trip scoped dependencies, version-only shorthand and Diff mode', () => {
   assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/reviews'))), '/reviews')
