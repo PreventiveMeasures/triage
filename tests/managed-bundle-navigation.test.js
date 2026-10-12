@@ -227,7 +227,7 @@ test('Compare and Review keep the selected base until a review has started on an
     bundles: [{ integrity: 'npm', npm: { name: '@scope/pkg', version: '3.0.0' } }],
     bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'code' } }
   prepareNpmReviewTab(state, 'review')
-  assert.deepEqual(state.npmReview, { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0' })
+  assert.deepEqual(state.npmReview, { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', resume: true })
   state.bundleCompare.target = '2.0.0'
   prepareNpmReviewTab(state, 'review')
   assert.equal(state.npmReview.reviewSpec, '2.0.0', 'an unstarted review follows Compare')
@@ -242,4 +242,8 @@ test('Compare and Review keep the selected base until a review has started on an
   state.bundleDetailsTab = 'compare'; state.managedSession.id = 'bob'; state.bundleCompare.target = '1.0.0'
   prepareNpmReviewTab(state, 'review')
   assert.equal(state.npmReview.reviewSpec, '1.0.0', 'another user does not inherit the started review')
+  state.bundleDetailsTab = 'overview'; state.npmReview = null
+  prepareNpmReviewTab(state, 'review')
+  assert.deepEqual(state.npmReview, { bundle: 'npm', resume: true }, 'Review clicks from any tab look up the saved review')
+  assert.deepEqual(managedTabLocation(state, 'review'), {}, 'the resume hint never leaks into the URL')
 })

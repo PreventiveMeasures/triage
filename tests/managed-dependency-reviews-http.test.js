@@ -168,3 +168,23 @@ test('discard requires author, CSRF and current revision, without fetching packa
   assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews, [])
   assert.equal((await h.send(path, { body })).status, 409)
 })
+
+test('latest review is specific to the author and exact target, across different bases', async t => {
+  const h = await fixture(t), sid = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
+  const context = { ecosystem: 'npm', package: 'lib', version: '2.0.0', integrity: 'sha512-current',
+    basePackage: null, baseVersion: null, baseIntegrity: null }
+  const create = (patch, time) => h.db.changeDependencyReview({ ...context, ...patch }, sid, { action: 'start', reviewId: null, revision: null }, time)
+  await create({}, 100)
+  const latest = await create({ basePackage: 'other-lib', baseVersion: '1.0.0', baseIntegrity: 'sha512-base' }, 200)
+  await create({ version: '3.0.0' }, 300)
+  await create({ integrity: 'sha512-different' }, 400)
+  const path = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
+  assert.equal((await h.send(path, { who: 'anonymous' })).status, 401)
+  assert.equal((await h.send('/api/npm/reviews/latest')).status, 400)
+  assert.equal((await h.send(path, { method: 'POST' })).status, 405)
+  assert.equal((await h.send(path, { who: 'admin' })).body.review, null)
+  const response = await h.send(path)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.review.id, latest.id)
+  assert.equal(response.body.review.basePackage, 'other-lib')
+})

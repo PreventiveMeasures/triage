@@ -58,6 +58,7 @@
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
 //   GET/POST /api/npm/reviews → read private/team reviews; save, publish, revoke or continue a set | 400/401/403/404/409
 //   POST /api/npm/reviews/discard → author discards an unpublished review and its file rows | 400/401/403/409
+//   GET /api/npm/reviews/latest → latest own review for exact target bytes, across all bases | 400/401/403
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
@@ -3283,6 +3284,16 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === TEAM_SET_NPM_SCOPES_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
+    }
+    if (path === '/api/npm/reviews/latest') {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const integrity = url.searchParams.get('integrity'), name = url.searchParams.get('package'), version = url.searchParams.get('version')
+      if (!isNpmPackageName(name) || !isNpmPackageSpec(version) || !integrity || integrity.length > 1024) {
+        sendJson(res, 400, { error: 'bad-review-context' }); return
+      }
+      sendJson(res, 200, { review: await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity }) }); return
     }
     if (path === '/api/npm/reviews/discard') {
       if (method !== 'POST') { send405(res, 'POST'); return }

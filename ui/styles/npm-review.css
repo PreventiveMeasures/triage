@@ -7,7 +7,7 @@ npm-review {
 }
 npm-review *, .dependency-review-list * { box-sizing: border-box; }
 npm-review button:not([class^='bundle-'], .focus-code-nav-btn, :where(.diff-fold-actions button, .bundle-compare-code-layout button)),
-.dependency-review-list button {
+.dependency-review-list button:not(.bundle-code-copy-path) {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   padding: .35rem .65rem; min-height: 1.9rem; border: 1px solid var(--border);
   border-radius: var(--ui-radius, 5px); background: var(--surface); color: var(--text); font: inherit;

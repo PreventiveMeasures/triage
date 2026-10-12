@@ -113,6 +113,8 @@ export async function checkDependencyReviews(db) {
   await db.setUserRole(users.alice.userId, 'triage')
   await db.discardDependencyReview(users.alice.sid, continued.id, continued.revision)
   assert.deepEqual((await db.listOwnDependencyReviews(users.alice.userId, null)).reviews.map(item => item.id), [review.id])
+  assert.equal((await db.getLatestOwnDependencyReview(users.alice.userId, reviewContext)).id, review.id)
+  assert.equal(await db.getLatestOwnDependencyReview(users.bob.userId, reviewContext), null)
   await assert.rejects(change(save(continued, 'index.js', 'accept')), /review-conflict/u, 'an autosave cannot resurrect a discarded review')
   await assert.rejects(db.discardDependencyReview(users.alice.sid, continued.id, continued.revision), /review-conflict/u)
   const restarted = await change({ action: 'start', reviewId: null, revision: null })

@@ -80,7 +80,7 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
     return { compareSpec: review.reviewSpec, ...compareModeField(review.reviewMode === 'diff' ? 'diff' : compare?.mode ?? 'code') }
   }
   if (tab === 'review' && review) {
-    const { bundle: _bundle, started: _started, user: _user, ...location } = review
+    const { bundle: _bundle, started: _started, user: _user, resume: _resume, ...location } = review
     return location
   }
   return managedCodeLocation(state, tab) ?? managedCompareLocation(state, tab)
@@ -91,9 +91,9 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
 export function prepareNpmReviewTab(state, tab) {
   if (!state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm || tab === state.bundleDetailsTab) return
   const location = managedTabLocation(state, tab)
-  if (tab === 'review' && state.bundleDetailsTab === 'compare') {
+  if (tab === 'review') {
     const kept = state.npmReview?.bundle === state.selectedBundle && state.npmReview.started && state.npmReview.user === state.managedSession?.id
-    if (!kept) state.npmReview = { bundle: state.selectedBundle, ...location }
+    state.npmReview = { ...(kept ? state.npmReview : { bundle: state.selectedBundle, ...location }), resume: true }
   }
   if (tab === 'compare' && state.bundleDetailsTab === 'review' && location?.compareSpec) {
     state.bundleCompare = { bundle: state.selectedBundle, target: location.compareSpec, mode: location.compareMode ?? 'overview' }

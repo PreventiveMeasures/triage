@@ -219,3 +219,6 @@ export async function myDependencyReviews(...args) {
 export async function discardDependencyReview(...args) {
   return (await loadManagedBundle()).discardDependencyReview(...args)
 }
+export async function latestDependencyReview(...args) {
+  return (await loadManagedBundle()).latestDependencyReview(...args)
+}

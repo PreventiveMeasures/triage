@@ -7,6 +7,8 @@ import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
 let answer = { reviews: [], teams: [] }
+let latestAnswer = null
+const latestRequests = [], loadedBases = []
 let discardConfirmation = { confirmed: false }
 const confirmations = []
 mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
@@ -17,11 +19,12 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
+  latestDependencyReview: (...args) => { latestRequests.push(args); return latestAnswer instanceof Error ? Promise.reject(latestAnswer) : Promise.resolve(latestAnswer) },
 } })
 mock.module('../ui/view/npm-package.js', { namedExports: {
-  loadNpmVersion() {}, npmCompareSource: () => ({ choices: [], options: [] }),
+  loadNpmVersion: (name, version) => { loadedBases.push([name, version]); return Promise.resolve({ details: base }) }, npmCompareSource: () => ({ choices: [], options: [] }),
   npmPackageRoute: (entry, tab, location) => ({ view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab, ...location }),
-  parseNpmPackageInput() {},
+  parseNpmPackageInput: input => ({ name: input.slice(0, input.lastIndexOf('@')), spec: input.slice(input.lastIndexOf('@') + 1) }),
 } })
 mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: null } })
 mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
@@ -211,6 +214,57 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
   answer = { reviews: [], teams: [] }
   page._ensureContext({ ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base })
   assert.deepEqual(page._treeFiles.map(({ path, kind }) => ({ path, kind })), [{ path: 'lib/helper.ts', kind: 'renamed' }, { path: 'lib/index.js', kind: 'changed' }])
+})
+
+test('Review resumes the latest saved base while explicit links and new reviews keep their selected base', async () => {
+  const page = component()
+  page.details = { kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] } }
+  latestRequests.length = 0; loadedBases.length = 0
+  latestAnswer = review
+  answer = { reviews: [review], teams: [] }
+  await page._loadBase('(empty)', true)
+  assert.deepEqual(loadedBases, [['@scope/lib', '1.0.0']])
+  assert.equal(page._context.baseVersion, '1.0.0')
+  assert.equal(page.request.reviewSpec, '1.0.0')
+  assert.equal(page.request.resume, undefined)
+  assert.equal(latestRequests[0][0].integrity, entry.integrity)
+  const direct = component()
+  direct.details = page.details
+  await direct._loadBase('(empty)')
+  assert.equal(latestRequests.length, 1, 'explicit routes do not switch to another review')
+  assert.equal(direct._context.basePackage, null)
+  latestAnswer = null
+  const fresh = component()
+  fresh.details = page.details
+  await fresh._loadBase('@scope/lib@1.0.0', true)
+  assert.equal(fresh._context.baseVersion, '1.0.0', 'with no prior review, keep the base carried from Compare')
+  latestAnswer = { ...review, basePackage: null, baseVersion: null, baseIntegrity: null }
+  const empty = component()
+  empty.details = page.details
+  await empty._loadBase('@scope/lib@1.0.0', true)
+  assert.equal(empty._context.basePackage, null, 'a saved full-package review overrides Compare’s base too')
+})
+
+test('a late latest-review lookup cannot override a new selection, and a failed lookup is retryable', async () => {
+  const page = component()
+  page.details = { kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] } }
+  let resolve
+  latestAnswer = new Promise(done => { resolve = done })
+  const loading = page._loadBase('@scope/lib@1.0.0', true)
+  await page._loadBase('(empty)')
+  resolve(review)
+  await loading
+  assert.equal(page._context.basePackage, null)
+  page._baseKey = null
+  latestAnswer = new Error('Could not load your latest review')
+  await page._loadBase('(empty)', true)
+  assert.match(page._baseError, /Could not load/u)
+  assert.equal(page._base, null)
+  latestAnswer = null
+  page._baseKey = null
+  await page._loadBase('(empty)', true)
+  assert.equal(page._baseError, null)
+  assert.equal(page._context.basePackage, null)
 })
 
 test('editing captures the loaded revision, and continuing uses a separate review', async () => {

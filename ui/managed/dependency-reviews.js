@@ -33,6 +33,16 @@ export async function discardDependencyReview(reviewId, revision, csrfToken, sig
   if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
   if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not discard review (${response.status}).`)
 }
+export async function latestDependencyReview(target, signal) {
+  const generation = managedAppState.generation
+  const query = new URLSearchParams({ package: target.package, version: target.version, integrity: target.integrity })
+  const response = await managedFetch(`/api/npm/reviews/latest?${query}`, { credentials: 'same-origin',
+    signal: AbortSignal.any([signal, managedAppState.sessionController.signal]) })
+  const body = await response.json()
+  if (generation !== managedAppState.generation || signal.aborted) throw new DOMException('Session changed', 'AbortError')
+  if (!response.ok) throw new Error(`Could not load your latest review (${response.status}).`)
+  return body.review
+}
 export async function dependencyReviews(context, change, csrfToken, signal) {
   const generation = managedAppState.generation
   const params = new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))

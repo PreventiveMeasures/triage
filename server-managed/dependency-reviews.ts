@@ -22,6 +22,7 @@ export type ReviewChange = { action: 'save'; reviewId: string | null; revision: 
   | { action: 'revoke'; reviewId: string; revision: number }
 export interface DependencyReviewStore {
   listDependencyReviews(context: ReviewContext, user: string): Promise<DependencyReview[]>
+  getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity'>): Promise<DependencyReview | null>
   listOwnDependencyReviews(user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null }>
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
   listDependencyReviewEnabledTeams(): Promise<string[]>
@@ -162,6 +163,12 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
   const read = (id: string) => db.prepare(`SELECT ${columns} FROM managed_dependency_review WHERE id = ?`).get(id)
   return {
     listOwnDependencyReviews: (user, before) => listOwn(db, user, before),
+    async getLatestOwnDependencyReview(user, target) {
+      const row = await db.prepare(`SELECT ${columns} FROM managed_dependency_review
+        WHERE user_id = ? AND ecosystem = ? AND package = ? AND version = ? AND integrity = ? ORDER BY time DESC, id DESC LIMIT 1`)
+        .get(user, target.ecosystem, target.package, target.version, target.integrity)
+      return row ? (await expandReviews(db, [row], user))[0]! : null
+    },
     async discardDependencyReview(sessionId, reviewId, revision) {
       const user = await actor(db, sessionId)
       const { changes } = await db.prepare(`DELETE FROM managed_dependency_review

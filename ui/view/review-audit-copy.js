@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { auditMarkdown } from '../../common/dependency-reviews.js'
+import { COPY_ICON } from './lit-icons.js'
 
 export class ReviewAuditCopy extends LitElement {
   static properties = { review: { attribute: false }, _copied: { state: true }, _error: { state: true } }
@@ -18,7 +19,8 @@ export class ReviewAuditCopy extends LitElement {
   }
   render() {
     if (!this.review || auditMarkdown(this.review) === null) return nothing
-    return html`<button type="button" @click=${() => this._copy()}>${this._copied ? 'Copied' : 'Copy audit Markdown'}</button>
+    return html`<button type="button" class=${`bundle-code-copy-path${this._copied ? ' copied' : ''}`} aria-label="Copy audit Markdown"
+      data-tooltip=${this._copied ? 'Copied' : 'Copy audit Markdown'} @click=${() => this._copy()}>${COPY_ICON}</button>
       ${this._error ? html`<span role="alert">Could not copy to the clipboard.</span>` : nothing}`
   }
 }

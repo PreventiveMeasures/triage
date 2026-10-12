@@ -144,7 +144,7 @@ function panel(page) {
 
 export function renderReview(page) {
   if (!page._base) {return html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
-    ${page._baseError ? html`<button type="button" @click=${() => { page._baseKey = null; void page._loadBase(page._target) }}>Retry</button>` : nothing}</div>`}
+    ${page._baseError ? html`<button type="button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`}
   const states = page._fileStates
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
     ${page._loading ? html`<div class="npm-review-loading" role="status">Loading reviews…</div>` : nothing}

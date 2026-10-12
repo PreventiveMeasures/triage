@@ -1,6 +1,6 @@
 import { LitElement, nothing } from 'lit'
 import { state } from '#client/index.js'
-import { dependencyReviews } from './client-managed.js'
+import { dependencyReviews, latestDependencyReview } from './client-managed.js'
 import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { allowedReviewVerdicts, summarizeReview } from '../../common/dependency-reviews.js'
@@ -8,7 +8,7 @@ import { bundleCompareFiles } from './bundle-compare-inputs.js'
 import { computeBundleDiff } from './bundle-compare-diff.js'
 import { compareReviewPaths, reviewViewMode } from './npm-review-files.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
-import { reviewFileStates, takeReviewSelection } from './npm-review-presentation.js'
+import { reviewFileStates, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview, renderReviewConfirmation, renderReviewEditor, renderReviewPublished } from './npm-review-view.js'
 import './npm-review-code.js'
 import './npm-review-tree.js'
@@ -72,15 +72,25 @@ export class NpmReview extends LitElement {
     return { ...(parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}), ...(mode === 'diff' ? { reviewMode: 'diff' } : {}) }
   }
   _navigate(target, mode) { void managedHistory?.navigate(npmPackageRoute(this.entry, 'review', this._location(target, mode))) }
-  async _loadBase(target) {
+  async _loadBase(target, resume = false) {
     const key = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
     if (this._baseKey === key) return
     this._baseKey = key; this._base = null; this._baseError = null
     this._controller.abort(); this._cancelSaves(); this._key = null
+    this._controller = new AbortController()
     try {
+      const latest = resume ? await latestDependencyReview(reviewContext(this.entry, null), this._controller.signal) : null
+      if (this._baseKey !== key) return
+      if (latest) target = latest.basePackage ? dependency(latest.basePackage, latest.baseVersion) : '(empty)'
       const parsed = target === '(empty)' ? null : parseNpmPackageInput(target)
       const base = parsed ? (await loadNpmVersion(parsed.name, parsed.spec ?? 'latest')).details : EMPTY_REVIEW_BASE
       if (this._baseKey !== key) return
+      if (resume) {
+        if (latest) selectReviewOnOpen(latest)
+        this._target = target
+        this.request = { bundle: this.entry.integrity, ...this._location(target) }
+        this._baseKey = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
+      }
       this._base = base; this._ensureContext(base)
     } catch (error) { if (this._baseKey === key) this._baseError = error.message }
   }
@@ -299,7 +309,7 @@ export class NpmReview extends LitElement {
     if (!this.entry?.npm || !this.details) return nothing
     const request = this.request?.bundle === this.entry.integrity ? this.request : {}
     this._target = request.reviewPackage ? dependency(request.reviewPackage, request.reviewSpec) : '(empty)'
-    void this._loadBase(this._target)
+    void this._loadBase(this._target, request.resume)
     return renderReview(this)
   }
 }

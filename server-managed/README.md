@@ -1977,6 +1977,8 @@ all package files are reviewed as additions. Append `/<basePackage>@<baseVersion
 to review an update; a bare base version is accepted as a same-package shortcut.
 The tab is shown only to users belonging to a visible team with dependency review enabled.
 Tags resolve to exact versions. Review uses the Compare header and stats.
+Clicking Review reopens the author's latest review for that exact package version
+and integrity, including its original base. Explicit review links keep their base.
 Changed files totaling less than 50,000 lines and 2 MiB across both versions use
 the whole diff; larger reviews use the per-file Code view. Both views support
 file reviews and whole-diff notes (a null file path).
