@@ -143,11 +143,14 @@ function importsOf({ json, npm }) {
   return found
 }
 
-// Whether a command names `name` as a word (`prebuild-install || node-gyp
-// rebuild`, `node node_modules/name/setup.js`).
+// Whether a command names `name`: as a word (`prebuild-install || node-gyp
+// rebuild`), or as the package installed in `node_modules` that a path
+// leads into (`node node_modules/name/setup.js`); not as part of another
+// path (`node scripts/name.js`, `node_modules/@scope/name`).
 function commandNames(command, name) {
   for (let at = command.indexOf(name); at !== -1; at = command.indexOf(name, at + 1)) {
-    if (!/[\w@.-]/u.test(command[at - 1] ?? '') && !/[\w-]/u.test(command[at + name.length] ?? '')) return true
+    const before = command.slice(0, at)
+    if ((!/[\w@./-]$/u.test(before) || /node_modules\/(?:\.bin\/)?$/u.test(before)) && !/^[\w.-]/u.test(command.slice(at + name.length))) return true
   }
   return false
 }

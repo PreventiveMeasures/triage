@@ -50,6 +50,11 @@ test('a dependency nothing of a version imports is one no code file names as an 
     'an install script naming it')
   assert.equal(unimported({ 'index.js': '', 'binding.gyp': '{}' }, 'node-gyp'), false, 'node-gyp, run for a binding.gyp')
   assert.equal(unimported({ 'index.js': '' }, 'install', { installScripts: { install: 'prebuild-install' } }), true, 'not as part of another word')
+  const setup = { installScripts: { postinstall: 'node node_modules/@scope/foo/setup.js && node scripts/bar.js' } }
+  assert.equal(unimported({ 'index.js': '' }, '@scope/foo', setup), false, 'the package a path into node_modules leads into')
+  assert.equal(unimported({ 'index.js': '' }, 'foo', setup), true, 'not a scope\'s package of its name')
+  assert.equal(unimported({ 'index.js': '' }, 'bar', setup), true, 'nor a file of the package\'s own')
+  assert.equal(unimported({ 'index.js': '' }, 'foo', { installScripts: { install: 'node node_modules/foo/install.js' } }), false)
   // Not files no import is read from: prose, source maps, lockfiles, its own package.json.
   for (const path of ['README.md', 'docs/guide.txt', 'CHANGELOG', 'HISTORY.md', 'LICENSE-MIT', 'dist/index.js.map', 'npm-shrinkwrap.json', 'package.json']) {
     assert.equal(unimported({ [path]: 'require("dep")' }, 'dep'), true, path)
