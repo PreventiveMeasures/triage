@@ -182,6 +182,7 @@ npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disable
 .npm-review-verdict-choice:has(:disabled) { opacity: .4; }
 .npm-review-verdict-choice:not(:has(:disabled, :checked)):hover { background: var(--surface-active); }
 .npm-review-line-counts { display: inline-flex; flex: none; gap: .25rem; font: .65rem/1.5 ui-monospace, monospace; }
+.npm-review-line-counts.unchanged { color: var(--muted); }
 .npm-review-line-counts .add { color: var(--green); }
 .npm-review-line-counts .del { color: var(--critical); }
 .npm-review-empty-count,

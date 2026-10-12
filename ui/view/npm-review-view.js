@@ -2,7 +2,6 @@ import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmCompareSource } from './npm-package.js'
-import { managedHistory } from './managed-history.js'
 import { NEXT_ICON } from './lit-icons.js'
 import { renderCompareStats } from './bundle-compare-stats.js'
 import { comparePickerStyle } from './bundle-compare-picker.js'
@@ -21,11 +20,11 @@ const verdictChoices = (name, status, change, disabled, allowed = Object.keys(ve
 
 function reviewActions(page) {
   const frozen = isFrozen(page), review = page._shownReview, summary = page._summary
-  return html`<div class="npm-review-summary-actions"><div class="npm-review-progress-block"><span>${page._unsaved
+  return html`<div class="npm-review-summary-actions"><div class="npm-review-progress-block"><span>${page._unsaved && (page._saveBlocked || page._error)
     ? html`<button type="button" class="npm-review-text-button" @click=${() => page._openPanel('unsaved')}>Unsaved changes</button>`
     : html`<strong>${summary.checkedFiles} of ${summary.totalFiles}</strong> files checked`}</span>
     ${reviewProgress(summary.checkedFiles, summary.totalFiles)}</div>
-    ${page._canEdit ? html`<button type="button" class=${finalizeClass(page)} ?disabled=${page._saving || page._loading || !summary.checkedFiles} @click=${() => void page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
+    ${page._canEdit ? html`<button type="button" class=${finalizeClass(page)} ?disabled=${busy(page) || !summary.checkedFiles} @click=${() => void page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
       : frozen && page._writable && (page._activeReview || page._ownPublished.length === 0) ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)} @click=${() => page._resume()}>Resume your review ${NEXT_ICON}</button>`
       : frozen && review.user === page.session?.id && page._writable ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'continue', reviewId: review.id, revision: review.revision })}>Continue review ${NEXT_ICON}</button>` : nothing}
@@ -34,20 +33,23 @@ function reviewActions(page) {
 
 function reviewHeader(page) {
   const source = page.source ?? npmCompareSource(page.entry)
-  const choices = [{ value: '(empty)', label: 'Empty package', displayLabel: 'Empty package' }, ...source.options.map(row => ({
+  const hasBase = Boolean(page._target && page._target !== '(empty)')
+  const choices = source.options.map(row => ({
     value: `${page.entry.npm.name}@${row.id}`, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail,
-  }))]
-  if (!choices.some(row => row.value === page._target)) choices.push({ value: page._target, label: page._target })
+  }))
+  if (hasBase && !choices.some(row => row.value === page._target)) choices.push({ value: page._target, label: page._target })
   const versions = source.choices.map(row => ({ value: row.id, label: row.name, displayLabel: row.displayLabel ?? row.id, detail: row.detail }))
   if (!versions.some(row => row.value === page.entry.npm.version)) versions.push({ value: page.entry.npm.version, label: page.entry.npm.version })
   return html`<header class="bundle-compare-head npm-review-head"><div class="bundle-compare-picker is-versions" style=${comparePickerStyle(source)}>
     <div class="bundle-compare-select-wrap"><span class="bundle-compare-select-hint">Review</span>
-      <bundle-selector .options=${choices} .value=${page._target} noun="version" versions label="Review base" ?disabled=${busy(page) || page._unsaved}
-        @bundle-change=${event => { event.stopPropagation(); if (!busy(page) && !page._unsaved) page._navigate(event.detail.value) }}></bundle-selector></div>
+      <bundle-selector .options=${choices} .value=${hasBase ? page._target : null} noun="version" versions label="Review base" placeholder="Choose a version…" ?disabled=${busy(page)}
+        @bundle-change=${event => { event.stopPropagation(); void page._navigate(event.detail.value) }}></bundle-selector>
+      ${hasBase ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear review base" ?disabled=${busy(page)}
+        @click=${() => void page._navigate('(empty)')}>×</button>` : nothing}</div>
     <span class="bundle-compare-arrow" aria-hidden="true">→</span>
     <div class="bundle-compare-select-wrap"><bundle-selector .options=${versions} .value=${page.entry.npm.version} noun="version" versions
-      label="Version to review" ?disabled=${busy(page) || page._unsaved} @bundle-change=${event => { event.stopPropagation(); if (!busy(page) && !page._unsaved) {
-        void managedHistory?.navigate({ view: 'npm', packageName: page.entry.npm.name, packageSpec: event.detail.value, bundleTab: 'review', ...page._location(page._target) }) } }}></bundle-selector></div>
+      label="Version to review" ?disabled=${busy(page)} @bundle-change=${event => { event.stopPropagation();
+        void page._navigateTo({ view: 'npm', packageName: page.entry.npm.name, packageSpec: event.detail.value, bundleTab: 'review', ...page._location(page._target) }) }}></bundle-selector></div>
     ${source.badges?.(page._base, page.details) ?? nothing}
     </div><div class="bundle-compare-summary">${renderCompareStats(page._diff)}</div></header>`
 }
@@ -58,7 +60,7 @@ function toolbar(page) {
     ${isFrozen(page) ? html`${reviewBadge(review)}<button type="button" class="npm-review-text-button" @click=${() => page._openPanel('manage')}>Details</button>` : nothing}
     <button type="button" class="npm-review-text-button" ?disabled=${page._blocked} @click=${() => page._openPanel('notes')}>Review notes</button>
     <button type="button" class="npm-review-text-button" @click=${() => page._openPanel('history')}>History <span class="npm-review-count">${page._reviews.filter(row => row.publishedAt !== null).length}</span></button>
-    <button type="button" class="npm-review-text-button" @click=${() => managedHistory?.navigate({ view: 'reviews' })}>My reviews</button>
+    <button type="button" class="npm-review-text-button" ?disabled=${busy(page)} @click=${() => void page._navigateTo({ view: 'reviews' })}>My reviews</button>
     </div>${reviewActions(page)}</div>`
 }
 
@@ -148,7 +150,7 @@ function panel(page) {
           @click=${() => { page._closePanel(); page._open(file) }}>${file ?? 'Whole diff notes'} ${NEXT_ICON}</button>`)}`
         : page._reviews.filter(review => review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt).map(review => renderReviewPublished(page, review))}
       ${page._panel === 'history' ? html`${page._reviews.some(review => review.publishedAt !== null) ? nothing : html`<p class="npm-review-muted">No published reviews yet.</p>`}
-        <button type="button" ?disabled=${busy(page) || page._pendingSaves.length > 0} @click=${() => page._refresh()}>Refresh reviews</button>` : nothing}${errorMessage(page)}</div>`}
+        <button type="button" ?disabled=${busy(page)} @click=${() => page._refresh()}>Refresh reviews</button>` : nothing}${errorMessage(page)}</div>`}
     ${savingMessage(page)}
   </dialog>`
 }

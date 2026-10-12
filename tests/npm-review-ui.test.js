@@ -12,6 +12,7 @@ const latestRequests = [], loadedBases = []
 let discardConfirmation = { confirmed: false }
 const confirmations = []
 const loadingToasts = []
+const navigations = []
 mock.module('../ui/view/toast.js', { namedExports: { showToast: (message, options) => {
   const toast = { message, options, dismissed: false }; loadingToasts.push(toast)
   return () => { toast.dismissed = true }
@@ -31,7 +32,9 @@ mock.module('../ui/view/npm-package.js', { namedExports: {
   npmPackageRoute: (entry, tab, location) => ({ view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab, ...location }),
   parseNpmPackageInput: input => ({ name: input.slice(0, input.lastIndexOf('@')), spec: input.slice(input.lastIndexOf('@') + 1) }),
 } })
-mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: null } })
+mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: {
+  navigate: route => { navigations.push(route) }, replaceRoute: () => {},
+} } })
 mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
 mock.module('../ui/view/npm-review-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-compare-all.js', { namedExports: {} })
@@ -638,19 +641,75 @@ test('rapid verdict changes save serially with updated revisions, including reve
 test('only saves pending for three seconds block editing, and completion clears the block', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const page = component(), pending = Promise.withResolvers()
+  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page._base = EMPTY_REVIEW_BASE; page._target = '@scope/lib@1.0.0'; page._files = ['index.js']
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  const assertSaveUI = blocked => {
+    const rendered = text(renderReview(page))
+    assert.equal(rendered.includes('Unsaved changes'), blocked)
+    assert.equal(rendered.includes('Saving changes…'), blocked)
+    assert.match(rendered, new RegExp(`label="Review base"[^>]+\\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`label="Version to review"[^>]+\\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`aria-label="Clear review base" \\?disabled=${blocked}`, 'u'))
+    assert.match(rendered, new RegExp(`\\?disabled=${blocked}[^>]*>Finalize review`, 'u'))
+  }
   page._resetEditor('index.js'); answer = pending.promise
+  page._editFile('index.js', { _comment: 'Save this note too' })
+  assertSaveUI(false)
   const saving = page._setFileStatus('index.js', 'accept')
+  assert.equal(page._unsaved, true, 'data protection still tracks edits during the grace period')
+  assertSaveUI(false)
   t.mock.timers.tick(2999)
   assert.equal(page._blocked, false)
+  assertSaveUI(false)
   t.mock.timers.tick(1)
   assert.equal(page._blocked, true)
+  assertSaveUI(true)
   await page._setFileStatus('index.js', 'reject')
   assert.equal(page._status, 'accept', 'edits stop once the slow-save block appears')
-  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept' }] } })
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept', comment: 'Save this note too' }] } })
   await saving
   assert.equal(page._blocked, false)
+  assertSaveUI(false)
   t.mock.timers.tick(3000)
   assert.equal(page._blocked, false)
+})
+
+test('version changes during the grace period save newer notes and navigate only to the latest choice', async () => {
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
+  page._resetEditor('index.js'); answer = first.promise; navigations.length = 0; requests.length = 0
+  const saving = page._setFileStatus('index.js', 'accept-with-nits')
+  const clearing = page._navigate('(empty)')
+  page._editFile('index.js', { _comment: 'Typed after choosing another base' })
+  const selecting = page._navigate('@scope/lib@0.5.0')
+  assert.deepEqual(navigations, [], 'navigation waits without disabling the editor')
+  assert.equal(page._blocked, false)
+  answer = second.promise
+  first.resolve({ review: { ...review, revision: 2, entries: [{ ...file, status: 'accept-with-nits' }] } })
+  await saving
+  await Promise.resolve()
+  assert.equal(requests.length, 2)
+  assert.equal(requests[1][1].comment, 'Typed after choosing another base')
+  assert.equal(requests[1][1].revision, 2)
+  assert.deepEqual(navigations, [])
+  second.resolve({ review: { ...review, revision: 3, entries: [{ ...file, status: 'accept-with-nits', comment: 'Typed after choosing another base' }] } })
+  await Promise.all([clearing, selecting])
+  assert.deepEqual(navigations, [{ view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '0.5.0' }])
+  assert.equal(page._unsaved, false)
+})
+
+test('navigation preserves edits when an autosave fails or the review context changes', async () => {
+  for (const outcome of ['failure', 'context-change']) {
+    const page = component(), pending = Promise.withResolvers()
+    page._resetEditor('index.js'); page._comment = 'Keep this note'; answer = pending.promise; navigations.length = 0
+    const navigating = page._navigateTo({ view: 'reviews' })
+    if (outcome === 'failure') pending.reject(new Error('Connection lost'))
+    else { page._key = 'another review'; page._cancelSaves(); pending.resolve({ review }) }
+    await navigating
+    assert.deepEqual(navigations, [])
+    assert.equal(page._comment, 'Keep this note')
+    if (outcome === 'failure') assert.equal(page._error, 'Connection lost')
+  }
 })
 
 test('fast saves cancel their timer without blocking a newer save', async t => {

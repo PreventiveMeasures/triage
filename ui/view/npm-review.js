@@ -91,7 +91,13 @@ export class NpmReview extends LitElement {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
     return { ...(parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}), ...(mode === 'diff' ? { reviewMode: 'diff' } : {}) }
   }
-  _navigate(target, mode) { void managedHistory?.navigate(npmPackageRoute(this.entry, 'review', this._location(target, mode))) }
+  _navigate(target, mode) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, mode))) }
+  async _navigateTo(route) {
+    if (this._blocked || this._loading) return
+    const key = this._key, navigation = this._navigation = {}
+    if (this._unsaved && !await this._saveAll()) return
+    if (key === this._key && navigation === this._navigation && !this._unsaved) await managedHistory?.navigate(route)
+  }
   async _loadBase(target, resume = false) {
     const key = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
     if (this._baseKey === key) return
@@ -142,8 +148,11 @@ export class NpmReview extends LitElement {
     }
   }
   async _refresh(initializeTeams = false) {
-    if (this._pendingSaves.length > 0) return
     const key = this._key
+    while (key === this._key && this._pendingSaves.length > 0) {
+      if ((await Promise.all(this._pendingSaves.map(save => save.promise))).some(review => !review)) return
+    }
+    if (key !== this._key) return
     this._dismissLoading?.()
     const dismiss = this._dismissLoading = showToast('Loading reviews…', { duration: 0 })
     this._loading = true; this._error = null
