@@ -483,6 +483,29 @@ test('a file is tagged Large and Obfuscated in its head and the tree, as the npm
   assert.deepEqual(flags(rows['lib/plain.js']), [])
 })
 
+test('a file is labelled with what its code can run beyond itself, in its head and in the tree, a kind new since saying so', () => {
+  const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'pkg', version: integrity, manifest: {} } })
+  const base = version('a', { 'index.js': 'module.exports = eval("1")\n', 'old.js': 'require("child_process")\n', 'plain.js': '1\n' })
+  const other = version('b', { 'index.js': 'module.exports = eval("2")\nnew Function("x")\n', 'run.js': 'require("child_process").exec("ls")\n', 'plain.js': '2\n' })
+  const element = new CompareCode()
+  Object.assign(element, { base, other, baseName: 'a', otherName: 'b', resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const render = path => { element.path = path; return renderText(element.render()) }
+  const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(render(path))[1]
+  const tags = markup => [...markup.matchAll(/class="npm-runs-code" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, tooltip, tag]) => [tag, tooltip])
+  assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code (eval): line 1'], ['Function', 'Makes a function of a string (Function): line 2, new']],
+    'as it is now, what it held before not new')
+  assert.deepEqual(tags(head('run.js')), [['child_process', 'Runs other programs (child_process): line 1, new']], 'all of an added file\'s new')
+  assert.deepEqual(tags(head('old.js')), [['child_process', 'Runs other programs (child_process): line 1']], 'a removed file as it was')
+  assert.deepEqual(tags(head('plain.js')), [])
+  const rows = Object.fromEntries([...render('index.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
+  assert.deepEqual(tags(rows['run.js']).map(([tag]) => tag), ['child_process'], 'the tree tags it too')
+  assert.deepEqual(tags(rows['plain.js']), [])
+})
+
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]

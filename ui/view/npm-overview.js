@@ -4,7 +4,7 @@
 // file extensions, and its binary files in a column of their own.
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
-import { bundleFileSizes } from '../../common/bundle-sources.js'
+import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
@@ -20,6 +20,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscationFound, npmReadabilityTag } from './file-readability.js'
+import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -421,11 +422,11 @@ export function npmReadabilityWarning(entry, details) {
   return readabilityWarning(npmFilesRead(details).counts, details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
-// A file's tags in the Files list and Compare's: its flags (npmFileFlagTags),
-// then how it reads.
+// A file's tags in the Files list and Compare's: what it can run beyond itself
+// (npmRunsCode), its flags (npmFileFlagTags), then how it reads.
 export function npmFileTags(details, path) {
   const { byPath, sizes } = npmFilesRead(details)
-  return html`${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmReadabilityTag(byPath.get(path))}`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each

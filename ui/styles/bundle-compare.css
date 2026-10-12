@@ -625,8 +625,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
    the npm Overview marks them, one no longer named struck through; and what
    a stasis bundle records of a file that changed (its format, its execute
    bit, its being an entry point), there and in the Overview's rows, what it
-   no longer is struck through. */
-:is(.bundle-compare-code-install, .bundle-compare-code-meta) {
+   no longer is struck through; and what a file's code can run beyond itself
+   (file-runs-code.js), wherever the file is listed. */
+:is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code) {
   flex: none; padding: 0 .3rem;
   color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
   border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
