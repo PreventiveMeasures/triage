@@ -14,16 +14,24 @@
 // - `npm/tarballs`: none kept, upstream reading npm's own cache first, as an
 //   assessment kept needs none.
 //
-// A cache failure is a miss, never a failed assessment.
+// A cache failure is a miss, never a failed assessment. Packages' documents
+// are read as every other npm document here is, within their bounds and
+// shared budget (npm-packages.ts readNpmPackument), and assessments made at
+// once are bounded as the viewer's loads are, each unpacking up to two
+// tarballs: one past them is refused as busy.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
+import { NpmPackageError, readNpmPackument } from './npm-packages.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000
+// As npm-loads.ts MAX_ACTIVE_LOADS.
+const MAX_ACTIVE_ASSESSMENTS = 4
+let assessing = 0
 const memory = new Map<string, unknown>()
 function remember(key: string, value: unknown) {
   memory.delete(key)
@@ -65,8 +73,15 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
 
 // `version` of package `name` assessed against `oldVersion`, where given:
 // trusted however new where a team lists its scope (`teamScoped`), its own
-// packages; else held to risk's minimum release age.
-export function npmRisk(name: string, version: string, oldVersion: string | null,
-  { teamScoped, isPublic, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; isPublic: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
-  return assessNpm(name, version, { oldVersion, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, cache: npmRiskCache(stores, isPublic), signal })
+// packages; else held to risk's minimum release age. Its documents are read
+// with npm's token where the reader may have it (`privileged`, as
+// readNpmVersion), its dependencies' without.
+export async function npmRisk(name: string, version: string, oldVersion: string | null,
+  { teamScoped, isPublic, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; isPublic: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
+  if (assessing >= MAX_ACTIVE_ASSESSMENTS) throw new NpmPackageError(429, 'npm-busy')
+  assessing++
+  try {
+    return await assessNpm(name, version, { oldVersion, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, cache: npmRiskCache(stores, isPublic), signal,
+      packument: (asked, { authorized }) => readNpmPackument(asked, privileged && authorized, signal) })
+  } finally { assessing-- }
 }

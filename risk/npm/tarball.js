@@ -5,6 +5,9 @@
 // bounds (server-managed/npm-packages.ts readNpmTar).
 export const MAX_PACKAGE_FILES = 20_000
 export const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+// What its tar stream may unpack to, its headers and padding beside its
+// files, as npm-loads.ts bounds it (MAX_TAR_BYTES).
+export const MAX_TAR_BYTES = 96 * 1024 * 1024
 
 const latin1 = new TextDecoder('latin1')
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
@@ -78,12 +81,25 @@ export function npmFileText(bytes) {
   try { return utf8.decode(bytes) } catch { return null }
 }
 
+// A gzipped tarball's tar stream, given up on as `package-too-large` once it
+// unpacks past MAX_TAR_BYTES, before any more of it is held.
+async function gunzip(gzipped) {
+  const reader = new Blob([gzipped]).stream().pipeThrough(new DecompressionStream('gzip')).getReader()
+  const chunks = []
+  let size = 0
+  for (let read = await reader.read(); !read.done; read = await reader.read()) {
+    size += read.value.byteLength
+    if (size > MAX_TAR_BYTES) { await reader.cancel(); throw new Error('package-too-large') }
+    chunks.push(read.value)
+  }
+  return new Uint8Array(await new Blob(chunks).arrayBuffer())
+}
+
 // A gzipped tarball's files as a version holds them for risk, as a source map
 // lists them (`kind: 'sourcemap'`, as the npm viewer holds a version):
 // `json.sources` their paths, sorted, `json.sourcesContent` their texts, and
 // `fileSizes` by path.
 export async function npmTarballVersion(gzipped) {
-  const stream = new Blob([gzipped]).stream().pipeThrough(new DecompressionStream('gzip'))
-  const files = [...npmTarFiles(new Uint8Array(await new Response(stream).arrayBuffer()))].toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  const files = [...npmTarFiles(await gunzip(gzipped))].toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
   return { kind: 'sourcemap', json: { version: 3, sources: files.map(([path]) => path), sourcesContent: files.map(([, bytes]) => npmFileText(bytes)) }, fileSizes: new Map(files.map(([path, bytes]) => [path, bytes.length])) }
 }

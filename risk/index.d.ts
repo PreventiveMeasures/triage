@@ -14,7 +14,10 @@ export const RISK_VERSION: number
 export const DEFAULT_MINIMUM_RELEASE_AGE: number
 
 // npm has no such package or version (`package-not-found`,
-// `version-not-found`), or couldn't be asked (`upstream-unavailable`).
+// `version-not-found`), a tarball unpacks past risk's bounds
+// (`package-too-large`), or npm couldn't be asked (`upstream-unavailable`),
+// answered past them (`upstream-too-large`) or answered what can't be read
+// (`upstream-invalid`).
 export class NpmRiskError extends Error {
   code: string
 }
@@ -29,6 +32,11 @@ export interface AssessNpmOptions {
   // name each): `npm/tarballs`, `risk/npm/versions`, `risk/npm/packages`,
   // `risk/npm/public`, `risk/npm/downloads` and `risk/npm/assessments`.
   cache?: CacheStore | false
+  // Asks for a package's whole document in risk's stead, as the managed
+  // server does within its bounds: null where npm has none for this asker.
+  // `authorized` whether it may be asked with the caller's npm token: the
+  // package assessed, not its dependencies.
+  packument?: (name: string, options: { authorized: boolean; signal: AbortSignal | undefined }) => Promise<Record<string, unknown> | null>
   now?: number
   signal?: AbortSignal
   // Whether npm's downloads are asked for: the package's popularity, and its

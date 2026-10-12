@@ -1619,6 +1619,10 @@ are trusted however new (a minimum release age of 0), any other version held
 to two weeks. What it reads is kept by type (npm-risk.ts): a public package's
 assessment in the public npm cache, its versions' documents in the upstream
 cache table, the rest in memory, and nothing of a private one shared.
+Packages' documents are read as the others here are, within their bounds and
+shared budget, and four assessments at once at most, as tarball loads are
+(429 `npm-busy` past either); a tarball unpacking past risk's bounds is a 413
+`package-too-large`.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
 downloads API, reaching back to the first of the month that year starts in so

@@ -19,7 +19,11 @@
 // The package assessed is asked for as upstream asks, with the npm token the
 // environment has for a scoped one (PREVENTIVE_MEASURES_NPM_TOKEN,
 // STASIS_NPM_TOKEN or NPM_TOKEN), so a private one can be read; its
-// dependencies' public facts and downloads with none.
+// dependencies' public facts and downloads with none. A caller may ask for
+// packages' documents itself (`packument`), as the managed server does,
+// within the bounds it holds every read of npm to. What risk asks npm itself
+// is read no further than its bounds, `upstream-too-large` past them, as is a
+// tarball unpacking past tarball.js's, `package-too-large`.
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
 import { npmTarballVersion } from './tarball.js'
@@ -28,6 +32,11 @@ import { DAY_MS } from './downloads.js'
 const REGISTRY = 'https://registry.npmjs.org'
 const DOWNLOADS = 'https://api.npmjs.org/downloads/range'
 const PACKAGE_MS = 60 * 60_000
+// How much of npm's answers is read: a whole document, as the managed server
+// reads one (server-managed/npm-packages.ts PACKUMENT_BYTES), and a few
+// months' downloads a day.
+const PACKUMENT_BYTES = 64 * 1024 * 1024
+const DOWNLOADS_BYTES = 1024 * 1024
 
 export class NpmRiskError extends Error {
   constructor(code, message = code) { super(message); this.code = code }
@@ -49,13 +58,29 @@ async function kept({ cache }, type, key, ask, fresh = () => true) {
   return value
 }
 
-// A package's whole document, null where npm has none for this asker.
-async function packageDocument(name, { signal }, authorized) {
+// An answer's body as JSON, read no further than `limit` bytes.
+async function jsonOf(res, limit, what) {
+  const tooLarge = () => new NpmRiskError('upstream-too-large', `npm's answer for ${what} is over ${limit} bytes`)
+  if (Number(res.headers.get('content-length')) > limit) { await res.body?.cancel(); throw tooLarge() }
+  const chunks = []
+  let size = 0
+  for await (const chunk of res.body ?? []) {
+    size += chunk.byteLength
+    if (size > limit) throw tooLarge()
+    chunks.push(chunk)
+  }
+  try { return JSON.parse(await new Blob(chunks).text()) } catch { throw new NpmRiskError('upstream-invalid', `npm's answer for ${what} isn't JSON`) }
+}
+
+// A package's whole document, null where npm has none for this asker: the
+// caller's (`packument`) where it gives one, else risk's own.
+async function packageDocument(name, { packument, signal }, authorized) {
+  if (packument) return packument(name, { authorized, signal })
   const secret = authorized && name.startsWith('@') ? token() : null
   const res = await fetch(`${REGISTRY}/${name}`, { headers: { accept: 'application/json', ...secret && { authorization: `Bearer ${secret}` } }, redirect: 'error', signal })
   if (res.status === 404) { await res.body?.cancel(); return null }
   if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm answered ${res.status} for ${name}`) }
-  return res.json()
+  return jsonOf(res, PACKUMENT_BYTES, name)
 }
 
 // When a document says its package's first version was published, one since
@@ -90,9 +115,14 @@ export async function npmPackageFacts(name, versions, context) {
 
 // A version's files, as compare.js takes a version, from its tarball
 // (tarball.js), with `npm` its `{ name, version, manifest, published }`.
-export async function npmVersionFiles(name, version, { manifest, published, dist }, { cache }) {
-  const tarball = await getTarball(name, version, dist, cache === undefined ? {} : { cache })
-  return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) }
+export async function npmVersionFiles(name, version, { manifest, published, dist }, { cache, signal }) {
+  const what = `${name}@${version}`
+  const tarball = await getTarball(name, version, dist, cache === undefined ? {} : { cache }).catch(error => {
+    throw signal?.aborted ? error : new NpmRiskError('upstream-unavailable', `npm's tarball of ${what} couldn't be had: ${error.message}`)
+  })
+  try { return { npm: { name, version, manifest, published }, ...await npmTarballVersion(tarball) } } catch (error) {
+    throw new NpmRiskError(error.message === 'package-too-large' ? 'package-too-large' : 'upstream-invalid', `npm's tarball of ${what}: ${error.message}`)
+  }
 }
 
 // When a package anyone can read was first published, `{ created }`, or null
@@ -120,7 +150,7 @@ export async function npmDownloads(name, context) {
     const res = await fetch(`${DOWNLOADS}/${range}/${encoded(name)}`, { headers: { accept: 'application/json' }, redirect: 'error', signal: context.signal })
     if (res.status === 404) { await res.body?.cancel(); return { none: true } }
     if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm's downloads answered ${res.status} for ${name}`) }
-    const json = await res.json()
+    const json = await jsonOf(res, DOWNLOADS_BYTES, `${name}'s downloads`)
     const start = Date.parse(json.start)
     const length = Math.round((Date.parse(json.end) - start) / DAY_MS) + 1
     const days = Array.from({ length: Number.isSafeInteger(length) && length > 0 && length <= 400 ? length : 0 }, () => 0)

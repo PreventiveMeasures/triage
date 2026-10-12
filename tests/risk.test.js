@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
+import { gzipSync } from 'node:zlib'
 import publishers from '@preventive/publishers/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm } from '../risk/index.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
-import { npmTarballVersion } from '../risk/npm/tarball.js'
+import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
 const DAY = 24 * 60 * 60_000
 const NOW = Date.parse('2026-10-12T12:00:00Z')
 const ago = days => new Date(NOW - days * DAY).toISOString()
+
+// A package's whole document, as npm's registry has it, of `{ name, versions:
+// [{ doc, published }], created? }`.
+const documentOf = ({ name, versions, created }) => ({ name, versions: Object.fromEntries(versions.map(({ doc }) => [doc.version, doc])),
+  time: { created: created ?? versions[0].published, modified: versions.at(-1).published, ...Object.fromEntries(versions.map(({ doc, published }) => [doc.version, published])) } })
 
 // npm's registry and downloads API for `packages`, each `{ name, versions:
 // [{ doc, tgz, published }], created? }`, and `downloads` by name; each URL
@@ -23,12 +31,9 @@ function npm(t, packages, downloads = {}) {
       const name = decodeURIComponent(url.split('/').at(-1))
       return downloads[name] ? Response.json(downloads[name]) : Response.json({ error: `package ${name} not found` }, { status: 404 })
     }
-    for (const { name, versions, created } of packages) {
-      if (url === `${REGISTRY}/${name}`) {
-        return Response.json({ name, versions: Object.fromEntries(versions.map(({ doc }) => [doc.version, doc])),
-          time: { created: created ?? versions[0].published, modified: versions.at(-1).published, ...Object.fromEntries(versions.map(({ doc, published }) => [doc.version, published])) } })
-      }
-      for (const { doc, tgz } of versions) if (url === doc.dist.tarball) return new Response(tgz)
+    for (const pkg of packages) {
+      if (url === `${REGISTRY}/${pkg.name}`) return Response.json(documentOf(pkg))
+      for (const { doc, tgz } of pkg.versions) if (url === doc.dist.tarball) return new Response(tgz)
     }
     return Response.json({ error: 'Not found' }, { status: 404 })
   }
@@ -102,6 +107,31 @@ test('npm having no such package or version is said so', async t => {
   npm(t, [{ name: 'there', versions: [version('there', '1.0.0', { 'package.json': '{}' }, {}, ago(30))] }])
   await assert.rejects(assessNpm('there', '9.9.9', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'version-not-found')
   await assert.rejects(assessNpm('missing', '1.0.0', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'package-not-found')
+})
+
+test('a tarball unpacking past risk\'s bounds is given up on as it unpacks', async t => {
+  const bomb = version('bomb', '1.0.0', { 'package.json': '{}' }, {}, ago(30))
+  bomb.tgz = gzipSync(Buffer.alloc(MAX_TAR_BYTES + 1))
+  bomb.doc.dist.integrity = `sha512-${createHash('sha512').update(bomb.tgz).digest('base64')}`
+  await assert.rejects(npmTarballVersion(bomb.tgz), /package-too-large/u)
+  npm(t, [{ name: 'bomb', versions: [bomb] }])
+  await assert.rejects(assessNpm('bomb', '1.0.0', { now: NOW, downloads: false }), error => error instanceof NpmRiskError && error.code === 'package-too-large')
+})
+
+test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its stead', async t => {
+  const MiB = new Uint8Array(1024 * 1024)
+  const endless = () => { let sent = 0; return new ReadableStream({ pull: controller => { if (sent++ > 64) controller.close(); else controller.enqueue(MiB) } }) }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(endless())))
+  await assert.rejects(assessNpm('huge', '1.0.0', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'upstream-too-large', 'past 64 MiB, no length said')
+  t.mock.restoreAll()
+  const own = { name: 'hooked', versions: [version('hooked', '1.0.0', { 'package.json': '{}' }, { dependencies: { 'dep-like': '^1.0.0' } }, ago(30))] }
+  const dependency = { name: 'dep-like', versions: [version('dep-like', '1.0.0', { 'package.json': '{}' }, {}, ago(31))] }
+  const asked = npm(t, [own, dependency]), read = []
+  const packument = (name, { authorized }) => { read.push([name, authorized]); return Promise.resolve(documentOf(name === 'hooked' ? own : dependency)) }
+  const assessment = await assessNpm('hooked', '1.0.0', { now: NOW, packument })
+  assert.deepEqual(read, [['hooked', true], ['dep-like', false]], 'the package assessed with the caller\'s token, its dependency without')
+  assert.ok(!asked.some(url => url.startsWith(`${REGISTRY}/hooked`) && !url.endsWith('.tgz')) && !asked.includes(`${REGISTRY}/dep-like`), 'npm\'s registry asked for tarballs alone')
+  assert.equal(assessment.dependencies.added[0].level, 'is-unpopular', 'its document read: public, none of its downloads counted')
 })
 
 test('a tarball read as npm installs it, and two versions\' files paired as Compare pairs them', async () => {

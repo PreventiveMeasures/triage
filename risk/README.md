@@ -31,6 +31,8 @@ An assessment kept needs no tarball. What depends on the time (a deprecation, be
 
 The package assessed is asked for with the npm token the environment has for a scoped one, as upstream asks. Its dependencies' downloads and first publish are asked with none: a private dependency reads as unknown, not unpopular.
 
+What risk reads is bounded: a package's document to 64 MiB, a tarball's tar stream to 96 MiB as it unpacks, and its files to 20,000 and 64 MiB, as the npm viewer's (`NpmRiskError` `upstream-too-large`, `package-too-large`). A caller holding its reads of npm to bounds of its own asks for documents itself, `packument: (name, { authorized, signal }) => document | null`, `authorized` for the package assessed, not its dependencies; the managed server does, within the budget all its npm documents share.
+
 ## What it tells
 
 - `findings`, each `{ id, severity, … }`, in the order a reviewer reads them. Against `oldVersion`, what changed:

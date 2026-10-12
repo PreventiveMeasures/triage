@@ -63,7 +63,7 @@
 //   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
-//   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/502
+//   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -191,6 +191,10 @@ const NPM_PROVENANCE_PATH = '/api/npm/provenance'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
 const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
 const NPM_RISK_PATH = '/api/npm/risk'
+// What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
+// having no such package or version, or a tarball unpacking past risk's
+// bounds; npm failing otherwise a 502.
+const NPM_RISK_STATUS: Partial<Record<string, number>> = { 'package-not-found': 404, 'version-not-found': 404, 'package-too-large': 413 }
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
   NPM_RENAME_DIFF_PATH, NPM_RISK_PATH])
 // How long an npm response may go unread before its connection is dropped.
@@ -2572,7 +2576,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(name, doc.version, old?.version ?? null,
-        { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, isPublic: !doc.private && !old?.private, signal: controller.signal })
+        { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, isPublic: !doc.private && !old?.private, privileged, signal: controller.signal })
       await reply(doc.private, { ...assessment })
       return
     }
@@ -2637,7 +2641,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     writeResponse(res, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (err) {
     if (err instanceof NpmPackageError || err instanceof PrettyError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
-    if (err instanceof NpmRiskError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.code === 'upstream-unavailable' ? 502 : 404, { error: err.code }); return }
+    if (err instanceof NpmRiskError) { if (!res.headersSent && !res.destroyed) sendJson(res, NPM_RISK_STATUS[err.code] ?? 502, { error: err.code }); return }
     if (controller.signal.aborted) return
     throw err
   } finally {

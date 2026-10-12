@@ -84,11 +84,13 @@ async function addedDependencies(added, published, context) {
 // `dependencies`, those added and changed against it, each with its flags,
 // an added one with its package's tier and age where `downloads` (true unless
 // given false) has them asked. `cache` keeps what is read (registry.js),
-// `now` is when it is asked, `signal` gives up on what is still asked of npm.
-// Throws an NpmRiskError (registry.js), its `code` saying why, where npm has
-// no such package or version, or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, cache, now = Date.now(), signal, downloads = true } = {}) {
-  const context = { cache, now, signal }
+// `packument` asks for a package's whole document in risk's stead
+// (registry.js), `now` is when it is asked, `signal` gives up on what is
+// still asked of npm. Throws an NpmRiskError (registry.js), its `code` saying
+// why, where npm has no such package or version, answers past risk's bounds,
+// or can't be asked.
+export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, cache, packument, now = Date.now(), signal, downloads = true } = {}) {
+  const context = { cache, packument, now, signal }
   const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
   const { published } = facts.versions.get(version)
   const kept = await lasting(name, version, oldVersion, facts, context)
