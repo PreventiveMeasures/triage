@@ -558,6 +558,25 @@ test('a hit opens at the same match pretty-printed where the printer respaced an
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">1<\/span>[^]*var x = /u, 'the expression\'s line, not the string\'s')
 })
 
+test('the search diffs a file anew where another scope pairs it with another old file', () => {
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
+  const now = `${lines}\nfetch(3)\n`, old1 = `${lines}\nfetch(1)\n`, old2 = `fetch(2)\n${lines}\nfetch(3)\n`
+  const element = view(null, [{ 'lib/old1.js': old1, 'lib/old2.js': old2 }, { 'lib/new.js': now }])
+  // As Compare's scopes list the files: each with one of the two old ones.
+  const scoped = path => computeBundleDiff(new Map([[path, path === 'lib/old1.js' ? old1 : old2]]), new Map([['lib/new.js', now]]), () => '__own__').files
+  element._mode = 'code'
+  element._query = 'fetch('
+  const hits = () => element._searchResults(element._railState().order).files.find(file => file.path === 'lib/new.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`)
+  element.files = scoped('lib/old1.js')
+  element.willUpdate(new Map([['files']]))
+  assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old1.js')
+  assert.deepEqual(hits(), ['−a20', '+b20'])
+  element.files = scoped('lib/old2.js')
+  element.willUpdate(new Map([['files']]))
+  assert.equal(element._entries.get('lib/new.js').basePath, 'lib/old2.js')
+  assert.deepEqual(hits(), ['−a0', ' b20'], 'old2\'s first line removed, the new last line unchanged')
+})
+
 test('a hit opened pretty-printed is found in the copy reading its matches no further than its own', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);'.repeat(5000)}\n` }, { 'dist/common.min.js': `var X=1;${'x(1);'.repeat(5000)}\n` }])

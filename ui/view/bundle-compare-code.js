@@ -353,13 +353,15 @@ export class BundleCompareCode extends LitElement {
         this._expansions.clear()
         this._limits.clear()
         this._forced.clear()
-        this._blocks.clear()
-        this._rowless.clear()
       }
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = this._buildEntries()
       this._counted = new Map()
+      // A path may name another pair of files now (another scope pairs a
+      // renamed file anew), so what the search kept of it is found again.
+      this._blocks.clear()
+      this._rowless.clear()
     }
   }
 
