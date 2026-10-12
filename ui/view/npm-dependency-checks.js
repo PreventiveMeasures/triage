@@ -6,7 +6,6 @@
 // and the dependencies over its package.json (bundle-compare-code.js) flag
 // them.
 import { html } from 'lit'
-import { npmProse } from './file-readability.js'
 import { installScripts } from './install-scripts.js'
 
 // The hosts npm takes a repository on by name (`github:owner/repo`), as
@@ -48,10 +47,12 @@ export function npmDependencySource(spec) {
   return !scheme && githubShorthand(value) ? 'GitHub' : null
 }
 
-// Files no import is read from: prose (file-readability.js), source maps,
-// which quote whatever their sources import, and lockfiles, which name every
-// package installed; nor the package's own package.json, which names them all.
-const NO_IMPORTS = /(?:\.map|(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml))$/iu
+// Files no import is read from: prose, by its extension (Markdown, text) or
+// its name alone (`LICENSE-MIT`, `CHANGES`; not code named alike, as
+// `lib/history.js`), source maps, which quote whatever their sources import,
+// and lockfiles, which name every package installed; nor the package's own
+// package.json, which names them all.
+const NO_IMPORTS = /(?:\.(?:md|markdown|txt|rst|adoc|asciidoc|textile|map)|(?:^|\/)(?:(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*)?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml))$/iu
 // A quote, then a run of the characters names and paths are made of (after
 // webpack's `~` too), and what ends it: a quote, escaped too, as a quote in
 // a quoted command is in binding.gyp (`require(\'nan\')`), or a template's `${`.
@@ -70,7 +71,7 @@ function quotedNames({ json }) {
   quoted = { whole: new Set(), parts: new Set() }
   const texts = json.sourcesContent ?? []
   for (const [i, path] of (json.sources ?? []).entries()) {
-    if (typeof texts[i] !== 'string' || path === 'package.json' || NO_IMPORTS.test(path) || npmProse(path)) continue
+    if (typeof texts[i] !== 'string' || path === 'package.json' || NO_IMPORTS.test(path)) continue
     for (const [, run, end] of texts[i].matchAll(QUOTED)) {
       if (end) quoted.parts.add(run)
       if (end && end !== '${') quoted.whole.add(run)

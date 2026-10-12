@@ -46,8 +46,11 @@ test('a dependency nothing of a version imports is one no code file names as an 
   assert.equal(unimported({ 'index.js': '', 'binding.gyp': '{}' }, 'node-gyp'), false, 'node-gyp, run for a binding.gyp')
   assert.equal(unimported({ 'index.js': '' }, 'install', { installScripts: { install: 'prebuild-install' } }), true, 'not as part of another word')
   // Not files no import is read from: prose, source maps, lockfiles, its own package.json.
-  for (const path of ['README.md', 'docs/guide.txt', 'CHANGELOG', 'dist/index.js.map', 'npm-shrinkwrap.json', 'package.json']) {
+  for (const path of ['README.md', 'docs/guide.txt', 'CHANGELOG', 'HISTORY.md', 'LICENSE-MIT', 'dist/index.js.map', 'npm-shrinkwrap.json', 'package.json']) {
     assert.equal(unimported({ [path]: 'require("dep")' }, 'dep'), true, path)
+  }
+  for (const path of ['lib/history.js', 'src/changes.ts', 'lib/readme-parser.js']) {
+    assert.equal(unimported({ [path]: 'require("dep")' }, 'dep'), false, `${path}, code named as prose is`)
   }
   assert.equal(unimported({ 'lib/package.json': '{"dependencies":{"dep":"1"}}' }, 'dep'), false, 'another package.json is a file of it as any')
   assert.equal(unimported({ 'index.js': null }, 'dep'), true, 'a file that isn\'t text')

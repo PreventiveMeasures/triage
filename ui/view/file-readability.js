@@ -35,7 +35,6 @@ export function npmTextEncoding(text) {
 export const NPM_LONG_LINE = 1000
 // Prose, which wraps where it is read: its long lines are paragraphs.
 const PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:[-.][^/]*)?)$/iu
-export const npmProse = path => PROSE.test(path)
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.
