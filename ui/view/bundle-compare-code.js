@@ -351,16 +351,18 @@ export class BundleCompareCode extends LitElement {
   }
 
   willUpdate(changed) {
-    if (changed.has('base') || changed.has('other')) {
-      const pair = `${this.base?.integrity}|${this.other?.integrity}`
-      if (pair !== this._pair) {
-        this._pair = pair
-        this._models.clear()
-        this._spaced.clear()
-        this._expansions.clear()
-        this._limits.clear()
-        this._forced.clear()
-      }
+    // What is kept by a file's path is of the texts the path named, which
+    // the files listed name anew too: another scope pairs a renamed file
+    // with another old file, or lists a changed one as added where its old
+    // side is out of the scope, the bundles the same.
+    const pair = `${this.base?.integrity}|${this.other?.integrity}`
+    if (pair !== this._pair || changed.has('files')) {
+      this._pair = pair
+      this._models.clear()
+      this._spaced.clear()
+      this._expansions.clear()
+      this._limits.clear()
+      this._forced.clear()
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = this._buildEntries()
