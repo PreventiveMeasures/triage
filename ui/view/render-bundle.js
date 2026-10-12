@@ -26,7 +26,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
 import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -1608,7 +1608,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
   const github = bundleFileGithub(details, path, entry?.managedId && entry.repoId != null ? { github: entry.repoFullName, directory: entry.repoDirectory } : null)
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
-      ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
+      ${sourceFileIcon(path, fileIconFormat(details, path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${path}</span>
       <button
         type="button"
@@ -2671,6 +2671,6 @@ function renderNpmPackageOverview(entry, details) {
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
     fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path, true)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
-    fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileIcon: path => sourceFileIcon(path, binaries.has(path) ? 'binary' : undefined), fileFilter: npmFilesFilter(entry),
   })
 }

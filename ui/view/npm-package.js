@@ -17,7 +17,7 @@ import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
-import { sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
 import { npmInstallScripts } from './install-scripts.js'
@@ -650,7 +650,7 @@ export function npmOverviewExtras(entry, files = null, details = null) {
   const scripts = npmInstallScripts(manifest, files)
   const dependencies = npmDependencies(manifest).length
   return html`
-    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
+    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file, fileIconFormat(details, file))}${factFile(file, files, path)}</span></dd>`)}
     ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}

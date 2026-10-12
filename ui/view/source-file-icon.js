@@ -29,18 +29,51 @@ const rustMark = svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 
  */
 const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><path d="M28 10a4 4 0 0 0-4-4h-6v6a6 6 0 0 1-6 6h-2v2h2v6h4v-6h8v6h4V16h2v-4a2 2 0 0 0-2-2"/><path d="M12 4H8v2a6 6 0 0 0-6 6v6a2 2 0 0 0 2 2v2H2.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5H6a2 2 0 0 0 2-2v-8h4a4 4 0 0 0 4-4V8a4 4 0 0 0-4-4M6 14H4v-2h2Z"/></g>`
 
+// LICENSE, LICENCE, UNLICENSE and COPYING: bare or with a -suffix (LICENSE-MIT),
+// then a license's name (LICENSE.BSD, COPYING.LESSER, LICENSE.Apache-2.0), a
+// version (LICENSE.2.0) and a prose extension (LICENSE.md, LICENSE-MIT.txt),
+// each optional. Any other extension names a file of another kind, whether
+// code in a language not mapped here (license.go) or not text (LICENSE.pdf).
+const LICENSE_NAME = /^(?:(?:un)?licen[cs]e|copying)(?:-[^/.]*)?(?:\.(?:mit|bsd|isc|apache|[al]?gpl|mpl|epl|eupl|cddl|cc0|zlib|psf|boost|bsl|artistic|unicode|ofl|wtfpl|lesser|lib)(?:v?\d[^/.]*|-[^/.]*)?)?(?:\.\d[^/.]*)*(?:\.(?:md|markdown|txt|text|rst|adoc|asciidoc|org))?$/iu
+
+// Formats of files that are not text: a Stasis resource whose bytes are not
+// UTF-8, a Stasis directory capture, and `binary`, which callers pass for an
+// npm package's file the server found not to be text.
+const NOT_TEXT_FORMATS = new Set(['resource:base64', 'directory', 'binary'])
+export const isNotTextFormat = format => NOT_TEXT_FORMATS.has(format)
+
+// A license is told by its name, but only a text one: a recorded format naming
+// code or a file that is not text keeps its own icon.
+function isLicense(path, format, lang) {
+  if ((lang !== null && lang !== 'markdown') || isNotTextFormat(format)) return false
+  return LICENSE_NAME.test(path.slice(path.lastIndexOf('/') + 1))
+}
+
+// The format a file's icon reads from its bundle's details: the one Stasis
+// records, or `binary` for an npm package's file the server found not to be
+// text (npm-package.js `npmBinaries`). Every caller holding details asks
+// here, so none can forget a file that is not text.
+export function fileIconFormat(details, path) {
+  return (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined) ?? (details?.npmBinaries?.has(path) ? 'binary' : undefined)
+}
+
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
+  // A source map before a license: license.js.map is the map of license.js.
+  if (lang === null && /\.map$/iu.test(path)) return 'map'
+  if (isLicense(path, format, lang)) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown'].includes(lang)) return lang
-  if (lang === null && /\.map$/iu.test(path)) return 'map'
   return 'generic'
 }
 
 // A source map's: a map folded in three.
 const mapMark = svg`<path d="M1.5 3.4 5.3 2l5.4 1.6 3.8-1.4v10.4l-3.8 1.4-5.4-1.6-3.8 1.4Z" fill="#3fa59a" fill-opacity=".22" stroke="#3fa59a" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.3 2v10.4m5.4-8.8V14" stroke="#3fa59a" stroke-width="1.1"/>`
+
+// A license's: the scales of justice.
+const licenseMark = svg`<circle cx="8" cy="2.6" r="1" fill="currentColor"/><path d="M8 3.6v9.9m-3.5 0h7M3 4.6h10M3 4.6 1.2 9.2M3 4.6l1.8 4.6M13 4.6l-1.8 4.6M13 4.6l1.8 4.6" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M1 9.2h4a2 2 0 0 1-4 0Zm10 0h4a2 2 0 0 1-4 0Z" fill="currentColor"/>`
 
 // Markdown's: the M and its down arrow, unframed, in the theme's green.
 const markdownMark = svg`<path d="M1 11.5v-7h2l1.7 2.3 1.7-2.3h2v7h-2V7.8L4.7 10 3 7.8v3.7Zm10.2-7h2V8H15l-2.8 3.5L9.4 8h1.8Z" fill="var(--green, #3fb950)"/>`
@@ -61,6 +94,8 @@ export function sourceFileIcon(path, format) {
               ? mapMark
             : type === 'markdown'
               ? markdownMark
+            : type === 'license'
+              ? licenseMark
             : type === 'json'
               ? svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`
               : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
