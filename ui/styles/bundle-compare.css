@@ -204,6 +204,10 @@
   gap: .6rem 1.5rem;
   align-items: start;
 }
+/* A lone lane of dependencies or packages, short rows of a name and a
+   version, keeps to about a lane's width rather than the pane's; Files'
+   paths run on. */
+.bundle-compare-cols[data-lanes='1']:not([data-section='files']) { max-width: 40rem; }
 @container (min-width: 830px) {
   .bundle-compare-cols[data-lanes='2'] { grid-template-columns: var(--compare-lanes); }
   .bundle-compare-cols[data-lanes='3'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
