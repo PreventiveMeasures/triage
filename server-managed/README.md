@@ -1303,7 +1303,10 @@ control. A version shows in the bundle view with four tabs:
   package changes hands, or is taken over), linking to the new one's
   profile; provenance lost, where npm lists provenance for the one compared
   with and none for the open one, as a version published by hand with a token taken
-  from its maintainers wouldn't; an open version under two weeks old, as on
+  from its maintainers wouldn't; install scripts the open version adds or
+  changes (`postinstall added`, node-gyp's `install` for a `binding.gyp` it
+  adds among them, not one it drops), each version's with their commands in
+  its tooltip; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
