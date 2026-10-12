@@ -69,10 +69,11 @@ test('a bundle file\'s copy is asked for by its metadata hash once the toggle is
   togglePrettySource()
   answers.push('var a = 1;\n')
   assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'loading' })
-  await settled()
+  // Hashed as it comes, which can take any number of turns.
+  await settledUntil(() => renders.length > 0)
   assert.deepEqual(requests, [['bundle', 'bundle-1', 'dist/app.min.js', hashOf(minified)]])
   assert.deepEqual(renders, ['dist/app.min.js'], 'the view that asked repaints with its copy')
-  assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'ready', text: 'var a = 1;\n' })
+  assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'ready', text: 'var a = 1;\n', hash: hashOf('var a = 1;\n') }, 'with its own hash')
   togglePrettySource()
   assert.equal(prettyCopy(details, managed, 'dist/app.min.js', minified), null)
   togglePrettySource()
@@ -117,7 +118,8 @@ test('a view asking for more copies than are kept keeps every one it waits for',
   for (let i = 0; i < files.length; i++) answers.push(`copy ${i}`)
   const paint = () => files.map((path, i) => prettyCopy(details, managed, path, `${minified}${i}`).status)
   assert.deepEqual(new Set(paint()), new Set(['loading']))
-  await setImmediate()
+  // Each repaints its view once it came and was hashed, which can take any number of turns.
+  await settledUntil(() => renders.length === files.length)
   assert.deepEqual(new Set(paint()), new Set(['ready']), 'none dropped while it came')
   await new Promise(resolve => { setTimeout(resolve, 1) })
   assert.deepEqual(new Set(paint()), new Set(['ready']), 'nor on a later paint')
@@ -135,11 +137,15 @@ test('copies that come once their view moved on are dropped past those kept', as
     prettyCopy(details, managed, files[i], `${minified}${i}`)
     await new Promise(resolve => { setTimeout(resolve, 1) })
   }
-  comes.forEach((come, i) => come(`copy ${i}`))
-  await setImmediate()
+  // In order, each repainting its view once it came and was hashed.
+  for (const [i, come] of comes.entries()) {
+    come(`copy ${i}`)
+    await settledUntil(() => renders.length === i + 1)
+  }
   answers.push('again')
   assert.equal(prettyCopy(details, managed, files[0], `${minified}0`).status, 'loading', 'the first, dropped once it came, is asked for again')
   assert.equal(requests.length, 11)
+  await settledUntil(() => renders.length === files.length + 1)
 })
 
 test('a request a session change aborted is asked again on the next paint', async () => {
@@ -150,6 +156,7 @@ test('a request a session change aborted is asked again on the next paint', asyn
   await settled()
   assert.deepEqual(renders, [], 'an aborted request paints nothing')
   assert.equal(prettyCopy(details, managed, 'a.min.js', minified).status, 'loading')
-  await settled()
+  // Hashed as it comes, which can take any number of turns.
+  await settledUntil(() => prettyCopy(details, managed, 'a.min.js', minified).status !== 'loading')
   assert.equal(prettyCopy(details, managed, 'a.min.js', minified).text, 'again')
 })
