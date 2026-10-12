@@ -457,13 +457,19 @@ test('a source\'s files list open, each with its type\'s icon, those the open on
   assert.match(markup, /<div class="bundle-compare-row">\s*<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=local>/u, 'one it can\'t is not')
 })
 
-test('a source\'s selects are one width from the start, as wide as its widest, whatever it lists once that arrives', () => {
+test('a source\'s selects are one width, its widest at least from the start, then wide enough for any it lists', () => {
   const width = view => /--compare-select-chars: (\d+)/u.exec(renderText(view._renderPicker(view._otherOptions(), false, '', '')))?.[1]
   const { view: pending } = sourced({ options: [], pending: true })
   // pkg@10.90.90 and `latest` at the tag's smaller size: 12 + 6 × .87 + 1.
   assert.equal(width(pending), '19', 'while its versions are on their way')
+  const { view: short } = sourced()
+  assert.equal(width(short), '19', 'as long as all it lists are shorter')
+  // pkg@10.0.0-beta.123 and `next`: 19 + 4 × .87 + 1.
   const { view: listed } = sourced({ options: [{ id: '10.0.0-beta.123', name: 'pkg@10.0.0-beta.123', displayLabel: '10.0.0-beta.123', format: 'npm', detail: 'next' }] })
-  assert.equal(width(listed), '19', 'a longer one listed is cut short in its select, not widening it')
+  assert.equal(width(listed), '24', 'a longer one listed, whole with its tag')
+  // pkg@1.0.0 and 24 characters of its tags: 9 + 24 × .87 + 1.
+  const { view: tagged } = sourced({ options: [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: Array.from({ length: 12 }, (_, i) => `ts${i}.0`).join(', ') }] })
+  assert.equal(width(tagged), '31', 'its tags only as many as fit')
 })
 
 test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {

@@ -117,7 +117,7 @@ export class SearchableSelector extends LitElement {
     const enabled = visible.filter(option => !option.disabled)
     const tabValue = enabled.find(option => option.value === this.value)?.value ?? enabled[0]?.value
     return html`<button type="button" class="trigger" popovertarget="selector-menu" aria-label=${this.label} aria-haspopup="dialog" aria-expanded=${this._open} ?disabled=${this.disabled}>
-      ${selected ? this.optionIcon(selected) : nothing}<span class="name" data-tooltip-truncated data-tooltip=${selected?.label ?? nothing}>${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class="detail">${selected.detail}</span>` : nothing}
+      ${selected ? this.optionIcon(selected) : nothing}<span class="name" data-tooltip-truncated data-tooltip=${selected?.label ?? nothing}>${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class="detail" data-tooltip-truncated data-tooltip=${selected.detail}>${selected.detail}</span>` : nothing}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
     </button><div class="menu" id="selector-menu" popover="auto" role="dialog" aria-label=${this.label} @beforetoggle=${this._beforeToggle} @toggle=${this._toggle} @keydown=${this._keyDown}>
       <div class="search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
