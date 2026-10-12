@@ -2436,12 +2436,7 @@ async function handleNpmDownloadCounts(req: IncomingMessage, res: ServerResponse
   const names = [...new Set((params.get('names') ?? '').split(','))]
   if (names.length > MAX_DOWNLOAD_COUNTS || !names.every(isNpmPackageName)) { sendJson(res, 400, { error: 'bad-package' }); return }
   if (await npmReader(deps, cookie) == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  // What npm hasn't answered by the time the reader leaves isn't waited for.
-  const left = new AbortController()
-  const leave = () => { if (!res.writableEnded) left.abort() }
-  res.once('close', leave)
-  const downloads = await npmDownloadCounts(names, Date.now(), left.signal)
-  res.off('close', leave)
+  const downloads = await npmDownloadCounts(names)
   if (!res.destroyed) sendJson(res, 200, { downloads })
 }
 

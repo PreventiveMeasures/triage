@@ -51,10 +51,11 @@ const recent = kept<NpmDownloads | null>(5000, undefined, 14 * DAY_MS)
 
 // The recent downloads of each of `names`, by name, null where npm has
 // none; one npm couldn't be asked about, or hadn't answered for by the
-// deadline or by when `signal` aborts (as its reader leaves), is left out.
-export async function npmDownloadCounts(names: string[], now = Date.now(), signal: AbortSignal | null = null): Promise<Record<string, NpmDownloads | null>> {
+// deadline, is left out. What this asks npm is shared with any request for
+// the same names meanwhile, so it runs to its deadline whoever leaves.
+export async function npmDownloadCounts(names: string[], now = Date.now()): Promise<Record<string, NpmDownloads | null>> {
   const range = rangeAt(now)
-  const stop = AbortSignal.any([AbortSignal.timeout(DEADLINE_MS), ...signal ? [signal] : []])
+  const stop = AbortSignal.timeout(DEADLINE_MS)
   const waiting = new Map<string, PromiseWithResolvers<NpmDownloads | null>>()
   const answers = names.map(name => {
     const year = keptNpmDownloads(name)
