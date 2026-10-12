@@ -6,6 +6,12 @@
 // module named by the string that names it; a declaration file (.d.ts) runs
 // nothing, and a call written not to read as one (`window['ev' + 'al']`)
 // goes unseen.
+//
+// Labels to assist a reviewer, making the plain cases less likely to be
+// missed, not a check to rely on: code can come to eval, Function or
+// child_process in more ways than any reading of its text tells (a name built
+// as it runs, `(…).constructor('…')`, node:vm, a module required by a name
+// computed), so a file without a label is not one without them.
 import { html, nothing } from 'lit'
 import { JS_STRING_OR_COMMENT } from './file-readability.js'
 
