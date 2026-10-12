@@ -585,9 +585,9 @@ export class BundleCompareCode extends LitElement {
   // The search's results over the files the rail lists (`order`) whose text
   // this view shows (_searchable), as searchCompareFiles finds them there.
   // Kept while the query, the files and the kinds shown are, the large diffs
-  // asked for, the whitespace and pretty-print settings, and the printed
-  // copies come or failed. A changed file is
-  // diffed as this view diffs it, its whitespace changes hidden where the
+  // asked for, the layout, the whitespace and pretty-print settings, and the
+  // printed copies come or failed. A changed file is diffed as this view
+  // diffs it, its whitespace changes hidden where the
   // view hides them; but one whose diff here is of its pretty-printed copies
   // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
   // for, lists its new text's lines alone, unsigned, so the rail claims no
@@ -598,7 +598,7 @@ export class BundleCompareCode extends LitElement {
   // past it lists its new text's lines unsigned, and another render signs
   // them.
   _searchResults(order) {
-    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
@@ -634,7 +634,7 @@ export class BundleCompareCode extends LitElement {
       if (this._prettyShown(path, entry, contents)) unsigned.set(path, before !== '' && after !== '' && before !== after ? 'printed' : 'numbered')
       return [{ path, ...contents }]
     })
-    const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf), unsigned }
+    const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split' }), unsigned }
     if (complete) this._found = { key, entries: this._entries, result }
     else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
     return result
@@ -658,12 +658,9 @@ export class BundleCompareCode extends LitElement {
   }
 
   // A search hit picked: its file opened, its line brought into view where
-  // the file's diff draws (see _seekRows); a diff too large to show unasked
-  // (isLargeDiff, an added or removed file's or a changed one's) asked for,
-  // the hit asking to see it.
+  // the file's diff draws (see _seekRows), asked for there where it is too
+  // large to show unasked (_fileState).
   _seek(path, hit) {
-    const { before, after } = fileContents(this.base, this.other, path, this._entries.get(path))
-    if (typeof before === 'string' && typeof after === 'string' && isLargeDiff(before, after)) this._forced.add(path)
     this._sought = { path, side: hit.side, line: hit.line, at: hit.ranges[0]?.[0] ?? 0, query: this._query }
     if (path === this._current) this.requestUpdate()
     else this._select(path, false)
@@ -855,6 +852,9 @@ export class BundleCompareCode extends LitElement {
     // Marked rather than hidden where the viewer asks: the diff of the files
     // as they are, the blocks that differ in renamed names alone drawn apart.
     const marking = renames && prefs.markRenames
+    // A hit sought here asks for a diff too large to show unasked, as "Show
+    // diff" does: large as the texts it shows are, printed or as published.
+    if (textual && this._sought?.path === path && !this._forced.has(path) && isLargeDiff(before, after)) this._forced.add(path)
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {

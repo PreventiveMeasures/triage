@@ -451,8 +451,8 @@ test('a hit in a diff too large to show unasked asks for it, and opens at its li
   assert.match(markup, /This diff is large/u)
   const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/large.js')
   element._seek('src/large.js', hit)
-  assert.ok(element._forced.has('src/large.js'), 'its diff asked for')
   const shown = renderText(element.render())
+  assert.ok(element._forced.has('src/large.js'), 'its diff asked for')
   assert.doesNotMatch(shown, /This diff is large/u)
   const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(<mark class="diff-word">new/u)
@@ -467,11 +467,34 @@ test('a hit in a file added too large to show unasked asks for its diff too, and
   const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/added-large.js')
   assert.deepEqual([hit.sign, hit.line], ['+', 7])
   element._seek('src/added-large.js', hit)
-  assert.ok(element._forced.has('src/added-large.js'))
   const shown = renderText(element.render())
+  assert.ok(element._forced.has('src/added-large.js'))
   assert.doesNotMatch(shown, /This diff is large/u)
   const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(new\)/u)
+})
+
+test('a hit in a file whose printed copies make a diff too large to show unasked asks for it, and opens at its line', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/grown.min.js', [{ 'dist/grown.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/grown.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(1);\n` }])
+  element.base.managedId = 'b21'
+  element.other.managedId = 'b22'
+  const printed = last => `${Array.from({ length: 60_000 }, (_, i) => `q(${i});`).join('\n')}\n${last}`
+  pretty.set('b21:dist/grown.min.js', printed(''))
+  pretty.set('b22:dist/grown.min.js', printed('fetch(1);\n'))
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 400 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(element.render()), /This diff is large/u, 'large as printed, though small as published')
+  element._mode = 'code'
+  element._query = 'fetch('
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/grown.min.js')
+  element._seek('dist/grown.min.js', hit)
+  const shown = renderText(element.render())
+  assert.ok(element._forced.has('dist/grown.min.js'))
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">60001<\/span>[^]*fetch\(1\)/u)
 })
 
 test('a file whose diff is of its pretty-printed copies lists its lines as published, unsigned, saying so', t => {

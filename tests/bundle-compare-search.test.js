@@ -66,3 +66,13 @@ test('a file\'s hits are collected no further than listed: the first lines in it
   assert.deepEqual(lines(hits).slice(0, 2), [' b0', ' b1'])
   assert.deepEqual(lines(fileHits(before, after, matcher('gone'), changeBlocks(before, after))), ['−a30'])
 })
+
+test('a changed block\'s hits list as its diff\'s layout draws them: unified, the removed over the added; split, row by row', () => {
+  const before = `keep\n${Array.from({ length: 25 }, (_, i) => `x old ${i}`).join('\n')}\n`
+  const after = `keep\n${Array.from({ length: 25 }, (_, i) => `x new ${i}`).join('\n')}\n`
+  const blocks = changeBlocks(before, after)
+  const unified = lines(fileHits(before, after, matcher('x'), blocks))
+  assert.equal(unified.length, SEARCH_MAX_FILE_HITS)
+  assert.ok(unified.every(hit => hit.startsWith('−')), 'the first 20 rows unified are removed lines')
+  assert.deepEqual(lines(fileHits(before, after, matcher('x'), blocks, { split: true })).slice(0, 4), ['−a1', '+b1', '−a2', '+b2'])
+})
