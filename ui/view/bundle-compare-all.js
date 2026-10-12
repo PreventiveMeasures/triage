@@ -149,6 +149,8 @@ class BundleCompareAll extends BundleCompareCode {
     // The toggle's state for every file, as for one file's two sides (_pretty): a failure first, then one still coming.
     const pretties = shown.map(({ file }) => file.pretty).filter(Boolean)
     const pretty = pretties.find(copy => copy.status === 'error') ?? pretties.find(copy => copy.status === 'loading') ?? pretties[0]
+    // The diff's controls, while any file shows a change or hides one they can show.
+    const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
     return html`<div class="bundle-code-view bundle-compare-code">
       ${this._renderRail(rail, this._current)}
       <div class="bundle-code-main">
@@ -156,7 +158,7 @@ class BundleCompareAll extends BundleCompareCode {
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace), pretty, shown.some(({ file }) => file.generated), false, false, shown.some(({ file }) => file.whitespace))}
+          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.generated), false, false, shown.some(({ file }) => file.whitespace))}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
