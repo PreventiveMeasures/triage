@@ -228,9 +228,11 @@
 }
 /* Packages take the pane but for what sits around their lists — the
    section and card heads, and the Files / Import resolutions headings
-   below, kept in view — still stopping halfway through a row. */
+   below, kept in view — still stopping halfway through a row. The
+   component measures what sits around them (`--compare-fill-around`). */
 .bundle-compare-rows--fill {
-  max-height: max(5.5 * var(--compare-row), round(down, 100cqh - 8.25rem, var(--compare-row)) - var(--compare-row) / 2);
+  max-height: max(5.5 * var(--compare-row),
+    round(down, 100cqh - var(--compare-fill-around, 8.25rem), var(--compare-row)) - var(--compare-row) / 2);
 }
 /* Sections that open on demand (Files, Import resolutions), the heading
    the disclosure. */
