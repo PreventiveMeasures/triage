@@ -66,5 +66,5 @@ test('license files wear the license icon by name, when they are text', () => {
   }
   assert.equal(sourceFileType('LICENSE', 'commonjs'), 'js', 'a recorded format still wins')
   assert.equal(sourceFileType('LICENSE', 'resource'), 'license', 'a Stasis resource stored as text')
-  for (const format of ['resource:base64', 'directory']) assert.equal(sourceFileType('LICENSE', format), 'generic', `not text: ${format}`)
+  for (const format of ['resource:base64', 'directory', 'binary']) assert.equal(sourceFileType('LICENSE', format), 'generic', `not text: ${format}`)
 })

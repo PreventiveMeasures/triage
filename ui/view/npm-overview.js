@@ -521,7 +521,8 @@ export function npmFileFlags(details, path, alerts = []) {
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
-  icon: sourceFileIcon,
+  // A file either side holds as binary is no license, whatever its name.
+  icon: (path, sides) => sourceFileIcon(path, sides.some(details => details?.npmBinaries?.has(path)) ? 'binary' : undefined),
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
@@ -1126,7 +1127,7 @@ export function npmBinaryColumn(paths, sizes) {
   if (paths.size === 0) return nothing
   return overviewColumn({ title: 'Binary files', count: paths.size, list: true, body: html`<ul class="bundles-sources-list">${[...paths].map(path => html`<li>
       <div class="bundles-source-row is-resource">
-        ${sourceFileIcon(path)}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${path}>${path}</span>
+        ${sourceFileIcon(path, 'binary')}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${path}>${path}</span>
         ${sizes.has(path) ? html`<span class="bundles-source-size">${formatBytes(sizes.get(path))}</span>` : nothing}
       </div>
     </li>`)}</ul>` })

@@ -358,9 +358,12 @@ export class BundleCompareCode extends LitElement {
     return paths ? dirsOf(paths, paths.values()) : bundleDirs(this.base)
   }
 
+  // The format a file's icon reads: Stasis's own, or `binary` for an npm
+  // package's file that is not text.
   _format(path) {
     const entry = this._entries.get(path)
-    return entry?.kind === 'removed' ? stasisFormat(this.base, entry.basePath ?? path) : stasisFormat(this.other, path)
+    const [details, at] = entry?.kind === 'removed' ? [this.base, entry.basePath ?? path] : [this.other, path]
+    return stasisFormat(details, at) ?? (details?.npmBinaries?.has(at) ? 'binary' : undefined)
   }
 
   // The tree over the files the kind filter keeps. The display prefix comes

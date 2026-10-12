@@ -2671,6 +2671,6 @@ function renderNpmPackageOverview(entry, details) {
     // Sized by what the package holds beyond the files every package has.
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
     fileTag: path => html`${npmSocketFileTags(alerts.get(path))}${npmFileTags(details, path, true)}`, fileFlags: path => npmFileFlags(details, path, alerts.get(path)),
-    fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+    fileIcon: path => sourceFileIcon(path, binaries.has(path) ? 'binary' : undefined), fileFilter: npmFilesFilter(entry),
   })
 }

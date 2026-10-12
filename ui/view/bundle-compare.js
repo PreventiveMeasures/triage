@@ -462,7 +462,7 @@ class BundleCompare extends LitElement {
   _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined) {
     const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
+      ${files ? files.icon(path, [this.details, this._otherDetails]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${fileMetaTags(meta)}${sizeTpl}
     </button></li>`
   }
 

@@ -26,7 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -937,4 +937,12 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   const plain = { ...details, integrity: 'clean@1.0.0', json: { version: 3, sources: ['index.js'], sourcesContent: ['module.exports = 1\n'] }, npm: clean.npm }
   npmOverviewBadges(clean, plain); await new Promise(resolve => { setImmediate(resolve) })
   assert.equal(npmOverviewBadges(clean, plain), nothing, 'none for a version that calls for no look')
+})
+
+test('a file the server found binary wears no license icon, whatever its name', () => {
+  const types = template => [...rendered(template).matchAll(/data-file-type="?([\w-]+)/gu)].map(m => m[1])
+  const binary = { npmBinaries: new Map([['package/LICENSE', { size: 4, digest: 'sha512-x' }]]) }
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [{}, binary])), ['generic'], 'binary on either side of Compare')
+  assert.deepEqual(types(npmCompareFiles.icon('package/LICENSE', [{}, null])), ['license'], 'text on both')
+  assert.deepEqual(types(npmBinaryColumn(new Set(['package/LICENSE', 'package/logo.png']), new Map())), ['generic', 'generic'])
 })

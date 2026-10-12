@@ -36,11 +36,15 @@ const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><pat
 // code in a language not mapped here (license.go) or not text (LICENSE.pdf).
 const LICENSE_NAME = /^(?:(?:un)?licen[cs]e|copying)(?:-[^/.]*)?(?:\.(?:mit|bsd|isc|apache|[al]?gpl|mpl|epl|eupl|cddl|cc0|zlib|psf|boost|bsl|artistic|unicode|ofl|wtfpl|lesser|lib)(?:v?\d[^/.]*|-[^/.]*)?)?(?:\.\d[^/.]*)*(?:\.(?:md|markdown|txt|text|rst|adoc|asciidoc|org))?$/iu
 
+// Formats of files that are not text: a Stasis resource whose bytes are not
+// UTF-8, a Stasis directory capture, and `binary`, which callers pass for an
+// npm package's file the server found not to be text.
+const NOT_TEXT_FORMATS = new Set(['resource:base64', 'directory', 'binary'])
+
 // A license is told by its name, but only a text one: a recorded format naming
-// code, a Stasis resource whose bytes are not UTF-8 or a directory capture
-// keeps its own icon.
+// code or a file that is not text keeps its own icon.
 function isLicense(path, format, lang) {
-  if ((lang !== null && lang !== 'markdown') || format === 'resource:base64' || format === 'directory') return false
+  if ((lang !== null && lang !== 'markdown') || NOT_TEXT_FORMATS.has(format)) return false
   return LICENSE_NAME.test(path.slice(path.lastIndexOf('/') + 1))
 }
 
