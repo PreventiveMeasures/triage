@@ -612,6 +612,22 @@ test('the search diffs a file anew where another scope pairs it with another old
   assert.equal(element._soughtRow, null, 'no row of old2 sought for old1\'s line')
 })
 
+test('a line asked for from without, as a new host Compare\'s chip opens, is opened at as a hit is, and once', () => {
+  const element = view('src/api.js')
+  const seek = { path: 'src/api.js', line: 1, query: 'b = 1' }
+  element.seek = seek
+  element.willUpdate(new Map([['seek']]))
+  assert.deepEqual(element._sought, { path: 'src/api.js', side: 'b', line: 1, at: 13, query: 'b = 1' }, 'at its query\'s match on the line')
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">2<\/span>[^]*export const b = 1/u)
+  // Code drawn anew with it, left and come back to, doesn't seek it again.
+  const again = view('src/api.js')
+  again.seek = seek
+  again.willUpdate(new Map([['seek']]))
+  assert.equal(again._sought, null)
+})
+
 // A comparison's files as one of its scopes lists them (bundleCompareFiles):
 // `base` and `other` the files the scope's reason names on each side.
 const scopeFiles = (base, other) => computeBundleDiff(new Map(Object.entries(base)), new Map(Object.entries(other)), () => '__own__').files

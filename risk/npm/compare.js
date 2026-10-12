@@ -52,14 +52,19 @@ function npmFileFindings(base, other, files) {
 }
 
 // The hosts the open version's code names in its URLs that the one compared
-// with's named in none of its, each `{ host, path, line }`, the file it is
-// first named in and its line: a file unchanged names what it named, so the
-// files the open version adds or changes hold any it names anew.
+// with's named in none of its, each `{ host, path, line, places }`: the file
+// it is first named in and its line, and `places` every file that names it,
+// `{ path, line }` each, the line it is first named on there. A file
+// unchanged names what it named, so the files the open version adds or
+// changes hold all it names anew.
 function npmNewHosts(base, other, files) {
   const found = new Map(), known = npmVersionHosts(base)
   for (const { path } of [...files.onlyOther, ...files.changed]) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {
-      if (!known.has(host) && !found.has(host)) found.set(host, { host, path, line })
+      if (known.has(host)) continue
+      const place = { path, line }
+      if (found.has(host)) found.get(host).places.push(place)
+      else found.set(host, { host, ...place, places: [place] })
     }
   }
   return [...found.values()]

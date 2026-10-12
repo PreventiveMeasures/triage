@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { nothing } from 'lit'
-import { templateText as rendered } from './_lit.js'
+import { templateText as rendered, templates } from './_lit.js'
 import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 const state = {}
@@ -742,8 +742,23 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   assert.match(flagged, /compare-tip-path">lib\/new\.js<\/span><span class="compare-tip-said">Telegram \(line 2\)</u)
   assert.doesNotMatch(await badges(other, base), /npm-compare-hosts|npm-compare-exfiltration/u, 'none the other way: hosts dropped, and a readme\'s no code')
   const files = Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]]))
-  const one = await badges(base, version('1.0.1', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n` }))
+  const oneVersion = version('1.0.1', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n` })
+  const one = await badges(base, oneVersion)
   assert.match(one, /<span>New host<\/span><span class="npm-extension-count">one\.new\.dev<\/span>/u, 'one, named')
+  // Named in one place alone, the chip opens it there, at its line, in Compare's Code.
+  assert.match(one, /<li><button type="button" class=npm-extension is-open is-warn npm-compare-hosts/u)
+  const chip = templates(npmCompareBadges(base, oneVersion))
+    .find(template => template.values.some(value => typeof value === 'string' && value.includes('npm-compare-hosts')))
+  const opened = []
+  chip.values.find(value => typeof value === 'function')({ currentTarget: { dispatchEvent: event => opened.push(event) } })
+  assert.deepEqual(opened.map(({ type, detail, bubbles }) => ({ type, detail, bubbles })),
+    [{ type: 'compare-open-line', detail: { path: 'lib/api.js', line: 2, query: 'one.new.dev' }, bubbles: true }])
+  // Named in two files, its tooltip lists both, each with its line there, and the chip opens neither.
+  const twice = await badges(base, version('1.0.2', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n`,
+    'lib/geo.js': `get("https://one.new.dev/x")\n${files['lib/geo.js']}` }))
+  assert.match(twice, /<li><span class=npm-extension is-warn npm-compare-hosts[^]*?<span>New host<\/span><span class="npm-extension-count">one\.new\.dev<\/span><\/span><\/li>/u)
+  assert.match(twice, /compare-tip-path">one\.new\.dev<\/span><span class="compare-tip-said"><span class="compare-tip-lines"><span>lib\/api\.js, line 2<\/span><span>lib\/geo\.js, line 1<\/span><\/span>/u,
+    'in the order the files are compared')
   assert.doesNotMatch(await badges(base, base), /npm-compare-hosts|npm-compare-exfiltration/u)
   // Each file's tag where it names one, in orange as what it runs is.
   const tags = path => [...rendered(npmCompareFiles.tag(other, path)).matchAll(/class="(npm-[\w-]+)" data-tooltip=([^>]*)>([^<]+)</gu)].map(([, kind, note, tag]) => `${kind}:${tag} ${note}`)

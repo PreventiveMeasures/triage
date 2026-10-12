@@ -1460,8 +1460,9 @@ control. A version shows in the bundle view with four tabs:
   script's strings, regular expressions and template literals, its comments
   aside, not a host built as the code runs, nor this machine's, the names
   kept for examples and tests, a local network's, or W3C's, whose URLs name
-  XML namespaces, its tooltip listing each with the file it is first named
-  in and its line;
+  XML namespaces, its tooltip listing each with every file that names it and
+  the line it is first named on there, and the chip, where one host is named
+  in one file alone, opening that file at its line in Code;
   `Non-registry deps`, dependencies the open version takes from
   elsewhere than npm's registry, as the Overview tags them, where the one
   compared with didn't, or by another spec, their names and each version's
