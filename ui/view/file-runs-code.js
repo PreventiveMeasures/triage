@@ -24,6 +24,8 @@ import { JS_STRING_OR_COMMENT } from './file-readability.js'
 // extension).
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
+// Whether a file (its path and text) is a script, as SCRIPT and NODE_HASHBANG tell.
+export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
 // What may come between a call's parts: blanks and comments
 // (`Function/* note */(…)`), each comment ending at its first `*/`.
 const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n)*`
@@ -68,7 +70,7 @@ const RUNS_CODE = new Map([
 // The kinds a file's code holds, each with the lines it is on, in RUNS_CODE's
 // order; null for none, or for a file that is no script.
 export function npmRunsCode(path, text) {
-  if (typeof text !== 'string' || !(SCRIPT.test(path) || NODE_HASHBANG.test(text))) return null
+  if (!npmIsScript(path, text)) return null
   const found = new Map()
   read(text, 0, (kind, offset) => found.get(kind)?.push(offset) ?? found.set(kind, [offset]))
   if (found.size === 0) return null

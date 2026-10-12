@@ -23,6 +23,7 @@ import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
 import { READABILITY, npmBecameUnreadable, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmLargeCode, npmListedFlags, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeAdded, npmRunsCodeKinds, npmRunsCodeNames, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmExfiltrationAdded, npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration, npmFileHosts } from './file-hosts.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -481,25 +482,28 @@ export function npmReadabilityWarning(entry, details) {
 }
 
 // A file's tags in the Files list and Compare's: what it can run beyond itself
-// (npmRunsCode), its flags (npmFileFlagTags), then how it reads.
+// (npmRunsCode), an exfiltration host it names (npmExfiltration), its flags
+// (npmFileFlagTags), then how it reads.
 export function npmFileTags(details, path) {
   const { byPath, sizes } = npmFilesRead(details)
-  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path)))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
+  const text = bundleFilesAsMap(details).get(path)
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path, text))}${npmExfiltrationTag(npmFileExfiltration(details, path, text))}${npmFileFlagTags(path, byPath.get(path), sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
 // it, by their severity, where the list draws them (the Files list's, not
-// Compare's); what it runs beyond itself, a warning's; and its flags and how
-// it reads, a warning's (`high`) or a notice, by their marks. Those but
-// Socket's kept, once a version.
+// Compare's); what it runs beyond itself and an exfiltration host it names,
+// a warning's; and its flags and how it reads, a warning's (`high`) or a
+// notice, by their marks. Those but Socket's kept, once a version.
 const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
 const fileFlags = new WeakMap()
 export function npmFileFlags(details, path, alerts = []) {
   let known = fileFlags.get(details)
   if (!known) fileFlags.set(details, known = new Map())
   if (!known.has(path)) {
-    const { byPath, sizes } = npmFilesRead(details)
-    known.set(path, [...npmRunsCodeNames(npmFileRunsCode(details, path, bundleFilesAsMap(details).get(path))).map(name => ({ name, severity: 'high' })),
+    const { byPath, sizes } = npmFilesRead(details), text = bundleFilesAsMap(details).get(path)
+    known.set(path, [...npmRunsCodeNames(npmFileRunsCode(details, path, text)).map(name => ({ name, severity: 'high' })),
+      ...npmFileExfiltration(details, path, text) ? [{ name: 'Exfiltration', severity: 'high' }] : [],
       ...npmListedFlags(path, byPath.get(path), sizes.get(path)).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))])
   }
   return [...alerts.map(alert => ({ name: socketAlertName(alert.type), severity: SOCKET_SEVERITIES.get(alert.severity) ?? 'low' })), ...known.get(path)]
@@ -545,7 +549,7 @@ export function npmCompareBadges(base, other, files = null) {
   if (!base?.npm || !other?.npm) return nothing
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files),
+  const chips = [deprecatedBadge(other.npm), publisherBadge(sides), provenanceBadge(sides), installScriptsBadge(base, other), ...dependencyBadges(base, other), ...fileBadges(base, other, files), hostsBadge(base, other, files),
     recentBadge(other.npm), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
@@ -632,13 +636,14 @@ const TIP_FILES = 8
 // red chip, though the tags it gives a file (npmFileTags) say little of one
 // alone, or warn of it in orange: code that runs beyond itself, as a string
 // run as code or another program (file-runs-code.js), new to a file it adds
-// or changes, the kinds named; a code file of 256 KiB or more it adds
-// (npmLargeCode); a file it changes that had no line over 200 characters and
-// now has one over 2,000 (npmBecameUnreadable), which the file's Long lines
-// or Minified tag says of it; and a file it adds or changes with an
-// obfuscator's fingerprint where the one compared with had none
-// (npmObfuscation). By Compare's `files`, a renamed one by its old path; none
-// until they are compared.
+// or changes, the kinds named; a host malicious packages send what they take
+// to, new to a file it adds or changes (file-hosts.js npmExfiltration), the
+// services named; a code file of 256 KiB or more it adds (npmLargeCode); a
+// file it changes that had no line over 200 characters and now has one over
+// 2,000 (npmBecameUnreadable), which the file's Long lines or Minified tag
+// says of it; and a file it adds or changes with an obfuscator's fingerprint
+// where the one compared with had none (npmObfuscation). By Compare's
+// `files`, a renamed one by its old path; none until they are compared.
 function fileBadges(base, other, files) {
   if (!files || !base.json || !other.json) return []
   const [was, now] = [base, other].map(npmFilesRead)
@@ -655,10 +660,17 @@ function fileBadges(base, other, files) {
   const runsCode = [...files.onlyOther, ...changed]
     .map(row => ({ path: row.path, added: npmRunsCodeAdded(runs(other, row.path), added.has(row) ? null : runs(base, row.basePath ?? row.path)) }))
     .filter(row => row.added)
+  const exfiltration = (details, path) => npmFileExfiltration(details, path, bundleFilesAsMap(details).get(path))
+  const exfiltrating = [...files.onlyOther, ...changed]
+    .map(row => ({ path: row.path, added: npmExfiltrationAdded(exfiltration(other, row.path), added.has(row) ? null : exfiltration(base, row.basePath ?? row.path)) }))
+    .filter(row => row.added)
   return [
     fileBadge('npm-compare-runs', 'Runs code', runsCode, row => npmRunsCodeSaid(row.added),
       'What the code runs beyond itself, new to the file: a string run as code (eval, Function) or other programs (child_process)',
       npmRunsCodeKinds(runsCode.map(row => row.added))),
+    fileBadge('npm-compare-exfiltration', 'Exfiltration', exfiltrating, row => npmExfiltrationSaid(row.added),
+      'A host malicious packages send what they take to, or fetch what they run from, new to the file',
+      npmExfiltrationNames(exfiltrating.map(row => row.added))),
     fileBadge('npm-compare-large', 'Large new code', large, row => formatBytes(now.sizes.get(row.path)),
       'Code files the open version adds, of 256 KiB or more'),
     fileBadge('npm-compare-unreadable', 'Now unreadable', unreadable, row => `${before(row).longest.toLocaleString('en')} → ${after(row).longest.toLocaleString('en')} characters`,
@@ -666,6 +678,46 @@ function fileBadges(base, other, files) {
     fileBadge('npm-compare-obfuscated', 'Obfuscated', obfuscated, row => npmObfuscationFound(after(row).obfuscation),
       'An obfuscator\'s fingerprint, 20 or more names such as _0x1a2b or while(!![]), where the version compared with had none'),
   ]
+}
+
+// Every host a version's scripts name (file-hosts.js npmHosts), once a version.
+const versionHosts = new WeakMap()
+function hostsOf(details) {
+  let hosts = versionHosts.get(details)
+  if (!hosts) {
+    hosts = new Set()
+    for (const [path, text] of bundleFilesAsMap(details)) for (const host of npmFileHosts(details, path, text)?.keys() ?? []) hosts.add(host)
+    versionHosts.set(details, hosts)
+  }
+  return hosts
+}
+
+// The hosts the open version's code names in its URLs that the one compared
+// with's named in none of its, as a chip in orange, as install scripts are: the
+// host, or how many; each in its tooltip with the file it is first named in,
+// and its line. A file unchanged names what it named, so the files the open
+// version adds or changes (Compare's `files`) hold any it names anew.
+function hostsBadge(base, other, files) {
+  if (!files) return nothing
+  const found = new Map(), known = hostsOf(base)
+  for (const { path } of [...files.onlyOther, ...files.changed]) {
+    for (const [name, line] of npmFileHosts(other, path, bundleFilesAsMap(other).get(path)) ?? []) {
+      if (!known.has(name) && !found.has(name)) found.set(name, `${path} (line ${line})`)
+    }
+  }
+  if (found.size === 0) return nothing
+  const label = found.size === 1 ? 'New host' : 'New hosts'
+  const shown = [...found].slice(0, TIP_FILES)
+  const more = found.size > shown.length ? `and ${(found.size - shown.length).toLocaleString('en')} more` : null
+  return html`<li><span class="npm-extension is-warn npm-compare-hosts"
+    data-tooltip=${`${label}: ${[...shown.map(([name, at]) => `${name}, ${at}`), ...more ? [more] : []].join('; ')}`}
+    .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">${label}</div>
+      <div class="compare-tip-rows is-files">${shown.map(([name, at]) => html`<span class="compare-tip-path">${name}</span><span class="compare-tip-said">${at}</span>`)}</div>
+      ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
+      <div class="compare-tip-note">Hosts the open version's code names in a URL, its comments aside, that the version compared with's named in none of its</div>
+    </div>`}>
+    <span>${label}</span><span class="npm-extension-count">${found.size === 1 ? [...found.keys()][0] : found.size.toLocaleString('en')}</span></span></li>`
 }
 
 // A chip on `rows`, files the open version adds or changes, counting them

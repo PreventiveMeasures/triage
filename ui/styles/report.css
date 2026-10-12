@@ -3700,7 +3700,7 @@ a.npm-compare-publisher {
    chip names, there and in its tooltip, green where it is known to publish,
    else orange. */
 :is(.npm-compare-account.is-unknown, .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported),
-  :is(.npm-compare-install, .npm-dependency-check) .npm-extension-count) {
+  :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts) .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
 .npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
