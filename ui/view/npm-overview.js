@@ -533,7 +533,8 @@ export function npmCompareBadges(base, other, files = null) {
   if (!base || !other?.npm) return nothing
   // A review may start from no package. Its display-only baseline has no
   // advisories or Socket report; never request an invented version upstream.
-  const sides = [base.npm ?? { name: other.npm.name, version: 'Empty package', private: true }, other.npm]
+  if (!base.npm) base = { ...base, npm: { name: other.npm.name, version: 'Empty package', private: true } }
+  const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
   const found = new Map((npmRisk(other.npm, base.npm?.version ?? null)?.findings ?? []).map(finding => [finding.id, finding]))
   const chips = [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),

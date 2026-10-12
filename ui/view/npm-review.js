@@ -131,7 +131,7 @@ export class NpmReview extends LitElement {
     const linesOf = (counts, files) => [...files.keys()].reduce((total, path) => total + (counts.get(path) ?? 0), 0)
     Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, before), otherLines: linesOf(otherLines, after) })
     this._treeFiles = [['onlyBase', 'removed'], ['onlyOther', 'added'], ['changed', 'changed']].flatMap(([group, kind]) =>
-      this._diff.files[group].map(file => ({ path: file.path, kind: file.renamedFrom == null ? kind : 'renamed', modified: file.modified,
+      this._diff.files[group].map(file => ({ ...file, kind: file.renamedFrom == null ? kind : 'renamed',
         before: group === 'onlyOther' ? '' : before.get(file.basePath ?? file.path), after: group === 'onlyBase' ? '' : after.get(file.path) }))).toSorted((a, b) => compareReviewPaths(a.path, b.path))
     this._nonTextFiles = this._treeFiles.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path)
     this._mode = reviewViewMode(this._treeFiles)

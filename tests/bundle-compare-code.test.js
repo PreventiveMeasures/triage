@@ -2332,3 +2332,30 @@ test('review whole diff renders far enough to show a file selected beyond the fi
   assert.match(renderText(viewer.render()), /aria-label=index\.js/u, 'the root file follows the directories and must be loaded before scrolling')
   assert.ok(viewer._fileLimit > 40)
 })
+
+
+test('Review inherits Compare file chips in both header views and its sidebar', async () => {
+  const { NpmReviewCode } = await import('../ui/view/npm-review-code.js')
+  const { NpmReviewDiff } = await import('../ui/view/npm-review-diff.js')
+  const { NpmReviewTree } = await import('../ui/view/npm-review-tree.js')
+  const before = { 'old.js': 'eval(input)\n' }
+  const after = { 'new.js': 'eval(input)\n', 'added.js': 'Function(input)\n' }
+  const compare = view('added.js', [before, after])
+  for (const Component of [NpmReviewCode, NpmReviewDiff, NpmReviewTree]) {
+    const review = new Component()
+    review.base = compare.base; review.other = compare.other; review._entries = compare._entries
+    for (const path of ['added.js', 'new.js']) {
+      const entry = compare._entries.get(path)
+      const header = renderText(compare._fileName(path, entry, ''))
+      assert.equal(renderText(review._fileName(path, entry, '')), header)
+      const tags = renderText(compare._fileTags(path, entry, true))
+      assert.match(tags, /npm-runs-code/u)
+      assert.equal(renderText(review._fileTags(path, entry, true)), tags)
+      if (review instanceof NpmReviewTree) {
+        review.files = [{ ...entry, path }]
+        review.willUpdate(new Map([['files']]))
+        assert.ok(renderText(review.render()).includes(tags), 'the sidebar renders the shared chips')
+      }
+    }
+  }
+})

@@ -653,10 +653,10 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
 
   const empty = { integrity: '(empty)' }
-  const added = await badges(empty, side('flagged', '2.0.0'))
-  assert.match(added, /data-tooltip=Advisories affecting Empty package: 0, 2\.0\.0: 1/u)
-  assert.match(added, />License<[^]*>– → 70</u)
-  assert.match(added, />top 100,000</u)
+  const fromEmpty = await badges(empty, side('flagged', '2.0.0'))
+  assert.match(fromEmpty, /data-tooltip=Advisories affecting Empty package: 0, 2\.0\.0: 1/u)
+  assert.match(fromEmpty, />License<[^]*>– → 70</u)
+  assert.match(fromEmpty, />top 100,000</u)
   assert.ok(!socketAsked.some(asked => asked.endsWith('@Empty package')), 'an empty review baseline never fetches a Socket report')
   npmCompareBadges(empty, side('flagged', '2.0.0')).values[0][0].values.find(value => typeof value === 'function')()
   assert.deepEqual(comparedAdvisories.at(-1).groups.map(({ status, rows }) => [status, rows.length]), [['new', 1]])
@@ -705,6 +705,10 @@ test('Compare flags in red the files the open version adds or changes that call 
     'lib/util.js': `${code}\n` })
   const other = version('1.1.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\nconst payload = '${'y'.repeat(2001)}'\n${code}\n`, 'lib/vendor.js': obfuscated(30, 0x3000),
     'lib/big-moved.js': big, 'lib/helpers.js': `${code}\n${obfuscated(25)}\n`, 'dist/payload.js': payload })
+  const empty = { kind: 'sourcemap', integrity: '(empty)', json: { sources: [], sourcesContent: [] } }
+  const blank = await badges(empty, other)
+  assert.match(blank, /npm-compare-large/u, 'blank-base reviews flag large new code too')
+  assert.match(blank, /npm-compare-obfuscated/u, 'blank-base reviews flag obfuscated code too')
   const files = compared(base, other)
   assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
     [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')

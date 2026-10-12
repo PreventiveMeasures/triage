@@ -22,6 +22,7 @@ mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
 } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchPrettyBundleFile() {}, fetchPrettyNpmFile() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {},
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
@@ -40,6 +41,7 @@ mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
 mock.module('../ui/view/npm-review-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-compare-all.js', { namedExports: {} })
 mock.module('../ui/view/npm-review-diff.js', { namedExports: {} })
+mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { EMPTY_REVIEW_BASE, NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
@@ -115,14 +117,14 @@ test('non-text files stay visible and unchecked in both review modes, with disab
 })
 
 test('Review uses the current comparison source for badges, dependency chips, and file alerts in both diff modes', () => {
-  const called = [], dependencyCalls = [], openDependency = () => {}, page = component()
+  const called = [], dependencyCalls = [], dependencyTags = () => {}, openDependency = () => {}, page = component()
   page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['export const value = 1\n'] } }
   page._target = '(empty)'
   page._base = EMPTY_REVIEW_BASE
   page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
   page.source = { choices: [], options: [], widest: { name: '0.0.0', detail: 'latest' },
     badges: (...sides) => { called.push(sides); return 'Shared comparison chips' },
-    dependencies: (...sides) => { dependencyCalls.push(sides); return 'Shared dependency changes' }, openDependency,
+    dependencies: (...sides) => { dependencyCalls.push(sides); return 'Shared dependency changes' }, dependencyTags, openDependency,
     files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
   }
   for (const mode of ['code', 'diff']) {
@@ -135,13 +137,14 @@ test('Review uses the current comparison source for badges, dependency chips, an
     assert.match(rendered, /\.baseAlerts=Base alerts \.otherAlerts=Version alerts/u)
     assert.match(rendered, /\.dependencies=Shared dependency changes/u)
     assert.ok(values(result).includes(openDependency))
+    assert.ok(values(result).includes(dependencyTags))
     assert.deepEqual(dependencyCalls.at(-1), [EMPTY_REVIEW_BASE, page.details])
-    assert.deepEqual(called.at(-1), [EMPTY_REVIEW_BASE, page.details])
+    assert.deepEqual(called.at(-1), [EMPTY_REVIEW_BASE, page.details, page._diff.files])
   }
   page._base = base
   page.source = { ...page.source, badges: (...sides) => { called.push(sides); return 'Loaded comparison chips' } }
   assert.match(text(renderReview(page)), /Loaded comparison chips/u)
-  assert.deepEqual(called.at(-1), [base, page.details])
+  assert.deepEqual(called.at(-1), [base, page.details, page._diff.files])
 })
 
 test('review selectors preserve the shared version dates and recent-release warnings', () => {
@@ -621,7 +624,7 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
   const treeView = new NpmReviewTree()
   treeView.files = files; treeView.states = new Map(); treeView.path = files[0].path
   treeView.willUpdate(new Map([['files', []], ['states', new Map()], ['path', null]]))
-  assert.equal((text(treeView.render()).match(/class="npm-review-tree-file"/gu) ?? []).length, 299)
+  assert.equal((text(treeView.render()).match(/class="bundle-code-tree-link npm-review-tree-file"/gu) ?? []).length, 299)
   treeView._query = 'file-09999'
   assert.match(text(treeView.render()), /file-09999.js/u)
   assert.doesNotMatch(text(treeView.render()), /file-00000.js/u)

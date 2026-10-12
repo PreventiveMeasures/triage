@@ -48,7 +48,7 @@ function reviewHeader(page) {
     <div class="bundle-compare-select-wrap"><bundle-selector .bundles=${versions} .value=${page.entry.npm.version} noun="version" versions
       label="Version to review" ?disabled=${busy(page)} @bundle-change=${event => { event.stopPropagation();
         void page._navigateTo({ view: 'npm', packageName: page.entry.npm.name, packageSpec: event.detail.value, bundleTab: 'review', ...page._location(page._target) }) }}></bundle-selector></div>
-    ${source.badges?.(page._base, page.details) ?? nothing}
+    ${source.badges?.(page._base, page.details, page._diff.files) ?? nothing}
     </div><div class="bundle-compare-summary">${renderCompareStats(page._diff)}</div></header>`
 }
 
@@ -160,19 +160,20 @@ export function renderReview(page) {
   const baseAlerts = page.source?.files?.alerts?.(page._base), otherAlerts = page.source?.files?.alerts?.(page.details)
   const dependencies = page.source?.dependencies?.(page._base, page.details) ?? null
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
-    <div class="npm-review-workbench bundle-code-view"><npm-review-tree class="bundle-code-rail" .files=${page._treeFiles} .states=${states} .path=${page._path} .unchecked=${page._unchecked}
+    <div class="npm-review-workbench bundle-code-view"><npm-review-tree class="bundle-code-rail" .files=${page._treeFiles}
+      .base=${page._base} .other=${page.details} .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags} .states=${states} .path=${page._path} .unchecked=${page._unchecked}
       @review-file-select=${event => page._selectFile(event.detail.path)} @review-file-filter=${event => { page._unchecked = event.detail.unchecked }}></npm-review-tree>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize file tree"
         data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>
       <div class="npm-review-content">${page._mode === 'code' ? html`<npm-review-code .base=${page._base} .other=${page.details} .files=${page._diff.files}
         .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags}
-        .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
+        .dependencyTags=${page.source?.dependencyTags ?? null} .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
         .path=${page._path} .order=${page._files} baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
         @compare-code-select=${event => { event.stopPropagation(); page._selectFile(event.detail.path) }}></npm-review-code>
         ${page._path && page._panel !== 'notes' ? renderReviewEditor(page) : nothing}`
         : html`<npm-review-diff .path=${page._path} .base=${page._base} .other=${page.details} .files=${page._diff.files} .reviewAfter=${true}
           .baseAlerts=${baseAlerts} .otherAlerts=${otherAlerts} .alertTags=${page.source?.files?.alertTags}
-          .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
+          .dependencyTags=${page.source?.dependencyTags ?? null} .dependencies=${dependencies} .openDependency=${page.source?.openDependency ?? null}
           baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
           .reviewFile=${path => renderReviewEditor(page, path, true)}></npm-review-diff>`}</div>
     </div><span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`

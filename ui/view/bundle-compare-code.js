@@ -883,7 +883,7 @@ export class BundleCompareCode extends LitElement {
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${this.reviewBadge?.(full) ?? nothing}
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._alertTags(full, this._entries.get(full))}${this._runsTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
+            ${this._fileTags(full, this._entries.get(full), true)}
             ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? renderFileChange({ kind: 'repointed' }, imports) : nothing}
             ${renderFileChange({ kind, modified }, kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label)}
@@ -1115,7 +1115,13 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
+      ${this._fileTags(path, entry)}${this._githubLink(path, entry)}`
+  }
+
+  // All comparison file chips, shared by Compare and Review in headers and trees.
+  // The tree uses the same signals, with shorter labels where needed.
+  _fileTags(path, entry, compact = false) {
+    return html`${compact ? nothing : this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._flagTags(path, entry)}${compact ? this._treeTag(path, entry) : this._readability(path, entry)}${this._installTags(path, entry, compact)}${fileMetaTags(entry.meta, compact)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one

@@ -1,9 +1,10 @@
-import { LitElement, html, nothing } from 'lit'
+import { html, nothing } from 'lit'
+import { BundleCompareCode } from './bundle-compare-code.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { COLLAPSE_DIRS_ICON, NEXT_ICON } from './lit-icons.js'
 import { sourceFileIcon } from './source-file-icon.js'
-import { FileLineCounter, renderFileChange, renderFileLineCounts } from './bundle-compare-tree.js'
+import { renderFileChange, renderFileLineCounts } from './bundle-compare-tree.js'
 import { verdictIcon, verdictLabels } from './npm-review-presentation.js'
 
 export function reviewTree(files, states) {
@@ -22,11 +23,12 @@ export function reviewTree(files, states) {
   return root
 }
 
-export class NpmReviewTree extends LitElement {
-  static properties = { files: { attribute: false }, states: { attribute: false }, path: {}, unchecked: { type: Boolean },
+export class NpmReviewTree extends BundleCompareCode {
+  static properties = { ...BundleCompareCode.properties, files: { attribute: false }, states: { attribute: false }, path: {}, unchecked: { type: Boolean },
     _query: { state: true }, _expanded: { state: true }, _limit: { state: true } }
   createRenderRoot() { return this }
-  constructor() { super(); this.files = []; this.states = new Map(); this._query = ''; this._expanded = new Set(); this._limit = 300; this._lineCounter = new FileLineCounter(() => this.requestUpdate()) }
+  constructor() { super(); this.files = []; this.states = new Map(); this._query = ''; this._expanded = new Set(); this._limit = 300 }
+  // Review owns the tree and navigation; the parent supplies shared file chips.
   willUpdate(changed) {
     if (changed.has('files') || changed.has('states')) this._tree = reviewTree(this.files, this.states)
     if (changed.has('files')) {
@@ -40,7 +42,6 @@ export class NpmReviewTree extends LitElement {
       this._limit = 300
     }
   }
-  disconnectedCallback() { super.disconnectedCallback(); this._lineCounter.begin() }
   updated(changed) {
     if (changed.has('path')) this.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest' })
   }
@@ -57,7 +58,7 @@ export class NpmReviewTree extends LitElement {
       return [{ ...child, depth, open }, ...open ? children : []]
     })
   }
-  _lineCounts(file) { return renderFileLineCounts(this._lineCounter.get(file, () => file), file.kind) }
+  _lineCounts(file) { return renderFileLineCounts(this._lineCounter.get(file, () => file), file.kind, file.modified) }
   render() {
     this._lineCounter.begin()
     const tree = this._tree ?? reviewTree(this.files, this.states)
@@ -73,12 +74,12 @@ export class NpmReviewTree extends LitElement {
       </div>
       <div class="npm-review-tree-scroll"><ul aria-label="Review files">
         ${repeat(rows.slice(0, this._limit), row => row.path, row => html`<li>
-          ${row.file ? html`<button type="button" class="npm-review-tree-file" style=${`padding-left:${8 + row.depth * 12}px`}
+          ${row.file ? html`<button type="button" class="bundle-code-tree-link npm-review-tree-file" style=${`padding-left:${8 + row.depth * 12}px`}
             aria-current=${row.path === this.path ? 'true' : nothing}
             aria-label=${`${row.path}, ${verdictLabels[this.states.get(row.path)?.status] ?? 'Not reviewed'}`} @click=${() => this._select(row.path)}>
             ${verdictIcon(this.states.get(row.path)?.status)}${sourceFileIcon(row.path)}<span class="npm-review-filename" data-tooltip-truncated data-tooltip=${row.path}>${row.name}</span>
             ${this.states.get(row.path)?.notes ? html`<span class="npm-review-note-dot" aria-label="Has notes">•</span>` : nothing}
-            ${this._lineCounts(row.file)}${renderFileChange(row.file)}
+            ${this._fileTags(row.path, row.file, true)}${this._lineCounts(row.file)}${renderFileChange(row.file)}
           </button>` : html`<button type="button" class="npm-review-tree-directory" style=${`padding-left:${8 + row.depth * 12}px`}
             aria-expanded=${String(row.open)} aria-label=${`${row.path}, ${row.checked} of ${row.total} checked`}
             @click=${() => { const next = new Set(this._expanded); if (next.has(row.path)) next.delete(row.path); else next.add(row.path); this._expanded = next }}>
