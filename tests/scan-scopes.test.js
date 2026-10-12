@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import './_polyfills.js'
 import { scanScopeOptions } from '../ui/scan/scopes.js'
 import { ScanPage } from '../ui/scan/page.js'
+import { templateText as renderText } from './_lit.js'
 
 test('recognized scope options use fixed order and subtitles while preserving bundle IDs', () => {
   const options = scanScopeOptions([{ id: 'all' }, { id: 'reason:add' }, { id: 'reason:metro' }, { id: 'reason:run' }])
@@ -37,12 +38,6 @@ test('scope selection keeps exact file sets and clears old manual exclusions', (
   assert.equal(page._files.length, 3)
 })
 
-
-function renderText(value) {
-  if (value?.strings) return value.strings.map((text, index) => text + renderText(value.values[index])).join('')
-  if (Array.isArray(value)) return value.map(renderText).join('')
-  return value == null || typeof value === 'symbol' ? '' : String(value)
-}
 
 test('dependency alerts show the reason selector without a source filter and preserve it on restart', () => {
   const page = new ScanPage()

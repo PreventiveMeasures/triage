@@ -8,7 +8,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
-import { compareModeField, compareModeOf } from '../../common/managed/routes.js'
+import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -20,11 +20,11 @@ import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { npmSized } from './npm-size-class.js'
-import { installScripts } from './install-scripts.js'
+import { npmInstallScripts } from './install-scripts.js'
+import { DAY_MS, fullDate } from './npm-downloads-chart.js'
 import { npmEntryFile, npmEntryPath, npmLicenseParts } from './npm-entries.js'
-import { NPM_DEPENDENCY_KINDS, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
+import { NPM_DEPENDENCY_KINDS, npmAlias, npmDependencyFlagTags, npmDependencyFlags, npmFlagDependencyChanges, npmRegistrySpec } from './npm-dependency-checks.js'
 
-export { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -88,12 +88,10 @@ export function npmPackageDetails(entry, data) {
   }
 }
 
-const NPM_ROUTE_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
-
 // The route of the version an entry names, on `tab`, at `location`.
 export function npmPackageRoute(entry, tab = 'overview', location = null) {
   if (!entry?.npm) return null
-  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: NPM_ROUTE_TABS.has(tab) ? tab : 'overview', ...location }
+  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: NPM_TABS.has(tab) ? tab : 'overview', ...location }
 }
 
 // Versions read and version lists, for the session and role that read them:
@@ -246,20 +244,19 @@ function versionChoices(list, version, now = Date.now()) {
 // within days, so one this new hasn't yet had the time to be. Those of a
 // scope a team lists are its own, and aren't flagged; nor is any until the
 // version list says whether it is one.
-const RECENT_MS = 14 * 24 * 60 * 60_000
+const RECENT_MS = 14 * DAY_MS
 export function npmRecentRelease(list, time, now = Date.now()) {
   return list.status === 'ready' && !list.teamScoped && now - Date.parse(time) < RECENT_MS
 }
 
-const publishedDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 const ago = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
 // When a version was published (an ISO date), and how long ago, in days up
 // to two months, then months up to two years, then years.
 export function npmPublished(time, now = Date.now()) {
-  const days = Math.floor((now - Date.parse(time)) / (24 * 60 * 60_000))
+  const days = Math.floor((now - Date.parse(time)) / DAY_MS)
   const age = days < 60 ? ago.format(-days, 'day') : days < 730 ? ago.format(-Math.floor(days / 30.44), 'month') : ago.format(-Math.floor(days / 365.25), 'year')
-  return `${publishedDate.format(Date.parse(time))} · ${age}`
+  return `${fullDate(Date.parse(time))} · ${age}`
 }
 
 const since = new Intl.RelativeTimeFormat('en', { numeric: 'always' })
@@ -269,7 +266,7 @@ export function npmAge(time, now = Date.now()) {
   const minutes = Math.max(0, Math.floor((now - Date.parse(time)) / 60_000))
   return minutes < 60 ? since.format(-minutes, 'minute') : minutes < 24 * 60 ? since.format(-Math.floor(minutes / 60), 'hour') : since.format(-Math.floor(minutes / (24 * 60)), 'day')
 }
-export const npmPublishedDay = time => publishedDate.format(Date.parse(time))
+export const npmPublishedDay = time => fullDate(Date.parse(time))
 export const npmPublishedOn = time => `Published on ${npmPublishedDay(time)}`
 
 // What Compare offers a package version (bundle-compare.js `source`): the
@@ -295,18 +292,16 @@ export function npmCompareSource(entry) {
     dependencies: npmFlaggedDependencyChanges,
     openDependency,
     // A swap or a pick on this side opens `base`, compared with `target`.
-    open: (base, target, mode) => {
-      if (!isManagedUiMode() || !managedHistory?.active) return
-      void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
-        ...(target ? { compareSpec: target, ...compareModeField(mode) } : {}) })
-    },
+    open: (base, target, mode) => navigateToNpm(name, base, 'compare', target ? { compareSpec: target, ...compareModeField(mode) } : {}),
   }
 }
 
-export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview') {
+// Opens a version on `bundleTab`, with the route's other `fields` (what it
+// is compared with); the lookup where no package is named.
+export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview', fields = {}) {
   if (!isManagedUiMode() || !managedHistory?.active) return
   void managedHistory.navigate(packageName == null ? { view: 'npm' }
-    : { view: 'npm', packageName, packageSpec, bundleTab })
+    : { view: 'npm', packageName, packageSpec, bundleTab, ...fields })
 }
 
 function showLookup(lookup) {
@@ -462,8 +457,7 @@ export function npmDependencies(manifest) {
   const rows = []
   for (const [field, kind] of NPM_DEPENDENCY_KINDS) {
     for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
-      const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
-      const opens = alias ?? name
+      const opens = npmAlias(range)?.name ?? name
       rows.push({ name, range, kind, opens: isNpmPackageName(opens) && npmRegistrySpec(range) ? opens : null })
     }
   }
@@ -500,9 +494,9 @@ export function npmFlaggedDependencyChanges(base, other) {
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it
 // takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
-const RANGE_VERSION = /^(?:npm:(?:@[^/@]+\/)?[^/@]+@)?(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
-export const npmRangeVersion = range => RANGE_VERSION.exec(range.trim())?.[1] ?? null
-const aliasOf = range => /^npm:((?:@[^/@]+\/)?[^/@]+)@/u.exec(range)?.[1] ?? null
+const RANGE_VERSION = /^(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
+export const npmRangeVersion = range => RANGE_VERSION.exec(npmAlias(range)?.spec ?? range.trim())?.[1] ?? null
+const aliasOf = range => npmAlias(range)?.name ?? null
 
 // A dependency Compare lists opens its package, as the Overview's do; a
 // changed one whose ranges each name a version of the same package opens
@@ -510,9 +504,8 @@ const aliasOf = range => /^npm:((?:@[^/@]+\/)?[^/@]+)@/u.exec(range)?.[1] ?? nul
 function openDependency({ opens, from, to }) {
   if (!opens) return
   const after = to && npmRangeVersion(to), before = from && npmRangeVersion(from)
-  if (!before || !after || before === after || aliasOf(from) !== aliasOf(to)) { navigateToNpm(opens); return }
-  if (!isManagedUiMode() || !managedHistory?.active) return
-  void managedHistory.navigate({ view: 'npm', packageName: opens, packageSpec: after, bundleTab: 'compare', compareSpec: before })
+  if (!before || !after || before === after || aliasOf(from) !== aliasOf(to)) navigateToNpm(opens)
+  else navigateToNpm(opens, after, 'compare', { compareSpec: before })
 }
 
 // The Overview's Dependencies column, in place of the Packages one a single
@@ -571,8 +564,6 @@ export function factFile(path, files, label = path) {
 }
 
 
-
-// An npm account, linking to its profile on npmjs.com.
 // An npm account, linking its profile: green where it's known to publish
 // one of npm's most downloaded packages (npm-packages.ts npmManifest's
 // `knownAccounts`), else yellow.
@@ -633,10 +624,6 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
   </dl>`
 }
-
-// The scripts npm runs as it installs the package (install-scripts.js), as
-// its manifest names them, `files` its files.
-export const npmInstallScripts = (manifest, files = null) => installScripts(manifest.installScripts, !!files?.has('binding.gyp'))
 
 // An install script's command, each word naming a file of the package
 // opening it.

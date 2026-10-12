@@ -485,7 +485,7 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
     }
     const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/([^/]+)\/(.+)$/u)
     if (day) {
-      const [, range, name] = day
+      const [, range, encoded] = day, name = decodeURIComponent(encoded)
       asked.push(['downloads', range === 'last-year' ? name : `${name} ${range}`, auth])
       const answer = range === 'last-year' ? downloads[name] : ranges[`${name} ${range}`]
       return Promise.resolve(answer ? Response.json(answer) : Response.json({ error: 'not found' }, { status: 404 }))

@@ -10,8 +10,8 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
 import { encodeBrotli } from './brotli.ts'
-import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument,
-  npmFileRows, npmPublishTime, npmToken, readLimited, readNpmTar } from './npm-packages.ts'
+import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
+  npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
 // A tarball larger than that cannot unpack within it, so it is refused as it
@@ -139,17 +139,10 @@ async function keep(path: string, bytes: Uint8Array) {
 // the token only for a private version, and its size bounded as it arrives.
 async function downloadTarball(url: string, isPrivate: boolean): Promise<Buffer> {
   const token = isPrivate ? npmToken() : null
-  let res: Response
-  try {
-    res = await fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {}, redirect: 'error', signal: AbortSignal.timeout(TARBALL_TIMEOUT_MS) })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if ([401, 403, 404].includes(res.status)) { await res.body?.cancel(); throw new NpmPackageError(404, 'package-not-found') }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  try { return await readLimited(res, MAX_TAR_BYTES) }
-  catch (err) {
-    if (err instanceof NpmPackageError) throw new NpmPackageError(413, 'package-too-large')
-    throw new NpmPackageError(502, 'upstream-unavailable')
-  }
+  const bytes = await askUpstream(url, { headers: token ? { authorization: `Bearer ${token}` } : {}, limit: MAX_TAR_BYTES, ms: TARBALL_TIMEOUT_MS, absent: [401, 403, 404] })
+    .catch((err: unknown) => { throw err instanceof NpmPackageError && err.message === 'upstream-too-large' ? new NpmPackageError(413, 'package-too-large') : err })
+  if (bytes === null) throw new NpmPackageError(404, 'package-not-found')
+  return bytes
 }
 
 // The version's tarball, its bytes held to the document's sha512 wherever

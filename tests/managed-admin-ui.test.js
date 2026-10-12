@@ -5,6 +5,7 @@ import './_polyfills.js'
 import '../ui/client-managed.js'
 import { ManagedPage } from '../ui/managed/page.js'
 import { ManagedAppState, managedAppState } from '../ui/managed/state.js'
+import { templates } from './_lit.js'
 
 function createPage(Page, appState = new ManagedAppState()) {
   const page = new Page()
@@ -367,10 +368,6 @@ test('bundle origins load only for open Stasis editors and never replace the ass
 test('bundle metadata shortcuts match supported GitHub origins and apply their declared location', () => {
   const page = createPage(customElements.get('managed-admin-bundles'))
   page._data = { repos: [{ repoId: 7, fullName: 'Owner/Repo' }] }
-  function templates(value) {
-    if (Array.isArray(value)) return value.flatMap(templates)
-    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-  }
   for (const [github, available] of [
     ['owner/repo', true],
     ['https://github.com/owner/repo.git', true],
@@ -456,10 +453,6 @@ test('bundle metadata suggestions use current aliases without replacing the save
   target = { ...target, directory: 'moved/a' }
   await page._loadLocationOrigin({ id: 'origin' })
   assert.equal(page._locationOrigin.directory, 'moved/a', 'opening again reads current aliases')
-  function templates(value) {
-    if (Array.isArray(value)) return value.flatMap(templates)
-    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-  }
   const shortcut = templates(page._locationEditor({ id: 'origin' })).find(template => template.values.includes('Use repository from metadata: org/mono'))
   shortcut.values.find(value => typeof value === 'function')()
   assert.equal(page._locationRepo, 8)
@@ -881,10 +874,6 @@ test('report location suggestions load per open editor, apply connected destinat
     requests.push({ url, ...pending })
     return pending.promise
   })
-  function templates(value) {
-    if (Array.isArray(value)) return value.flatMap(templates)
-    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-  }
   const shortcut = (field, value) => templates(page._locationEditor({ id: 'second' }))
     .find(template => template.values.includes(`Use ${field} from report: ${value}`))
   page._openLocation({ id: 'first', canChangeRepo: false })

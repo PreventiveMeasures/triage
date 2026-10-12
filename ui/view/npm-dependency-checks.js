@@ -7,7 +7,7 @@
 // them.
 import { html } from 'lit'
 import { NPM_PROSE } from './file-readability.js'
-import { installScripts } from './install-scripts.js'
+import { npmInstallScripts } from './install-scripts.js'
 
 // The kinds of dependency a manifest names, by its field
 // (npm-package.js npmDependencies).
@@ -86,39 +86,53 @@ function gitHost(spec) {
   try { return parts ? (parts.forEach(part => part && decodeURIComponent(part)), host) : null } catch { return null }
 }
 
-// Where a dependency's spec has npm fetch it from, where that isn't its
-// registry, as npm-package-arg's resolve reads a spec: not a path (`./x`,
-// `~/x`, `/x`, `c:/x`, `file:`) nor an `npm:` alias of a registry package;
-// then a repository on a host npm knows (gitHost), named for it (GitHub);
-// then a URL, `git` for a repository's (`git:`, `git+https:`, `git+ssh:`,
-// `git+http:`, `git+rsync:`, `git+ftp:`, `git+file:`, and `git+ssh://` to
-// `user@host:path`) and `URL` for a tarball's (`https:`, `http:`). Null for
-// the registry's ranges and tags, for a URL npm doesn't install
-// (`workspace:`, `ssh:` on another host), and for what it reads as a path
-// (`git@example.com:x/y`).
-export function npmDependencySource(spec) {
+// Where npm installs a dependency's spec from, read once in
+// npm-package-arg's resolve order: `path` for a path (`./x`, `~/x`, `/x`,
+// `c:/x`, `file:`); `registry` for an `npm:` alias of a registry package,
+// or a spec with no `/` or `:` that names no tarball, which no later step
+// takes; a repository on a host npm knows (gitHost), named for it
+// (`GitHub`); for a URL, `git` for a repository's (`git:`, `git+https:`,
+// `git+ssh:`, `git+http:`, `git+rsync:`, `git+ftp:`, `git+file:`, and
+// `git+ssh://` to `user@host:path`), `URL` for a tarball's (`https:`,
+// `http:`), and null for one npm doesn't install (`workspace:`, `ssh:` on
+// another host); then `path` again for one with a `/` or a tarball's name
+// (`a/b/c`, `x.tgz`, `git@example.com:x/y`), and else `registry`: a
+// version, a range or a tag.
+function specFrom(spec) {
   const value = String(spec ?? '').trim()
-  if (/^(?:[.]|~\/|\/|[a-z]:|file:|npm:)/iu.test(value)) return null
+  if (/^(?:[.]|~\/|\/|[a-z]:|file:)/iu.test(value)) return 'path'
+  if (/^npm:/iu.test(value) || !/[/:]|[.](?:tgz|tar\.gz|tar)$/iu.test(value)) return 'registry'
   const host = gitHost(value)
   if (host) return host.label
-  if (!/^(?:git\+)?[a-z]+:/iu.test(value)) return null
-  const scp = /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#.*)?$/iu.exec(value)
-  if (value.startsWith('git+ssh:') && scp && !/:\d+(?:\/|$)/u.test(scp[1])) return 'git'
-  const protocol = safeUrl(value)?.protocol
-  return /^(?:git|git\+(?:https?|rsync|ftp|file|ssh)):$/u.test(protocol) ? 'git' : /^https?:$/u.test(protocol) ? 'URL' : null
+  if (/^(?:git\+)?[a-z]+:/iu.test(value)) {
+    const scp = /^git\+ssh:\/\/([^:#]+:[^#]+(?:\.git)?)(?:#.*)?$/iu.exec(value)
+    if (value.startsWith('git+ssh:') && scp && !/:\d+(?:\/|$)/u.test(scp[1])) return 'git'
+    const protocol = safeUrl(value)?.protocol
+    return /^(?:git|git\+(?:https?|rsync|ftp|file|ssh)):$/u.test(protocol) ? 'git' : /^https?:$/u.test(protocol) ? 'URL' : null
+  }
+  return /\/|[.](?:tgz|tar\.gz|tar)$/iu.test(value) ? 'path' : 'registry'
 }
 
-// Whether npm installs a dependency's spec from its registry, as
-// npm-package-arg's resolve reads a spec: an `npm:` alias's, a version, a
-// range or a tag, none of which holds a `/` or starts with a scheme. Not a
-// path (`./x`, `~/x`, `file:`, a tarball's name, `x.tgz`), a repository
-// (`owner/repo`, `github:`) or a URL (npmDependencySource), nor a scheme npm
-// doesn't install (`workspace:`): the registry's package of that name isn't
-// what npm installs for any.
-export function npmRegistrySpec(spec) {
-  const value = String(spec ?? '').trim()
-  return /^npm:/iu.test(value) || !/^[.]|^(?:git\+)?[a-z]+:|\/|[.](?:tgz|tar\.gz|tar)$/iu.test(value)
+// Where a dependency's spec has npm fetch it from, where that isn't its
+// registry (specFrom): a host's name (`GitHub`), `git` or `URL`. Null for
+// the registry's ranges and tags, a path, and what npm doesn't install.
+export function npmDependencySource(spec) {
+  const from = specFrom(spec)
+  return from === 'registry' || from === 'path' ? null : from
 }
+
+// The package and spec an `npm:` alias names (`npm:pkg@^1.2.3`), as
+// specFrom reads one; null for a spec that isn't one.
+export function npmAlias(spec) {
+  const [, name, range = ''] = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@(.*))?$/iu.exec(String(spec ?? '').trim()) ?? []
+  return name ? { name, spec: range } : null
+}
+
+// Whether npm installs a dependency's spec from its registry (specFrom):
+// not from a path, a repository or a URL, nor a scheme npm doesn't install
+// (`workspace:`), the registry's package of that name being what npm
+// installs for none of those.
+export const npmRegistrySpec = spec => specFrom(spec) === 'registry'
 
 // Files no import is read from: prose, as the Overview tells it
 // (file-readability.js NPM_PROSE; not code named alike, as
@@ -144,7 +158,7 @@ function importsOf({ json, npm }) {
   let found = importsByVersion.get(json)
   if (found) return found
   const sources = json.sources ?? [], texts = json.sourcesContent ?? []
-  found = { whole: new Set(), parts: new Set(), commands: installScripts(npm?.manifest?.installScripts, sources.includes('binding.gyp')).map(([, command]) => command) }
+  found = { whole: new Set(), parts: new Set(), commands: npmInstallScripts(npm?.manifest, sources).map(([, command]) => command) }
   for (const [i, path] of sources.entries()) {
     if (typeof texts[i] !== 'string' || path === 'package.json' || (NPM_PROSE.test(path) && !MDX.test(path)) || NO_IMPORTS.test(path)) continue
     for (const [, run, end] of texts[i].matchAll(QUOTED)) {

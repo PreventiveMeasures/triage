@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
+import { templates } from './_lit.js'
 
 // Render the actual card without the page renderer and source-preview DOM.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
@@ -43,11 +44,6 @@ function finding(entry = null) {
     repo: { github: 'https://github.com/o/r' }, _managedReportId: 'report', _reportName: 'report.json' }
   if (entry) state.triage.set(f.id, entry)
   return f
-}
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 
 // The bound value of `name` (`?disabled=`, `.disabled=`) in the first

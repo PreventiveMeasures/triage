@@ -38,7 +38,9 @@ import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './prett
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
-import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE } from './npm-entries.js'
+import { NPM_TABS } from '../../common/managed/routes.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmSized } from './npm-size-class.js'
@@ -1982,7 +1984,7 @@ function renderBundleSlide(entry) {
   // An npm package version shows its Overview, Code, Treemap and Compare,
   // which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
-  if (npm && !['overview', 'code', 'compare', 'treemap'].includes(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
+  if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch

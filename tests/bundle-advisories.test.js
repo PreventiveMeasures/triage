@@ -3,6 +3,7 @@ import { beforeEach, mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { store } from '@rray/frontend/state-management'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
+import { templateText as renderText, templates } from './_lit.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
 let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
@@ -18,15 +19,6 @@ mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisor
   return pending ?? Promise.resolve(result)
 } } })
 const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, recheckBundleAdvisories, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
-function renderText(value) {
-  if (value?.strings && value?.values) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
-  if (Array.isArray(value)) return value.map(renderText).join('')
-  return value == null || typeof value === 'symbol' ? '' : String(value)
-}
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 beforeEach(t => {
   managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedWhy = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }

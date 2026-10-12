@@ -8,6 +8,7 @@ import { autorun } from '@rray/frontend/state-management'
 import { bundleWhy } from '../ui/view/bundle-why.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
+import { templates } from './_lit.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
 // navigation, tooltip listeners, or asynchronous syntax highlighting.
@@ -35,11 +36,6 @@ function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
   if (value?.strings) return value.strings.map((text, index) => text + renderText(value.values[index])).join('')
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
-}
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 
 beforeEach(() => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
 import { browserAt } from './_managed-browser.js'
+import { templates } from './_lit.js'
 
 const hash = `#public=link0001.${'A'.repeat(43)}`
 globalThis.location = new URL(`https://triage.test/team/shared-team${hash}`)
@@ -14,11 +15,6 @@ const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js'
 const { findingLinkFor } = await import('../ui/view/finding-link.js')
 const { createManagedHistory } = await import('../ui/view/managed-history.js')
 const { parsePublicShare } = await import('../client/managed/public-share.js')
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 
 const finding = { id: 'issue /?# é', severity: 'high', description: 'Shared finding', _reportName: 'report.json', _managedReportId: 'report-id' }
 

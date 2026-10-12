@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { templateText as renderText } from './_lit.js'
 
 mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
@@ -24,11 +25,6 @@ const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks
 const Compare = customElements.get('bundle-compare')
 const { state: compareState } = await import('../client/index.js')
 
-function renderText(value) {
-  if (Array.isArray(value)) return value.map(renderText).join('')
-  if (value?.strings) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
-  return value == null || typeof value === 'symbol' ? '' : String(value)
-}
 function details(integrity, target, conditions = 'node, import') {
   return { integrity, kind: 'stasis', bundle: new Bundle({
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'import "dep"', 'a.js': 'a', 'b.js': 'b' } }]]),

@@ -11,7 +11,7 @@ import { state } from '#client/index.js'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { fetchPrettyBundleFile, fetchPrettyNpmFile } from './client-managed.js'
-import { npmFileReadability } from './file-readability.js'
+import { npmFileReadabilityOf } from './file-readability.js'
 
 // The pretty-print toggles' icon, for the Code tab's bar and Compare's.
 export const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
@@ -37,7 +37,7 @@ const copyKey = (details, path) => `${details.integrity}\0${path}`
 
 // Whether each file of a bundle or npm version can be formatted, by its
 // details: in a language the server formats, no larger than it formats, and
-// minified (npmFileReadability).
+// minified (npmFileReadabilityOf).
 const formattable = new WeakMap()
 
 // Whether the open file can be pretty-printed: a formattable file of a
@@ -47,7 +47,7 @@ export function prettyPrintable(details, entry, path, content) {
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
   if (!files.has(path)) {
-    files.set(path, prettyExtension(path) !== null && utf8ByteLength(content) <= MAX_PRETTY_BYTES && npmFileReadability(path, content).category === 'minified')
+    files.set(path, prettyExtension(path) !== null && utf8ByteLength(content) <= MAX_PRETTY_BYTES && npmFileReadabilityOf(details, path, content).category === 'minified')
   }
   return files.get(path)
 }

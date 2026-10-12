@@ -3264,13 +3264,6 @@ body.report-fullscreen {
     white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
   }
 }
-/* Its name a warning's tag: what runs on install is what to read first. */
-.npm-install-script-name {
-  flex-shrink: 0; padding: 0 .35rem;
-  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
-  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .66rem; font-weight: 600; line-height: 1.45;
-}
 /* An entry point, after its file's icon, on one line, cut short where it
    doesn't fit. */
 .npm-entry-point {
@@ -3497,8 +3490,10 @@ npm-downloads-chart {
   &.is-mid { --tier: var(--yellow); }
   &.is-low { --tier: var(--high); }
   &.is-unpopular { --tier: var(--critical); }
-  /* In Compare's badges, as tall as the chips beside it. */
+  /* In Compare's badges, as tall as the chips beside it; beside a new
+     dependency's name over package.json, as small as the tags beside it. */
   .npm-compare-badges & { padding: .05rem .4rem; line-height: 1.45; }
+  .bundle-compare-code-dep & { font-size: .6rem; line-height: 1.35; }
 }
 /* Under the switch, the period under the pointer's downloads, on a line
    kept for them, so the chart doesn't move as they come and go: centered
@@ -3713,15 +3708,12 @@ a.npm-compare-publisher {
   .npm-extension.npm-compare-file, .npm-compare-file .npm-extension-count) {
   color: color-mix(in srgb, var(--critical) 55%, var(--text));
 }
-/* Provenance the open version lost: a stronger warning than its deprecation. */
-.npm-extension.npm-compare-provenance {
-  background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
-}
-/* Files the open version adds or changes that call for a look (npm-overview.js
+/* Provenance the open version lost, a stronger warning than its deprecation;
+   and files it adds or changes that call for a look (npm-overview.js
    fileBadges): a large code file added, a file become unreadable, one with
    an obfuscator's fingerprint, red as provenance lost is, though their tags
    on the files say little of one alone. */
-.npm-extension.npm-compare-file {
+.npm-extension:is(.npm-compare-provenance, .npm-compare-file) {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
 /* The open version deprecated, as an unpopular package's downloads tier reads. */

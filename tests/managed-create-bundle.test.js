@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import './_polyfills.js'
 import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
+import { templates } from './_lit.js'
 
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
@@ -79,11 +80,6 @@ test('a combined response with no default or branches leaves the picker ready fo
   assert.equal(page._refsError, '')
   assert.equal(page._loadingRefs, false)
 })
-
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 
 test('bundle conditions default to Node.js and changes preserve selected files and cached directories', async t => {
   let reads = 0

@@ -21,7 +21,6 @@ export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
-const REGISTRY_TIMEOUT_MS = 30_000
 // What registry documents being read at once may hold, each counted at its
 // limit until it is read and parsed: four packuments, or 32 version documents.
 const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
@@ -55,6 +54,32 @@ function registryUrl(name: string, spec?: string): string {
   return `${NPM_REGISTRY}/${name}${spec === undefined ? '' : `/${encodeURIComponent(spec)}`}`
 }
 
+// What an upstream (npm's registry and APIs, Socket, GitHub) answers, read
+// whole: null where it says it has none (`absent`, 404 unless said). Asked
+// without redirects, and given up on after `ms`, 30 seconds unless said, or
+// once `signal` aborts, its abort rethrown as it is; a 502 where it can't be
+// asked, answers otherwise or stops, and `upstream-too-large` past `limit`
+// bytes (readLimited).
+export async function askUpstream(url: string, { limit, ms = 30_000, signal, absent = [404], ...init }: Omit<RequestInit, 'signal'> & { limit: number; ms?: number; signal?: AbortSignal; absent?: number[] }): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(ms), ...signal ? [signal] : []]) })
+    if (absent.includes(res.status)) { await res.body?.cancel(); return null }
+    if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
+    return await readLimited(res, limit)
+  } catch (err) {
+    if (signal?.aborted || err instanceof NpmPackageError) throw err
+    throw new NpmPackageError(502, 'upstream-unavailable')
+  }
+}
+
+// The same, read as JSON (by `parse`, as one line of ndjson): a 502
+// `upstream-invalid` where it isn't.
+export async function askUpstreamJson(url: string, options: Parameters<typeof askUpstream>[1], parse = (text: string): unknown => JSON.parse(text)): Promise<unknown> {
+  const body = await askUpstream(url, options)
+  if (body === null) return null
+  try { return parse(body.toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
+}
+
 export async function readLimited(res: Response, limit: number): Promise<Buffer> {
   const declared = Number(res.headers.get('content-length'))
   if (declared > limit) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-too-large') }
@@ -72,24 +97,8 @@ export async function readLimited(res: Response, limit: number): Promise<Buffer>
 // 404, or 401/403 as it answers some private packages asked anonymously.
 // Credentials go only with `token`; nothing is cached on either side.
 async function registryDocument(url: string, { token, accept, limit, signal }: { token: string | null; accept: string; limit: number; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
-  let res: Response
-  try {
-    res = await fetch(url, {
-      headers: { accept, ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(REGISTRY_TIMEOUT_MS)]),
-    })
-  } catch (err) {
-    if (signal.aborted) throw err
-    throw new NpmPackageError(502, 'upstream-unavailable')
-  }
-  if ([401, 403, 404].includes(res.status)) { await res.body?.cancel(); return null }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  try {
-    const json = JSON.parse((await readLimited(res, limit)).toString('utf8')) as unknown
-    if (json && typeof json === 'object' && !Array.isArray(json)) return json as Record<string, unknown>
-  } catch (err) {
-    if (err instanceof NpmPackageError) throw err
-  }
+  const json = await askUpstreamJson(url, { headers: { accept, ...(token ? { authorization: `Bearer ${token}` } : {}) }, limit, signal, absent: [401, 403, 404] })
+  if (json === null || plainObject(json)) return json
   throw new NpmPackageError(502, 'upstream-invalid')
 }
 

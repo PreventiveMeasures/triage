@@ -3,6 +3,7 @@ import { registerHooks } from 'node:module'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
 import { state } from '../client/state.ts'
+import { templates } from './_lit.js'
 
 const invalidations = [], paints = []
 mock.module('../ui/view/render.js', { namedExports: { render: () => paints.push(state.managedIssues.get('finding')) } })
@@ -21,10 +22,6 @@ const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js'
 const session = { id: 'viewer', csrfToken: 'csrf', role: 'view' }
 const finding = { id: 'finding', title: 'Finding', severity: 'high', file: 'src/file.js', repo: { github: 'o/r' }, _managedReportId: 'report' }
 const url = 'https://github.com/o/r/issues/1'
-function templates(value) {
-  if (Array.isArray(value)) return value.flatMap(templates)
-  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-}
 beforeEach(t => {
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team', managedSession: session, managedIssues: new Map() }
   const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))

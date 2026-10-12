@@ -4,7 +4,7 @@
 // right. Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
 
-const DAY_MS = 24 * 60 * 60_000
+export const DAY_MS = 24 * 60 * 60_000
 const HEIGHT = 72
 // The plot runs to the card's right edge, as the switch over it does.
 const PAD = { top: 6, right: 0, bottom: 18, left: 40 }
@@ -19,7 +19,7 @@ const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)
 // Made once: the readout formats dates on every pointer move.
 const dateFormat = options => new Intl.DateTimeFormat('en', { ...options, timeZone: 'UTC' }).format
 const shortDate = dateFormat({ month: 'short', day: 'numeric' })
-const fullDate = dateFormat({ month: 'short', day: 'numeric', year: 'numeric' })
+export const fullDate = dateFormat({ month: 'short', day: 'numeric', year: 'numeric' })
 const monthYear = dateFormat({ month: 'short', year: 'numeric' })
 const monthName = dateFormat({ month: 'long', year: 'numeric' })
 

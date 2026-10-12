@@ -208,6 +208,10 @@ export function npmFileReadability(path, text) {
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
 }
 
+// The category a file's tag shows: for one with long lines, how its text is
+// encoded.
+export const npmTaggedCategory = readability => readability.category === 'long' ? readability.kind : readability.category
+
 // What a file is labelled, in its tags and in the Overview's warning and
 // chips, each finding it: its control characters, its invisible ones
 // (characterLabels) and its long lines, where it holds them, beside its category (how its text is encoded, for one whose long
@@ -218,7 +222,7 @@ export function npmFileReadability(path, text) {
 export function npmReadabilityLabels(readability) {
   const flags = [...characterLabels(readability.controls),
     ...readability.longLines > 0 && ['long', 'minified', 'inline-map'].includes(readability.category) ? ['long'] : []]
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   return READABILITY.get(category).mark || flags.length === 0 ? [...flags, category] : flags
 }
 
@@ -226,6 +230,21 @@ export function npmReadabilityLabels(readability) {
 // otherwise readable, as they are unexpected there, and as a notice in
 // minified code, as minified code is; any other as its category is.
 export const npmLabelMark = (readability, label) => label === 'long' && readability.category !== 'long' ? 'notice' : READABILITY.get(label).mark
+
+// A file's readability (npmFileReadability), read once a version (`details`)
+// and path, whoever asks: the Overview's lists, Compare's tags and whether a
+// file can be pretty-printed alike. Read again for another text, as Compare
+// gives one side's for both where an importer was captured on one.
+const readByVersion = new WeakMap()
+export function npmFileReadabilityOf(details, path, text) {
+  let files = readByVersion.get(details)
+  if (!files) readByVersion.set(details, files = new Map())
+  const kept = files.get(path)
+  if (kept?.text === text) return kept.read
+  const read = npmFileReadability(path, text)
+  files.set(path, { text, read })
+  return read
+}
 
 // Each category: its name, its tag in a list of files or a file's head, and how it is marked,
 // `warn` for what to look into, `notice` for what can be hard to review by
@@ -280,7 +299,7 @@ function readabilityNote(readability) {
 // invisible characters are.
 export function npmEncodingTag(readability) {
   if (!readability) return nothing
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   const { tag, mark } = READABILITY.get(category)
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
 }
@@ -305,7 +324,7 @@ export function npmReadabilityFlags(readability, marks = null) {
 // A file's head, wide enough, tags every one, as it does how one changed.
 export function npmListedReadabilityTag(readability) {
   if (!readability) return nothing
-  const category = readability.category === 'long' ? readability.kind : readability.category
+  const category = npmTaggedCategory(readability)
   return category === 'ascii' || category === 'map' ? npmReadabilityFlags(readability) : npmReadabilityTag(readability)
 }
 
@@ -317,7 +336,7 @@ export const npmReadabilityTag = readability => readability ? html`${npmReadabil
 // (npmFileFlagTags, npmListedReadabilityTag): `{ name, mark }` each, its
 // tag's text and mark; none for what reads as most files do (UTF-8, ASCII).
 export function npmListedFlags(path, readability, bytes) {
-  const category = readability && (readability.category === 'long' ? readability.kind : readability.category)
+  const category = readability && npmTaggedCategory(readability)
   const listed = category && category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
   return [
     ...npmLargeCode(path, bytes) ? [{ name: 'Large', mark: 'notice' }] : [],

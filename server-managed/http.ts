@@ -51,18 +51,18 @@
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
-//   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
-//   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/502
-//   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
-//   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
+//   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
+//   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
+//   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
+//   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/429/502
 //   GET  /api/npm/download-counts?names=a,b → many packages' recent downloads, for their tiers | 400/401
-//   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
-//   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
-//   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404
-//   GET  /api/npm/provenance?name=&version= → npm's provenance for a public version | 400/401/404/502
-//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502
+//   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/429/502
+//   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404/429/502
+//   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404/429/502
+//   GET  /api/npm/provenance?name=&version= → npm's provenance for a public version | 400/401/404/429/502
+//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
-//        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/504
+//        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -2448,6 +2448,13 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
+// What a registry read found, or a 404 for the package (handleNpm's catch
+// answers it) where it found none.
+function found<T>(value: T | null | undefined): T {
+  if (value == null) throw new NpmPackageError(404, 'package-not-found')
+  return value
+}
+
 // GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
@@ -2455,8 +2462,8 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH || path === NPM_PROVENANCE_PATH || path === NPM_PRETTY_PATH
-    || path === NPM_RENAME_DIFF_PATH
+  // All but the package's own (its versions, figures and advisories) are a version's.
+  const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
@@ -2477,6 +2484,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
     return !res.destroyed
   }
+  const reply = async (isPrivate: boolean, body: Record<string, unknown>) => { if (await recheck(isPrivate)) sendJson(res, 200, body) }
   // The reader's GitHub token, for GitHub's rate limits and never for what it
   // shows: asked for once, and only where an answer isn't kept (npm-insights.ts).
   let token: Promise<string | null> | undefined
@@ -2507,8 +2515,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const scope = npmPackageScope(name)
       const [versions, teamScoped] = await Promise.all([readNpmVersions(name, privileged, controller.signal, { times: true }),
         scope !== null && deps.db.hasTeamNpmScope(scope)])
-      if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      if (await recheck(versions.private)) sendJson(res, 200, { ...versions, teamScoped })
+      await reply(found(versions).private, { ...versions, teamScoped })
       return
     }
     // Across every published version, as the version list has them, which
@@ -2516,10 +2523,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // version names, where GitHub says it is public, asked with the reader's
     // GitHub token, its listing kept as bundle advisories keep it.
     if (path === NPM_ADVISORIES_PATH) {
-      const versions = await readNpmVersions(name, privileged, controller.signal)
-      if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const list = await npmAdvisories(name, versions.versions, advisoryOptions)
-      if (await recheck(versions.private)) sendJson(res, 200, { name, ...list })
+      const versions = found(await readNpmVersions(name, privileged, controller.signal))
+      await reply(versions.private, { name, ...await npmAdvisories(name, versions.versions, advisoryOptions) })
       return
     }
     // The package's, with the repository its latest version names; either
@@ -2528,38 +2533,29 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       // npm's downloads, which need nothing of the version, are asked at once;
       // none is answered before the package's access is.
       const downloadsAsked = npmDownloads(name).catch(() => null)
-      const doc = await latestDoc()
-      if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const doc = found(await latestDoc())
       const [downloads, github] = await Promise.all([downloadsAsked, githubFigures(doc)])
-      if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
+      await reply(doc.private, { name, downloads, github })
       return
     }
-    const doc = await readNpmVersion(name, spec, privileged, controller.signal)
-    if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal))
     if (spec === 'latest') latest = Promise.resolve(doc)
     const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
-    // Its publish commit's tags, where its repository is public on GitHub and
-    // the reader has a token to ask with; none where they can't be had.
-    if (path === NPM_TAGS_PATH) {
-      const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, githubToken).catch(() => [])
-      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
-      return
-    }
+    // What the viewer asks about a version beside its files, by its route,
+    // and asks for meanwhile below. Its publish commit's tags, where its
+    // repository is public on GitHub and the reader has a token to ask with.
     // Socket's report, asked only where npm answers for the version without a
-    // token: a private package's name never leaves for Socket.
-    if (path === NPM_SOCKET_PATH) {
-      const socket = doc.private ? null : await npmSocketReport(name, doc.version).catch(() => null)
-      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, socket })
-      return
-    }
-    // npm's provenance, asked only where its version says npm keeps one, and
-    // npm answers for the version without a token; a failure is answered as
-    // one, for the viewer to ask again.
-    if (path === NPM_PROVENANCE_PATH) {
-      const provenance = doc.private || doc.manifest['provenance'] !== true ? null : await npmProvenance(name, doc.version, doc.dist.integrity)
-      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, provenance })
-      return
-    }
+    // token: a private package's name never leaves for Socket. npm's
+    // provenance, asked only where its version says npm keeps one, and npm
+    // answers for the version without a token.
+    const tagsOf = () => repo === null || sha === null ? Promise.resolve([]) : npmCommitTags(repo, sha, doc.version, githubToken)
+    const socketOf = () => doc.private ? Promise.resolve(null) : npmSocketReport(name, doc.version)
+    const provenanceOf = () => doc.private || doc.manifest['provenance'] !== true ? Promise.resolve(null) : npmProvenance(name, doc.version, doc.dist.integrity)
+    // None where tags or Socket's report can't be had; a failure to have
+    // provenance is answered as one, for the viewer to ask again.
+    if (path === NPM_TAGS_PATH) { await reply(doc.private, { name, version: doc.version, tags: await tagsOf().catch(() => []) }); return }
+    if (path === NPM_SOCKET_PATH) { await reply(doc.private, { name, version: doc.version, socket: await socketOf().catch(() => null) }); return }
+    if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
     // One of its files pretty-printed (pretty-print.ts), from a copy kept
     // for a public version.
     if (file) {
@@ -2575,8 +2571,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (diffed) {
       const { prettyCache } = deps
       if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = await readNpmVersion(name, otherSpec, privileged, controller.signal)
-      if (other == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const other = found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
@@ -2600,12 +2595,12 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (!download) {
       const quiet = (asked: Promise<unknown>) => { asked.catch(() => {}) }
       quiet(npmDownloads(name))
-      quiet(latestDoc().then(found => found && githubFigures(found)))
+      quiet(latestDoc().then(newest => newest && githubFigures(newest)))
       quiet(readNpmVersions(name, privileged, controller.signal, { times: true, spare: true })
         .then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
-      if (repo !== null && sha !== null) quiet(npmCommitTags(repo, sha, doc.version, githubToken))
-      if (!doc.private) quiet(npmSocketReport(name, doc.version))
-      if (!doc.private && doc.manifest['provenance'] === true) quiet(npmProvenance(name, doc.version, doc.dist.integrity))
+      quiet(tagsOf())
+      quiet(socketOf())
+      quiet(provenanceOf())
     }
     const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, repo, sha))
     res.once('close', load.release)

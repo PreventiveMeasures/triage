@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { templateText as rendered } from './_lit.js'
 
 const state = {}
 mock.module('../client/index.js', { exports: {
@@ -25,13 +26,21 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmDependencyTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
-const rendered = value => Array.isArray(value) ? value.map(rendered).join('') : value?.strings ? value.strings.map((part, i) => part + rendered(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
 // Code an obfuscator wrote, with `count` names of its own, from `from` on.
 const obfuscated = (count, from = 0x1a2b) => Array.from({ length: count }, (_, i) => `var _0x${(from + i).toString(16)}=_0x${from.toString(16)}[${i}];`).join('')
+
+test('a file\'s readability is read once a version and path, and again for another text', () => {
+  const code = 'export const a = 1\n', details = {}
+  const read = npmFileReadabilityOf(details, 'index.js', code)
+  assert.deepEqual(read, npmFileReadability('index.js', code))
+  assert.equal(npmFileReadabilityOf(details, 'index.js', code), read, 'kept')
+  assert.equal(npmFileReadabilityOf({}, 'index.js', code) === read, false, 'by version')
+  assert.equal(npmFileReadabilityOf(details, 'index.js', null).category, 'binary', 'another text read anew')
+})
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -353,7 +362,7 @@ test('downloads group into 7-day weeks ending on the last day, a partial oldest 
 })
 
 test('each license in an expression opens its own file, else the package\'s only one', async () => {
-  const { npmLicenseParts } = await import('../ui/view/npm-package.js')
+  const { npmLicenseParts } = await import('../ui/view/npm-entries.js')
   const parts = (license, paths) => npmLicenseParts(license, paths).map(({ text, file }) => file ? `${text}→${file}` : text)
   assert.deepEqual(parts('MIT OR Apache-2.0', ['LICENSE-MIT', 'LICENSE-APACHE', 'index.js']), ['MIT→LICENSE-MIT', ' OR ', 'Apache-2.0→LICENSE-APACHE'])
   assert.deepEqual(parts('(MIT AND BSD-3-Clause)', ['LICENSE']), ['(', 'MIT→LICENSE', ' AND ', 'BSD-3-Clause→LICENSE', ')'])
@@ -392,8 +401,7 @@ test('a package\'s tier among npm\'s by downloads goes by the most it had in any
 })
 
 test('a file Socket raises an alert on is named in its severity\'s color, its note in the tooltip', () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : String(value ?? '')
-  const [malware, scripts] = npmSocketFileTags([{ type: 'malware', severity: 'critical', note: 'Steals tokens.' }, { type: 'installScripts', severity: 'middle', note: null }]).map(text)
+  const [malware, scripts] = npmSocketFileTags([{ type: 'malware', severity: 'critical', note: 'Steals tokens.' }, { type: 'installScripts', severity: 'middle', note: null }]).map(rendered)
   assert.match(malware, /npm-socket-file-alert sev-critical/u)
   assert.match(malware, /data-tooltip=Socket: Malware, critical · Steals tokens\.>Malware</u)
   assert.match(scripts, /sev-moderate[^]*>Install scripts</u, 'Socket\'s middle severity reads as moderate')
@@ -401,7 +409,6 @@ test('a file Socket raises an alert on is named in its severity\'s color, its no
 })
 
 test('Compare\'s badges flag the advisories affecting either version, Socket\'s scores under their bars, and a package few download', async () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
   answers.advisories.flagged = { versions: ['2.0.0', '1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [1] }, { id: 'b', severity: 'moderate', affected: [0, 1] }] }
   // 500 a day: 3,500 a week, among the top 100,000.
@@ -409,7 +416,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['flagged@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
   answers.socket['flagged@2.0.0'] = { scores: scores({ supplyChain: .85, quality: .9, license: .7 }), alerts: [] }
   const side = (name, version, extra = {}) => ({ npm: { name, version, ...extra } })
-  const badges = async (...sides) => { npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return text(npmCompareBadges(...sides)) }
+  const badges = async (...sides) => { npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(...sides)) }
 
   const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
   assert.match(flagged, /<button type="button" class=npm-extension npm-compare-advisories sev-moderate[^]*>2 → 1</u)
@@ -460,7 +467,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.equal(dialog.heading, 'Advisories · flagged 1.0.0 → 2.0.0')
   assert.deepEqual(dialog.groups.map(({ status, heading, rows }) => [status, heading, rows.length]), [['kept', 'Still affecting 2.0.0', 1], ['fixed', 'Fixed in 2.0.0', 1]])
   assert.equal(dialog.isCurrent(), true)
-  assert.match(text(npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))),
+  assert.match(rendered(npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))),
     /compare-tip-head">Socket's license score<[^]*compare-tip-version">1\.0\.0<[^]*compare-tip-score is-good is-max>[^]*100<[^]*compare-tip-version">2\.0\.0<[^]*compare-tip-score is-fair>[^]*70<[^]*compare-tip-note">Shown under 80</u,
     'Socket\'s, a ring and a tint for each version\'s')
 
@@ -764,9 +771,8 @@ test('Compare flags in red code that runs beyond itself new to a file the open v
 })
 
 test('the Overview\'s provenance: what built the version, from which commit, then by which workflow, in which run, its log entry; none, or nothing for a private package', async () => {
-  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
   const entry = (name, manifest, extra = {}) => ({ npm: { name, version: '1.0.0', manifest, ...extra } })
-  const fact = async version => { npmProvenanceFact(version); await new Promise(resolve => { setImmediate(resolve) }); return text(npmProvenanceFact(version)) }
+  const fact = async version => { npmProvenanceFact(version); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmProvenanceFact(version)) }
   answers.provenance['built@1.0.0'] = { repository: 'https://github.com/org/repo', commit: 'b'.repeat(40), workflow: '.github/workflows/release.yml', ref: 'refs/tags/v1.0.0',
     builder: 'https://github.com/actions/runner/github-hosted', run: 'https://github.com/org/repo/actions/runs/7/attempts/1', logIndex: 42 }
   const built = await fact(entry('built', { provenance: true, github: { github: 'org/repo' } }))
@@ -800,14 +806,14 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   answers.provenance['lab-github@1.0.0'] = answers.provenance['lab@1.0.0']
   assert.match(await fact(entry('lab-github', { provenance: true, github: { github: 'org/repo' } })), /data-tooltip=The package names org\/repo>Not the repository it names</u,
     'a GitHub repository, built on GitLab')
-  assert.equal(text(npmProvenanceFact(entry('unbuilt', {}))), '<span class="npm-commit-missing">None</span>')
+  assert.equal(rendered(npmProvenanceFact(entry('unbuilt', {}))), '<span class="npm-commit-missing">None</span>')
   // Listed in its manifest, but no statement the server reads (as one naming
   // another tarball): never shown as attested, nor while it's asked for.
   const rejected = entry('rejected', { provenance: true })
-  assert.equal(text(npmProvenanceFact(rejected)), '<span class="npm-commit-missing">Checking…</span>')
+  assert.equal(rendered(npmProvenanceFact(rejected)), '<span class="npm-commit-missing">Checking…</span>')
   assert.match(await fact(rejected), /npm-provenance-warning[^>]*>Listed, but none for this tarball</u)
   assert.doesNotMatch(await fact(rejected), /Attested/u)
-  assert.equal(text(npmProvenanceFact(entry('secret', { provenance: true }, { private: true }))), '', 'nothing for a private package')
+  assert.equal(rendered(npmProvenanceFact(entry('secret', { provenance: true }, { private: true }))), '', 'nothing for a private package')
 
   // Whether it names what built the version, for the facts not to name its
   // trusted publisher again: while it's asked for, and once read with a builder.

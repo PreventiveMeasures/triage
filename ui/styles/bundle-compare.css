@@ -625,13 +625,14 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
   &.is-license { background: color-mix(in srgb, var(--muted) 14%, var(--bg)); border-color: var(--border); }
 }
-/* A package.json's install scripts, in its head and in the tree: marked as
-   the npm Overview marks them, one no longer named struck through; and what
+/* A package.json's install scripts, in its head and in the tree, marked as
+   the npm Overview marks their names, one no longer named struck through;
+   those names in the Overview; and what
    a stasis bundle records of a file that changed (its format, its execute
    bit, its being an entry point), there and in the Overview's rows, what it
    no longer is struck through; and what a file's code can run beyond itself
    (file-runs-code.js), wherever the file is listed. */
-:is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code) {
+:is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-install-script-name) {
   flex: none; padding: 0 .3rem;
   color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
   border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
@@ -640,6 +641,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
   .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
 }
+/* An install script's name in the Overview, a little larger: what runs on
+   install is what to read first. */
+.npm-install-script-name { padding: 0 .35rem; font-size: .66rem; }
 /* A file that can be hard to review by reading it, tagged in the tree as in its
    head, as is what it is beyond that (a large code file, one obfuscated). */
 .bundle-code-tree-link > :is(.npm-encoding-tag, .npm-flag-tag) { flex: none; padding: 0 .25rem; font-size: .56rem; }
@@ -995,9 +999,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
   &:is(button):hover { border-color: var(--dep); }
   &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  & :is(.npm-dependency-kind, .npm-dependency-flag, span.npm-downloads-tier) { align-self: center; }
-  /* A new one's tier by downloads, as small as the tags beside it. */
-  & span.npm-downloads-tier { font-size: .6rem; line-height: 1.35; }
+  & :is(.npm-dependency-kind, .npm-dependency-flag) { align-self: center; }
 }
 .bundle-compare-code-dep-range {
   color: var(--muted);
