@@ -108,6 +108,9 @@ test('lines of code leave out blank lines and keep comments', () => {
     ['// note\n/* block */\ncode()\n', 3], ['a\r\n\r\n  b  \r\n', 2], ['a\rb\r\r', 2], ['\uFEFF\n\u00A0\nx', 1],
   ]) assert.equal(bundleSourceLineCount(content), loc, JSON.stringify(content))
   assert.equal(bundleSourceLineCount(null), 0)
+  // A bundled payload's one line of 10 million characters, as Shai-Hulud's
+  // bun_environment.js, any of them past U+00FF: counted, not thrown on.
+  assert.equal(bundleSourceLineCount(`x\n${'a'.repeat(1e7)}\u4E00\n\n  y`), 3)
 })
 
 test('package stats weigh only the sources under the package, in bytes and non-blank lines of code', () => {

@@ -51,15 +51,24 @@ export function computeBundleFileHashes(details) {
 }
 
 // Count lines of code: lines with anything but whitespace on them, comments
-// included for now, split at \r\n, \r or \n. A match runs from a line's
-// first non-whitespace character to its end, so there is one per such line.
+// included for now, split at \r\n, \r or \n. Each such line is counted at
+// its first non-whitespace character, its rest passed over to the next line
+// break: no match runs a line's length, which past some 9 million characters
+// (a bundled payload's one line, as Shai-Hulud's 10 MB bun_environment.js)
+// overflows the stack a Unicode regular expression backtracks with in a
+// string holding any character past U+00FF.
 // The source map intentionally excludes non-text resources, so a null entry
 // remains the metadata marker for images, fonts, and other binary payloads.
 export function bundleSourceLineCount(content) {
   if (typeof content !== 'string') return 0
-  const code = /\S[^\r\n]*/gu
+  const code = /\S/gu, end = /[\r\n]/gu
   let lines = 0
-  while (code.test(content)) lines++
+  while (code.test(content)) {
+    lines++
+    end.lastIndex = code.lastIndex
+    if (!end.test(content)) break
+    code.lastIndex = end.lastIndex
+  }
   return lines
 }
 
