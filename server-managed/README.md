@@ -236,8 +236,9 @@ and in the tree: `eval` and `Function` (with `new` or without), a string run
 as code, and `child_process`, other programs, each with the lines it is on,
 one the version compared with didn't hold (all of an added file's) saying
 so. A quick read, not a parse: its strings, regular expressions and comments
-set aside, `child_process` told by the string naming the module, and a
-declaration file read for none.
+set aside, `child_process` told by the string naming the module where code
+loads it (`require(…)`, `import`, `from`), and a declaration file read for
+none.
 Between two stasis bundles, what each records of a file beside its bytes is
 compared too: the format it loads it in (a resource carried as data, or
 `module`, `commonjs` and the rest, run as code, as is a file it records no

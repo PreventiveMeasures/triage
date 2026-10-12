@@ -3,7 +3,8 @@
 // (child_process), as the npm Overview's Files list and Compare label a file.
 // A quick read, not a parse: a script's code with its strings, regular
 // expressions and comments set aside as file-readability.js tells them, a
-// module named by the string that names it; a declaration file (.d.ts) runs
+// module by the string naming it where it is loaded (`require('child_process')`,
+// `import … from 'node:child_process'`); a declaration file (.d.ts) runs
 // nothing, and a call written not to read as one (`window['ev' + 'al']`)
 // goes unseen, as does one in a template literal in another's substitution
 // (`${`${eval(x)}`}`), whose backtick ends the outer one as the regular
@@ -23,8 +24,8 @@ const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const DECLARATION = /\.d\.[cm]?ts$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
 // What may come between a call's parts: blanks and comments
-// (`Function/* note */(…)`).
-const GAP = String.raw`(?:\s|/\*[\s\S]{0,100}?\*/|//[^\n]{0,100}\n)*`
+// (`Function/* note */(…)`), each comment ending at its first `*/`.
+const GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/)){0,100}\*/|//[^\n]{0,100}\n)*`
 // Function called: as it is, optionally (`Function?.(…)`), or by its call or
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
@@ -36,11 +37,15 @@ const SAYS_ANY = new RegExp(`eval|Function${FUNCTION_CALLED}|child_process`, 'u'
 // `...eval` aside) or part of another's (`evaluate`), or as the global
 // object's (`window.eval`, `globalThis?.eval`); looked back on only where the
 // name or the global object's starts, so a long run of blanks reads in one go.
-const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.\s*)(?:(?:globalThis|window|global|self)\s*\??\.\s*)?${name}`
+const named = name => String.raw`(?=globalThis|window|global|self|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?:(?:globalThis|window|global|self)${GAP}\??\.${GAP})?${name}`
 const AFTER = String.raw`(?![\p{ID_Continue}$])`
 
 // Each kind, in the order its tags show: its tag, what it does, and how its
 // code reads, or for a module, its name.
+// What comes before a module's name where code loads it: `require(`, a
+// bundler's `__require(` or `__non_webpack_require__(`, `import(`, `import`
+// and `from`; a name not loaded, as in a list of node's modules, is none.
+const LOADS = /(?:require[\w$]*|\bimport)\s*\(\s*$|\b(?:from|import)\s*$/u
 export const RUNS_CODE = new Map([
   ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${named('eval')}${AFTER}`, 'gu') }],
   ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${named('Function')}${FUNCTION_CALLED}`, 'gu') }],
@@ -81,7 +86,7 @@ function read(code, base, at) {
     ends.push(index + match.length)
     if (string?.[0] === '`' && SAYS_ANY.test(string)) for (const [from, to] of substitutions(string)) read(string.slice(from, to), base + index + from, at)
     if (string === undefined || string.length > 24 || !'"\'`'.includes(string[0])) continue
-    for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1))) at(kind, base + index)
+    for (const [kind, { module }] of RUNS_CODE) if (module?.test(string.slice(1, -1)) && LOADS.test(code.slice(Math.max(0, index - 64), index))) at(kind, base + index)
   }
   const inside = (offset) => {
     const span = below(starts, offset + 1) - 1
