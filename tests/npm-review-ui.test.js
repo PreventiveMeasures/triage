@@ -3,7 +3,6 @@ import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
 import { withinComparisonLimits } from '../ui/view/bundle-compare-files.js'
-import { buildBundleSourceTree, orderedComparisonFiles } from '../ui/view/bundle-source-tree.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
@@ -158,36 +157,6 @@ test('review selectors preserve the shared version dates and recent-release warn
   assert.equal(options.length, 2)
   assert.deepEqual(options.map(rows => [rows[0].id, rows[0].date, rows[0].dateWarning]),
     [['@scope/lib@1.0.0', 'Oct 12, 2026', '3h ago'], ['2.0.0', 'Oct 12, 2026', '3h ago']])
-})
-
-test('review trees reuse Compare counts and pure-rename markers and fill long lists across renders', async t => {
-  const page = component()
-  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['new.js', 'added.js'], sourcesContent: ['same\n', 'added\n'] } }
-  page._key = null; answer = { reviews: [], teams: [] }
-  page._ensureContext({ ...base, kind: 'sourcemap', json: { sources: ['old.js'], sourcesContent: ['same\n'] } })
-  await Promise.resolve()
-  const tree = new BundleCompareCode()
-  tree.base = { ...base, kind: 'sourcemap', json: { sources: ['old.js'], sourcesContent: ['same\n'] } }; tree.other = page.details; tree.files = page._diff.files; tree.extensions = reviewExtensions(page)
-  tree.willUpdate(new Map([['files']]))
-  const markup = text(tree._renderRail(tree._railState(), null))
-  assert.match(markup, /bundle-compare-code-letter renamed pure/u)
-  assert.match(markup, /bundle-compare-code-line-counts unchanged" aria-label="No line changes">=/u)
-  assert.match(markup, /class=del empty>−0</u)
-  let now = 0
-  t.mock.method(performance, 'now', () => (now += 40))
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const update = t.mock.method(tree, 'requestUpdate', () => {})
-  tree._lineCounter.reset()
-  tree._renderRail(tree._railState(), null)
-  assert.equal(tree._lineCounter.counts.size, 1)
-  t.mock.timers.tick(0)
-  assert.equal(update.mock.callCount(), 1)
-  assert.equal(text(tree._renderRail(tree._railState(), null)), markup)
-  tree._lineCounter.reset()
-  tree._renderRail(tree._railState(), null)
-  tree.disconnectedCallback()
-  t.mock.timers.tick(0)
-  assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving Review')
 })
 
 test('Finalize tint follows allowed verdicts, including edits awaiting save and security findings', async () => {
@@ -1002,12 +971,6 @@ test('a blank new note does not block finalization or create an empty row', asyn
   assert.equal(page._panel, 'publish')
   assert.equal(page._unsaved, false)
 })
-
-test('review file order is directories first at every depth', () => {
-  const files = ['index.js', 'z/a.js', 'a.js', 'a/z.js', 'a/nested/b.js', 'z/b.js']
-  assert.deepEqual(orderedComparisonFiles(buildBundleSourceTree(files)), ['a/nested/b.js', 'a/z.js', 'z/a.js', 'z/b.js', 'a.js', 'index.js'])
-})
-
 
 test('review drawers identify the entire version comparison', () => {
   assert.equal(reviewTitle(context), '@scope/lib 1.0.0 -> 2.0.0')

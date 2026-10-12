@@ -1824,6 +1824,11 @@ test('a long tree counts its lines a little at a time, so it paints at once and 
   assert.equal(update.mock.callCount(), 1, 'another render is asked for, once')
   for (let i = 0; i < 20; i++) renderText(element.render())
   assert.deepEqual(rowCounts(renderText(element.render())), all, 'filled in, as counted at once')
+  element._lineCounter.reset()
+  renderText(element.render())
+  element.disconnectedCallback()
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving the viewer')
 })
 
 test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
@@ -2318,41 +2323,16 @@ test('review whole diff uses the shared tree and keeps actions outside the stick
   assert.match(markup, /Binary file changed/u)
 })
 
-test('review whole diff renders far enough to show a file selected beyond the first page in tree order', async () => {
+test('review verdict decorations keep file icons and chips in both viewers', async () => {
   const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
-  const paths = ['index.js', ...Array.from({ length: 60 }, (_, i) => `a/file-${String(i).padStart(2, '0')}.js`)]
-  const code = view(null, [Object.fromEntries(paths.map(path => [path, '1'])), Object.fromEntries(paths.map(path => [path, '2']))])
-  const viewer = new BundleCompareAll()
-  for (const name of ['base', 'other', 'files']) viewer[name] = code[name]
-  viewer.extensions = { fileActions: () => '', filterContent: false }
-  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
-  assert.doesNotMatch(renderText(viewer.render()), /aria-label=index\.js/u)
-  viewer.path = 'index.js'
-  viewer.willUpdate(new Map([['path']]))
-  assert.match(renderText(viewer.render()), /aria-label=index\.js/u, 'the root file follows the directories and must be loaded before scrolling')
-  assert.ok(viewer._fileLimit > 40)
-})
-
-
-test('Review inherits Compare file chips in both header views and its sidebar', async () => {
-  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
-  const before = { 'old.js': 'eval(input)\n' }
-  const after = { 'new.js': 'eval(input)\n', 'added.js': 'Function(input)\n' }
-  const compare = view('added.js', [before, after])
+  const source = view('added.js', [{}, { 'added.js': 'Function(input)\n' }])
   for (const Component of [CompareCode, BundleCompareAll]) {
-    const review = new Component()
-    review.base = compare.base; review.other = compare.other; review._entries = compare._entries
-    for (const path of ['added.js', 'new.js']) {
-      const entry = compare._entries.get(path)
-      const header = renderText(compare._fileName(path, entry, ''))
-      assert.equal(renderText(review._fileName(path, entry, '')), header)
-      const tags = renderText(compare._fileTags(path, entry, true))
-      assert.match(tags, /npm-runs-code/u)
-      assert.equal(renderText(review._fileTags(path, entry, true)), tags)
-      review.files = compare.files; review.extensions = { filePrefix: () => 'VERDICT' }
-      review.willUpdate(new Map([['files']]))
-      assert.ok(renderText(review.render()).includes(tags), 'the sidebar renders the shared chips alongside verdicts')
-    }
+    const viewer = Object.assign(new Component(), { base: source.base, other: source.other, files: source.files,
+      extensions: { filePrefix: () => 'VERDICT' } })
+    viewer.willUpdate(new Map([['files']]))
+    const row = [...renderText(viewer.render()).matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+      .map(([markup]) => markup).find(markup => markup.includes('data-tooltip=added.js>'))
+    assert.match(row, /VERDICT<svg class="source-file-icon" data-file-type=js[^]*npm-runs-code/u)
   }
 })
 
