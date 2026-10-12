@@ -819,9 +819,11 @@ class BundleCompare extends LitElement {
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
       ${mode === 'code' && this._diffFits ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+          .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .models=${this._combinedFor().models} .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
         : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+          .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
         : html`<div class="bundle-compare-body">${body}</div>`}

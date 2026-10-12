@@ -359,6 +359,12 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.deepEqual(labels(rows['package.json'], 'install'), ['postinstall'], 'the tree tags what runs on install now')
   assert.match(rows['dist/app.min.js'], /class=npm-encoding-tag is-notice[^>]*>Minified</u)
   assert.doesNotMatch(rows['index.js'], /npm-encoding-tag|bundle-compare-code-entry/u, 'no tag for what reads as it is, and entry points in the head alone')
+  // Alerts on a side's files, as Socket's on an npm version's, in the head and the tree.
+  Object.assign(element, { otherAlerts: new Map([['dist/app.min.js', [{ type: 'malware' }]]]), baseAlerts: new Map([['index.js', [{ type: 'gone' }]]]),
+    alertTags: alerts => alerts.map(alert => `<alert ${alert.type}>`) })
+  assert.match(head('dist/app.min.js'), /<alert malware>/u)
+  assert.doesNotMatch(head('index.js'), /<alert/u, 'the open one\'s alerts on a file it has')
+  assert.match(render('index.js'), /<alert malware>[^]*?bundle-compare-code-letter added/u, 'in the tree too')
 })
 
 test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {

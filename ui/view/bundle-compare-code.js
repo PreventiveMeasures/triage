@@ -218,6 +218,11 @@ export class BundleCompareCode extends LitElement {
     other: { attribute: false },
     files: { attribute: false },
     resolutions: { attribute: false },
+    // Alerts on each side's files, by path, and their tags: Socket's, on an
+    // npm version's (npm-overview.js npmSocketFileAlerts).
+    baseAlerts: { attribute: false },
+    otherAlerts: { attribute: false },
+    alertTags: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -233,6 +238,9 @@ export class BundleCompareCode extends LitElement {
     this.other = null
     this.files = null
     this.resolutions = []
+    this.baseAlerts = null
+    this.otherAlerts = null
+    this.alertTags = null
     this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
@@ -465,7 +473,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
+            ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
               data-tooltip=${kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label}>${KIND[kind].letter}</span>
@@ -604,7 +612,14 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}`
+  }
+
+  // The alerts on a file (`otherAlerts`; `baseAlerts` for one removed), in
+  // its head and in the tree.
+  _alertTags(path, { kind, basePath = path }) {
+    const alerts = kind === 'removed' ? this.baseAlerts?.get(basePath) : this.otherAlerts?.get(path)
+    return alerts?.length > 0 && this.alertTags ? this.alertTags(alerts) : nothing
   }
 
   // A file the open bundle or version starts from (for one removed, the one

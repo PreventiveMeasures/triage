@@ -89,6 +89,26 @@ const SOCKET_SEVERITIES = new Map([['critical', 'critical'], ['high', 'high'], [
 // `installScripts` → `Install scripts`.
 const socketAlertName = type => type.replaceAll(/(?<=[a-z])(?=[A-Z])/gu, ' ').toLowerCase().replace(/^./u, first => first.toUpperCase())
 
+// Socket's alerts on a version's files (`npm`, an entry's or its details'),
+// by the path each names: none for a private package, or until its report
+// arrives. One map a report, so a view drawing them redraws when it comes.
+const NO_ALERTS = new Map()
+const alertsByReport = new WeakMap()
+export function npmSocketFileAlerts(npm) {
+  const report = npm ? npmSocketReport({ npm }) : null
+  if (!report) return NO_ALERTS
+  if (!alertsByReport.has(report)) alertsByReport.set(report, Map.groupBy(report.alerts.filter(alert => alert.file), alert => alert.file))
+  return alertsByReport.get(report)
+}
+
+// A file's Socket alerts, each named in its severity's color, its note in
+// its tooltip.
+export const npmSocketFileTags = (alerts = []) => alerts.map(alert => {
+  const severity = SOCKET_SEVERITIES.get(alert.severity) ?? 'low'
+  return html`<span class=${`npm-socket-file-alert sev-${severity}`}
+    data-tooltip=${`Socket: ${socketAlertName(alert.type)}, ${severity}${alert.note ? ` · ${alert.note}` : ''}`}>${socketAlertName(alert.type)}</span>`
+})
+
 // A version npm publishes in place of a package its security team took down,
 // as it does for malicious code: a "security holding package" from
 // npm/security-holder, published by npm, or by one of its staff as
@@ -298,11 +318,14 @@ export function npmReadabilityWarning(entry, details) {
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
-// one's type icon, the tag of one the open version adds or changes, and over
-// them, where any of those can be hard to review by reading it, the Overview's
+// one's type icon and Socket's alerts on it, the tag of one the open version
+// adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
   icon: sourceFileIcon,
+  // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
+  alerts: details => npmSocketFileAlerts(details?.npm),
+  alertTags: npmSocketFileTags,
   tag: (details, path) => npmReadabilityTag(npmFilesRead(details).byPath.get(path)),
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)

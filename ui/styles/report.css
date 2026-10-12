@@ -3767,6 +3767,18 @@ button.npm-category {
 /* Socket's scores, each a chip as wide as its text, linking to its report;
    and over the summary, the alerts it raises on the version, as on malware,
    each with its note. */
+/* A file Socket raises an alert on, named in its severity's color beside the
+   file wherever it is listed (the Files list, Compare's heads and tree). */
+.npm-socket-file-alert {
+  flex: none; padding: 0 .3rem; border-radius: var(--ui-radius, 3px);
+  color: #000; font-size: .62rem; font-weight: 700; line-height: 1.45; white-space: nowrap;
+
+  &.sev-critical { background: var(--critical); color: #fff; }
+  &.sev-high     { background: var(--high); }
+  &.sev-moderate { background: var(--medium); }
+  &.sev-low      { background: var(--low); color: var(--badge-low-text); }
+  .bundle-code-tree-link > & { padding: 0 .2rem; font-size: .54rem; }
+}
 .npm-socket-scores { gap: .25rem; }
 a.npm-socket-score {
   align-items: center; gap: .25rem;

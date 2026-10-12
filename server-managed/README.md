@@ -222,7 +222,9 @@ bundle's entry, an npm version's main, module, types or bin), and a
 package.json's install scripts (preinstall, install, postinstall, prepare,
 and `node-gyp rebuild` beside a binding.gyp) are marked in its head and in
 the tree, each with its command, one new or changed saying so, and in its
-head one no longer named struck through. Lines always wrap. Code can hide whitespace changes, as
+head one no longer named struck through. For an npm version, a file
+Socket raises an alert on is labelled with it in its head and in the tree.
+Lines always wrap. Code can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
@@ -1193,7 +1195,9 @@ control. A version shows in the bundle view with four tabs:
   banner saying so; and the alerts Socket raises on the version, such as
   malware, each with its severity, the file it names (opening it) and
   Socket's note, left out on npm's placeholder, which holds nothing but the
-  files every package has. Under the facts, its languages, then its readable files
+  files every package has. A file an alert names is labelled with it, in
+  its severity's color, in the Files list and in Compare's file heads and
+  tree, each version by its own report. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its

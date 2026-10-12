@@ -13,7 +13,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileTypes, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
@@ -252,4 +252,13 @@ test('a package\'s tier among npm\'s by downloads goes by the most it had in any
   assert.equal(tier([...weeks(1, 25e6), ...weeks(6, 10e6)]), 1000, 'only the latest six weeks')
   assert.equal(tier(Array.from({ length: 6 }, () => 25e6)), null, 'no whole week')
   assert.equal(npmDownloadTier(null), null)
+})
+
+test('a file Socket raises an alert on is named in its severity\'s color, its note in the tooltip', () => {
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : String(value ?? '')
+  const [malware, scripts] = npmSocketFileTags([{ type: 'malware', severity: 'critical', note: 'Steals tokens.' }, { type: 'installScripts', severity: 'middle', note: null }]).map(text)
+  assert.match(malware, /npm-socket-file-alert sev-critical/u)
+  assert.match(malware, /data-tooltip=Socket: Malware, critical · Steals tokens\.>Malware</u)
+  assert.match(scripts, /sev-moderate[^]*>Install scripts</u, 'Socket\'s middle severity reads as moderate')
+  assert.deepEqual(npmSocketFileTags(), [])
 })
