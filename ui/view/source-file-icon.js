@@ -40,11 +40,12 @@ const LICENSE_NAME = /^(?:(?:un)?licen[cs]e|copying)(?:-[^/.]*)?(?:\.(?:mit|bsd|
 // UTF-8, a Stasis directory capture, and `binary`, which callers pass for an
 // npm package's file the server found not to be text.
 const NOT_TEXT_FORMATS = new Set(['resource:base64', 'directory', 'binary'])
+export const isNotTextFormat = format => NOT_TEXT_FORMATS.has(format)
 
 // A license is told by its name, but only a text one: a recorded format naming
 // code or a file that is not text keeps its own icon.
 function isLicense(path, format, lang) {
-  if ((lang !== null && lang !== 'markdown') || NOT_TEXT_FORMATS.has(format)) return false
+  if ((lang !== null && lang !== 'markdown') || isNotTextFormat(format)) return false
   return LICENSE_NAME.test(path.slice(path.lastIndexOf('/') + 1))
 }
 

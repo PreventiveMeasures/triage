@@ -17,7 +17,7 @@ import { render } from './render.js'
 import { state } from '#client/index.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { openNpmCompareAdvisoriesDialog } from './dialogs/npm-compare-advisories-dialog.js'
-import { fileIconFormat, sourceFileIcon } from './source-file-icon.js'
+import { fileIconFormat, isNotTextFormat, sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
 import { DAY_MS, compact, npmDownloadTier, npmLastMonth, npmTierLevel, npmTierName } from './npm-downloads-chart.js'
@@ -521,9 +521,9 @@ export function npmFileFlags(details, path, alerts = []) {
 // adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
 // warning, counting those alone.
 export const npmCompareFiles = {
-  // A file either side holds as binary, under that side's path, is no license,
-  // whatever its name.
-  icon: (path, sides) => sourceFileIcon(path, sides.some(([details, at]) => fileIconFormat(details, at) === 'binary') ? 'binary' : undefined),
+  // A file either side holds as not text, under that side's path, is no
+  // license, whatever its name.
+  icon: (path, sides) => sourceFileIcon(path, sides.map(([details, at]) => fileIconFormat(details, at)).find(isNotTextFormat)),
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
