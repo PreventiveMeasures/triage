@@ -311,7 +311,8 @@ test('the Diff view pretty-prints every minified file it shows, however many', a
   assert.match(renderText(all.render()), /is-loading/u, 'each asked for')
   // Two at a time, each hashed as it comes, which can take any number of turns.
   const deadline = Date.now() + 10_000
-  while (/is-loading/u.test(renderText(all.render())) && Date.now() < deadline) await new Promise(resolve => { setImmediate(resolve) })
+  const coming = () => files.some(path => all._fileState(path, all._entries.get(path)).pretty.status === 'loading')
+  while (coming() && Date.now() < deadline) await new Promise(resolve => { setImmediate(resolve) })
   const markup = renderText(all.render())
   assert.doesNotMatch(markup, /is-loading|is-error|\?disabled=true/u)
   for (const path of files) assert.equal(all._fileState(path, all._entries.get(path)).pretty.status, 'ready', `${path} diffed as its copies have it`)
@@ -361,7 +362,7 @@ test('the Diff view draws its files 40 at a time, more on asking or as one past 
   assert.deepEqual([scrolled.length, pane.scrollTop], [2, 0], 'its list from its top')
 })
 
-test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
+test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state, and how many failed', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   await import('../ui/view/bundle-compare-all.js')
   const files = ['dist/g0.min.js', 'dist/g1.min.js']
@@ -378,7 +379,7 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
-  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print: This file couldn't be read as code\./u)
+  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print 1 of 2 files: This file couldn't be read as code\./u)
 })
 
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {
