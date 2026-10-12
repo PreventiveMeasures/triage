@@ -431,6 +431,17 @@ test('the search diffs a changed file as the view does: a long one\'s removed li
   assert.doesNotMatch(renderText(large.render()), /A large diff, not shown yet/u)
 })
 
+test('the search signs a line as the diff shows it with whitespace changes hidden: re-indented, it is unchanged', t => {
+  t.after(() => view()._setWhitespace(false))
+  const element = view(null, [{ 'src/indent.js': 'if (a) {\n  fetch(x)\n}\nfetch(old)\n' }, { 'src/indent.js': 'if (a) {\n    fetch(x)\n}\nfetch(new)\n' }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.find(file => file.path === 'src/indent.js').hits.map(hit => `${hit.sign}${hit.side}${hit.line}`)
+  assert.deepEqual(signs(), ['−a1', '+b1', '−a3', '+b3'])
+  element._setWhitespace(true)
+  assert.deepEqual(signs(), [' b1', '−a3', '+b3'], 'as its diff has it, the re-indented line unchanged')
+})
+
 test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
   // Every reading of the clock past the budget: the scan alone outlasts it.
   let clock = 0
@@ -499,6 +510,26 @@ test('a search hit in a minified file opens, pretty-printed, at the line holding
   const markup = renderText(element.render())
   const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">6<\/span>[^]*Z\(1\)/u, 'the pretty-printed copy\'s line 6, Z(1);')
+})
+
+test('a search hit whose match pretty-printing spaces opens at the line its first character falls on', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/spaced.min.js', [{ 'dist/spaced.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/spaced.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}module.exports=Z;\n` }])
+  element.base.managedId = 'b7'
+  element.other.managedId = 'b8'
+  pretty.set('b7:dist/spaced.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b8:dist/spaced.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._mode = 'code'
+  element._query = 'X+n'
+  element.render()
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/spaced.min.js')
+  element._seek('dist/spaced.min.js', hit)
+  const markup = renderText(element.render())
+  const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">3<\/span>[^]*return [^]*X[^]* \+ n;/u, 'the copy\'s line 3, return X + n')
 })
 
 test('a repointed file stays a source view with its line links while whitespace changes are hidden', t => {

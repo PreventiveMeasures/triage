@@ -300,7 +300,8 @@ export class BundleCompareCode extends LitElement {
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
     this._mode = 'files'
-    // A changed file's change blocks, as the search found them, by path; the
+    // A changed file's change blocks, as the search found them, by whitespace
+    // setting and path; the
     // files it found too large to diff unasked (_searchResults); and its last
     // results, kept while the query and files are.
     this._blocks = new Map()
@@ -573,21 +574,23 @@ export class BundleCompareCode extends LitElement {
 
   // The search's results over the files the rail lists (`order`) whose text
   // this view shows (_searchable), as searchCompareFiles finds them there.
-  // Kept while the query, the files and the kinds shown are, and the large
-  // diffs asked for. A changed file is diffed as this view diffs it: unasked
-  // unless it is large (isLargeDiff), which lists its new text's lines alone,
-  // unsigned, until its diff is shown. Diffs are found a little at a time,
-  // as the tree's line counts are, a render's budget counted from its first:
-  // a file past it lists its new text's lines unsigned, and another render
-  // signs them.
+  // Kept while the query, the files and the kinds shown are, the large diffs
+  // asked for and the whitespace setting. A changed file is diffed as this
+  // view diffs it: its whitespace changes hidden where the view hides them,
+  // and unasked unless it is large (isLargeDiff), which lists its new text's
+  // lines alone, unsigned, until its diff is shown. Diffs are found a little
+  // at a time, as the tree's line counts are, a render's budget counted from
+  // its first: a file past it lists its new text's lines unsigned, and
+  // another render signs them.
   _searchResults(order) {
-    const key = `${this._query}\0${this._forced.size}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${prefs.ignoreWhitespace}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
     let complete = true
     const blocksOf = (path, before, after) => {
-      if (this._blocks.has(path)) return this._blocks.get(path)
+      const kept = `${prefs.ignoreWhitespace}\0${path}`
+      if (this._blocks.has(kept)) return this._blocks.get(kept)
       if (!this._forced.has(path) && isLargeDiff(before, after)) {
         this._undiffed.add(path)
         return null
@@ -598,8 +601,12 @@ export class BundleCompareCode extends LitElement {
         complete = false
         return null
       }
-      const blocks = changeBlocks(before, after)
-      this._blocks.set(path, blocks)
+      // As _fileState diffs it: whitespace changes hidden where the setting and
+      // the file's language hide them, but for blanks of more than one kind.
+      const hide = prefs.ignoreWhitespace && !this._unlisted(path, this._entries.get(path), { before, after })
+      let blocks = changeBlocks(before, after, hide)
+      if (hide && hidesMixedWhitespace(before, after, blocks)) blocks = changeBlocks(before, after)
+      this._blocks.set(kept, blocks)
       this._undiffed.delete(path)
       return blocks
     }
@@ -622,16 +629,19 @@ export class BundleCompareCode extends LitElement {
   // A search hit picked: its file opened, its line brought into view where
   // the file's diff draws (see _seekRows).
   _seek(path, hit) {
-    this._sought = { path, side: hit.side, line: hit.line, query: this._query }
+    this._sought = { path, side: hit.side, line: hit.line, at: hit.ranges[0]?.[0] ?? 0, query: this._query }
     if (path === this._current) this.requestUpdate()
     else this._select(path, false)
   }
 
   // The line a hit names in the text a file's diff shows, `{ side, line }`:
   // in a pretty-printed copy, the line holding the same match, counted in
-  // order on its side; null where none does there.
+  // order on its side; where none does (the printer spaced what it matched,
+  // `a+b` as `a + b`), the line its first character falls on, counted in the
+  // characters other than whitespace, which pretty-printing moves but keeps;
+  // null past the copy's end.
   _soughtLine(path, entry, pretty, model) {
-    const { side, line, query } = this._sought
+    const { side, line, at, query } = this._sought
     if (pretty?.status !== 'ready') return { side, line }
     const matcher = buildSearchMatcher(query, false, false)
     const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
@@ -640,6 +650,12 @@ export class BundleCompareCode extends LitElement {
     for (let i = 0; i < model[side].length; i++) {
       seen += matcher.ranges(model[side][i]).length
       if (seen > ordinal) return { side, line: i }
+    }
+    const solid = text => text.length - (text.match(/\s/gu)?.length ?? 0)
+    let offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text), 0) + solid(raw[line]?.slice(0, at) ?? '')
+    for (let i = 0; i < model[side].length; i++) {
+      offset -= solid(model[side][i])
+      if (offset < 0) return { side, line: i }
     }
     return null
   }
@@ -822,8 +838,7 @@ export class BundleCompareCode extends LitElement {
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
     // where that would hide blanks of more than one kind changing
     // (hidesMixedWhitespace): others are diffed with them shown.
-    const unlisted = !whitespaceInsensitive(path, contents.after, stasisFormat(this.other, path))
-      || !whitespaceInsensitive(basePath, contents.before, stasisFormat(this.base, basePath))
+    const unlisted = this._unlisted(path, entry, contents)
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
@@ -839,6 +854,13 @@ export class BundleCompareCode extends LitElement {
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
     return { before: shown, after, textual, large, pretty, key, generated, renames, marking, reading, hiding, changes, model, whitespace }
+  }
+
+  // Whether a file's whitespace may mean something on either side, so its
+  // whitespace changes show whatever the setting (see _fileState).
+  _unlisted(path, { basePath = path }, { before, after }) {
+    return !whitespaceInsensitive(path, after, stasisFormat(this.other, path))
+      || !whitespaceInsensitive(basePath, before, stasisFormat(this.base, basePath))
   }
 
   // What diff -b would hide between the texts a file shows (whitespaceHidden),
