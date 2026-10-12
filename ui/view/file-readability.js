@@ -101,19 +101,25 @@ function minifiedAverage(text, { stringOrComment, droppable, needed }) {
 const OBFUSCATED_NAME = /(?<![\p{ID_Continue}$])_0x[0-9a-f]{4,6}(?![\p{ID_Continue}$])/gu
 const OBFUSCATED_NAMES = 20
 const OBFUSCATED_LOOP = /while\s*\(\s*!!\[\]\s*\)/u
+// Names counted before a fingerprint's count stops, reading as that many or
+// more: each is kept to tell it from the others, and a file can hold millions.
+const OBFUSCATED_COUNTED = 1000
 // A text's obfuscator fingerprint, `{ names, loop }`: how many such names it
-// has, and whether it has the loop; null where it has neither enough names
-// nor the loop.
+// has, up to OBFUSCATED_COUNTED, and whether it has the loop; null where it
+// has neither enough names nor the loop.
 export function npmObfuscation(text) {
   const names = new Set()
-  for (const [name] of text.matchAll(OBFUSCATED_NAME)) names.add(name)
+  for (const [name] of text.matchAll(OBFUSCATED_NAME)) {
+    names.add(name)
+    if (names.size === OBFUSCATED_COUNTED) break
+  }
   const loop = OBFUSCATED_LOOP.test(text)
   return names.size >= OBFUSCATED_NAMES || loop ? { names: names.size, loop } : null
 }
 
 // What a fingerprint holds, as a tooltip says it.
-export const npmObfuscationFound = ({ names, loop }) =>
-  [names >= OBFUSCATED_NAMES && `${names.toLocaleString('en')} names such as _0x1a2b`, loop && 'while(!![])'].filter(Boolean).join(', and ')
+export const npmObfuscationFound = ({ names, loop }) => [names >= OBFUSCATED_NAMES
+  && `${names.toLocaleString('en')}${names === OBFUSCATED_COUNTED ? ' or more' : ''} names such as _0x1a2b`, loop && 'while(!![])'].filter(Boolean).join(', and ')
 
 // A code file this large is mostly a bundle, worth a look where a version
 // adds it: JavaScript or TypeScript, not a declaration file, which holds no

@@ -21,7 +21,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoryStatus, npmCompareBadges, npmCompareFiles, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
-const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmTextEncoding } = await import('../ui/view/file-readability.js')
+const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmEncodingTag, npmFileFlagTags, npmFileReadability, npmLargeCode, npmObfuscation, npmObfuscationFound, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 // Template text, its values spelled out, `nothing` as none.
@@ -207,6 +207,9 @@ test('code minified into shorter lines is minified too, by its lines\' length an
 
 test('an obfuscator\'s fingerprint is 20 of its _0x names or more, or the loop it turns its strings with', () => {
   assert.deepEqual(npmObfuscation(obfuscated(20)), { names: 20, loop: false })
+  assert.deepEqual(npmObfuscation(`${obfuscated(5000)}while(!![]){}`), { names: 1000, loop: true }, 'counted to 1,000, the loop found past them')
+  assert.equal(npmObfuscationFound({ names: 1000, loop: false }), '1,000 or more names such as _0x1a2b')
+  assert.equal(npmObfuscationFound({ names: 999, loop: true }), '999 names such as _0x1a2b, and while(!![])')
   assert.equal(npmObfuscation(obfuscated(19)), null, 'fewer')
   assert.equal(npmObfuscation(`${obfuscated(10)}${obfuscated(10)}`), null, 'a name used again counts once')
   assert.deepEqual(npmObfuscation('(function(){while(!![]){try{break}catch(e){}}})()'), { names: 0, loop: true })
