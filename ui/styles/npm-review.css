@@ -170,10 +170,12 @@ npm-review-diff { display: flex; flex-direction: column; flex: 1; min-width: 0; 
   font-size: .7rem;
   }
 .npm-review-verdict-choice:is(.accept, .accept-with-nits) { --verdict-color: var(--green); }
-.npm-review-verdict-choice.request-changes { --verdict-color: var(--medium); }
-.npm-review-verdict-choice.reject { --verdict-color: var(--critical); }
+.npm-review-verdict-choice.request-changes, .npm-review-finalize.request-changes { --verdict-color: var(--medium); }
+.npm-review-verdict-choice.reject, .npm-review-finalize.reject { --verdict-color: var(--critical); }
 .npm-review-verdict-choice:has(:checked) { background: var(--surface-active); color: var(--text); }
-.npm-review-verdict-choice:not(.unchecked):has(:checked) {
+.npm-review-verdict-choice:not(.unchecked):has(:checked),
+npm-review button.npm-review-finalize:is(.request-changes, .reject),
+npm-review button.npm-review-finalize:is(.request-changes, .reject):not(:disabled):hover {
   background: rgb(from var(--verdict-color) r g b / .17); color: var(--verdict-color);
   }
 .npm-review-verdict-choice:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }

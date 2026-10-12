@@ -1,6 +1,26 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { allowedReviewVerdicts, auditMarkdown, needsPackageJsonReview, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
+import { allowedReviewVerdicts, auditMarkdown, needsPackageJsonReview, npmReviewVerdictLimit, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
+
+test('security findings constrain only the reviewed version, combined with the strictest file verdict', () => {
+  const npm = { version: '2.0.0' }
+  const list = (id, severity, affected = [0]) => ({ versions: ['2.0.0', '1.0.0'], advisories: [{ id, severity, affected }] })
+  const socket = (...types) => ({ alerts: types.map(type => ({ type })) })
+  assert.equal(npmReviewVerdictLimit(npm, null, socket('malware')), 'reject')
+  assert.equal(npmReviewVerdictLimit(npm, list('MAL-2026-1', 'critical')), 'reject')
+  assert.equal(npmReviewVerdictLimit(npm, list('GHSA-test', 'critical')), 'request-changes')
+  assert.equal(npmReviewVerdictLimit(npm, null, socket('criticalCVE')), 'request-changes')
+  assert.equal(npmReviewVerdictLimit(npm, list('GHSA-test', 'critical'), socket('malware')), 'reject')
+  assert.equal(npmReviewVerdictLimit(npm, list('MAL-2026-1', 'critical', [1])), 'accept', 'fixed findings do not constrain the target')
+  assert.equal(npmReviewVerdictLimit(npm, list('GHSA-test', 'high'), socket('networkAccess', 'typosquat')), 'accept')
+  assert.equal(npmReviewVerdictLimit(npm, null, { alerts: [], scores: { vulnerability: .25 } }), 'accept', 'aggregate scores are not a critical finding')
+  assert.equal(npmReviewVerdictLimit({ ...npm, private: true }, null, socket('malware')), 'accept', 'Socket findings are only for public packages')
+  assert.equal(npmReviewVerdictLimit(npm, { status: 'loading' }), 'accept')
+  assert.equal(npmReviewVerdictLimit({ version: '0.0.1-security', manifest: { description: 'security holding package', publisher: 'npm' } }), 'reject')
+  assert.deepEqual(allowedReviewVerdicts([{ file: 'a.js', status: 'accept' }], 'reject'), ['reject'])
+  assert.deepEqual(allowedReviewVerdicts([{ file: 'a.js', status: 'accept-with-nits' }], 'request-changes'), ['request-changes', 'reject'])
+  assert.deepEqual(allowedReviewVerdicts([{ file: 'a.js', status: 'reject' }], 'request-changes'), ['reject'])
+})
 
 const paths = ['a.js', 'b.js', 'c.js', 'd.js']
 const entries = [

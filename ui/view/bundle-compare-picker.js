@@ -1,5 +1,6 @@
 import { nothing } from 'lit'
-import { TAGS_FIT } from './bundle-selector.js'
+// A choice’s tags are cut short beyond this width.
+const TAGS_FIT = 24
 
 // Both selects share a width, initially fitting the widest name or placeholder,
 // then every loaded choice and as many of its smaller tags as fit TAGS_FIT.

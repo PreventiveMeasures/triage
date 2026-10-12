@@ -27,6 +27,9 @@ import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } f
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { HOST_TAGS, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.js'
 import { npmHostFinding } from '../../risk/npm/held.js'
+import { npmReviewVerdictLimit, npmTakenDown } from '../../common/dependency-reviews.js'
+
+export { npmTakenDown } from '../../common/dependency-reviews.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -134,13 +137,8 @@ export const npmSocketFileTags = (alerts = []) => alerts.map(alert => {
     data-tooltip=${`Socket: ${socketAlertName(alert.type)}, ${severity}${alert.note ? ` · ${alert.note}` : ''}`}>${socketAlertName(alert.type)}</span>`
 })
 
-// A version npm publishes in place of a package its security team took down,
-// as it does for malicious code: a "security holding package" from
-// npm/security-holder, published by npm, or by one of its staff as
-// `0.0.1-security`.
-export function npmTakenDown({ npm: { version, manifest } }) {
-  const npms = manifest.description === 'security holding package' || manifest.github?.github?.toLowerCase() === 'npm/security-holder'
-  return npms && (manifest.publisher === 'npm' || /-security(?:\.\d+)?$/u.test(version))
+export function npmReviewLimit(entry) {
+  return npmReviewVerdictLimit(entry.npm, npmPackageAdvisories(entry.npm.name), npmSocketReport(entry))
 }
 
 // Over the summary: where npm took the package down, saying so, its readme

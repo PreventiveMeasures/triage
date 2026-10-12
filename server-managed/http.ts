@@ -146,6 +146,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
+import { allowedReviewVerdicts, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
@@ -2599,6 +2600,28 @@ function found<T>(value: T | null | undefined): T {
   return value
 }
 
+// Read the same target-version evidence as the viewer. Missing upstream
+// reports impose no extra verdict restriction; detected findings do.
+async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReader, doc: NpmVersionDocument, signal: AbortSignal) {
+  if (npmTakenDown({ npm: doc })) return 'reject' as const
+  const privileged = canReadPrivateNpm(reader, doc.name)
+  const advisories = async () => {
+    const versions = await readNpmVersions(doc.name, privileged, signal)
+    if (!versions) return null
+    return npmAdvisories(doc.name, versions.versions, {
+      githubToken: () => ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
+      repo: async () => {
+        const latest = await readNpmVersion(doc.name, 'latest', privileged, signal)
+        return (latest?.manifest['github'] as { github?: string } | undefined)?.github ?? null
+      },
+      cache: cacheSignal => auditCache(deps.config.upstreamCacheDir, deps.db, cacheSignal, deps.config.debug),
+      debug: deps.config.debug,
+    })
+  }
+  const [list, socket] = await Promise.all([advisories().catch(() => null), doc.private ? null : npmSocketReport(doc.name, doc.version).catch(() => null)])
+  return npmReviewVerdictLimit(doc, list, socket)
+}
+
 // Reviews are scoped to the bytes actually displayed, including the base.
 // Access to both versions is rechecked before returning or saving annotations.
 async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
@@ -2692,6 +2715,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
         }
       } finally { loads.forEach(load => load.release()) }
     }
+    const limit = change?.action === 'publish' && change.final && change.final.status !== 'reject'
+      ? await npmReviewPublicationLimit(deps, reader, doc, controller.signal) : 'accept'
     const current = await npmReader(deps, cookie)
     if (!current || current.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     if ([doc, base].some(item => item?.private && !canReadPrivateNpm(current, item.name))) { sendJson(res, 404, { error: 'package-not-found' }); return }
@@ -2699,6 +2724,9 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     const checked = await checkMutation(req, res, deps, cookie)
     if (!checked) return
     if (checked.user.id !== current.userId || !roleAtLeast(checked.user.role, 'triage')) { sendJson(res, 403, { error: 'forbidden' }); return }
+    if (change.action === 'publish' && change.final && !allowedReviewVerdicts([], limit).includes(change.final.status)) {
+      sendJson(res, 400, { error: limit === 'reject' ? 'review-malware' : 'review-critical-vulnerability' }); return
+    }
     const review = await deps.db.changeDependencyReview(context, checked.session.id, change, Date.now())
     sendJson(res, 200, { review })
   } catch (err) {

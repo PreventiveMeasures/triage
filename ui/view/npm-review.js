@@ -69,6 +69,15 @@ export class NpmReview extends LitElement {
     return this._statesCache.states
   }
   get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files) }
+  get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry) ?? 'accept' }
+  get _allowedVerdicts() {
+    const entries = new Map((this._shownReview?.entries ?? []).map(entry => [entry.file, entry]))
+    if (this._canEdit) {
+      for (const [file, draft] of this._drafts) entries.set(file, { file, status: draft.status || null })
+      if (this._file !== null) entries.set(this._file, { file: this._file, status: this._status || null })
+    }
+    return allowedReviewVerdicts([...entries.values()], this._securityLimit)
+  }
   get _needsPackageJson() { return needsPackageJsonReview(this._activeReview?.entries ?? [], this._files) }
   get _unchangedContinuation() {
     const source = this._continuation?.source
@@ -328,13 +337,14 @@ export class NpmReview extends LitElement {
       if (key !== this._key || !this._canEdit || this._unsaved || !this._summary.checkedFiles) return
       const review = this._activeReview
       if (!review) return
-      this._finalStatus = this._continuation?.source.status ?? summarizeReview(review.entries, this._files).verdictLimit; this._finalComment = review.comment ?? ''
+      const allowed = this._allowedVerdicts, continued = this._continuation?.source.status
+      this._finalStatus = allowed.includes(continued) ? continued : allowed[0]; this._finalComment = review.comment ?? ''
       this._publishRevision = review.revision; this._publishStep = true; this._panel = 'publish'
     } finally { this._finalizing = false }
   }
   _publish() {
     const review = this._activeReview
-    if (!review || !this._summary.checkedFiles || this._needsPackageJson || this._unchangedContinuation || !this._publishStep || this._selectedTeams.size === 0 || this._unsaved || !allowedReviewVerdicts(review.entries).includes(this._finalStatus)) return
+    if (!review || !this._summary.checkedFiles || this._needsPackageJson || this._unchangedContinuation || !this._publishStep || this._selectedTeams.size === 0 || this._unsaved || !this._allowedVerdicts.includes(this._finalStatus)) return
     return this._change({ action: 'publish', reviewId: review.id, revision: this._publishRevision, teamIds: [...this._selectedTeams],
       finalStatus: this._finalStatus, finalComment: this._finalComment })
   }

@@ -17,9 +17,29 @@ export function summarizeReview(entries, files) {
   return { coverage: checkedFiles === files.length ? 'full' : 'partial', checkedFiles, totalFiles: files.length, verdictLimit }
 }
 
-export function allowedReviewVerdicts(entries) {
+export function allowedReviewVerdicts(entries, limit = 'accept') {
   const verdicts = Object.keys(REVIEW_VERDICTS)
-  return verdicts.slice(verdicts.indexOf(summarizeReview(entries, null).verdictLimit))
+  return verdicts.slice(Math.max(verdicts.indexOf(limit), verdicts.indexOf(summarizeReview(entries, null).verdictLimit)))
+}
+
+// npm's security placeholder, identified by its provenance as well as its name.
+export function npmTakenDown({ npm: { version, manifest = {} } }) {
+  const npms = manifest.description === 'security holding package' || manifest.github?.github?.toLowerCase() === 'npm/security-holder'
+  return npms && (manifest.publisher === 'npm' || /-security(?:\.\d+)?$/u.test(version))
+}
+
+// Only findings affecting the version being reviewed constrain its verdict.
+// Socket's aggregate scores also fall for other reasons; use explicit alerts.
+// Alert identifiers: https://docs.socket.dev/docs/rule-conditions
+export function npmReviewVerdictLimit(npm, advisoryList, socket) {
+  if (!npm) return 'accept'
+  const index = advisoryList?.versions?.indexOf(npm.version) ?? -1
+  const advisories = index < 0 ? [] : advisoryList.advisories.filter(advisory => advisory.affected.includes(index))
+  const alerts = npm.private ? [] : socket?.alerts ?? []
+  if (npmTakenDown({ npm }) || alerts.some(alert => alert.type === 'malware')
+    || advisories.some(advisory => advisory.id?.startsWith('MAL-') || /^Malicious package\b/iu.test(advisory.title ?? ''))) return 'reject'
+  if (advisories.some(advisory => advisory.severity === 'critical') || alerts.some(alert => alert.type === 'criticalCVE')) return 'request-changes'
+  return 'accept'
 }
 
 export function needsPackageJsonReview(entries, files) {

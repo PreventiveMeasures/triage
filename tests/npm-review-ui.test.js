@@ -90,6 +90,45 @@ test('Review uses the current comparison source for badges and file alerts in bo
   assert.deepEqual(called.at(-1), [base, page.details])
 })
 
+test('Finalize tint follows allowed verdicts, including edits awaiting save and security findings', async () => {
+  const page = component()
+  page.details = { ...entry, json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page._base = EMPTY_REVIEW_BASE
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  page._files = ['index.js']
+  page._reviews = [{ ...review, entries: [{ ...file, status: 'accept' }] }]
+  page._resetEditor('index.js')
+  for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) {
+    page._status = status
+    assert.match(text(renderReview(page)), new RegExp(`npm-review-primary npm-review-finalize ${status}`, 'u'))
+    assert.equal(page._allowedVerdicts[0], status)
+  }
+  page._status = 'accept'
+  page._drafts.set('other.js', { status: 'reject' })
+  assert.equal(page._allowedVerdicts[0], 'reject', 'a verdict on a different file still constrains Finalize')
+  page._drafts.clear()
+  let limit = 'request-changes'
+  page.source = { choices: [], options: [], reviewVerdictLimit: () => limit }
+  await page._beginPublish()
+  assert.equal(page._finalStatus, 'request-changes')
+  assert.deepEqual(page._allowedVerdicts, ['request-changes', 'reject'])
+  assert.match(text(page._confirmation(page._activeReview)), /Critical vulnerabilities detected/u)
+  page._selectedTeams = new Set(['one'])
+  requests.length = 0
+  page._finalStatus = 'accept'
+  await page._publish()
+  assert.equal(requests.length, 0)
+  limit = 'reject'
+  page._finalStatus = 'request-changes'
+  assert.match(text(renderReview(page)), /npm-review-primary npm-review-finalize reject/u)
+  assert.match(text(page._confirmation(page._activeReview)), /Malware detected/u)
+  await page._publish()
+  assert.equal(requests.length, 0, 'a finding arriving during confirmation prevents a now-disallowed verdict')
+  await page._beginPublish()
+  assert.equal(page._finalStatus, 'reject')
+  assert.deepEqual(page._allowedVerdicts, ['reject'])
+})
+
 test('review URLs round trip scoped dependencies, version-only shorthand and Diff mode', () => {
   assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/reviews'))), '/reviews')
   for (const path of ['/npm/lib@2.0.0/review', '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0',

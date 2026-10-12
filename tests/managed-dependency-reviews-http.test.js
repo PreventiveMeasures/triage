@@ -34,6 +34,55 @@ async function fixture(t) {
 }
 const url = context => `/api/npm/reviews?${new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))}`
 
+test('publication enforces detected malware and critical vulnerabilities using server evidence', async t => {
+  const h = await fixture(t)
+  const cases = [
+    { name: 'review-malware', alert: 'malware', allowed: ['reject'], error: 'review-malware' },
+    { name: 'review-critical-socket', alert: 'criticalCVE', allowed: ['request-changes', 'reject'], error: 'review-critical-vulnerability' },
+    { name: 'review-critical-advisory', range: '*', allowed: ['request-changes', 'reject'], error: 'review-critical-vulnerability' },
+    { name: 'review-fixed-advisory', range: '<2.0.0', allowed: ['accept', 'accept-with-nits', 'request-changes', 'reject'] },
+  ]
+  const packages = cases.map(({ name }) => ({ ...packageOf(name, '2.0.0', { 'package.json': JSON.stringify({ name, version: '2.0.0' }) }), versions: ['2.0.0', '1.0.0'] }))
+  registry(t, packages)
+  const registryFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    const address = String(input)
+    const socket = /^https:\/\/firewall-api\.socket\.dev\/purl\/(.+)$/u.exec(address)
+    if (socket) {
+      const name = decodeURIComponent(socket[1]).slice('pkg:npm/'.length).split('@')[0]
+      const found = cases.find(row => row.name === name)
+      return Promise.resolve(Response.json({ name, version: '2.0.0', alerts: found?.alert ? [{ type: found.alert, severity: 'critical' }] : [] }))
+    }
+    if (address.endsWith('/-/npm/v1/security/advisories/bulk')) {
+      const queried = JSON.parse(init.body)
+      return Promise.resolve(Response.json(Object.fromEntries(Object.keys(queried).map(name => {
+        const found = cases.find(row => row.name === name)
+        return [name, found?.range ? [{ id: 901, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Critical example', severity: 'critical', vulnerable_versions: found.range, cwe: [] }] : []]
+      }))))
+    }
+    return registryFetch(input, init)
+  })
+  await h.db.createTeam('policy-team', 'Policy team', Date.now())
+  await h.db.setTeamMember('policy-team', h.sessions.triage.userId, { dependencies: true, security: true })
+  await h.send('/api/admin/teams/set-dependency-review', { who: 'admin', body: { teamId: 'policy-team', enabled: true } })
+  for (const [index, item] of cases.entries()) {
+    const context = { ecosystem: 'npm', package: item.name, version: '2.0.0', integrity: packages[index].doc.dist.integrity }
+    const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'package.json', comment: '', status: 'accept' } })
+    assert.equal(saved.status, 200)
+    const { id: reviewId, revision } = saved.body.review
+    const publish = { ...context, action: 'publish', reviewId, revision, teamIds: ['policy-team'], finalComment: '' }
+    for (const finalStatus of ['accept', 'accept-with-nits', 'request-changes'].filter(status => !item.allowed.includes(status))) {
+      const blocked = await h.send('/api/npm/reviews', { body: { ...publish, finalStatus, verdictLimit: 'accept', socket: null, advisories: [] } })
+      assert.equal(blocked.status, 400, `${item.name}: ${JSON.stringify(blocked.body)}`)
+      assert.equal(blocked.body.error, item.error)
+      assert.equal((await h.send(url(context))).body.reviews[0].publishedAt, null)
+    }
+    const published = await h.send('/api/npm/reviews', { body: { ...publish, finalStatus: item.allowed[0] } })
+    assert.equal(published.status, 200, `${item.name}: ${JSON.stringify(published.body)}`)
+    assert.equal(published.body.review.status, item.allowed[0])
+  }
+})
+
 test('review API validates bytes and file scope, protects identity, and publishes whole sets', async t => {
   const h = await fixture(t)
   const after = packageOf('lib', '2.0.0', { 'index.js': 'new\n', 'package.json': '{"name":"lib","version":"2.0.0"}' })

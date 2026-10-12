@@ -41,7 +41,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS } from '../../common/managed/routes.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmReviewLimit, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
@@ -2045,7 +2045,7 @@ function renderBundleSlide(entry) {
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details, entry)],
               ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
-                .source=${{ ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges }}></npm-review>`],
+                .source=${{ ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, reviewVerdictLimit: npmReviewLimit }}></npm-review>`],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
                 .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, dependencyTags: npmDependencyTags } : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],

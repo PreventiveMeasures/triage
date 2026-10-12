@@ -10,6 +10,8 @@ const ERRORS = {
   'no-reviewed-files': 'Review at least one changed file before publishing.',
   'package-json-not-reviewed': 'Review package.json before publishing a partial review.',
   'bad-final-verdict': 'Choose a final verdict no more favorable than the file verdicts.',
+  'review-malware': 'Malware detected. Only Reject is available.',
+  'review-critical-vulnerability': 'Critical vulnerabilities detected. Choose Request changes or Reject.',
   forbidden: 'Reviewing requires triage access.',
 }
 

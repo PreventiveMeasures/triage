@@ -25,9 +25,9 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion,
     { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`],
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
-  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { npmFileFlagTags, npmFileReadabilityOf, npmObfuscationFound, npmReadabilityFlags } = await import('../ui/view/file-readability.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityLabels } = await import('../risk/files/readability.js')
 const { npmTextEncoding } = await import('../risk/files/characters.js')
@@ -48,6 +48,20 @@ test('a file\'s readability is read once a version and path, and again for anoth
   assert.equal(npmFileReadabilityOf({}, 'index.js', code) === read, false, 'by version')
   assert.equal(npmFileReadabilityOf(details, 'index.js', null).category, 'binary', 'another text read anew')
 })
+
+test('review restrictions update when the same advisory and Socket data as the chips arrives', async () => {
+  const entry = { npm: { name: 'review-policy', version: '2.0.0' } }
+  const report = Promise.withResolvers()
+  answers.advisories['review-policy'] = { versions: ['2.0.0'], advisories: [{ id: 'test', severity: 'critical', affected: [0] }] }
+  answers.socket['review-policy@2.0.0'] = report.promise
+  assert.equal(npmReviewLimit(entry), 'accept')
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmReviewLimit(entry), 'request-changes')
+  report.resolve({ scores: null, alerts: [{ type: 'malware' }] })
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmReviewLimit(entry), 'reject')
+})
+
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [

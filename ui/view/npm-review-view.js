@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { allowedReviewVerdicts, summarizeReview } from '../../common/dependency-reviews.js'
+import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmCompareSource } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { NEXT_ICON } from './lit-icons.js'
@@ -13,6 +13,7 @@ const isFrozen = page => page._shownReview?.publishedAt != null
 const coverage = summary => summary.coverage === 'full' ? 'Full' : 'Partial'
 const errorMessage = page => page._error ? html`<p class="npm-review-error" role="alert">${page._error}</p>` : nothing
 const savingMessage = page => page._saveBlocked ? html`<div class="npm-review-saving" role="status">Saving changes…</div>` : nothing
+const finalizeClass = page => `npm-review-primary npm-review-finalize ${page._allowedVerdicts[0]}`
 const verdictChoices = (name, status, change, disabled, allowed = Object.keys(verdictLabels), unchecked = false) => html`<div class="npm-review-verdict-options" role="group" aria-label="Verdict">
   ${Object.entries(unchecked ? { '': 'Not checked', ...verdictLabels } : verdictLabels).map(([value, label]) => html`<label class=${`npm-review-verdict-choice ${value || 'unchecked'}`}>
     <input type="radio" name=${name} aria-label=${label} value=${value} .checked=${live(status === value)} ?disabled=${disabled || value !== '' && !allowed.includes(value)}
@@ -24,7 +25,7 @@ function reviewActions(page) {
     ? html`<button type="button" class="npm-review-text-button" @click=${() => page._openPanel('unsaved')}>Unsaved changes</button>`
     : html`<strong>${summary.checkedFiles} of ${summary.totalFiles}</strong> files checked`}</span>
     ${reviewProgress(summary.checkedFiles, summary.totalFiles)}</div>
-    ${page._canEdit ? html`<button type="button" class="npm-review-primary" ?disabled=${page._saving || page._loading || !summary.checkedFiles} @click=${() => void page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
+    ${page._canEdit ? html`<button type="button" class=${finalizeClass(page)} ?disabled=${page._saving || page._loading || !summary.checkedFiles} @click=${() => void page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
       : frozen && page._writable && (page._activeReview || page._ownPublished.length === 0) ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)} @click=${() => page._resume()}>Resume your review ${NEXT_ICON}</button>`
       : frozen && review.user === page.session?.id && page._writable ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'continue', reviewId: review.id, revision: review.revision })}>Continue review ${NEXT_ICON}</button>` : nothing}
@@ -82,7 +83,7 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
 }
 
 export function renderReviewConfirmation(page, review) {
-  const allowed = allowedReviewVerdicts(review.entries), summary = summarizeReview(review.entries, page._files)
+  const allowed = page._allowedVerdicts, summary = summarizeReview(review.entries, page._files)
   return html`<form class="npm-review-publish-form" @submit=${event => { event.preventDefault(); void page._publish() }}>
     <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${coverage(summary)} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}<p>${summary.totalFiles > summary.checkedFiles ? html`${summary.totalFiles - summary.checkedFiles} files not checked.
@@ -91,6 +92,8 @@ export function renderReviewConfirmation(page, review) {
         ? html`<button type="button" class="npm-review-text-button" @click=${() => { page._closePanel(); page._selectFile('package.json') }}>package.json</button>`
         : 'package.json'} before publishing a partial review.</p>` : nothing}</section>
       <div><strong>Final verdict</strong>${verdictChoices('final-verdict', page._finalStatus, status => { page._finalStatus = status }, busy(page), allowed)}</div>
+      ${page._securityLimit === 'reject' ? html`<p class="npm-review-help">Malware detected. Only Reject is available.</p>`
+        : page._securityLimit === 'request-changes' ? html`<p class="npm-review-help">Critical vulnerabilities detected.</p>` : nothing}
       <label>Final note <span class="npm-review-muted">· optional</span><textarea aria-label="Final comment" rows="3" maxlength="20000" .value=${live(page._finalComment)}
         placeholder="Summarize your findings or explain what remains…" ?disabled=${busy(page)} @input=${event => { page._finalComment = event.target.value }}></textarea></label>
       ${page._unchangedContinuation ? html`<p class="npm-review-help">Change a verdict or note to publish a new review.</p>` : nothing}
@@ -101,7 +104,7 @@ export function renderReviewConfirmation(page, review) {
           : 'Select at least one team to publish.'}</p>`}</fieldset>
       ${errorMessage(page)}</div>
     <footer class="npm-review-dialog-footer"><p>Publishing freezes your verdicts and notes.<br>You can continue in a new review to make changes.</p>
-      <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._needsPackageJson || page._unchangedContinuation || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
+      <button type="submit" class=${finalizeClass(page)} ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._needsPackageJson || page._unchangedContinuation || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
     </footer>
   </form>`
 }

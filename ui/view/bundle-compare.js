@@ -81,9 +81,6 @@ import { bundleLineCounts } from '../../common/bundle-metadata.js'
 const MAX_ROWS = 400
 // Widest version column in Removed / Added; a longer list ellipsizes.
 const MAX_VERSION_CHARS = 24
-// A source's select fits a choice's tags up to this many characters, past
-// which they are cut short.
-const TAGS_FIT = 24
 // The Overview's column order, Packages and Files alike.
 const LANES = ['removed', 'added', 'changed']
 
