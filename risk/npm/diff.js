@@ -23,8 +23,8 @@ const treeData = (content, at) => typeof content === 'string' ? `\0text\0${conte
 
 // `onlyOther`, the files the open version (`other`) adds, `{ path }` each, and
 // `changed`, those it changes, `{ path, modified }`, or moves, `{ path,
-// basePath, renamedFrom, modified }`, `modified` whether its content changed
-// too; each version as compare.js takes one. A file that isn't text is
+// renamedFrom, modified }`, `modified` whether its content changed too; each
+// version as compare.js takes one. A file that isn't text is
 // told by its digest (npmBinaries), as the viewer's Compare tells it.
 export function npmFilesDiff(base, other) {
   const after = bundleFilesAsMap(other), before = bundleFilesAsMap(base)
@@ -38,6 +38,6 @@ export function npmFilesDiff(base, other) {
   const renames = compareTrees(entries(onlyBase, before, 'a'), entries(onlyOther, after, 'b'), { paths: 'keys', renameLimit: RENAME_LIMIT, lines: false })
     .filter(change => change.status === 'renamed')
   const moved = new Set(renames.map(change => change.new.path))
-  for (const change of renames) changed.push({ path: change.new.path, basePath: change.old.path, renamedFrom: change.old.path, modified: change.similarity !== 100 })
+  for (const change of renames) changed.push({ path: change.new.path, renamedFrom: change.old.path, modified: change.similarity !== 100 })
   return { onlyOther: onlyOther.filter(path => !moved.has(path)).map(path => ({ path })), changed }
 }

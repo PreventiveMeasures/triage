@@ -300,7 +300,7 @@ describe('createNeonPubSub — LISTEN/NOTIFY round-trip on PGlite', () => {
   it('stop drains in-flight handler promises before returning', async () => {
     // `onBusMessage` hits the DB (`handle.revisionById.get` /
     // `getLive`); the lifecycle teardown runs `pubsub.stop()` and THEN
-    // `handle.close()` (see closeDb in server-e2e/index.ts). Without the
+    // `handle.close()` (see closeDb in server-e2e/app.ts). Without the
     // pendingHandlers drain, a handler mid-DB-query would race the
     // close and throw. Stage a slow handler and assert `stop()` waits
     // for it.

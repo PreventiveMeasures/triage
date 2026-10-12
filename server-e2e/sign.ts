@@ -157,7 +157,7 @@ export async function verifyEd25519(
 // `{ ok: false, canonical: null }` on bad shape / bad sig;
 // `{ ok: true, canonical: <bytes> }` on success.
 //
-// NOT used by `server-e2e/index.ts handleSave`. Production composes
+// NOT used by `server-e2e/sync-handlers.ts handleSave`. Production composes
 // the smaller helpers (`canonicalSave`, `computeRevisionIdFromCanonical`,
 // `verifyEd25519`) separately so the dup-precheck via
 // `revisionExists` can fire BEFORE Ed25519-verify and skip the

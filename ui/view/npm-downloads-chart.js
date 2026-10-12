@@ -3,9 +3,7 @@
 // between weeks and months and the hovered period's downloads at its top
 // right. Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
-import { DAY_MS, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel } from '../../risk/npm/downloads.js'
-
-export { DAY_MS } from '../../risk/npm/downloads.js'
+import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel } from '../../risk/npm/downloads.js'
 
 const HEIGHT = 72
 // The plot runs to the card's right edge, as the switch over it does.
@@ -17,7 +15,6 @@ const BAR_RADIUS = 4
 export const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const whole = new Intl.NumberFormat('en')
 
-const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)
 // Made once: the readout formats dates on every pointer move.
 const dateFormat = options => new Intl.DateTimeFormat('en', { ...options, timeZone: 'UTC' }).format
 const shortDate = dateFormat({ month: 'short', day: 'numeric' })

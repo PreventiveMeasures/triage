@@ -2648,8 +2648,8 @@ report.addEventListener('revalidation-detail-change', (e) => {
   render()
 })
 // The upstream lens. A full render like its neighbours: it changes
-// which groups exist and which members they hold (group.js
-// onlyUpstream), so every count, column and filter on screen is drawn
+// which groups exist and which members they hold (workspace-groups.js
+// mergeReportGroups), so every count, column and filter on screen is drawn
 // from a different set afterwards.
 report.addEventListener('upstream-only-change', (e) => {
   state.upstreamOnly = e.detail.on === true

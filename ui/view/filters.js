@@ -127,7 +127,7 @@ export function resetFilters() {
   // Including the revalidation outcome: this is "no filters", and one
   // that survived would keep hiding findings after a reset — which
   // matters more now that a revalidation report can OPEN on it (see
-  // ingest.js maybeDefaultToConfirmed), and that the deep-link and
+  // defaultRevalidateFilter), and that the deep-link and
   // graph-jump paths reset precisely so the finding they navigate to
   // is on screen.
   state.filterRevalidate = ''

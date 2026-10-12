@@ -43,5 +43,5 @@ export function riskAnswer(name, version, otherVersion = null, { downloads = nul
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
   const kept = npmLastingRisk(other, otherVersion === null ? null : versionOf(name, otherVersion))
   return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published,
-    ...npmAssessmentOf(kept, npmVersionFindings(other, { minimumReleaseAge, downloads, published })) }))
+    ...npmAssessmentOf(kept, npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads })) }))
 }

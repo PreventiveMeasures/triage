@@ -1309,7 +1309,7 @@ describe('what a dropped duplicate leaves behind', () => {
       _reportName: 'theirs.md',
       _source: 'claude-security',
       _analyzer: 'claude-security',
-      // Has a mechanism of its own (ingest.js recordCorrectedVariant),
+      // Has a mechanism of its own (finding-duplicates.js mergeReportDuplicateFields),
       // which keeps both reports' values as variants.
       correctedSeverity: 'low',
       correctedSeverityReason: 'Not exploitable.',

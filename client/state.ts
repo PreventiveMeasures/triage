@@ -775,7 +775,7 @@ export const state: State = store<State>({
   // finding, App switch or no. On, the list is the dependencies' own
   // code, narrowed group by group rather than filtered between them,
   // which is what leaves the card answering for those rows alone
-  // (group.js onlyUpstream has the whole of it).
+  // (workspace-groups.js mergeReportGroups has the whole of it).
   upstreamOnly: false,
   // Recorded at ingest when two copies of one finding disagree about what
   // the revalidation pass concluded — the same id under two different

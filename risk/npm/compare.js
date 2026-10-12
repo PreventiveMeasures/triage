@@ -1,20 +1,18 @@
 // What calls for a look at a package version against the one before it, as
 // findings: `{ id, severity, ... }` each (stamps.js SEVERITIES), what it found
-// beside. Each version as the viewer holds one (`{ kind: 'sourcemap', npm,
-// json, fileSizes? }`: npm's facts, `npm.manifest` as manifest.js reads a
-// version's document and `npm.published` when it was published, its files as
-// a source map lists them, `json.sources` and `json.sourcesContent`, a text
-// or null each, and their sizes by path where known), and
-// `files` how they differ, as Compare's diff has it (computeBundleDiff,
-// diff.js): `onlyOther`, the files the open version adds, and `changed`, those
-// it changes, each `{ path, basePath?, renamedFrom?, modified? }`, by its path
-// in the open version, the one compared with's `basePath` where it differs.
+// beside. Each version as risk holds one (`{ kind: 'sourcemap', npm, json,
+// fileSizes? }`: npm's facts, `npm.manifest` as manifest.js reads a version's
+// document, its files as a source map lists them, `json.sources` and
+// `json.sourcesContent`, a text or null each, and their sizes by path where
+// known), and `files` how they differ (diff.js npmFilesDiff): `onlyOther`, the
+// files the open version adds, and `changed`, those it changes, each `{ path,
+// renamedFrom?, modified? }`, by its path in the open version.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { npmVersionFileRisk, npmVersionHosts } from './files.js'
-import { npmVersionFindings } from './held.js'
 import { npmBecameUnreadable, npmLargeCode } from '../files/readability.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
-import { npmDependencyChanges, npmDependencySpecs, npmFlagDependencyChanges } from './dependencies.js'
+import { npmDependencySpecs } from './dependencies.js'
+import { npmFilesDiff } from './diff.js'
 import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
 
 // What the open version does to its files that calls for a look, as red
@@ -32,10 +30,7 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 function npmFileFindings(base, other, files) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
-  // A file it adds was none before, whatever the one compared with holds at
-  // its path, which can be another file where Compare lays the two out under
-  // other roots (`package/a.js` read as `a.js`).
-  const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.basePath ?? row.path)
+  const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.renamedFrom ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
   const touched = [...files.onlyOther, ...changed]
   const sizes = bundleFileSizes(other)
@@ -70,17 +65,18 @@ function npmNewHosts(base, other, files) {
   return [...found.values()]
 }
 
-// The dependencies the open version takes from elsewhere than npm's registry,
-// where the one compared with didn't, or by another spec (`non-registry-deps`,
-// each `{ name, was, now }`, its specs); and those it adds that nothing of it
-// imports, which npm installs all the same, its install scripts and all, as a
-// dependency added to run them would be (`unused-deps`, each `{ name, kind,
-// range }`); as dependencies.js flags each.
-export function npmDependencyFindings(base, other) {
-  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other)
+// Of the dependencies the open version adds and changes against `base`, or
+// alone, none given, each with its flags (dependencies.js
+// npmFlagDependencyChanges): those it takes from elsewhere than npm's
+// registry, where the one compared with didn't, or by another spec
+// (`non-registry-deps`, each `{ name, was, now }`, its specs); and those it
+// adds that nothing of it imports, which npm installs all the same, its
+// install scripts and all, as a dependency added to run them would be
+// (`unused-deps`, each `{ name, kind, range }`).
+export function npmDependencyFindings({ added, changed }, base) {
   const flagged = check => [...added, ...changed].filter(row => row.flags.some(flag => flag.check === check))
-  const was = npmDependencySpecs(base.npm.manifest)
-  const fetched = flagged('source').map(row => ({ name: row.name, was: was.get(row.name) ?? null, now: row.to ?? row.range }))
+  const was = base ? npmDependencySpecs(base.npm.manifest) : null
+  const fetched = flagged('source').map(row => ({ name: row.name, was: was?.get(row.name) ?? null, now: row.to ?? row.range }))
   const unimported = flagged('unimported').map(({ name, kind, range }) => ({ name, kind, range }))
   return [
     ...fetched.length > 0 ? [{ id: 'non-registry-deps', severity: 'high', dependencies: fetched }] : [],
@@ -89,29 +85,24 @@ export function npmDependencyFindings(base, other) {
 }
 
 // Everything that calls for a look at the open version (`other`) against the
-// one compared with (`base`), in the order a reviewer reads them: an open
-// version npm says is deprecated (held.js npmVersionFindings, `deprecated`); a
-// publisher that changed (release.js npmPublisherChange, `publisher`);
-// provenance lost (`provenance-lost`); install scripts added or changed
-// (`install-scripts`); its dependencies (npmDependencyFindings); its files
-// (npmFileFindings), with `files` how they differ, none without; the hosts its
-// code names anew (npmNewHosts, `new-hosts`); and the open version's own
-// findings but its deprecation (`too-new`, `popularity`), as `options` asks
-// for them (npmVersionFindings).
-export function npmCompareFindings(base, other, files = null, options = {}) {
-  const { manifest } = other.npm
-  const publisher = npmPublisherChange(base.npm.manifest, manifest)
-  const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json?.sources })))
-  const hosts = files && base.json && other.json ? npmNewHosts(base, other, files) : []
-  const own = npmVersionFindings(other, options)
+// one compared with (`base`), whatever the time, in the order a reviewer reads
+// them: a publisher that changed (release.js npmPublisherChange,
+// `publisher`); provenance lost (`provenance-lost`); install scripts added or
+// changed (`install-scripts`); its `dependencies` added and changed, as
+// flagged (npmDependencyFindings); its files, by how they differ (diff.js
+// npmFilesDiff, npmFileFindings); and the hosts its code names anew
+// (npmNewHosts, `new-hosts`).
+export function npmCompareFindings(base, other, dependencies) {
+  const publisher = npmPublisherChange(base.npm.manifest, other.npm.manifest)
+  const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json.sources })))
+  const files = npmFilesDiff(base, other)
+  const hosts = npmNewHosts(base, other, files)
   return [
-    ...own.filter(({ id }) => id === 'deprecated'),
     ...publisher ? [{ id: 'publisher', ...publisher }] : [],
-    ...npmProvenanceLost(base.npm.manifest, manifest) ? [{ id: 'provenance-lost', severity: 'critical' }] : [],
+    ...npmProvenanceLost(base.npm.manifest, other.npm.manifest) ? [{ id: 'provenance-lost', severity: 'critical' }] : [],
     ...scripts ? [{ id: 'install-scripts', severity: 'high', ...scripts }] : [],
-    ...npmDependencyFindings(base, other),
-    ...files && base.json && other.json ? npmFileFindings(base, other, files) : [],
+    ...npmDependencyFindings(dependencies, base),
+    ...npmFileFindings(base, other, files),
     ...hosts.length > 0 ? [{ id: 'new-hosts', severity: 'high', hosts }] : [],
-    ...own.filter(({ id }) => id !== 'deprecated'),
   ]
 }

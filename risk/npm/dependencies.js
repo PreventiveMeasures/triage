@@ -43,7 +43,7 @@ export function npmDependencyChanges(base, other) {
 }
 
 // Files no import is read from: prose, as the Overview tells it
-// (file-readability.js NPM_PROSE; not code named alike, as
+// (readability.js NPM_PROSE; not code named alike, as
 // `lib/history.js`), but MDX, which imports what it renders; source maps,
 // which quote whatever their sources import, and lockfiles, which name every
 // package installed; nor the package's own package.json, which names them all.

@@ -5,6 +5,7 @@
 // keeps a provenance statement for it, the scripts npm runs installing it,
 // its dependencies, and its deprecation.
 import publishers from '@preventive/publishers/npm.js'
+import { INSTALL_SCRIPTS } from './install-scripts.js'
 
 const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
 // The npm accounts known to publish: those with standing on one of npm's
@@ -37,9 +38,8 @@ export function npmVersionManifest(json) {
     if (record && Object.keys(record).length > 0) pick[key] = record
   }
   if (plainObject(json?.dist) && plainObject(json.dist.attestations) && plainObject(json.dist.attestations.provenance)) pick.provenance = true
-  // Not `prepare`, which runs only for a local or git install.
   const scripts = stringRecord(json?.scripts)
-  const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
+  const install = scripts ? INSTALL_SCRIPTS.filter(script => script in scripts) : []
   if (install.length > 0) pick.installScripts = Object.fromEntries(install.map(script => [script, scripts[script]]))
   return pick
 }

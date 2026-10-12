@@ -221,7 +221,8 @@ export function controlParts(text, lineEnd = false) {
 const escape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 // Highlighted markup with the same boxes. The markup is Prism's, or the
-// viewers' own built on it (prism-source-links.js, markHighlighted): every
+// viewers' own built on it (prism-source-links.js, bundle-compare-code-model.js
+// markHighlighted): every
 // `<` in its text escaped, so each one starts a tag. Its text is searched
 // with the tags left out, so a CR is read as ending its line by the newline
 // after a tag, and a tag's attributes are never searched.
