@@ -442,6 +442,37 @@ test('the search signs a line as the diff shows it with whitespace changes hidde
   assert.deepEqual(signs(), [' b1', '−a3', '+b3'], 'as its diff has it, the re-indented line unchanged')
 })
 
+test('a hit in a diff too large to show unasked asks for it, and opens at its line', () => {
+  const text = line => Array.from({ length: 60_000 }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
+  const element = view('src/large.js', [{ 'src/large.js': text('fetch(old)') }, { 'src/large.js': text('fetch(new)') }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  const markup = renderText(element.render())
+  assert.match(markup, /This diff is large/u)
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/large.js')
+  element._seek('src/large.js', hit, element._searchResults(element._railState().order).unsigned.get('src/large.js') === 'large')
+  assert.ok(element._forced.has('src/large.js'), 'its diff asked for')
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(<mark class="diff-word">new/u)
+})
+
+test('a file whose diff is of its pretty-printed copies lists its lines as published, unsigned, saying so', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view(null, [{ 'dist/printed.min.js': `var Y=1;${'q(Y);'.repeat(250)}fetch(1);\n` }, { 'dist/printed.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
+  // Managed, as the server pretty-prints a managed bundle's files.
+  element.base.managedId = 'b9'
+  element.other.managedId = 'b10'
+  element._mode = 'code'
+  element._query = 'fetch('
+  const signs = () => element._searchResults(element._railState().order).files.find(file => file.path === 'dist/printed.min.js').hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)
+  assert.deepEqual(signs(), ['−a0', '+b0'], 'as published while it is diffed so')
+  state.bundleSourcePretty = true
+  assert.deepEqual(signs(), ['?b0'])
+  assert.match(renderText(element.render()), /Diffed pretty-printed: its lines as published, unsigned, the lines it removed not searched\./u)
+})
+
 test('however long the search\'s scan takes, each render diffs a file more, and signs its hits', t => {
   // Every reading of the clock past the budget: the scan alone outlasts it.
   let clock = 0
@@ -505,7 +536,7 @@ test('a search hit in a minified file opens, pretty-printed, at the line holding
   element._query = 'Z(1)'
   element.render()
   const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'dist/search.min.js')
-  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 0, '+'], 'found on the one line of the file as published')
+  assert.deepEqual([hit.side, hit.line, hit.sign], ['b', 0, null], 'found on the one line of the file as published, unsigned: its diff is of the copies')
   element._seek('dist/search.min.js', hit)
   const markup = renderText(element.render())
   const rows = markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)

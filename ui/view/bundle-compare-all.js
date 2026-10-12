@@ -185,6 +185,8 @@ class BundleCompareAll extends BundleCompareCode {
     if (at >= this._fileLimit) this._fileLimit = Math.ceil((at + 1) / FILE_BATCH) * FILE_BATCH
     const entries = order.map(path => [path, this._entries.get(path)])
     const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
+    // As the rail's search asks (_prettyShown).
+    this._prettyAllowed = prettyAllowed
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
