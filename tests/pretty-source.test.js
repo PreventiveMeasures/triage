@@ -23,7 +23,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
     return new Promise((end, fail) => { npmRequests.push({ send: onLine, end, fail }) })
   },
 } })
-const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { keptPrettyCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
 // counts for no later test.
@@ -108,10 +108,14 @@ test('an npm version\'s copies come in one request, all its files that need it, 
   assert.deepEqual(['a.min.js', 'b.min.js', 'c.min.js', 'd.min.js'].map(path => copy(path).status), ['loading', 'loading', 'loading', 'loading'])
   assert.deepEqual(requests, [['npm', '@scope/lib', '2.0.0']], 'one request for them all')
   const asked = npmRequests[0]
+  const settledBefore = prettySettled()
   await asked.send({ path: 'a.min.js', source: hashOf(minified), text: 'var a = 1;\n' })
   assert.deepEqual(renders, ['a.min.js'], 'the view that asked repaints as each comes')
   assert.deepEqual(copy('a.min.js'), { status: 'ready', text: 'var a = 1;\n', hash: hashOf('var a = 1;\n') }, 'with its own hash')
   assert.equal(copy('b.min.js').status, 'loading', 'one still coming waits')
+  assert.equal(prettySettled(), settledBefore + 1, 'counted as come, for a view to tell its own work stale by')
+  assert.deepEqual(keptPrettyCopy(npm, 'a.min.js'), copy('a.min.js'), 'kept, to be read without asking')
+  assert.equal(keptPrettyCopy(npm, 'b.min.js'), null, 'none kept of one still coming')
   await asked.send({ path: 'b.min.js', source: hashOf('another file'), text: 'var b = 2;\n' })
   assert.deepEqual(copy('b.min.js'), { status: 'error', message: MISMATCH, retry: true }, 'one the server names as another file\'s is refused')
   await asked.send({ path: 'c.min.js', source: hashOf(`${minified}c`), status: 422, message: "This file couldn't be read as code." })
@@ -119,6 +123,7 @@ test('an npm version\'s copies come in one request, all its files that need it, 
   asked.end()
   await settledUntil(() => renders.length === 4)
   assert.deepEqual(copy('d.min.js'), { status: 'error', message: "The server didn't pretty-print this file.", retry: false }, 'one it brought none of')
+  assert.deepEqual(keptPrettyCopy(npm, 'd.min.js'), copy('d.min.js'))
   assert.deepEqual(prettyCopy(npm, { npm: npm.npm }, 'a.min.js', `${minified}x`), { status: 'error', message: MISMATCH, retry: false },
     'a text other than the version\'s file has none')
   togglePrettySource()
