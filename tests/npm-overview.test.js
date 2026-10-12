@@ -118,8 +118,13 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   assert.equal(category('lib/a.js', `${code}\nconst map = \`\n//# sourceMappingURL=data:application/json;base64,\${encode(map)}\``), 'ascii',
     'code that writes one has none')
   assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=data:application/json,%7B%22version%22%3A3%7D`), 'inline-map', 'percent-encoded')
-  for (const prose of ['README.md', 'docs/guide.markdown', 'LICENSE', 'CHANGELOG', 'notes.txt', 'LICENSE-MIT']) {
+  for (const prose of ['README.md', 'docs/guide.markdown', 'LICENSE', 'CHANGELOG', 'CHANGELOG.md', 'HISTORY', 'notes.txt', 'LICENSE-MIT', 'LICENSE.txt',
+    'LICENSE-LGPL2.1', 'LICENSE-GPL-3.0', 'README.org', 'README.rdoc', 'README.asc', 'History.mdown', 'CHANGES.2.0', 'LICENSE.2.0']) {
     assert.equal(category(prose, `${long} words\nmore`), 'ascii', `${prose}: prose wraps`)
+  }
+  assert.equal(category('dist/notice.min.js', `${code}\n${long}`), 'minified', 'code named as prose is code')
+  for (const path of ['lib/history.js', 'src/changes.ts', 'lib/readme-parser.js', 'lib/changes-2.0.js']) {
+    assert.equal(category(path, `${code}\n${code}\nconst payload = '${'x'.repeat(2000)}'\n${code}`), 'long', `${path}: code named as prose`)
   }
   const read = npmFileReadability('lib/a.js', `${code}\n${long}\n${long}y\n${code}`)
   assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])

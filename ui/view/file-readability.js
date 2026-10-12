@@ -33,8 +33,13 @@ export function npmTextEncoding(text) {
 
 // Lines longer than anyone writes by hand.
 export const NPM_LONG_LINE = 1000
-// Prose, which wraps where it is read: its long lines are paragraphs.
-const PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:[-.][^/]*)?)$/iu
+// Prose, which wraps where it is read: its long lines are paragraphs. By its
+// extension (text, Markdown and MDX, and the markup GitHub renders a README
+// from: `README.org`, `README.rdoc`), or its name alone (`LICENSE-MIT`,
+// `CHANGES`; a dot in it only a version's, `LICENSE-LGPL2.1`,
+// `CHANGES.2.0`; a prose extension after it is one), not code named alike
+// (`lib/history.js`, `dist/notice.min.js`), which can be minified as any.
+export const NPM_PROSE = /(?:\.(?:md|markdown|mdown|mkdn|mdx|txt|rst|adoc|asciidoc|asc|textile|rdoc|org|creole|mediawiki|wiki|pod)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:-[^/.]*)?(?:\.\d[^/.]*)*)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 // A line that is all one, the map in it as a data: URL, base64 or
 // percent-encoded: not code that writes one.
@@ -148,7 +153,7 @@ export const npmLargeCode = (path, bytes) => typeof bytes === 'number' && bytes 
 const SHORT_LINES = 200
 const UNREADABLE_LINE = 2000
 export function npmBecameUnreadable(path, was, now) {
-  if (!was || !now || was.category === 'binary' || now.category === 'binary' || PROSE.test(path) || SOURCE_MAP.test(path)) return false
+  if (!was || !now || was.category === 'binary' || now.category === 'binary' || NPM_PROSE.test(path) || SOURCE_MAP.test(path)) return false
   return was.longest <= SHORT_LINES && now.longest > UNREADABLE_LINE
 }
 
@@ -186,11 +191,11 @@ export function npmFileReadability(path, text) {
   }
   // A source map holds the names and sources of the code it maps, and prose
   // its examples: neither runs.
-  const obfuscation = PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
+  const obfuscation = NPM_PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
   const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
-  if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (NPM_PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
     // average more: told without reading its code.
