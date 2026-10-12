@@ -35,6 +35,7 @@ import { packageJsonInstallScripts } from './install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
+import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
@@ -165,19 +166,23 @@ function countLines(text) {
 }
 
 // A diff too large to compute before it is asked for.
-// path → { kind, baseBytes, otherBytes, basePath, renamedFrom, modified } for
-// every file that differs between the two sides of `files`
+// path → { kind, baseBytes, otherBytes, basePath, renamedFrom, modified, meta }
+// for every file that differs between the two sides of `files`
 // (bundle-compare-diff.js): removed, added, or changed, `basePath` naming the
 // file in the base bundle where that differs from its path, `renamedFrom` a
-// renamed one's old path, and `modified` whether its contents changed too.
+// renamed one's old path, `modified` whether its contents changed too (false
+// for a changed one whose record alone changed), and `meta` how what a stasis
+// bundle records of it changed.
 export function fileEntries(files) {
   const entries = new Map()
   if (!files) return entries
   for (const row of files.onlyBase) entries.set(row.path, { kind: 'removed', basePath: row.basePath, baseBytes: row.bytes, otherBytes: null })
   for (const row of files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
   for (const row of files.changed) {
-    entries.set(row.path, row.renamedFrom == null ? { kind: 'changed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes }
-      : { kind: 'renamed', basePath: row.basePath, renamedFrom: row.renamedFrom, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+    const recorded = { ...row.meta ? { meta: row.meta } : {} }
+    entries.set(row.path, row.renamedFrom == null
+      ? { kind: 'changed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...row.modified === false ? { modified: false } : {}, ...recorded }
+      : { kind: 'renamed', basePath: row.basePath, renamedFrom: row.renamedFrom, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes, ...recorded })
   }
   return entries
 }
@@ -509,7 +514,7 @@ export class BundleCompareCode extends LitElement {
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-            ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}
+            ${this._alertTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
             ${this._treeCounts(full, this._entries.get(full))}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
@@ -531,7 +536,8 @@ export class BundleCompareCode extends LitElement {
     if (!counts) return nothing
     const { additions, deletions } = counts
     const renamed = entry.kind === 'renamed'
-    if (renamed && additions === 0 && deletions === 0) {
+    // A file renamed, or recorded otherwise, as it was.
+    if ((renamed || entry.modified === false) && additions === 0 && deletions === 0) {
       return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
     }
     return html`<span class="bundle-compare-code-line-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
@@ -677,12 +683,16 @@ export class BundleCompareCode extends LitElement {
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind }, { before, after, textual, large, model, hiding, changes, whitespace }) {
+  _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, hiding, changes, whitespace }) {
     const size = value => formatBytes(value ?? 0)
+    const recorded = metaSentences(meta)
     if (!textual) {
+      if (kind === 'changed' && modified === false) {
+        return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
+      }
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
         : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
+      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.${recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
       return html`<div class="bundle-compare-code-message">
@@ -701,7 +711,8 @@ export class BundleCompareCode extends LitElement {
     const spaced = prefs.ignoreWhitespace && whitespace === 'hideable'
     const hidden = [spaced && 'whitespace', hiding && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
-      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
+      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.')
+        : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}</p>
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
@@ -713,7 +724,7 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${this._githubLink(path, entry)}`
+      ${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}${this._githubLink(path, entry)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one

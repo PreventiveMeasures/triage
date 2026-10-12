@@ -69,6 +69,28 @@ function sameContent(a, b) {
     || (a?.format === 'digest' && b?.format === 'digest' && a.digest === b.digest)
 }
 
+// What a stasis bundle records of a file beside its bytes: the format it
+// loads it in (a resource is carried as data, the rest run as code), whether
+// it carries an execute bit, and whether the bundle starts from it. A
+// function of the file's path; null for another kind of bundle, which
+// records none of it.
+export function bundleFileMeta(details) {
+  if (details?.kind !== 'stasis' || !details.bundle) return null
+  const { formats, executable, entries } = details.bundle
+  return path => ({ format: formats?.get(path), executable: executable?.has(path) ?? false, entry: entries?.has(path) ?? false })
+}
+
+// How a file's record changed from one stasis bundle to the other, as
+// `{ field, from, to }` (bundleFileMeta's fields): none where either side
+// records nothing, nor in a format either leaves unsaid.
+function metaChanges(before, after) {
+  if (!before || !after) return []
+  const changes = []
+  if (before.format !== undefined && after.format !== undefined && before.format !== after.format) changes.push({ field: 'format', from: before.format, to: after.format })
+  for (const field of ['executable', 'entry']) if (before[field] !== after[field]) changes.push({ field, from: before[field], to: after[field] })
+  return changes
+}
+
 // Comparator: largest absolute delta first, then path/label ascending
 // so equal-magnitude rows stay stably ordered. Used for the changed
 // file + package lists, where the biggest mover is the most
@@ -151,7 +173,7 @@ function emptyPkgAcc() {
 //     files: {
 //       onlyBase:  [{ path, bytes }],
 //       onlyOther: [{ path, bytes }],
-//       changed:   [{ path, baseBytes, otherBytes, delta, basePath?, modified? }],
+//       changed:   [{ path, baseBytes, otherBytes, delta, basePath?, modified?, meta? }],
 //     },
 //     packages: {
 //       onlyBase:  [{ pkg, bytes }],
@@ -172,14 +194,23 @@ function emptyPkgAcc() {
 // maps every base file to how it reads. `layout` (treeLayout) may come
 // from the caller, to key `pkgOf` by the same paths: it is asked of files
 // as the other bundle lays them out.
+// `meta`, each side's bundleFileMeta where it has one, compares what two
+// stasis bundles record of a file beside its bytes: a row whose record
+// changed carries how (`meta`, metaChanges), and a file whose record alone
+// changed is changed too, `modified: false`, its bytes the same.
 // `identical` is true when the two bundles carry the same files with
-// byte-identical content, resources included.
-export function computeBundleDiff(base, other, pkgOf, layout = treeLayout(base.keys(), other.keys())) {
+// byte-identical content, resources included, each recorded alike.
+export function computeBundleDiff(base, other, pkgOf, layout = treeLayout(base.keys(), other.keys()), meta = []) {
   const { root, paths: basePaths } = layout
   // The base's files as the other lays them out, and back.
   const baseFile = new Map([...basePaths].map(([from, to]) => [to, from]))
   base = new Map([...base].map(([path, content]) => [basePaths.get(path), content]))
   const atBase = path => baseFile.get(path) === path ? {} : { basePath: baseFile.get(path) }
+  // How a file's record changed, by its base path and its path, as a row's fields.
+  const recorded = (from, to) => {
+    const changes = metaChanges(meta[0]?.(from), meta[1]?.(to))
+    return changes.length > 0 ? { meta: changes } : {}
+  }
   const onlyBase = []
   const onlyOther = []
   const changed = []
@@ -206,6 +237,7 @@ export function computeBundleDiff(base, other, pkgOf, layout = treeLayout(base.k
       const bC = base.get(path)
       const oC = other.get(path)
       const same = sameContent(bC, oC)
+      const record = recorded(baseFile.get(path), path)
       const bB = byteLen(bC)
       // Identical content shares the byte count, so only measure the
       // other side when the files actually differ.
@@ -214,11 +246,11 @@ export function computeBundleDiff(base, other, pkgOf, layout = treeLayout(base.k
       otherBytes += oB
       acc.baseBytes += bB
       acc.otherBytes += oB
-      if (same) {
+      if (same && !record.meta) {
         unchangedFiles++
       } else {
         const delta = oB - bB
-        changed.push({ path, ...atBase(path), baseBytes: bB, otherBytes: oB, delta })
+        changed.push({ path, ...atBase(path), baseBytes: bB, otherBytes: oB, delta, ...record, ...same ? { modified: false } : {} })
         changedDelta += delta
         acc.changedFiles++
       }
@@ -248,7 +280,7 @@ export function computeBundleDiff(base, other, pkgOf, layout = treeLayout(base.k
       const bB = byteLen(bC), oB = same ? bB : byteLen(oC)
       onlyBaseBytes -= bB
       onlyOtherBytes -= oB
-      changed.push({ path: to, renamedFrom: from, basePath: baseFile.get(from), baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same })
+      changed.push({ path: to, renamedFrom: from, basePath: baseFile.get(from), baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same, ...recorded(baseFile.get(from), to) })
       changedDelta += oB - bB
       // Both in one package (its key is in the rename's).
       const acc = pkgAcc(from)
