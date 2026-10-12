@@ -922,18 +922,20 @@ function npmSpan(ms) {
 // with was published (`compared`, npm-package.js npmFlaggedDependencyChanges;
 // its first version published after it, npmVersionList's `created`): how
 // old it was when the open one was, or that it came after that, as a name
-// someone took once a release named it would; the day in its tooltip.
+// someone took once a release named it would; in its tooltip, a line each,
+// the day, how long before or after the open version, and what npm had.
 function newPackageTag({ opens, compared }) {
   const [base, open] = compared ?? []
   if (!base || !open) return nothing
   const { created } = npmVersionList(opens)
   const now = publishedAt(open), was = publishedAt(base)
   if (!created || !was || !now || Date.parse(created) <= Date.parse(was)) return nothing
-  const gap = Date.parse(now) - Date.parse(created)
-  const first = `First published on ${npmPublishedDay(created)}`, span = npmSpan(Math.abs(gap))
-  return gap >= 0
-    ? html`<span class="npm-dependency-flag is-new" data-tooltip=${`${first}, ${span} before ${open.version} was; npm had no package by its name when ${base.version} was published`}>${span} old</span>`
-    : html`<span class="npm-dependency-flag is-new" data-tooltip=${`${first}, ${span} after ${open.version} was: npm had no package by its name when either version was published`}>published later</span>`
+  const gap = Date.parse(now) - Date.parse(created), span = npmSpan(Math.abs(gap))
+  const lines = [`First published on ${npmPublishedDay(created)}`, `${span} ${gap >= 0 ? 'before' : 'after'} ${open.version} was`]
+  const note = `npm had no package by its name when ${gap >= 0 ? base.version : 'either version'} was published`
+  return html`<span class="npm-dependency-flag is-new" data-tooltip=${[...lines, note].join(' · ')}
+    .tooltipContent=${html`<div class="compare-tip"><div class="compare-tip-head">New package</div>${lines.map(line => html`<div>${line}</div>`)}<div class="compare-tip-note">${note}</div></div>`}
+    >${gap >= 0 ? `${span} old` : 'published later'}</span>`
 }
 
 // What tags a dependency Compare lists (bundle-compare.js source's

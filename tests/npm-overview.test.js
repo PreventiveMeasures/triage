@@ -642,8 +642,8 @@ test('a new dependency npm counts no downloads of is unpopular; one below the to
   answers.versions['crypto-uncounted'] = { versions: ['0.0.1-security'], times: { '0.0.1-security': '2026-03-31T03:25:11.636Z' }, created: '2026-03-30T05:57:32.867Z' }
   const uncounted = await tag({ name: 'crypto-uncounted', opens: 'crypto-uncounted', compared: axios })
   assert.match(uncounted, /<span class="npm-downloads-tier is-unpopular"\s+data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular<\/span>/u)
-  assert.match(uncounted, /<span class="npm-dependency-flag is-new" data-tooltip=First published on Mar 30, 2026, 18 hours before 1\.14\.1 was; npm had no package by its name when 1\.14\.0 was published>18 hours old<\/span>$/u,
-    'its first version\'s day, one npm took down since')
+  assert.match(uncounted, /<span class="npm-dependency-flag is-new" data-tooltip=First published on Mar 30, 2026 · 18 hours before 1\.14\.1 was · npm had no package by its name when 1\.14\.0 was published\s+\.tooltipContent=<div class="compare-tip"><div class="compare-tip-head">New package<\/div><div>First published on Mar 30, 2026<\/div><div>18 hours before 1\.14\.1 was<\/div><div class="compare-tip-note">npm had no package by its name when 1\.14\.0 was published<\/div><\/div>\s+>18 hours old<\/span>$/u,
+    'its first version\'s day, one npm took down since, a line each in its tooltip')
   // Not a private one, whose downloads npm's API tells no one, nor one the
   // reader can't open: neither its tier nor its age.
   answers.counts['@acme/internal'] = null
@@ -658,13 +658,13 @@ test('a new dependency npm counts no downloads of is unpopular; one below the to
   answers.versions['fresh-low'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-02-01T00:00:00.000Z' }, created: '2026-02-01T00:00:00.000Z' }
   answers.versions.listing = { versions: ['1.1.0', '1.0.0'], times: { '1.1.0': '2026-03-31T00:21:00.000Z', '1.0.0': '2026-01-01T00:00:00.000Z' } }
   const listed = [{ name: 'listing', version: '1.0.0', published: null }, { name: 'listing', version: '1.1.0', published: null }]
-  assert.match(await tag({ name: 'fresh-low', opens: 'fresh-low', compared: listed }), /npm-downloads-tier is-low[^]*>top 100,000<\/span>[^]*<span class="npm-dependency-flag is-new" data-tooltip=First published on Feb 1, 2026, 58 days before 1\.1\.0 was;[^>]*>58 days old<\/span>$/u)
+  assert.match(await tag({ name: 'fresh-low', opens: 'fresh-low', compared: listed }), /npm-downloads-tier is-low[^]*>top 100,000<\/span>[^]*<span class="npm-dependency-flag is-new" data-tooltip=First published on Feb 1, 2026 · 58 days before 1\.1\.0 was ·[^]*<div>58 days before 1\.1\.0 was<\/div>[^]*>58 days old<\/span>$/u)
   // One first published after the open version was: npm had none by its
   // name then, as where someone took a name a release named.
   answers.counts['taken-later'] = days(0)
   answers.versions['taken-later'] = { versions: ['1.0.0'], times: { '1.0.0': '2026-04-02T06:00:00.000Z' }, created: '2026-04-02T06:00:00.000Z' }
   assert.match(await tag({ name: 'taken-later', opens: 'taken-later', compared: axios }),
-    /<span class="npm-dependency-flag is-new" data-tooltip=First published on Apr 2, 2026, 2 days after 1\.14\.1 was: npm had no package by its name when either version was published>published later<\/span>$/u)
+    /<span class="npm-dependency-flag is-new" data-tooltip=First published on Apr 2, 2026 · 2 days after 1\.14\.1 was · npm had no package by its name when either version was published[^]*<div>2 days after 1\.14\.1 was<\/div><div class="compare-tip-note">npm had no package by its name when either version was published<\/div>[^]*>published later<\/span>$/u)
   // Not one that existed when the version compared with was published.
   answers.counts['old-unpopular'] = days(0)
   answers.versions['old-unpopular'] = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' }, created: '2020-01-01T00:00:00.000Z' }
