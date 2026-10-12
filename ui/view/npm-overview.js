@@ -205,6 +205,19 @@ export function npmGithubFigures(entry) {
 
 // What built a version, as its provenance names its builder: GitHub Actions,
 // on a runner GitHub hosts or one of the publisher's own, or GitLab CI.
+// npm's provenance for a public version npm lists it for, as the session
+// has it; null for any other.
+const provenanceOf = ({ name, version, private: hidden, manifest }) => hidden || !manifest.provenance ? null
+  : npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
+
+// Whether the version's provenance names what built it, or may yet, being
+// asked for: where it does, no other fact need name the CI that published
+// it (npm-package.js npmOverviewMeta).
+export function npmProvenanceNamesBuilder(npm) {
+  const data = provenanceOf(npm)
+  return data !== null && (data.status === 'loading' || Boolean(data.provenance?.builder))
+}
+
 // What built a version, by its builder's id and its runner's (npm-provenance.ts
 // `runner`): GitHub's names its own runners or the publisher's; GitLab's
 // names the runner in its project (`<project>/-/runners/<id>`), whoever's.
@@ -228,15 +241,15 @@ const isHosted = (built, runner) => runner ? runner === 'github-hosted' || runne
 // another tarball) is flagged, as nothing vouches for it; nothing for a
 // private package, which can't have any.
 export function npmProvenanceFact(entry) {
-  const { name, version, manifest } = entry.npm
   if (entry.npm.private) return nothing
-  if (!manifest.provenance) return html`<span class="npm-commit-missing">None</span>`
-  const data = npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
+  const data = provenanceOf(entry.npm)
+  if (!data) return html`<span class="npm-commit-missing">None</span>`
   if (data.status === 'loading') return html`<span class="npm-commit-missing">Checking…</span>`
   if (data.status === 'error') return html`<span class="npm-commit-missing">Couldn't be read</span>`
   if (!data.provenance) {
     return html`<span class="npm-provenance-warning" data-tooltip="npm lists provenance for this version, but no statement naming its tarball could be read">Listed, but none for this tarball</span>`
   }
+  const { manifest } = entry.npm
   const { repository, commit, workflow, ref, builder, run, logIndex, runner } = data.provenance
   const link = (href, text, tooltip = nothing) => html`<a class="bundle-origin-link" href=${href} data-tooltip=${tooltip} target="_blank" rel="noopener noreferrer"><span>${text}</span></a>`
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/u.exec(repository)?.[1] ?? null

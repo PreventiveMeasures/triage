@@ -533,7 +533,7 @@ function npmAccount(manifest, account, label) {
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
 // are the package's file paths, once read.
-export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, provenance = nothing, files = null } = {}) {
+export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, provenance = nothing, provenanceNamesBuilder = false, files = null } = {}) {
   const { manifest } = entry.npm
   const github = manifest.github?.github
   // Its repository, at the commit it was published from where npm recorded
@@ -556,8 +556,8 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
       : manifest.author}</dd>` : nothing}
     ${manifest.publisher && manifest.publisher !== manifest.authorAccount
       ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest, manifest.publisher, `~${manifest.publisher}`)}</dd>`
-      // A CI npm trusts, which its provenance names where it has any.
-      : manifest.trustedPublisher && !manifest.provenance ? html`<dt>Publisher</dt><dd class="npm-trusted-publisher">${manifest.trustedPublisher}</dd>` : nothing}
+      // A CI npm trusts, which its provenance names where that's read.
+      : manifest.trustedPublisher && !provenanceNamesBuilder ? html`<dt>Publisher</dt><dd class="npm-trusted-publisher">${manifest.trustedPublisher}</dd>` : nothing}
     ${published ? html`<dt>Published</dt><dd>${npmRecentRelease(list, published)
       ? html`<span class="npm-recent">${npmPublished(published)}</span>` : npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">

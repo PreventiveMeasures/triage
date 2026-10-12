@@ -1166,7 +1166,8 @@ control. A version shows in the bundle view with four tabs:
   account where it is someone else's (each account green where it is known
   to publish one of npm's most downloaded packages, as
   `@preventive/publishers` lists them, else yellow), or, published by a CI npm
-  trusts (`GitHub Actions`), that CI in grey where no provenance names it,
+  trusts (`GitHub Actions`), that CI in grey unless its provenance, once
+  read, names what built it,
   when the version was published and
   how long ago (in the warning color under two weeks old, as a compromised
   release is mostly found and pulled within days; a version of a scope any

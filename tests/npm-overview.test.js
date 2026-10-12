@@ -20,7 +20,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmCompareBadges, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
@@ -421,4 +421,14 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   assert.match(await fact(rejected), /npm-provenance-warning[^>]*>Listed, but none for this tarball</u)
   assert.doesNotMatch(await fact(rejected), /Attested/u)
   assert.equal(text(npmProvenanceFact(entry('secret', { provenance: true }, { private: true }))), '', 'nothing for a private package')
+
+  // Whether it names what built the version, for the facts not to name its
+  // trusted publisher again: while it's asked for, and once read with a builder.
+  assert.equal(npmProvenanceNamesBuilder(entry('built', { provenance: true }).npm), true)
+  assert.equal(npmProvenanceNamesBuilder(entry('rejected', { provenance: true }).npm), false, 'not where no statement was read')
+  assert.equal(npmProvenanceNamesBuilder(entry('pending', { provenance: true }).npm), true, 'nor yet while it is asked for')
+  assert.equal(npmProvenanceNamesBuilder(entry('unbuilt', {}).npm), false)
+  answers.provenance['builderless@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: null }
+  assert.equal(await (async () => { npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm); await new Promise(resolve => { setImmediate(resolve) })
+    return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
 })

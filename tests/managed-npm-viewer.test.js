@@ -376,7 +376,8 @@ test('an author\'s and a publisher\'s npm accounts are green where they publish 
 
 test('a CI npm trusts to publish is named in grey where no provenance names it', () => {
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'symbol' ? '' : String(value ?? '')
-  const facts = manifest => text(npmOverviewMeta(npmPackageEntry({ ...data, manifest })))
+  const facts = (manifest, provenanceNamesBuilder) => text(npmOverviewMeta(npmPackageEntry({ ...data, manifest }), { provenanceNamesBuilder }))
   assert.match(facts({ trustedPublisher: 'GitHub Actions' }), /<dt>Publisher<\/dt><dd class="npm-trusted-publisher">GitHub Actions<\/dd>/u)
-  assert.doesNotMatch(facts({ trustedPublisher: 'GitHub Actions', provenance: true }), /<dt>Publisher<\/dt>/u, 'its provenance names it')
+  assert.match(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, false), /<dt>Publisher<\/dt>/u, 'though npm lists provenance, where none read names it')
+  assert.doesNotMatch(facts({ trustedPublisher: 'GitHub Actions', provenance: true }, true), /<dt>Publisher<\/dt>/u, 'its provenance names it')
 })
