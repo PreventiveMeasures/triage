@@ -571,7 +571,7 @@ export class BundleCompareCode extends LitElement {
         <ul class="bundle-code-search-hits">
           ${lines.map(hit => html`<li class="bundle-code-search-hit">
             <button type="button" class="bundle-code-search-hit-link" aria-label=${`${SIGNS[hit.sign]?.label ?? 'Line'} ${hit.line + 1}${hit.side === 'a' ? ' of the old text' : ''}: ${hit.text.trim().slice(0, 80)}`}
-              @click=${() => this._seek(path, hit, unsigned.get(path) === 'large')}>
+              @click=${() => this._seek(path, hit)}>
               <span class="bundle-code-search-hit-ln">${hit.line + 1}</span>
               <span class=${`bundle-compare-search-sign ${SIGNS[hit.sign]?.name ?? ''}`} aria-hidden="true">${hit.sign ?? ''}</span>
               <span class="bundle-code-search-hit-text mono">${railHitText(hit.text, hit.ranges)}</span>
@@ -659,9 +659,11 @@ export class BundleCompareCode extends LitElement {
 
   // A search hit picked: its file opened, its line brought into view where
   // the file's diff draws (see _seekRows); a diff too large to show unasked
-  // (`large`) asked for, the hit asking to see it.
-  _seek(path, hit, large = false) {
-    if (large) this._forced.add(path)
+  // (isLargeDiff, an added or removed file's or a changed one's) asked for,
+  // the hit asking to see it.
+  _seek(path, hit) {
+    const { before, after } = fileContents(this.base, this.other, path, this._entries.get(path))
+    if (typeof before === 'string' && typeof after === 'string' && isLargeDiff(before, after)) this._forced.add(path)
     this._sought = { path, side: hit.side, line: hit.line, at: hit.ranges[0]?.[0] ?? 0, query: this._query }
     if (path === this._current) this.requestUpdate()
     else this._select(path, false)

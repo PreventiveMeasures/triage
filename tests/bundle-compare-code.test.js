@@ -450,12 +450,28 @@ test('a hit in a diff too large to show unasked asks for it, and opens at its li
   const markup = renderText(element.render())
   assert.match(markup, /This diff is large/u)
   const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/large.js')
-  element._seek('src/large.js', hit, element._searchResults(element._railState().order).unsigned.get('src/large.js') === 'large')
+  element._seek('src/large.js', hit)
   assert.ok(element._forced.has('src/large.js'), 'its diff asked for')
   const shown = renderText(element.render())
   assert.doesNotMatch(shown, /This diff is large/u)
   const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
   assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(<mark class="diff-word">new/u)
+})
+
+test('a hit in a file added too large to show unasked asks for its diff too, and opens at its line', () => {
+  const text = Array.from({ length: 120_000 }, (_, i) => i === 7 ? 'fetch(new)' : `line ${i}`).join('\n') + '\n'
+  const element = view('src/added-large.js', [{}, { 'src/added-large.js': text }])
+  element._mode = 'code'
+  element._query = 'fetch('
+  assert.match(renderText(element.render()), /This diff is large/u)
+  const { hits: [hit] } = element._searchResults(element._railState().order).files.find(file => file.path === 'src/added-large.js')
+  assert.deepEqual([hit.sign, hit.line], ['+', 7])
+  element._seek('src/added-large.js', hit)
+  assert.ok(element._forced.has('src/added-large.js'))
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /This diff is large/u)
+  const rows = shown.slice(shown.indexOf('aria-label="Diff"')).split('role="row"').slice(1)
+  assert.match(rows[element._soughtRow.index], /<span class="diff-num">8<\/span><span class="diff-sign">\+<\/span>[^]*fetch\(new\)/u)
 })
 
 test('a file whose diff is of its pretty-printed copies lists its lines as published, unsigned, saying so', t => {
