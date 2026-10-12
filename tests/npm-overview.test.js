@@ -26,7 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDownloadCounts: names => { countsAsked.push(names); return Promise.resolve({ downloads: Object.fromEntries(names.filter(name => name in answers.counts).map(name => [name, answers.counts[name]])) }) },
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => { versionsAsked.push(name); return versionsFail.has(name) ? Promise.reject(new Error('package-not-found')) : Promise.resolve(answers.versions[name] ?? { versions: [] }) }, fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmCompareBadges, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmSettledDownloads, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileFlagTags, npmFileReadability, npmFileReadabilityOf, npmLargeCode, npmObfuscation, npmObfuscationFound, npmReadabilityFlags, npmReadabilityLabels, npmTextEncoding } = await import('../ui/view/file-readability.js')
 const { computeBundleDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -340,6 +340,21 @@ test('an advisory affects the version shown, is fixed in it, or covers later ver
   assert.equal(npmAdvisoryStatus(advisory([0, 2]), versions, '1.2.0'), 'later', 'ranges either side of it: a later version is still affected')
   assert.equal(npmAdvisoryStatus(advisory([3]), versions, '2.0.0-beta.1'), 'fixed', 'a version not listed compares by semver')
   assert.equal(npmAdvisoryStatus(advisory([]), versions, '1.0.0'), 'later')
+})
+
+test('the Advisories column notes where GitHub\'s repository advisories couldn\'t be checked, or are as it last listed them, how long ago', async () => {
+  const column = async name => {
+    const entry = { npm: { name, version: '1.0.0' } }
+    npmAdvisoriesColumn(entry)
+    await new Promise(resolve => { setImmediate(resolve) })
+    return rendered(npmAdvisoriesColumn(entry))
+  }
+  answers.advisories['note-checked'] = { versions: ['1.0.0'], advisories: [], repository: true }
+  answers.advisories['note-unchecked'] = { versions: ['1.0.0'], advisories: [], repository: false }
+  answers.advisories['note-kept'] = { versions: ['1.0.0'], advisories: [], repository: true, keptAt: new Date(Date.now() - 3 * 60 * 60_000 - 60_000).toISOString() }
+  assert.doesNotMatch(await column('note-checked'), /npm-advisories-note/u)
+  assert.match(await column('note-unchecked'), /<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown\.<\/p>/u)
+  assert.match(await column('note-kept'), /<p class="npm-advisories-note">GitHub's repository advisories are as of 3 hours ago: they couldn't be checked now\.<\/p>/u)
 })
 
 test('downloads group into 7-day weeks ending on the last day, a partial oldest week left out', async () => {

@@ -25,10 +25,12 @@ function advisoryGithubClient(token: string | null, signal: AbortSignal): Client
 // The managed caller supplies its user's token when available; public shares
 // remain anonymous. Upstream sends this credential only to GitHub and returns
 // published advisories, matching versions across npm, OSV and repository rows.
-// `cache` keeps each repository's listing (upstream-cache.ts) across audits.
+// `cache` keeps each repository's listing (upstream-cache.ts) across audits;
+// `github`, a client of the caller's, asks GitHub in place of one with
+// `githubToken`.
 export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal,
-  { debug = false, repoAdvisories = false, details = false, githubToken = null, cache }: {
-    debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null; cache?: CacheStore | undefined
+  { debug = false, repoAdvisories = false, details = false, githubToken = null, github, cache }: {
+    debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null; github?: Client; cache?: CacheStore | undefined
   } = {}): Promise<
   { status: 200; body: Advisory[] } | { status: 502; body: { error: string } }
 > {
@@ -45,7 +47,7 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
     // Kept in the caller's store, or without one in upstream's disk cache,
     // where the server set one (auditCache).
     const result = await Promise.race([
-      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details, ...(cache && { cache }) }), deadline,
+      advisories(packages, { github: github ?? advisoryGithubClient(githubToken, signal), repoAdvisories, details, ...(cache && { cache }) }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

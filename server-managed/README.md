@@ -1090,7 +1090,8 @@ On Vercel, only the listings are kept, in `managed_upstream_cache` and for the
 same 90 minutes, shared by every viewer, public share and instance: only public
 repositories publish advisories. Nothing else is kept there or on disk. Upstream
 stamps, checks and expires the entries; refreshes replace the repository's
-single row. The listings of repositories an audit already knows (GitHub
+single row, and an expired listing stays, for the npm Overview's advisories to
+take where GitHub can't be reached (`GET /api/npm/advisories`). The listings of repositories an audit already knows (GitHub
 dependencies, Soldeer dependencies' recorded repositories, and on a recheck,
 every dependency's recorded repository) are read in one query, since a request's
 queries share one Neon connection; listings of repositories upstream looks up,
@@ -1640,7 +1641,7 @@ tags }`: the tags of its GitHub repository that point to its publish commit
 finds them by name, and needs a token: the reader's own, where they have one,
 and none are asked without. Only a public repository's are answered, kept an
 hour for that repository and commit. `GET /api/npm/advisories?name=` returns `{ name, versions,
-advisories, repository }`, asked as bundle advisories with repository
+advisories, repository, keptAt? }`, asked as bundle advisories with repository
 advisories are: what `npm audit` asks npm's registry, for every published
 version at once (`source: 'registry'`), and what the package's GitHub
 repository publishes that npm does not report yet (`source: 'repository'`):
@@ -1652,9 +1653,16 @@ url?, title?, severity?, cvss?, cwe, range?, details?, affected }`, `details`
 its text (Markdown): OSV's record of an npm advisory's GHSA, a repository
 advisory's own description; `affected` indexing
 `versions`, one row an advisory: npm's registry answers one a range it covers,
-merged here, their ranges joined with `||`. `repository` is false where GitHub refused (its anonymous rate
-limit, say), or couldn't say whether the repository is public, leaving npm's
-alone; such a list is asked again on the next request. `GET
+merged here, their ranges joined with `||`. Where GitHub refuses the listing (its anonymous rate
+limit, say), or can't say whether the repository is public, the listing last
+kept for it is taken instead, however old: read where audits keep listings,
+on disk or in `managed_upstream_cache`, never written, and checked by upstream
+as its own are, `keptAt` saying when it was kept. GitHub is asked nothing for
+it, and an audit that fails with it is npm's failing, not asked a third time.
+Only where none is kept, or upstream won't take it, is `repository` false,
+leaving npm's alone. A repository GitHub says isn't public
+never has its kept listing taken. Such a list, kept or npm's alone, is asked
+again on the next request. `GET
 /api/npm/socket?name=&version=` returns `{ name, version, socket }`: Socket's
 report on the version, as Socket Firewall asks it (no key), `{ scores,
 alerts }`, `scores` each 0 to 1 (`overall`, `supplyChain`, `vulnerability`,
