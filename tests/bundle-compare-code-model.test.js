@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -50,9 +50,48 @@ test('added and removed files are one block of every line', () => {
   assert.deepEqual(removed.noEol, { a: true, b: false })
 })
 
-test('ignoring whitespace pairs lines that differ only in it', () => {
+test('ignoring whitespace pairs lines that differ only in how much of it they have, as diff -b does', () => {
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n', { ignoreWhitespace: true }).blocks.length, 0)
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n').blocks.length, 1)
+  assert.equal(lineDiff('  a()\n', '    a()\n', { ignoreWhitespace: true }).blocks.length, 0, 're-indented')
+  for (const [before, after] of [['exec("rm -rf /tmp/x")\n', 'exec("rm -rf / tmp/x")\n'], ['return x\n', 'returnx\n'], ['c()\n', '    c()\n']]) {
+    assert.equal(lineDiff(before, after, { ignoreWhitespace: true }).blocks.length, 1, `${JSON.stringify(before)} → ${JSON.stringify(after)}: blanks put between other characters, or taken from there`)
+  }
+})
+
+test('what diff -b would hide: whether it hides a change, and one mixing kinds of blank', () => {
+  assert.deepEqual(whitespaceHidden('  a()\n', '    a()\n'), { hides: true, mixed: false })
+  assert.deepEqual(whitespaceHidden('  a()\n', '\ta()\n'), { hides: true, mixed: true }, 'spaces turned to a tab')
+  assert.deepEqual(whitespaceHidden('\t  a()\n', '\t    a()\n'), { hides: true, mixed: true }, 'a run of tabs and spaces made longer')
+  assert.deepEqual(whitespaceHidden('a b\n', 'ab\n'), { hides: false, mixed: false }, 'a blank taken from between two characters shows')
+})
+
+test('whitespace is hidden only in files whose whitespace means nothing, told by extension or #! line', () => {
+  for (const path of ['src/a.js', 'src/a.mjs', 'src/a.cjs', 'src/a.jsx', 'src/a.ts', 'types/a.d.ts', 'src/a.tsx', 'package.json', 'tsconfig.jsonc', 'styles/a.css', 'styles/a.SCSS',
+    'styles/a.less', 'index.html', 'icon.svg', 'pom.xml', 'src/a.c', 'src/a.h', 'src/a.cpp', 'src/A.java', 'build.gradle.kts', 'main.go', 'src/lib.rs', 'App.cs', 'App.swift', 'index.php', 'install.sh']) {
+    assert.equal(whitespaceInsensitive(path), true, path)
+  }
+  for (const path of ['tools/gen.py', '.github/workflows/ci.yml', 'Makefile', 'README.md', 'src/a.coffee', 'views/a.pug', 'styles/a.sass', 'data/a.tsv', 'src/Main.lagda',
+    'src/App.vue', 'LICENSE', 'notes.txt', 'binding.gyp', 'pyproject.toml', 'src/a.jsonl', 'src/a.json.py']) {
+    assert.equal(whitespaceInsensitive(path), false, `${path}: whatever its type might be, its whitespace shows`)
+  }
+  // An extensionless script, by its #! line, one known whole.
+  for (const line of ['#!/usr/bin/env node', '#! /usr/bin/env node', '#!/usr/local/bin/node', '#!/bin/sh', '#!/bin/bash -e', '#!/usr/bin/env deno']) {
+    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), true, line)
+    assert.equal(whitespaceInsensitive('bin/tool', line), true, `${line}, alone`)
+  }
+  for (const line of ['#!/usr/bin/env python3', '#!/usr/bin/env -S -u node python3', '#!/usr/bin/env -S node --no-warnings', '#!/usr/bin/env node2',
+    '#!/usr/bin/env node # python', '#!/usr/bin/env node\r', '#!/usr/bin/env shellcheck', '#!/usr/bin/coffee', '// #!/usr/bin/env node', ' #!/bin/sh']) {
+    assert.equal(whitespaceInsensitive('bin/tool', `${line}\nrun()\n`), false, JSON.stringify(line))
+  }
+  assert.equal(whitespaceInsensitive('bin/tool', 'run()\n'), false, 'nor one with no #! line')
+  assert.equal(whitespaceInsensitive('bin/tool', null), false, 'nor a side that is not text')
+  // A stasis bundle's own format for the file, where it records one, over its name.
+  for (const [path, format, insensitive] of [['src/a.js', 'module', true], ['CMakeLists.txt', 'cmake', true], ['gradlew', 'shell', true], ['App.xcodeproj/project.pbxproj', 'pbxproj', true],
+    ['src/a.js', 'resource', false], ['src/a.js', 'resource:base64', false], ['tools/gen.py', 'python', false], ['Podfile', 'podfile', false], ['ios/Podfile.lock', 'podfile-lock', false],
+    ['fix.patch', 'patch', false], ['src/a.js', 'a-format-no-one-knows', false]]) {
+    assert.equal(whitespaceInsensitive(path, '', format), insensitive, `${path} as ${format}`)
+  }
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

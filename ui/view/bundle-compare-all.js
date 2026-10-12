@@ -158,7 +158,7 @@ class BundleCompareAll extends BundleCompareCode {
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.generated), false, false, shown.some(({ file }) => file.whitespace))}
+          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.generated), false, shown.some(({ file }) => file.whitespace) ? 'hideable' : null)}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
@@ -167,7 +167,7 @@ class BundleCompareAll extends BundleCompareCode {
                 ${this._fileName(path, entry, prefix)}
                 <span class="bundle-code-main-spacer"></span>
                 ${this._fileFigures(entry, file.model)}
-                ${file.mixedWhitespace ? this._whitespaceToggle(true) : nothing}
+                ${file.whitespace && file.whitespace !== 'hideable' ? this._whitespaceToggle(file.whitespace) : nothing}
               </header>
               ${this._fileBody(path, entry, file)}
             </section>`)}

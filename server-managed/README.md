@@ -227,12 +227,27 @@ a local or git install, and `node-gyp rebuild` beside a binding.gyp) are marked 
 the tree, each with its command, one new or changed saying so, and in its
 head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
-Lines always wrap. Code can hide whitespace changes, as
-`diff -w` does, except in a file where that would hide blanks of more than
-one kind changing between the same two characters, such as spaces turned to
-tabs or a tab put among spaces: its changes all show, and the toggle is off
-for it. The toggle is offered only where hiding whitespace changes hides one,
-in the diff shown or in diff -w's.
+Lines always wrap. Code can hide whitespace changes as
+`diff -b` does: a line re-indented, or with blanks added to a run of them or
+at its end, reads as unchanged, while blanks put between other characters or
+taken from between them still show, as in `/tmp` to `/ tmp` inside a string
+or `return x` to `returnx`, which `diff -w` would hide. It hides them only in
+code whose whitespace means nothing but in its strings: JavaScript and
+TypeScript, JSON, CSS, SCSS and Less, HTML, XML and SVG, C and C++, Java,
+Kotlin, Go, Rust, C#, Swift, PHP and shell. A stasis bundle's file is told
+by the format the bundle records for it (`module`, `commonjs`, `json`,
+`shell`, `cmake`, …), where it records one, whatever its name; any other by
+extension, or by a script's `#!` line, one of a short list known to run Node,
+Deno, Bun or a shell (`#!/usr/bin/env node`, `#!/bin/sh`, …), matched whole
+with nothing parsed out of it. A format of another language, or one not
+known, reads as not listed. Any other file may hold
+its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
+Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
+Nor are they hidden in a file where that would hide blanks of more than one
+kind changing between the same two characters, such as spaces turned to tabs
+or a run of tabs and spaces made longer. Such a file's toggle is off while
+whitespace changes are to be hidden, saying why. The toggle is offered only
+where hiding whitespace changes hides one, in the diff shown or in diff -b's.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
@@ -932,9 +947,10 @@ has no error oxc's semantic check finds. No file reviewed is ever given to
 Node's `vm` or otherwise compiled or run: only parsed, by oxc. The renamed
 copy is then formatted again, checked to change only its layout and
 again by oxc's minifier as the old copy, else used as it was. The two copies
-are then diffed as they are, `ignoreWhitespace=true` diff -w, and the change
+are then diffed as they are, `ignoreWhitespace=true` diff -b, and the change
 blocks checked to take the old copy's lines to the new one's, every line
-between them alike and, but for diff -w, the last line in a block where a
+between them alike (but for how much whitespace it has, under diff -b) and,
+but for diff -b, the last line in a block where a
 newline was added or dropped after it, by the worker and again by the server, which otherwise
 answers none (422 `undiffable`). It answers Brotli-encoded `{ before,
 blocks, reason, reads, marks }`: the old copy as diffed, each change block

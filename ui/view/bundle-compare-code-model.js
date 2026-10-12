@@ -8,7 +8,7 @@
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { pairLines } from '@preventive/compare'
+import { hidesMixedWhitespace, pairLines } from '@preventive/compare'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }
@@ -24,8 +24,9 @@ const MIN_FOLD = 4
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
-// three kinds of change share one model. `ignoreWhitespace` is diff -w:
-// lines differing only in whitespace pair up as unchanged. `changes` are
+// three kinds of change share one model. `ignoreWhitespace` is diff -b:
+// lines differing only in how much whitespace they have pair up as
+// unchanged (common/line-diff.js changeBlocks). `changes` are
 // blocks found elsewhere: the server's, its old side given the new one's
 // names (server-managed/rename-diff.ts). `marks` are the blocks the server
 // found to differ in renamed names alone (rename-diff-worker.js): those of
@@ -82,9 +83,40 @@ export function fileLineCounts(before, after) {
 }
 
 // Whether hiding whitespace changes hides one between two texts: whether the
-// blocks a diff of them shows with those hidden, or diff -w's where none are
+// blocks a diff of them shows with those hidden, or diff -b's where none are
 // given, pair as unchanged lines that differ (blocksHold).
 export const hidesWhitespace = (before, after, blocks = changeBlocks(before, after, true)) => !blocksHold(before, after, blocks)
+
+// What diff -b would hide between two texts: whether it hides a change at all
+// (`hides`), and whether one it hides mixes kinds of blank (`mixed`), as spaces
+// turned to a tab, which no view hides (hidesMixedWhitespace).
+export function whitespaceHidden(before, after) {
+  const blocks = changeBlocks(before, after, true)
+  return { hides: hidesWhitespace(before, after, blocks), mixed: hidesMixedWhitespace(before, after, blocks) }
+}
+
+// Files whose whitespace means nothing but in their strings, the only ones in
+// which a view hides whitespace changes: JavaScript and TypeScript, JSON, CSS
+// and its preprocessors, HTML and XML, and the brace languages (C, C++, Java,
+// Kotlin, Go, Rust, C#, Swift, PHP) and shell. Anything else may hold its
+// meaning in its whitespace -- Python's, YAML's or Markdown's indentation, a
+// Makefile's tabs, a language no one listed -- and shows all of it. Told by
+// the format a stasis bundle records for the file, where it records one, of
+// the formats stasis knows (its own spelling of a file's language); else by
+// extension, or by a script's #! line, one of those known to run Node, Deno,
+// Bun or a shell, whole: none is read apart, so no option is taken for one.
+const INSENSITIVE_FORMATS = new Set(['module', 'commonjs', 'module-typescript', 'commonjs-typescript', 'json', 'solidity', 'php', 'shell', 'rust',
+  'java', 'kotlin', 'gradle', 'objc', 'objcpp', 'swift', 'c', 'cpp', 'c-header', 'cpp-header', 'xml', 'cmake', 'pbxproj'])
+const INSENSITIVE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx|json5?|jsonc|css|scss|less|html?|xhtml|xml|svg|c|h|cc|cpp|cxx|hh|hpp|hxx|java|kts?|go|rs|cs|swift|php|sh|bash|zsh)$/u
+const INSENSITIVE_SCRIPTS = new Set([
+  '#!/usr/bin/env node', '#! /usr/bin/env node', '#!/usr/bin/node', '#!/usr/local/bin/node', '#!/usr/bin/env nodejs', '#!/usr/bin/env deno', '#!/usr/bin/env bun',
+  '#!/bin/sh', '#! /bin/sh', '#!/bin/sh -e', '#!/usr/bin/env sh', '#!/bin/bash', '#! /bin/bash', '#!/bin/bash -e', '#!/usr/bin/env bash',
+  '#!/bin/zsh', '#!/usr/bin/env zsh', '#!/bin/dash',
+])
+export function whitespaceInsensitive(path, text = '', format = undefined) {
+  if (typeof format === 'string') return INSENSITIVE_FORMATS.has(format)
+  return INSENSITIVE.test(path.toLowerCase()) || (typeof text === 'string' && INSENSITIVE_SCRIPTS.has(text.split('\n', 1)[0]))
+}
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change

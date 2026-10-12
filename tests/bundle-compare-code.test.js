@@ -438,7 +438,7 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]
   const toggle = markup => /<button type="button" class="bundle-compare-code-toggle" aria-pressed=(\w+) aria-disabled=(\w*)\s*aria-label=([^>]*?) data-tooltip/u.exec(markup)
   const shownAll = renderText(view('src/tabs.js', tabbed).render())
-  assert.deepEqual(toggle(shownAll).slice(1, 3), ['false', ''], 'offered while whitespace changes show, as nothing is hidden')
+  assert.equal(toggle(shownAll), null, 'not offered while whitespace changes show, as it may hide none here')
   const element = view('src/tabs.js', tabbed)
   element._setWhitespace(true)
   t.after(() => element._setWhitespace(false))
@@ -446,6 +446,11 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   assert.match(markup, /class=bundle-compare-diff-table/u, 'its whitespace changes show')
   assert.doesNotMatch(markup, /Only whitespace changed/u)
   assert.deepEqual(toggle(markup).slice(1), ['false', 'true', 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show'])
+  // A run mixing tabs and spaces made longer mixes kinds too.
+  const runs = [{ 'src/runs.js': '\t  a()\n' }, { 'src/runs.js': '\t    a()\n' }]
+  const run = renderText(view('src/runs.js', runs).render())
+  assert.match(run, /class=bundle-compare-diff-table/u)
+  assert.deepEqual(toggle(run).slice(1), ['false', 'true', 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show'])
   const plain = renderText(view('src/spaces.js', spaced).render())
   assert.match(plain, /Only whitespace changed in this file/u, 'one only re-indented hides them')
   assert.deepEqual(toggle(plain).slice(1, 3), ['true', ''])
@@ -525,6 +530,73 @@ test('with renamed names hidden, Hide whitespace changes is offered where the se
   assert.equal(renameDiffs.at(-1).ignoreWhitespace, true, 'the server diffs them with whitespace changes hidden')
   assert.match(hidden, /Only whitespace and renamed names changed in this file\./u)
   assert.match(hidden, /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'still there to turn off')
+})
+
+test('hidden whitespace changes are how much whitespace a line has alone: blanks put between other characters, or taken from there, show', t => {
+  const files = [{ 'src/run.js': 'exec("rm -rf /tmp/x")\n', 'src/ret.js': 'function f(x) {\n  return x\n}\n', 'src/indent.js': 'if (a) {\n  b()\n}\n' },
+    { 'src/run.js': 'exec("rm -rf / tmp/x")\n', 'src/ret.js': 'function f(x) {\n  returnx\n}\n', 'src/indent.js': 'if (a) {\n    b()\n}\n' }]
+  const element = view('src/run.js', files)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  for (const path of ['src/run.js', 'src/ret.js']) {
+    const markup = renderText(view(path, files).render())
+    assert.match(markup, /class=diff-row del[^]*class=diff-row add/u, `${path}: its change shows`)
+    assert.doesNotMatch(markup, /Only whitespace changed|aria-label=Hide whitespace changes/u, `${path}: and nothing is hidden`)
+  }
+  const indent = renderText(view('src/indent.js', files).render())
+  assert.match(indent, /Only whitespace changed in this file\./u, 'a line re-indented reads as unchanged')
+  assert.match(indent, /data-tooltip=Hide whitespace changes, in code whose whitespace means nothing[^>]*: a line re-indented/u, 'as the toggle says')
+})
+
+test('whitespace changes all show in a file whose whitespace may mean something, hiding them not offered there', async t => {
+  const files = [{ 'tools/gen.py': 'if a:\n    b()\n', 'tools/same.py': 'a = 1\n' }, { 'tools/gen.py': 'if a:\n        b()\n', 'tools/same.py': 'a = 2\n' }]
+  const off = renderText(view('tools/gen.py', files).render())
+  assert.match(off, /class=diff-row del[^]*class=diff-row add/u)
+  assert.doesNotMatch(off, /aria-label=(?:Hide whitespace changes|Whitespace changes are hidden only)/u, 'not offered: it may hide none here')
+  const element = view('tools/gen.py', files)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  const on = renderText(element.render())
+  assert.match(on, /class=diff-row del[^]*class=diff-row add/u, 'its re-indented line shows while whitespace changes are hidden')
+  assert.doesNotMatch(on, /Only whitespace changed/u)
+  assert.match(on, /aria-pressed=false aria-disabled=true\s*aria-label=Whitespace changes are hidden only in code whose whitespace means nothing, as JavaScript, CSS or JSON: all of this file's show/u, 'its toggle off, saying why')
+  assert.doesNotMatch(renderText(view('tools/same.py', files).render()), /aria-label=(?:Hide whitespace changes|Whitespace changes are hidden only)/u, 'nor told where hiding would hide none')
+  const script = [{ 'bin/gen': '#!/usr/bin/env python3\nif a:\n    b()\n' }, { 'bin/gen': '#!/usr/bin/env python3\nif a:\n        b()\n' }]
+  const gen = renderText(view('bin/gen', script).render())
+  assert.match(gen, /aria-label=Whitespace changes are hidden only/u, 'an extensionless script alike, unless its #! line names Node or a shell')
+  assert.match(gen, /class=diff-row del[^]*class=diff-row add/u)
+  const node = [{ 'bin/run': '#!/usr/bin/env node\nif (a) {\n  b()\n}\n' }, { 'bin/run': '#!/usr/bin/env node\nif (a) {\n    b()\n}\n' }]
+  assert.match(renderText(view('bin/run', node).render()), /Only whitespace changed in this file\./u, 'one whose #! line names Node hides them')
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, files)
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.models = combinedDiffRows(code.base, code.other, code.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
+  assert.match(sections['tools/gen.py'], /aria-disabled=true\s*aria-label=Whitespace changes are hidden only/u, 'the Diff view says so in its head')
+  assert.match(sections['tools/gen.py'], /class=bundle-compare-diff-table/u)
+})
+
+test('in a stasis bundle, whether whitespace may be hidden is told by the format it records for the file, over its name', t => {
+  const reindent = ['if (a) {\n  b()\n}\n', 'if (a) {\n    b()\n}\n']
+  const files = [{ 'CMakeLists.txt': reindent[0], 'src/data.js': reindent[0] }, { 'CMakeLists.txt': reindent[1], 'src/data.js': reindent[1] }]
+  const formatted = path => {
+    const element = view(path, files)
+    for (const side of [element.base, element.other]) {
+      side.bundle.formats.set('CMakeLists.txt', 'cmake')
+      side.bundle.formats.set('src/data.js', 'resource')
+    }
+    return renderText(element.render())
+  }
+  const element = view('CMakeLists.txt', files)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  assert.match(formatted('CMakeLists.txt'), /Only whitespace changed in this file\./u, 'CMake, which a .txt name alone would not say')
+  const data = formatted('src/data.js')
+  assert.match(data, /class=diff-row del[^]*class=diff-row add/u, 'a .js name carried as a resource shows its whitespace changes')
+  assert.match(data, /aria-disabled=true\s*aria-label=Whitespace changes are hidden only/u)
+  assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
 })
 
 test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {

@@ -18,9 +18,14 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer(args[3]) },
 } })
 const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
-// Each copy asked for here notes its path once it comes, as a view repaints.
-const renders = []
-const prettyCopy = (details, entry, path, content) => copyOf(details, entry, path, content, () => renders.push(path))
+// Each copy asked for here notes its path once it comes, as a view repaints,
+// in the list of the test that asked: one that comes after its test ended
+// counts for no later test.
+let renders = []
+const prettyCopy = (details, entry, path, content) => {
+  const painted = renders
+  return copyOf(details, entry, path, content, () => painted.push(path))
+}
 
 const minified = `${'var a=1;'.repeat(200)}\n`
 const readable = 'export const a = 1\n'
@@ -45,7 +50,7 @@ beforeEach(() => {
   state.bundleSourcePretty = false
   requests.length = 0
   answers.length = 0
-  renders.length = 0
+  renders = []
 })
 
 test('only a managed bundle\'s or npm version\'s minified code is offered pretty-printed', () => {
@@ -118,7 +123,9 @@ test('a failure is shown, and asked again only where asking again may succeed', 
   answers.push('b')
   assert.equal(prettyCopy(details, managed, 'a.min.js', minified).status, 'error', 'a file that is not code stays so')
   assert.equal(prettyCopy(details, managed, 'b.min.js', `${minified}\n`).status, 'loading', 'a busy server is asked again')
-  await settled()
+  // Until it came and was hashed, which can take any number of turns.
+  await settledUntil(() => prettyCopy(details, managed, 'b.min.js', `${minified}\n`).status !== 'loading')
+  assert.equal(prettyCopy(details, managed, 'b.min.js', `${minified}\n`).text, 'b')
   assert.equal(requests.length, 3)
 })
 
@@ -150,9 +157,10 @@ test('copies that come once their view moved on are dropped past those kept', as
     await new Promise(resolve => { setTimeout(resolve, 1) })
   }
   // In order, each repainting its view once it came and was hashed.
+  const painted = renders
   for (const [i, come] of comes.entries()) {
     come(`copy ${i}`)
-    await settledUntil(() => renders.length === i + 1)
+    await settledUntil(() => painted.length === i + 1)
   }
   answers.push('again')
   assert.equal(prettyCopy(details, managed, files[0], `${minified}0`).status, 'loading', 'the first, dropped once it came, is asked for again')
