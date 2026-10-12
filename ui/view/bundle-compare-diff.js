@@ -104,7 +104,7 @@ function treeData(content, at) {
 // git's diff.renameLimit for a package's renames: past this many removed files
 // by added ones, squared, no pair is scored, as that would hold the page for
 // seconds, and only identical content and paths pair them.
-const RENAME_LIMIT = 100
+const RENAME_LIMIT = 250
 
 // The files of `onlyBase` renamed to one of `onlyOther`, both by path as the
 // other bundle lays them out, within a package: `Map<base path, other path>`,

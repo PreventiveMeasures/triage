@@ -535,7 +535,7 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const changes = renames && !large
-        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate()) : null
+        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate(), pretty.hashes) : null
       const ready = changes?.status === 'ready'
       // Where either side reads names (`f.name`, `f.toString()`), a rename may
       // change what the code does, which hiding renamed names could hide: its
@@ -575,7 +575,7 @@ export class BundleCompareCode extends LitElement {
   // Both sides pretty-printed (pretty-source.js), as the Code tab shows a
   // minified file, so minified versions diff line by line: null unless each
   // side with text can be, `limited` where not `allowed`, else the toggle's
-  // state and, once both copies came, their texts.
+  // state and, once both copies came, their texts and hashes.
   _pretty(path, entry, contents, allowed = true) {
     if (!this._printable(path, entry, contents)) return null
     if (!allowed) return { status: 'limited' }
@@ -586,7 +586,7 @@ export class BundleCompareCode extends LitElement {
     const failed = copies.find(copy => copy.status === 'error')
     if (failed) return failed
     if (copies.some(copy => copy.status === 'loading')) return { status: 'loading' }
-    return { status: 'ready', before: copies[0].text, after: copies[1].text }
+    return { status: 'ready', before: copies[0].text, after: copies[1].text, hashes: copies.map(copy => copy.hash) }
   }
 
   // What a file shows in place of a diff: why there is none, or how to have

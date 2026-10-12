@@ -4,8 +4,9 @@
 // has them (pretty-print.ts), then diffed by @preventive/compare's renamedDiff
 // in a worker, off the event loop and two at a time per process. Answered as
 // Brotli-encoded JSON, `{ before, blocks, reason, reads, marks }`
-// (rename-diff-worker.js) and the two files' hashes, `hash` and `otherHash`,
-// which the viewer checks are those it asked about. The last few answers are
+// (rename-diff-worker.js), the two files' hashes, `hash` and `otherHash`, and
+// those of the two copies diffed, `prettyHash` and `otherPrettyHash`, which
+// the viewer checks are those it asked about and draws. The last few answers are
 // kept in memory by both files' hashes, a private npm version's never, each
 // side read again through the pretty-print cache first, which checks that its
 // source holds a file of that hash. Access is the caller's to check.
@@ -14,6 +15,7 @@ import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
+import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { prettyExtension } from '../common/pretty-print.js'
 import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
@@ -156,8 +158,12 @@ function byDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
   return Promise.race([work, late]).finally(() => { clearTimeout(timer) })
 }
 
-const encoded = (diff: RenameDiff, { base, other }: RenameDiffRequest) =>
-  encodeBrotli(Buffer.from(JSON.stringify({ ...diff, hash: base.hash, otherHash: other.hash })))
+// An answer as sent, naming the files asked about and the pretty-printed
+// copies of them it was worked out from.
+async function encoded(diff: RenameDiff, { base, other }: RenameDiffRequest, [before, after]: [string, string]): Promise<Buffer> {
+  const [prettyHash, otherPrettyHash] = await Promise.all([computeFileHash(before), computeFileHash(after)])
+  return encodeBrotli(Buffer.from(JSON.stringify({ ...diff, hash: base.hash, otherHash: other.hash, prettyHash, otherPrettyHash })))
+}
 const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
 // The answer for the two files a request names, Brotli-encoded, `texts`
@@ -171,10 +177,12 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
   // too, its turn not held past it by a version's files still downloading.
   if (!keep) {
     const deadline = Date.now() + DIFF_TIMEOUT_MS
-    return opened(await encoded(await inTurn(deadline, async () => {
-      const [before, after] = await byDeadline(texts(), deadline)
-      return inWorker(before, after, request, deadline)
-    }), request))
+    let sides: [string, string] = ['', '']
+    const diff = await inTurn(deadline, async () => {
+      sides = await byDeadline(texts(), deadline)
+      return inWorker(sides[0], sides[1], request, deadline)
+    })
+    return opened(await encoded(diff, request, sides))
   }
   const [before, after] = await texts()
   // A file's type is part of how it is read: the same text as a script and as a module differ.
@@ -188,7 +196,7 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
   let job = pending.get(key)
   if (!job) {
     const deadline = Date.now() + DIFF_TIMEOUT_MS
-    pending.set(key, job = inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request)).finally(() => pending.delete(key)))
+    pending.set(key, job = inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request, [before, after])).finally(() => pending.delete(key)))
   }
   const body = await job
   kept.set(key, body)

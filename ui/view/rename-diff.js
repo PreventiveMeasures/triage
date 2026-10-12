@@ -3,8 +3,9 @@
 // the old one given the new one's names (server-managed/rename-diff.ts),
 // asked for by both files' paths and their texts' hashes, as their copies are
 // (pretty-source.js). The server checks its own diff (@preventive/compare's
-// renamedDiff); the viewer takes it as it is, once it names the two hashes
-// asked about, and keeps the last few it read, for the session.
+// renamedDiff); the viewer takes it as it is, once it names the two files
+// asked about and, as the copies it was worked out from, the two the view
+// draws, and keeps the last few it read, for the session.
 import { computeFileHash } from '@preventive/report'
 import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 
@@ -14,17 +15,18 @@ const KEPT_DIFFS = 16
 
 // Diffs by both sides' integrity and path and the whitespace setting:
 // `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason, reads,
-// marks }` (the old side as diffed, the change blocks, why its names are its
-// own where they could not be given safely, the properties through which
-// either side reads names, and the blocks of the diff of the files as they
-// are that differ in renamed names alone), or `{ status: 'error', message, retry }`,
+// marks, copies }` (the old side as diffed, the change blocks, why its names
+// are its own where they could not be given safely, the properties through
+// which either side reads names, the blocks of the diff of the files as they
+// are that differ in renamed names alone, and the hashes of the copies it was
+// worked out from), or `{ status: 'error', message, retry }`,
 // `retry` where asking again may succeed (the server busy, a timeout).
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
 
-// What an answer not shaped as the server answers, or for other files than
-// those asked about, is told as.
+// What an answer not shaped as the server answers, for other files than those
+// asked about, or of other copies than those drawn, is told as.
 const MISMATCH = "The server's diff doesn't match this file as shown."
 
 // Whether the server can diff a comparison's files: both a managed bundle's,
@@ -41,10 +43,11 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const answer = base.npm
       ? await fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
       : await fetchBundleRenameDiff(base.managedId, other.managedId, params)
-    const { before: renamed, blocks, reason, reads, marks } = answer
+    const { before: renamed, blocks, reason, reads, marks, prettyHash, otherPrettyHash } = answer
     next = answer.hash === hash && answer.otherHash === otherHash && typeof renamed === 'string' && Array.isArray(blocks)
       && (reason == null || typeof reason === 'string') && Array.isArray(reads) && reads.every(read => typeof read === 'string') && Array.isArray(marks)
-      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null, reads, marks }
+      && typeof prettyHash === 'string' && typeof otherPrettyHash === 'string'
+      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null, reads, marks, copies: [prettyHash, otherPrettyHash] }
       : { status: 'error', message: MISMATCH, retry: true }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
@@ -66,11 +69,15 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
 
 // A file's diff with renamed names hidden, `basePath` and `before` its base
 // side's path and text, `path` and `after` the other's, asked for the first
-// time it is wanted, `notify` called once it comes.
-export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify) {
+// time it is wanted, `notify` called once it comes; taken only where the
+// copies it was worked out from are those the view draws, as `drawn` names
+// them (their hashes), its blocks else of other lines: told as an error then,
+// asked for again with the rest.
+export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn) {
   const key = `${base.integrity}\0${basePath}\0${other.integrity}\0${path}\0${ignoreWhitespace}`
   const asked = diffs.get(key)
-  const diff = asked ?? { status: 'loading' }
+  let diff = asked ?? { status: 'loading' }
+  if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) diff = { status: 'error', message: MISMATCH, retry: true }
   diffs.delete(key)
   diffs.set(key, diff)
   if (diff.status === 'loading') notifiers.set(key, notify)

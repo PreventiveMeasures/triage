@@ -12,7 +12,8 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // (@preventive/compare's renamedDiff), naming the two files' hashes (each
 // asked for noted; an error in place of the base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
-// Bundles whose diffs the server answers for another base file than the one asked about.
+// Bundles whose diffs the server answers for another base file than the one
+// asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
@@ -23,7 +24,8 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     if (before instanceof Error) throw before
     const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' })
     assert.deepEqual(warnings, [])
-    return { ...diff, hash: misanswered.has(id) ? `${params.hash}x` : params.hash, otherHash: params.otherHash }
+    const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
+    return { ...diff, hash: misanswered.has(id) ? `${params.hash}x` : params.hash, otherHash: params.otherHash, prettyHash, otherPrettyHash }
   },
   fetchNpmRenameDiff() {},
 } })
@@ -596,7 +598,7 @@ test('a rename diff that failed for a reason that may pass is asked for again wh
   assert.match(shown, /Only renamed names changed in this file\./u)
 })
 
-test('a diff the server answers for other files than those asked about shows the names, and is asked for again', async t => {
+test('a diff the server answers for other files than those asked about, or of other copies than those drawn, shows the names, and is asked for again', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/told.min.js', [{ 'dist/told.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(1);\n` }, { 'dist/told.min.js': `var X=1;${'q(X);'.repeat(250)}f(2);\n` }])
   element.base.managedId = 'b11'
@@ -606,13 +608,15 @@ test('a diff the server answers for other files than those asked about shows the
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
-  // The answer of another file's diff: drawn, it might hide a change.
-  misanswered.add('b11')
-  element._setRenames(true)
-  await settle()
-  assert.match(renderText(element.render()), /Couldn't hide renamed names: The server's diff doesn't match this file as shown\./u)
-  misanswered.clear()
-  element._setRenames(false)
+  // The answer of another file's diff, or of another copy of this one: drawn, either might hide a change.
+  for (const told of ['b11', 'b11:copy']) {
+    misanswered.add(told)
+    element._setRenames(true)
+    await settle()
+    assert.match(renderText(element.render()), /Couldn't hide renamed names: The server's diff doesn't match this file as shown\./u, told)
+    misanswered.clear()
+    element._setRenames(false)
+  }
   element._setRenames(true)
   await settle()
   const shown = renderText(element.render())
