@@ -925,12 +925,47 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 
 /* Repointed imports of the open file, above its diff: the specifier, the
    old and new target, and the line importing it. */
-/* Over package.json's diff, the dependencies the open version adds and
-   updates, in the cards Compare's Overview lists them in, side by side where
-   they fit. */
+/* Over package.json's diff, its dependencies' changes under one head, as
+   chips, each tinted as its group is in the Overview (added, changed,
+   removed, that one struck through), its range beside its name. */
 .bundle-compare-code-deps {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); align-items: start; gap: .5rem;
   margin: .75rem;
+  padding: .55rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+
+  & h4 {
+    display: flex; align-items: baseline; gap: .5rem;
+    margin: 0 0 .45rem;
+    color: var(--muted);
+    font-size: .66rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    & span { font-weight: 500; letter-spacing: 0; text-transform: none; }
+  }
+  & ul { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0; padding: 0; list-style: none; }
+}
+.bundle-compare-code-dep {
+  --dep: var(--muted);
+  display: inline-flex; align-items: baseline; gap: .35rem;
+  padding: .1rem .45rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--dep) 9%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--dep) 45%, var(--border));
+  border-radius: var(--ui-radius, 4px);
+  font: inherit; font-size: .72rem; line-height: 1.45;
+
+  &.is-added { --dep: var(--green); }
+  &.is-changed { --dep: var(--medium); }
+  &.is-removed { --dep: var(--critical); }
+  &.is-removed .bundle-compare-code-dep-name { color: var(--muted); text-decoration: line-through; }
+  &:is(button):hover { border-color: var(--dep); }
+  &:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  & .npm-dependency-kind { align-self: center; }
+}
+.bundle-compare-code-dep-range {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem;
+
+  & b { color: color-mix(in srgb, var(--dep) 75%, var(--text)); font-weight: 600; }
 }
 .bundle-compare-code-repointed {
   margin: .75rem;

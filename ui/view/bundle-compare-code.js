@@ -35,7 +35,6 @@ import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.j
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
-import { compareDependencyRow } from './compare-dependency-row.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -814,23 +813,31 @@ export class BundleCompareCode extends LitElement {
   // target it resolved to before and after, and the lines importing it —
   // links to them when the source shows below.
   // Over the package's own package.json, where a source lists what its
-  // dependencies changed (`dependencies`): those the open version adds and
-  // those whose range it changes, plain, peer and optional ones (dev ones
-  // aren't listed), in the cards Compare's Overview lists them in, each
-  // opening as there.
+  // dependencies changed (`dependencies`): plain, peer and optional ones (dev
+  // ones aren't listed), under one head counting them, each a chip with its
+  // range beside its name, those the open version adds, those whose range
+  // it changes and those it drops, struck through, each opening as the
+  // Overview's Dependencies rows do.
   _dependencyChanges(path) {
     if (path !== 'package.json' || !this.dependencies) return nothing
-    const groups = [['added', 'New dependencies', this.dependencies.added], ['changed', 'Updated dependencies', this.dependencies.changed]]
-      .filter(([, , rows]) => rows.length > 0)
-    if (groups.length === 0) return nothing
-    return html`<div class="bundle-compare-code-deps">${groups.map(([kind, title, rows]) => html`<section class=${`bundle-compare-group bundle-compare-${kind}`} aria-label=${title}>
-      <header class="bundle-compare-group-head">
-        <span class="bundle-compare-dot" aria-hidden="true"></span>
-        <span class="bundle-compare-group-title">${title}</span>
-        <span class="bundle-compare-group-count">${rows.length}</span>
-      </header>
-      <ul class="bundle-compare-rows">${rows.map(row => html`<li>${compareDependencyRow(row, this.openDependency)}</li>`)}</ul>
-    </section>`)}</div>`
+    const { added, changed, removed } = this.dependencies
+    const chips = [...added.map(row => ['added', row]), ...changed.map(row => ['changed', row]), ...removed.map(row => ['removed', row])]
+    if (chips.length === 0) return nothing
+    const counts = [[added, 'new'], [changed, 'updated'], [removed, 'removed']].filter(([rows]) => rows.length > 0).map(([rows, noun]) => `${rows.length} ${noun}`)
+    const open = this.openDependency
+    return html`<section class="bundle-compare-code-deps" aria-label="Dependency changes">
+      <h4>Dependencies <span>${counts.join(' · ')}</span></h4>
+      <ul>${chips.map(([kind, row]) => {
+        const range = kind === 'changed'
+          ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
+          : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
+        const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}`
+        const label = `${{ added: 'New', changed: 'Updated', removed: 'Removed' }[kind]}: ${row.name}`
+        return html`<li>${open && row.opens
+          ? html`<button type="button" class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label} @click=${() => open(row)}>${content}</button>`
+          : html`<span class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label}>${content}</span>`}</li>`
+      })}</ul>
+    </section>`
   }
 
   _renderRepointed(path, rows, text, linked) {

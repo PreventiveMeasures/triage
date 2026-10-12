@@ -48,7 +48,6 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { state } from '#client/index.js'
-import { compareDependencyRow } from './compare-dependency-row.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
@@ -489,9 +488,19 @@ class BundleCompare extends LitElement {
   // Changed the one it moved from and to; `kind` marks peer and optional.
   _depGroup(title, rows, kind, lanes) {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
+    const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
+      ${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
+      ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
+          <span class="bundle-compare-ver-from">${r.from}</span>
+          <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+          <span class="bundle-compare-ver-to changed">${r.to}</span>
+        </span>`
+        : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}`
     // One the source can open (`openDependency`), it opens.
-    return this._group(title, rows, kind, r => r.key, r => html`<li>${compareDependencyRow(r, this.source?.openDependency)}</li>`, nothing,
-      { fill: true, lanes, style: rangeChars > 0 ? { '--compare-version-width': `${rangeChars}ch` } : {} })
+    const open = this.source?.openDependency
+    return this._group(title, rows, kind, r => r.key, r => html`<li>${open && r.opens
+      ? html`<button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => open(r)}>${cells(r)}</button>`
+      : html`<div class="bundle-compare-row">${cells(r)}</div>`}</li>`, nothing, { fill: true, lanes, style: rangeChars > 0 ? { '--compare-version-width': `${rangeChars}ch` } : {} })
   }
 
   _renderDependencies(rows, baseName, otherName, lanes) {

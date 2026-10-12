@@ -334,9 +334,8 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
 })
 
-test('over the package\'s package.json, the dependencies the open version adds and updates, each opening as the Overview\'s do, in either Code', async () => {
+test('over the package\'s package.json, its dependencies\' changes as chips under one head, each opening as the Overview\'s do, in either Code', async () => {
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
-  const { compareDependencyRow } = await import('../ui/view/compare-dependency-row.js')
   const version = (integrity, files) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = version('a', { 'package.json': '{"dependencies":{"kept":"^1.0.0","gone":"1.0.0"}}\n', 'lib/package.json': '{}\n' })
   const other = version('b', { 'package.json': '{"dependencies":{"kept":"^1.1.0"},"peerDependencies":{"fresh":"2.0.0"}}\n', 'lib/package.json': '{"a":1}\n' })
@@ -351,19 +350,22 @@ test('over the package\'s package.json, the dependencies the open version adds a
   element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
   const render = path => { element.path = path; return renderText(element.render()) }
   const pkg = render('package.json')
-  assert.match(pkg, /class="bundle-compare-code-deps"[^]*New dependencies[^]*>fresh<[^]*npm-dependency-kind">peer[^]*>2\.0\.0<[^]*Updated dependencies[^]*>kept<[^]*\^1\.0\.0[^]*→[^]*\^1\.1\.0[^]*class=bundle-compare-diff-table/u,
-    'over its diff, a peer dependency among them')
-  assert.doesNotMatch(/class="bundle-compare-code-deps">([^]*?)<\/section><\/div>/u.exec(pkg)[1], /gone/u, 'not those it drops')
-  assert.match(pkg, /<button type="button" class="bundle-compare-row bundle-compare-row-link"/u)
+  assert.match(pkg, /class="bundle-compare-code-deps"[^]*<h4>Dependencies <span>1 new · 1 updated · 1 removed<\/span><\/h4>[^]*class=bundle-compare-diff-table/u, 'one head, over its diff')
+  const chips = [...pkg.matchAll(/class=bundle-compare-code-dep (is-\w+) aria-label=([^@>]+?) @click=>([^]*?)<\/button>/gu)]
+    .map(([, kind, label, content]) => [kind, label.trim(), content.replaceAll(/<[^>]+>/gu, '')])
+  assert.deepEqual(chips, [['is-added', 'New: fresh', 'freshpeer2.0.0'], ['is-changed', 'Updated: kept', 'kept^1.0.0 → ^1.1.0'], ['is-removed', 'Removed: gone', 'gone1.0.0']],
+    'new, updated and removed, each its range beside its name, a peer dependency marked')
   assert.doesNotMatch(render('lib/package.json'), /bundle-compare-code-deps/u, 'only over the package\'s own')
-  compareDependencyRow(shared.dependencies.changed[0], shared.openDependency).values.find(value => typeof value === 'function')()
-  assert.deepEqual(opened, ['kept'], 'a row opens as the Overview\'s does')
+  // Each opens as the Overview's rows do.
+  const handlers = value => Array.isArray(value) ? value.flatMap(handlers) : value?.values ? value.values.flatMap(handlers) : typeof value === 'function' ? [value] : []
+  for (const click of handlers(element._dependencyChanges('package.json'))) click()
+  assert.deepEqual(opened, ['fresh', 'kept', 'gone'])
   const all = Object.assign(new (customElements.get('bundle-compare-all'))(), shared)
   all.models = combinedDiffRows(base, other, shared.files).models
   all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
   const sections = Object.fromEntries(renderText(all.render()).split('<section class="bundle-compare-all-file" aria-label=').slice(1)
     .map(part => [part.slice(0, part.indexOf(' ')), part]))
-  assert.match(sections['package.json'], /class="bundle-compare-code-deps"[^]*New dependencies[^]*Updated dependencies/u, 'in the one-list Code too')
+  assert.match(sections['package.json'], /class="bundle-compare-code-deps"[^]*1 new · 1 updated · 1 removed/u, 'in the one-list Code too')
   assert.doesNotMatch(sections['lib/package.json'], /bundle-compare-code-deps/u)
 })
 
