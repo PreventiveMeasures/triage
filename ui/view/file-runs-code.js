@@ -22,8 +22,12 @@ import { JS_STRING_OR_COMMENT } from './file-readability.js'
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const DECLARATION = /\.d\.[cm]?ts$/iu
 const NODE_HASHBANG = /^#!.*\bnode\b/u
+// Function called: as it is, optionally (`Function?.(…)`), or by its call or
+// apply (`Function.call(null, …)`), each making a function of its last
+// argument.
+const FUNCTION_CALL = String.raw`Function(?:\s*\??\.\s*(?:call|apply))?\s*(?:\?\.\s*)?\(`
 // Told before anything is set aside: most files say none of it at all.
-const SAYS_ANY = /eval|Function\s*\(|child_process/u
+const SAYS_ANY = new RegExp(`eval|${FUNCTION_CALL}|child_process`, 'u')
 
 // A name read as one, not as a property's (`vm.eval`) or part of another's
 // (`evaluate`), or as the global object's (`window.eval`).
@@ -34,7 +38,7 @@ const AFTER = String.raw`(?![\p{ID_Continue}$])`
 // code reads, or for a module, its name.
 export const RUNS_CODE = new Map([
   ['eval', { tag: 'eval', note: 'Runs a string as code (eval)', code: new RegExp(`${BEFORE}eval${AFTER}`, 'gu') }],
-  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${BEFORE}Function\\s*\\(`, 'gu') }],
+  ['function', { tag: 'Function', note: 'Makes a function of a string (Function)', code: new RegExp(`${BEFORE}${FUNCTION_CALL}`, 'gu') }],
   ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)', module: /^(?:node:)?child_process$/u }],
 ])
 
