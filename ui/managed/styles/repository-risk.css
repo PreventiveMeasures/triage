@@ -3,18 +3,59 @@
   color: var(--muted);
   font-size: .8rem;
 }
-.risk-section { margin-top: 1.5rem; }
+.risk-section { margin-top: 1rem; }
+.risk-section:first-child { margin-top: 0; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
-.risk-section .collection-toolbar { margin-bottom: .5rem; }
-/* The tables are links.css's, each cell on one line: findings, and why a
-   lockfile wasn't read, wrap where the row doesn't fit, and where a package
-   is used is cut short, its tooltip telling it whole. */
+/* The results' tabs and controls stay at the top of the scroll pane
+   (common.css .manage-list) as the rows scroll under them. */
+.risk-results-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: .25rem;
+  background: var(--bg);
+}
+.risk-results-head .collection-toolbar { margin-bottom: 0; }
+/* The shadow root has no link colors of its own: an advisory's link is the
+   accent's, a package's name the text's, neither the browser's, visited or
+   not. */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.risk-name, .risk-name:visited { color: var(--text); }
+.risk-name:hover { color: var(--accent); text-decoration: none; }
+/* Lockfiles, a line a repository: its name, then its lockfiles, wrapping. */
+.risk-repos { margin: 0; padding: 0; list-style: none; font-size: .8rem; }
+.risk-repos > li {
+  display: grid;
+  grid-template-columns: minmax(8rem, 16rem) 1fr;
+  gap: .75rem;
+  align-items: baseline;
+  padding: .3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.risk-repo-name { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.risk-lockfiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .15rem 1.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.risk-lockfiles li { white-space: nowrap; }
+.risk-lockfile-meta { margin-left: .5rem; color: var(--muted); }
+@container (max-width: 40rem) {
+  .risk-repos > li { grid-template-columns: 1fr; gap: 0; }
+}
+/* The tables are links.css's, each cell on one line: findings wrap where the
+   row doesn't fit, taking what width the other columns leave, and where a
+   package is used is cut short, its tooltip telling it whole. */
 th:last-child, td:last-child { text-align: left; }
 td { vertical-align: top; }
-.risk-wrap { white-space: normal; overflow-wrap: break-word; }
+.risk-findings-column { width: 100%; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+.risk-used-in { max-width: 14rem; }
 .risk-pending, .risk-none { color: var(--muted); }
-.risk-name { text-decoration: none; }
 .risk-error { color: var(--critical); }
 .risk-chip {
   display: inline-block;
@@ -67,4 +108,4 @@ td { vertical-align: top; }
 .risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
-.risk-tabs { width: fit-content; margin-bottom: .75rem; }
+.risk-tabs { width: fit-content; margin-bottom: .5rem; }
