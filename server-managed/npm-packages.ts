@@ -12,10 +12,13 @@
 // read without credentials too, and held to that integrity.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import publishers from '@preventive/publishers/npm.js'
 import { getRepo } from '@preventive/upstream/package.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
+import { keepJson, readKeptJson, upstreamCachePath } from './upstream-cache.ts'
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
@@ -59,10 +62,13 @@ function registryUrl(name: string, spec?: string): string {
 // without redirects, and given up on after `ms`, 30 seconds unless said, or
 // once `signal` aborts, its abort rethrown as it is; a 502 where it can't be
 // asked, answers otherwise or stops, and `upstream-too-large` past `limit`
-// bytes (readLimited).
-export async function askUpstream(url: string, { limit, ms = 30_000, signal, absent = [404], ...init }: Omit<RequestInit, 'signal'> & { limit: number; ms?: number; signal?: AbortSignal; absent?: number[] }): Promise<Buffer | null> {
+// bytes (readLimited). `answered` sees the response first, its status and
+// headers.
+export async function askUpstream(url: string, { limit, ms = 30_000, signal, absent = [404], answered, ...init }: Omit<RequestInit, 'signal'>
+  & { limit: number; ms?: number; signal?: AbortSignal; absent?: number[]; answered?: (res: Response) => void }): Promise<Buffer | null> {
   try {
     const res = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(ms), ...signal ? [signal] : []]) })
+    answered?.(res)
     if (absent.includes(res.status)) { await res.body?.cancel(); return null }
     if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
     return await readLimited(res, limit)
@@ -95,18 +101,47 @@ export async function readLimited(res: Response, limit: number): Promise<Buffer>
 
 // A registry document, or null where the registry has none for this caller:
 // 404, or 401/403 as it answers some private packages asked anonymously.
-// Credentials go only with `token`; nothing is cached on either side.
+// Credentials go only with `token`; nothing is cached on either side, but for
+// public whole documents (publicWholeDocument).
 async function registryDocument(url: string, { token, accept, limit, signal }: { token: string | null; accept: string; limit: number; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
   const json = await askUpstreamJson(url, { headers: { accept, ...(token ? { authorization: `Bearer ${token}` } : {}) }, limit, signal, absent: [401, 403, 404] })
   if (json === null || plainObject(json)) return json
   throw new NpmPackageError(502, 'upstream-invalid')
 }
 
+// Where public packages' whole documents are kept, off Vercel: the upstream
+// cache dir, set at startup (index.ts); null keeps none.
+let documentCache: string | null = null
+export const setNpmDocumentCache = (dir: string | null) => { documentCache = dir === null ? null : resolve(dir) }
+
+// A package's whole document as npm answers anyone (`url` its own), kept on
+// disk where the server keeps them (setNpmDocumentCache) with npm's ETag, and
+// asked for again each time with it: npm answers 304, and nothing more, while
+// it is unchanged. Null where npm has none for anyone, nothing then kept.
+async function publicWholeDocument(name: string, url: string, { limit, signal }: { limit: number; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
+  const path = documentCache === null ? null : upstreamCachePath(documentCache, 'npm/packuments', `${name}.json.gz`)
+  const kept = path === null ? null : await readKeptJson(path, limit)
+  let etag: string | null = null, status = 0
+  const body = await askUpstream(url, { headers: { accept: 'application/json', ...kept && { 'if-none-match': kept.etag } }, limit, signal, absent: [304, 401, 403, 404],
+    answered: res => { status = res.status; etag = res.headers.get('etag') } })
+  if (status === 304 && kept) return kept.json
+  if (body === null) {
+    if (path !== null && kept) await rm(path, { force: true }).catch(() => {})
+    return null
+  }
+  let json: unknown
+  try { json = JSON.parse(body.toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
+  if (path !== null && etag !== null) await keepJson(path, etag, body)
+  return json
+}
+
 // Asked anonymously first: a reader without private access stops there. One
 // with it asks again with the token, where there is one and the package is
-// scoped (npm's private packages always are), and the answer is private.
-async function readDocument(name: string, url: string, privileged: boolean, options: { accept: string; limit: number; signal: AbortSignal }) {
-  const open = await registryDocument(url, { ...options, token: null })
+// scoped (npm's private packages always are), and the answer is private. A
+// whole document (`whole`) anyone may read is kept (publicWholeDocument).
+async function readDocument(name: string, url: string, privileged: boolean, { whole = false, ...options }: { accept: string; limit: number; signal: AbortSignal; whole?: boolean }) {
+  const open = whole ? await publicWholeDocument(name, url, options) : await registryDocument(url, { ...options, token: null })
   if (open) return { json: open, private: false }
   const token = npmToken()
   if (!privileged || !token || npmPackageScope(name) === null) return null
@@ -255,7 +290,7 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
   if (!isNpmPackageName(name)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
   return withDocumentBudget(PACKUMENT_BYTES, async () => {
     const accept = times ? 'application/json' : 'application/vnd.npm.install-v1+json'
-    const found = await readDocument(name, registryUrl(name), privileged, { accept, limit: PACKUMENT_BYTES, signal })
+    const found = await readDocument(name, registryUrl(name), privileged, { accept, limit: PACKUMENT_BYTES, signal, whole: times })
     if (!found) return null
     const { json } = found
     if (json['name'] !== name || !plainObject(json['versions'])) throw new NpmPackageError(502, 'upstream-invalid')
@@ -279,7 +314,7 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
 // takes.
 export function readNpmPackument(name: string, privileged: boolean, signal: AbortSignal): Promise<Record<string, unknown> | null> {
   if (!isNpmPackageName(name)) return Promise.resolve(null)
-  return withDocumentBudget(PACKUMENT_BYTES, async () => (await readDocument(name, registryUrl(name), privileged, { accept: 'application/json', limit: PACKUMENT_BYTES, signal }))?.json ?? null)
+  return withDocumentBudget(PACKUMENT_BYTES, async () => (await readDocument(name, registryUrl(name), privileged, { accept: 'application/json', limit: PACKUMENT_BYTES, signal, whole: true }))?.json ?? null)
 }
 
 const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))

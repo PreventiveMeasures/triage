@@ -1,9 +1,9 @@
 import { Buffer } from 'node:buffer'
 import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { gunzip } from 'node:zlib'
+import { gunzip, gzip } from 'node:zlib'
 import type { CacheStore, Package } from '@preventive/upstream/advisories.js'
 import type { ManagedSql } from './sql.ts'
 
@@ -140,10 +140,43 @@ export async function readKeptFile(path: string, max: number): Promise<Uint8Arra
   finally { await handle.close() }
 }
 
+// `bytes` kept at `path`, written whole beside it first and then moved in, so a
+// reader finds the old file or the new one, never part of one; a failure
+// keeps nothing.
+let tmpSeq = 0
+export async function keepFile(path: string, bytes: Uint8Array) {
+  const tmp = `${path}.${process.pid}.${++tmpSeq}.tmp`
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(tmp, bytes)
+    await rename(tmp, path)
+  } catch { await rm(tmp, { force: true }).catch(() => {}) }
+}
+
+const gunzipAsync = promisify(gunzip)
+const gzipAsync = promisify(gzip)
+
+// An upstream's JSON object kept with its ETag, gzipped, as keepJson keeps it:
+// `{ etag, json }`, or null where none is kept, or what is can't be read
+// within `limit` bytes.
+export async function readKeptJson(path: string, limit: number): Promise<{ etag: string; json: Record<string, unknown> } | null> {
+  const bytes = await readKeptFile(path, limit)
+  if (!bytes) return null
+  const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  try {
+    const kept: unknown = JSON.parse((await gunzipAsync(bytes, { maxOutputLength: limit + 1024 })).toString('utf8'))
+    return object(kept) && typeof kept['etag'] === 'string' && object(kept['json']) ? { etag: kept['etag'], json: kept['json'] } : null
+  } catch { return null }
+}
+
+// `body`, an upstream's JSON object as it wrote it, kept with its `etag`.
+export async function keepJson(path: string, etag: string, body: Buffer) {
+  await keepFile(path, await gzipAsync(Buffer.concat([Buffer.from(`{"etag":${JSON.stringify(etag)},"json":`), body, Buffer.from('}')])))
+}
+
 // A kept listing is read to no more than this, gzipped or not: one runs to
 // some hundreds of KiB.
 const LISTING_BYTES = 64 * 1024 * 1024
-const gunzipAsync = promisify(gunzip)
 
 // A repository's listing as last kept where audits keep them (auditCache),
 // however old, for when GitHub can't be reached to refresh it: `at`, when it

@@ -1809,7 +1809,14 @@ tarball must have: one kept in upstream's cache directory (`npm/tarballs`,
 where bundle builds keep theirs), or in npm's own cache, is served only when it
 matches. Otherwise the tarball comes from the registry, at the package's own
 path, without credentials for a public version, is checked against that sha512,
-and is then kept in upstream's cache, where the server has one. Readers with
+and is then kept in upstream's cache, where the server has one. A package's
+whole document, as risk and the version list with publish times read it, is
+kept there too where it is public (`npm/packuments`, gzipped, with npm's ETag),
+and served only when the registry, asked anonymously with that ETag, answers
+304: the request is still made on every read, but npm sends nothing more while
+the document is unchanged (a large package's runs to megabytes). One only the
+token could read is never kept, and one npm no longer has for anyone is
+dropped. Off Vercel only, as upstream's cache is. Readers with
 private access also try the registry anonymously first, and retry a scoped
 package with the token; their answer says `private: true` when only the token
 could read it. Access is checked again after the registry answers, and a
