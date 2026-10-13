@@ -3819,6 +3819,8 @@ a.npm-compare-publisher {
   &.is-max { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
 }
 .compare-tip-note { font-size: .7rem; }
+/* What a tooltip tells as new, under its rows: plain, not muted as a note. */
+.compare-tip-notice { font-size: .7rem; font-weight: 600; }
 /* Its gauge: a hairline ring, filled clockwise from the top to the score in
    its tint, blended with the muted ink so it reads as a hint. */
 .npm-socket-gauge {

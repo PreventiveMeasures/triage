@@ -61,9 +61,12 @@ const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60
 // name or the global object's starts, so a long run of blanks reads in one go.
 const GLOBAL = 'globalThis|window|global|self'
 const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:${GLOBAL})${GAP}\??\.${GAP})?${name}`
-// A token's name, as a name or in a string (`process.env.NPM_TOKEN`,
-// `process.env['GITHUB_TOKEN']`).
-const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB)_TOKEN(?![\p{ID_Continue}$])`
+// A token's name, as its value is read (`process.env.GITHUB_TOKEN || null`,
+// `env.NPM_TOKEN`), not where its absence is told (`!process.env.GITHUB_TOKEN`)
+// or it is dropped (`delete process.env.NPM_TOKEN`); looked back on, a few
+// names and dots at most, only where the name starts.
+const TOKEN_VAR = '(?:NPM|GITHUB)_TOKEN'
+const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!(?:!|\bdelete\s)\s{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})${TOKEN_VAR}(?![\p{ID_Continue}$])`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
@@ -71,20 +74,24 @@ const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB
 // Module's _compile, called
 // (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
 // = …`), not named in a type (`typeof Module.prototype._compile`); a token's
-// name; the environment read out whole; and a PUT request's
+// name, its value read; the environment read out whole; and a PUT request's
 // call (`axios.put(…)`).
 const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED}${GLOBAL_FOUND})`
-  + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
+  + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<tokens>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
-// `.sshd`), or a token's name; a command publishing (`npm publish`, `pnpm
+// `.sshd`); a token's name where it is read, the string the name alone (a
+// key, `process.env['GITHUB_TOKEN']`) or the name expanded (a shell's or
+// .npmrc's `$GITHUB_TOKEN`, `${NPM_TOKEN}`, cmd's `%NPM_TOKEN%`), not where
+// text names it (`requires a token in GITHUB_TOKEN`); a command publishing (`npm publish`, `pnpm
 // publish …`, options before it as npm takes them, `npm --tag next publish`)
 // or the registry's who-am-I, a publisher's first step with a token. And the
 // registry's host, where a PUT request is one publishing.
 // Told first of a string by what any of them says.
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 const HOLDS = [
-  ['credentials', new RegExp(String.raw`(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])|${TOKEN_NAME}`, 'gu')],
+  ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
+  ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
   ['registry', /registry\.(?:npmjs\.org|yarnpkg\.com)/gu],
 ]
@@ -116,20 +123,23 @@ const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 const LOADS = new RegExp(String.raw`(?:(?:require[\w$]*${GAP}(?:\?\.${GAP})?|\bimport${GAP})\(|\b(?:from|import))${GAP}$`, 'u')
 const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}(?:from\b|=))[^;'"\x60]*(?:\bfrom|=${GAP}require${GAP}\()${GAP}$`, 'u')
 
-// Each kind, in the order its tags show: its tag, what it does, for a tag
-// kinds share its name in the tag's tooltip (a string run as code by any way,
-// `eval`'s), and for one marked as worse than the others' warning, `critical`:
-// the whole environment read out, and publishing.
+// Each kind, in the order its tags show: its tag, what it does, its name in
+// the tag's tooltip, a row of its own where kinds share the tag (a string run
+// as code by any way, `eval`'s; a credential file or token, `credentials`'),
+// and for one marked as worse than the others' warning, `critical`: the whole
+// environment read out, and publishing.
 const AS_CODE = { tag: 'eval', note: 'Runs a string as code' }
+const CREDENTIALS = { tag: 'credentials', note: 'Reaches for credentials' }
 export const RUNS_CODE = new Map([
   ['eval', { ...AS_CODE, name: 'eval' }],
   ['function', { ...AS_CODE, name: 'Function' }],
   ['vm', { ...AS_CODE, name: 'vm' }],
   ['compile', { ...AS_CODE, name: 'Module._compile' }],
-  ['child-process', { tag: 'child_process', note: 'Runs other programs (child_process)' }],
-  ['credentials', { tag: 'credentials', note: 'Reaches for credentials (.npmrc, .ssh, .aws, NPM_TOKEN, GITHUB_TOKEN)' }],
-  ['env', { tag: 'whole env', note: 'Reads out the whole environment (process.env by JSON.stringify, Object.entries or values, URLSearchParams)', mark: 'critical' }],
-  ['publish', { tag: 'publish', note: 'Publishes to npm (npm publish, /-/whoami, a registry PUT)', mark: 'critical' }],
+  ['child-process', { tag: 'child_process', note: 'Runs other programs', name: 'child_process' }],
+  ['credential-files', { ...CREDENTIALS, name: '.npmrc, .ssh or .aws' }],
+  ['tokens', { ...CREDENTIALS, name: 'NPM_TOKEN or GITHUB_TOKEN' }],
+  ['env', { tag: 'whole env', note: 'Reads out the whole environment', name: 'process.env, by JSON.stringify, Object.entries or values, URLSearchParams', mark: 'critical' }],
+  ['publish', { tag: 'publish', note: 'Publishes to npm', name: 'npm publish, /-/whoami or a registry PUT', mark: 'critical' }],
 ])
 
 // The kinds a file's code holds, each with the lines it is on, of the first
@@ -189,7 +199,7 @@ function read(code, base, at) {
 }
 
 // The kinds code itself does, by READS' groups.
-const CODE_KINDS = ['eval', 'function', 'compile', 'credentials', 'env', 'put']
+const CODE_KINDS = ['eval', 'function', 'compile', 'tokens', 'env', 'put']
 
 // Whether the string at `index` in code names a module where it is loaded.
 function loaded(code, index) {

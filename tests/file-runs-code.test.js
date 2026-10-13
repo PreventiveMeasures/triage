@@ -30,7 +30,7 @@ test('a script is read for eval, Function and child_process, each with the lines
   assert.deepEqual(found('a.mjs', "import { spawn } from 'node:child_process'\nconst cp = require(\"child_process\")\nawait import(`child_process`)\n"),
     { 'child-process': [1, 2, 3] }, 'a module named by the string that names it, required or imported')
   assert.deepEqual([...npmRunsCode('a.ts', 'npm_publish("npm publish")\nsend(JSON.stringify(process.env))\nprocess.env.NPM_TOKEN\nimport cp from "child_process"\nm._compile(s)\nimport vm from "vm"\nFunction(y)\neval(x)\n')],
-    [['eval', [8]], ['function', [7]], ['vm', [6]], ['compile', [5]], ['child-process', [4]], ['credentials', [3]], ['env', [2]], ['publish', [1]]], 'in RUNS_CODE\'s order')
+    [['eval', [8]], ['function', [7]], ['vm', [6]], ['compile', [5]], ['child-process', [4]], ['tokens', [3]], ['env', [2]], ['publish', [1]]], 'in RUNS_CODE\'s order')
   assert.deepEqual(found('a.js', 'eval(a); eval(b)\n\neval(c)\n'), { eval: [1, 3] }, 'a line once')
   assert.deepEqual(found('bin/cli', '#!/usr/bin/env node\nrequire("child_process").execSync("ls")\n'), { 'child-process': [2] },
     'a script node runs by its hashbang, with no extension')
@@ -52,7 +52,12 @@ test('vm loaded, and Module\'s _compile called or hooked, run a string as code',
 
 test('credentials: a credential file\'s path, a token\'s name; and the environment read out whole', () => {
   assert.deepEqual(found('a.js', 'fs.readFileSync(path.join(os.homedir(), \'.npmrc\'))\nconst key = \'~/.ssh/id_rsa\'\nconst aws = `${home}/.aws/credentials`\n'
-    + 'process.env.NPM_TOKEN\nprocess.env[\'GITHUB_TOKEN\']\nconst { NPM_TOKEN } = process.env\n'), { credentials: [1, 2, 3, 4, 5, 6] })
+    + 'process.env.NPM_TOKEN\nprocess.env[\'GITHUB_TOKEN\']\nconst { NPM_TOKEN } = process.env\n'), { 'credential-files': [1, 2, 3], tokens: [4, 5, 6] })
+  assert.deepEqual(found('a.js', 'const github = (await import(\'@preventive/upstream/github.js\')).createClient({ token: process.env.GITHUB_TOKEN || null })\n'
+    + 'client ?? createClient({ token: env.GITHUB_TOKEN || null })\nexec(\'curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com\')\n'
+    + 'write(\'//registry.npmjs.org/:_authToken=${NPM_TOKEN}\')\nexec(\'echo %NPM_TOKEN%\')\n'), { tokens: [1, 2, 3, 4, 5] }, 'a token\'s value read, or expanded by a shell or .npmrc')
+  assert.equal(found('a.js', 'if (repoAdvisories && !process.env.GITHUB_TOKEN) fail(\'Error: --repo-advisories requires a GitHub token in GITHUB_TOKEN\')\n'
+    + 'delete process.env.NPM_TOKEN\nif (! env . NPM_TOKEN) ask()\n'), null, 'its absence told, or the token dropped, and text naming it')
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),
     { env: [1, 2, 3, 4] }, 'the environment\'s values read out whole, a kind of its own')
   assert.deepEqual(found('a.js', 'fetch(url, { body: JSON.stringify({ ...process.env }) })\nnew URLSearchParams({ ...process.env, host })\n'), { env: [1, 2] },
@@ -69,7 +74,7 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     'in a comment, or a name or path of another')
   assert.equal(found('a.js', 'const x = `${/* NPM_TOKEN */ value}`\nconst y = `a ${/npm publish/.test(s)} b`\n'), null,
     'in a template\'s substitution\'s comment or regular expression, its code read as code')
-  assert.deepEqual(found('a.js', 'const p = `${home}/.npmrc`\nconst q = `${f(\'~/.ssh\')} and ${x}`\nconst t = `\n${y}\nnpm publish`\n'), { credentials: [1, 2], publish: [5] },
+  assert.deepEqual(found('a.js', 'const p = `${home}/.npmrc`\nconst q = `${f(\'~/.ssh\')} and ${x}`\nconst t = `\n${y}\nnpm publish`\n'), { 'credential-files': [1, 2], publish: [5] },
     'in a template\'s text, and in a string in its substitution, on its own line')
 })
 
