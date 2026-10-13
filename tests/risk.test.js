@@ -367,25 +367,31 @@ test('a package few download is yellow at most where an account known to publish
   assert.deepEqual([(await popularity('middling', '1.0.0')).severity, (await popularity('middling', '1.1.0')).severity], ['high', 'moderate'], 'orange, and yellow where known')
 })
 
-test('a package few download is yellow at most, failing a known account, in a known scope, one of npm\'s most downloaded packages\' or a known account\'s own, as a CI publishing names no account', async t => {
+test('a package few download is yellow at most, failing a known account, in a known scope, one of npm\'s most downloaded packages\' or a known account\'s own, published with provenance, as a CI publishing names no account', async t => {
   const ci = { dependencies: {}, _npmUser: { name: 'GitHub Actions', email: 'npm-oidc-no-reply@github.com', trustedPublisher: { id: 'github', oidcConfigId: 'oidc:1' } } }
+  // A version npm keeps a provenance statement for.
+  const proven = published => { published.doc.dist.attestations = { provenance: { predicateType: 'https://slsa.dev/provenance/v1' } }; return published }
   const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
   // A known account whose own scope is none of the most downloaded packages'.
   const owner = publishers.find(name => !knownScopes.includes(`@${name.toLowerCase()}`))
   const quiet = { start: '2026-08-01', end: '2026-10-11', downloads: [] }
   npm(t, [
-    { name: '@babel/quiet-helper', versions: [version('@babel/quiet-helper', '1.0.0', { 'package.json': '{}' }, ci, ago(400)), version('@babel/quiet-helper', '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300))] },
-    { name: '@nobody-knows/quiet', versions: [version('@nobody-knows/quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
-    { name: 'babel-quiet', versions: [version('babel-quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
-    { name: `@${owner.toLowerCase()}/quiet`, versions: [version(`@${owner.toLowerCase()}/quiet`, '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
+    { name: '@babel/quiet-helper', versions: [proven(version('@babel/quiet-helper', '1.0.0', { 'package.json': '{}' }, ci, ago(400))),
+      version('@babel/quiet-helper', '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300)), version('@babel/quiet-helper', '1.2.0', { 'package.json': '{}' }, ci, ago(200)),
+      version('@babel/quiet-helper', '1.3.0', { 'package.json': '{}' }, by('stranger-account'), ago(100))] },
+    { name: '@nobody-knows/quiet', versions: [proven(version('@nobody-knows/quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400)))] },
+    { name: 'babel-quiet', versions: [proven(version('babel-quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400)))] },
+    { name: `@${owner.toLowerCase()}/quiet`, versions: [proven(version(`@${owner.toLowerCase()}/quiet`, '1.0.0', { 'package.json': '{}' }, ci, ago(400)))] },
   ], { '@babel/quiet-helper': quiet, '@nobody-knows/quiet': quiet, 'babel-quiet': quiet, [`@${owner.toLowerCase()}/quiet`]: quiet })
   const popularity = async (name, number) => (await assessNpm(name, number, { now: NOW })).findings.find(({ id }) => id === 'popularity')
   assert.deepEqual(await popularity('@babel/quiet-helper', '1.0.0'), { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true, scope: '@babel' },
-    'a CI\'s in @babel: yellow, the scope named')
+    'a CI\'s in @babel, with provenance: yellow, the scope named')
+  assert.equal((await popularity('@babel/quiet-helper', '1.2.0')).severity, 'critical', 'a CI\'s in it without provenance: red, as a stolen token publishes')
+  assert.equal((await popularity('@babel/quiet-helper', '1.3.0')).severity, 'critical', 'an unknown account\'s in it, without: red')
   assert.deepEqual(await popularity('@babel/quiet-helper', '1.1.0'), { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true },
     'a known account\'s, as before: the account told first')
   assert.deepEqual(await popularity(`@${owner.toLowerCase()}/quiet`, '1.0.0'),
-    { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true, scope: `@${owner.toLowerCase()}`, account: owner }, 'a CI\'s in a known account\'s own scope: yellow, the account named')
+    { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true, scope: `@${owner.toLowerCase()}`, account: owner }, 'a CI\'s in a known account\'s own scope, with provenance: yellow, the account named')
   assert.equal((await popularity('@nobody-knows/quiet', '1.0.0')).severity, 'critical', 'a scope of none of them: red')
   assert.equal((await popularity('babel-quiet', '1.0.0')).severity, 'critical', 'no scope: red')
 })

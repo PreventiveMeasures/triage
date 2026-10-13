@@ -60,6 +60,6 @@ export function riskAnswer(name, version, otherVersion = null, { downloads = nul
   const base = old === '(empty)' ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : old === null ? null : versionOf(name, old)
   const kept = base === null ? npmLastingRisk(other) : npmLastingRisk(other, base, standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
-    known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name) })
+    known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name), provenance: Boolean(other.npm.manifest.provenance) })
   return JSON.parse(JSON.stringify({ name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
 }

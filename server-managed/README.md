@@ -1394,8 +1394,9 @@ control. A version shows in the bundle view with four tabs:
   any of its latest six weeks, so a week lower for days npm failed to count
   (zeros it may never correct) or for a holiday doesn't move it, and yellow
   at most past the top 20,000 where the version's risk finds it known (a
-  known account published it, or it is in a known scope, a known account's
-  own among them), its tooltip saying why, as Compare's popularity chip is;
+  known account published it, or, published with provenance, it is in a
+  known scope, a known account's own among them), its tooltip saying why, as
+  Compare's popularity chip is;
   the tiers'
   weekly bounds, rounded estimates to be revisited, are download-counts'
   snapshot of a month (Jan 30 – Feb 28, 2026), each rank's count grown by the

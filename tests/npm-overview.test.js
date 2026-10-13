@@ -469,7 +469,8 @@ test('the downloads card\'s tier is yellow at most past the top 20,000 where ris
   answers.stats.carded = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) } }
   assert.match(await row({ npm: { name: 'carded', version: '2.0.0', manifest: { publisher: 'known', knownAccounts: ['known'] } } }), new RegExp(`\\.known=${KNOWN}>`, 'u'))
   answers.stats['@babel/carded'] = answers.stats.carded
-  assert.match(await row({ npm: { name: '@babel/carded', version: '2.0.0', manifest: {} } }), /\.known=In @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in>/u)
+  assert.match(await row({ npm: { name: '@babel/carded', version: '2.0.0', manifest: { provenance: true } } }),
+    /\.known=Published with provenance in @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in>/u)
   assert.match(await row({ npm: { name: 'carded', version: '1.0.0', manifest: { publisher: 'someone' } } }), /\.known=>/u, 'none where it isn\'t')
 })
 
@@ -502,12 +503,15 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
     'a level lower, yellow, where a known account published the open version, its tooltip saying so')
   assert.match(vouched, /compare-tip-note">September 2026<\/div><div class="compare-tip-note">Published by an account that publishes one of npm's most downloaded packages</u)
   answers.stats['@babel/vouched'] = answers.stats.flagged
-  const scoped = await badges(side('@babel/vouched', '1.0.0'), side('@babel/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } }))
-  assert.match(scoped, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · In @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in\s/u,
-    'yellow, in a known scope, as a CI that names no account publishes it, its tooltip saying so')
+  const scoped = await badges(side('@babel/vouched', '1.0.0'), side('@babel/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions', provenance: true } }))
+  assert.match(scoped, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in\s/u,
+    'yellow, in a known scope, as a CI that names no account publishes it with provenance, its tooltip saying so')
+  answers.stats['@babel/unproven'] = answers.stats.flagged
+  assert.match(await badges(side('@babel/unproven', '1.0.0'), side('@babel/unproven', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } })),
+    /<span class=npm-extension npm-popularity is-warn /u, 'orange in it without provenance, as a stolen token publishes')
   answers.stats['@dougwilson/vouched'] = answers.stats.flagged
-  const owned = await badges(side('@dougwilson/vouched', '1.0.0'), side('@dougwilson/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } }))
-  assert.match(owned, /npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · In @dougwilson, the scope of ~dougwilson, an account that publishes one of npm's most downloaded packages\s/u,
+  const owned = await badges(side('@dougwilson/vouched', '1.0.0'), side('@dougwilson/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions', provenance: true } }))
+  assert.match(owned, /npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @dougwilson, the scope of ~dougwilson, an account that publishes one of npm's most downloaded packages\s/u,
     'yellow in a known account\'s own scope, its tooltip naming the account')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }

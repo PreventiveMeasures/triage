@@ -17,7 +17,7 @@ import { npmAddedDependency } from './new-dependency.js'
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-const RISK_VERSION = 9
+const RISK_VERSION = 10
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or
@@ -196,7 +196,7 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
   const { published, manifest } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context, fromEmpty)
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
-    downloads: downloads && popularity ? await npmDownloads(name, context) : null })
+    provenance: Boolean(manifest.provenance), downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
   return { name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own, added) }
