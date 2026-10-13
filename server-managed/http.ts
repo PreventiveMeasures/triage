@@ -1381,8 +1381,9 @@ async function riskRepositories(db: ManagedDb, query: URLSearchParams): Promise<
 // (repository-browser.ts), and that access checked again once it is read,
 // before any of it is told; packages as the npm viewer's admins read them, in
 // spare assessments (npm-risk.ts), trusted however new where a team lists
-// their scope. The reader leaving, losing their admin role or the server
-// shutting down stops it.
+// their scope, and each lockfile's asked of npm's advisories at once. The
+// reader leaving, losing their admin role or the server shutting down stops
+// it.
 async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
   if (!s) return
@@ -1419,6 +1420,14 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
     assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
+    // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
+    // alone: no repository's.
+    async advisories(packages, signal) {
+      const audited = await fetchBundleAdvisories(packages.map(pkg => ({ ecosystem: 'npm' as const, ...pkg })), signal,
+        { debug: deps.config.debug, cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug) })
+      if (audited.status !== 200) throw new NpmPackageError(502, audited.body.error)
+      return audited.body
+    },
   }, controller.signal)
   let checked = Date.now()
   await sendLines(res, lines, async () => {
