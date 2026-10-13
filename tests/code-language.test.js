@@ -78,3 +78,10 @@ test('a file\'s icon format comes from its bundle: what Stasis records, or `bina
   for (const [details, path] of [[stasis, 'README.md'], [npm, 'index.js'], [null, 'LICENSE'], [{ kind: 'sourcemap' }, 'LICENSE']]) assert.equal(fileIconFormat(details, path), undefined)
   assert.equal(sourceFileType('LICENSE', fileIconFormat(npm, 'LICENSE')), 'generic')
 })
+
+test('compiled code wears its own icon by extension: WebAssembly, and native addons and the libraries they load', () => {
+  for (const path of ['dist/module.wasm', 'pkg/OPT.WASM']) assert.equal(sourceFileType(path), 'wasm', path)
+  for (const path of ['build/Release/binding.node', 'prebuilds/linux-x64/libvips.so', 'lib/libfoo.dylib', 'win32/addon.DLL']) assert.equal(sourceFileType(path), 'native', path)
+  assert.equal(sourceFileType('binding.node', 'resource:base64'), 'native', 'stored as base64, as its bytes are no text')
+  for (const path of ['node', 'bin/so', 'wasm.js', 'notes.node.md']) assert.notEqual(sourceFileType(path), 'native', path)
+})

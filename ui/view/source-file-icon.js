@@ -57,6 +57,16 @@ export function fileIconFormat(details, path) {
   return (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined) ?? (details?.npmBinaries?.has(path) ? 'binary' : undefined)
 }
 
+// A path's extension, lowercased, read from its name alone as langForPath does.
+const extensionOf = path => {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
+// Compiled code a package ships: Node's native addons and the shared
+// libraries they load.
+const NATIVE = new Set(['node', 'so', 'dylib', 'dll'])
+
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
@@ -67,6 +77,9 @@ export function sourceFileType(path, format) {
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css', 'yaml', 'markup'].includes(lang)) return lang
   if (lang === 'bash') return 'shell'
+  const extension = extensionOf(path)
+  if (extension === 'wasm') return 'wasm'
+  if (NATIVE.has(extension)) return 'native'
   return 'generic'
 }
 
@@ -107,6 +120,9 @@ const MARKS = {
   shell: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="m4.2 6 2 2-2 2m3.3 0h4.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`,
   // HTML's, XML's and SVG's: a tag's brackets, in HTML's orange.
   markup: svg`<path d="M4.8 4.5 1.5 8l3.3 3.5m6.4-7L14.5 8l-3.3 3.5M9.3 3 6.7 13" fill="none" stroke="#e34c26" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`,
+  wasm: badge('#654ff0', 'WA'),
+  // Native code's: a chip.
+  native: svg`<rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.4" y="6.4" width="3.2" height="3.2" fill="currentColor"/><path d="M6 1.5V4m4-2.5V4M6 12v2.5m4-2.5v2.5M1.5 6H4m-2.5 4H4M12 6h2.5M12 10h2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>`,
 }
 const pageMark = svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
 
