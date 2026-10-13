@@ -192,16 +192,16 @@ export interface NpmVersionStore {
 
 // The version a spec names, a dist-tag resolved by the registry, with its
 // dist. Null where the registry has none for this reader. With `store`, an
-// exact version kept there is read from it, not asked of npm, and a public
-// one npm answers is kept: npm never changes a version, though it may remove
-// one, which whoever reads it from a store learns elsewhere (risk does). A
-// scoped package can be made private, so a scoped one's is asked again once
-// kept a day (SCOPED_VERSION_MS); an unscoped package is always public.
-const SCOPED_VERSION_MS = 24 * 60 * 60_000
+// exact version kept there for less than a day (VERSION_KEPT_MS) is read from
+// it, not asked of npm, and a public one npm answers is kept. npm never
+// changes a version's files, but its document can change: a deprecation, the
+// package made private (a scoped one can be), the version removed (which whoever
+// reads it from a store learns elsewhere too: risk does). A day bounds each.
+const VERSION_KEPT_MS = 24 * 60 * 60_000
 export async function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
   if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) throw new NpmPackageError(400, 'bad-package')
   const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
-  if (kept && (npmPackageScope(name) === null || Date.now() - kept.at < SCOPED_VERSION_MS)) try { return versionDocument(name, kept.json, false) } catch {}
+  if (kept && Date.now() - kept.at < VERSION_KEPT_MS) try { return versionDocument(name, kept.json, false) } catch {}
   return withDocumentBudget(VERSION_DOCUMENT_BYTES, async () => {
     const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
     if (!found) return null

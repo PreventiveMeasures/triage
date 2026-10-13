@@ -2,11 +2,11 @@
 // (managed_upstream_cache, upstream-cache.ts), beyond the instance, so that
 // neither asks for it again on every read, nor after a restart or on another
 // instance: public versions' documents, of the fields read of them
-// (npm-manifest.ts npmVersionFields), as npm never changes a version (whether
-// npm still has one, risk tells; whether a scoped one is still public,
-// readNpmVersion asks again a day on); and, for scans, each package's risk
-// line, for as long as a scan keeps it (repository-risk.ts), those older
-// removed as a scan starts (pruneRiskLines).
+// (npm-manifest.ts npmVersionFields), for a day (readNpmVersion asks npm again
+// then, as a version can be deprecated, its package made private, or itself
+// removed); and, for scans, each package's risk line, for as long as a scan
+// keeps it (repository-risk.ts), those older removed as a scan starts
+// (pruneRiskLines).
 // The database is an optimization: a failure reads as a miss, and writes
 // nothing.
 import { createHash } from 'node:crypto'

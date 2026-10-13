@@ -688,7 +688,7 @@ test('with a store, a public version\'s document is kept and read from it, never
   assert.equal(await store.read('@team/secret', '1.0.0'), null, 'one only the token reads not kept')
 })
 
-test('a scoped package\'s kept version is asked of npm again a day on, as npm lets one be made private', async t => {
+test('a kept version is asked of npm again a day on, as npm lets a scoped package be made private, or a version deprecated', async t => {
   withToken(t)
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -705,6 +705,20 @@ test('a scoped package\'s kept version is asked of npm again a day on, as npm le
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * 60 * 60_000 })
   assert.equal((await readNpmVersion('@org/turned', '1.0.0', true, signal, store)).private, true, 'asked again, and private now')
   assert.ok(calls.length > asked)
+})
+
+test('an unscoped version deprecated after it was kept shows its deprecation a day on', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  const pkg = packageOf('deprecated-later', '1.0.0', { 'index.js': '' })
+  registry(t, [pkg])
+  const signal = new AbortController().signal
+  assert.equal((await readNpmVersion('deprecated-later', '1.0.0', false, signal, store)).manifest.deprecated, undefined)
+  pkg.doc.deprecated = 'use deprecated-now'
+  assert.equal((await readNpmVersion('deprecated-later', '1.0.0', false, signal, store)).manifest.deprecated, undefined, 'kept within the day')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * 60 * 60_000 })
+  assert.equal((await readNpmVersion('deprecated-later', '1.0.0', false, signal, store)).manifest.deprecated, 'use deprecated-now')
 })
 
 test('a private package\'s whole document, read with the server\'s token, is never kept', async t => {

@@ -2823,7 +2823,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const privileged = canReadPrivateNpm(reader, name)
   // Public versions' documents, kept in the database (npm-kept.ts), as
   // repository risk scans keep them: an exact version's, read on every view,
-  // asked of npm once, a scoped package's once a day.
+  // asked of npm once a day.
   const keptVersions = npmVersionStore(deps.db, deps.config.debug)
   // The latest version, read once a request: the package's figures and
   // advisories go by the repository it names.

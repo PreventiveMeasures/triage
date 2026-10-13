@@ -933,13 +933,11 @@ at a commit, a lockfile's packages by its blob, and a package's risk line for an
 hour, so a scan again asks GitHub only for each repository's head and access,
 and npm for nothing it told within the hour. The database keeps risk lines for
 that hour too, older ones removed as a scan starts, and public versions'
-documents, of only the fields `readNpmVersion` reads of them (`npm-kept.ts`,
-`managed_upstream_cache`), so that a scan after a restart, or on another
-instance, asks npm for none of them again: npm never changes a version, and
-where it removed one since, as it removes malware, risk finds it missing from
-the package's whole document and the scan tells it as one npm removed. A
-scoped package's are asked again once kept a day, as npm lets a scoped
-package be made private; an unscoped one is always public. What risk keeps of each package
+documents for a day, of only the fields `readNpmVersion` reads of them
+(`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
+on another instance, asks npm for none of them again: where npm removed a
+version since, as it removes malware, risk finds it missing from the package's
+whole document and the scan tells it as one npm removed. What risk keeps of each package
 (`npm-risk.ts`) is beneath that. Closing the response, or leaving it idle for
 five minutes, stops the scan. The page is `/manage/repositories/risk`, not yet
 linked from the Manage navigation.
@@ -1856,14 +1854,13 @@ documents and tarballs that a bundle build fetched with the token can remain in
 upstream's caches, readable without one, so leaving the token out is not
 enough. An exact version's document npm answered anonymously is kept in the
 database (`npm-kept.ts`, of only the fields read of it), and the viewer and
-repository risk scans read it from there rather than ask npm on every read:
-npm never changes a version, and an unscoped package is always public, so an
-unscoped one's is kept for good; npm lets a scoped package be made private, so
-a scoped one's counts for a day, and is then asked again, a private answer
-replacing nothing. A dist-tag such as `latest` is asked each time. A version
-npm removed since stays readable where its document is kept (its tarball
-where that is kept too); risk tells it as removed, from the package's whole
-document. Tarballs are read from there all the same, as the answer names the sha512 the
+repository risk scans read it from there for a day rather than ask npm on every
+read, then ask again: npm never changes a version's files, but its document can
+change within that day, as its owner deprecates it or makes a scoped package
+private (a private answer is never kept), or npm removes it. A dist-tag such as
+`latest` is asked each time. A version npm removed stays readable for that day
+where its document is kept (its tarball where that is kept too); risk tells it
+as removed, from the package's whole document. Tarballs are read from there all the same, as the answer names the sha512 the
 tarball must have: one kept in upstream's cache directory (`npm/tarballs`,
 where bundle builds keep theirs), or in npm's own cache, is served only when it
 matches. Otherwise the tarball comes from the registry, at the package's own
