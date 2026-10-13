@@ -261,6 +261,7 @@
     "risk/npm/files.js",
     "risk/npm/downloads.js",
     "risk/npm/install-scripts.js",
+    "risk/npm/malware.js",
     "risk/npm/manifest.js",
     "risk/npm/new-dependency.js",
     "risk/npm/old-version.js",

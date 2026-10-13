@@ -30,8 +30,10 @@
 // bounds it. What risk asks npm itself is given up on after 30 seconds, and
 // read no further than its bounds, `upstream-too-large` past them, as is a
 // tarball unpacking past tarball.js's, `package-too-large`.
+import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
+import { npmPlaceholder } from './malware.js'
 import { npmOldVersion } from './old-version.js'
 import { npmTarballVersion } from './tarball.js'
 import { DAY_MS } from './downloads.js'
@@ -39,6 +41,9 @@ import { DAY_MS } from './downloads.js'
 const REGISTRY = 'https://registry.npmjs.org'
 const DOWNLOADS = 'https://api.npmjs.org/downloads/range'
 const PACKAGE_MS = 60 * 60_000
+// How long a version's advisories are kept, as the managed server keeps a
+// package's and a lockfile's: an hour, as a new one may come at any time.
+const ADVISORIES_MS = 60 * 60_000
 // How much of npm's answers is read: a whole document, as the managed server
 // reads one (server-managed/npm-packages.ts PACKUMENT_BYTES), and a few
 // months' downloads a day.
@@ -124,9 +129,15 @@ const releasesOf = (doc, deprecated) => Object.entries(doc.versions ?? {}).filte
 // What risk reads of `version` of a package, of the one it is compared with
 // (`oldVersion`: one, null for none, or true for the one old-version.js
 // npmOldVersion picks of its versions, by its document), and of the package:
-// `versions`, each one's `{ manifest, published, dist }`, `deprecated`, by
-// version, and `oldVersion`, the one compared with or null. Its document is
-// read once at most, and not at all where all of it is kept and fresh.
+// `versions`, each one's `{ manifest, published, dist }`, those of them npm
+// removed since they were published (`removed`, each one's when), none
+// picked to compare a removed one with, `deprecated`, by version, whether
+// npm's security team took the package down (`takenDown`, its latest version
+// npm's placeholder, malware.js npmPlaceholder), and `oldVersion`, the one
+// compared with or null. Its document is read once at most, and not at all
+// where all of it is kept and fresh. A version's facts are kept for good, as
+// npm never changes a version, but npm may remove it: the package's, kept an
+// hour, has which it removed, and they go by that.
 export async function npmPackageFacts(name, version, oldVersion, context) {
   const { cache, now } = context
   const fresh = hit => hit != null && now - hit.at < PACKAGE_MS
@@ -135,26 +146,49 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
   if (cache && given !== undefined) {
     const wanted = given === null ? [version] : [version, given]
     const [facts, pkg] = await Promise.all([Promise.all(wanted.map(at => cache.read('risk/npm/versions', `${name}@${at}`))), cache.read('risk/npm/packages', name)])
-    if (facts.every(Boolean) && fresh(pkg)) return { versions: new Map(wanted.map((at, i) => [at, facts[i]])), deprecated: pkg.deprecated, oldVersion: given }
+    const gone = at => Object.hasOwn(pkg.removed, at)
+    if (fresh(pkg) && 'removed' in pkg && wanted.every((at, i) => facts[i] || gone(at))) {
+      return { versions: new Map(wanted.flatMap((at, i) => gone(at) ? [] : [[at, facts[i]]])), removed: new Map(wanted.filter(gone).map(at => [at, pkg.removed[at]])),
+        deprecated: pkg.deprecated, takenDown: pkg.takenDown, oldVersion: given }
+    }
   }
   const doc = await packageDocument(name, context, true)
   if (!doc) throw new NpmRiskError('package-not-found', `npm has no package ${name}`)
+  const removed = new Map()
   const factsOf = at => {
     const json = doc.versions?.[at]
+    if (!json && isTime(doc.time?.[at])) { removed.set(at, doc.time[at]); return null }
     if (!json) throw new NpmRiskError('version-not-found', `npm has no ${name}@${at}`)
     const { deprecated: _, ...manifest } = npmVersionManifest(json)
     return { manifest, published: isTime(doc.time?.[at]) ? doc.time[at] : null, dist: { tarball: json.dist?.tarball, integrity: json.dist?.integrity } }
   }
   const opened = factsOf(version)
   const deprecated = Object.fromEntries(Object.entries(doc.versions ?? {}).filter(([, json]) => typeof json?.deprecated === 'string' && json.deprecated !== '').map(([at, json]) => [at, json.deprecated]))
-  const old = oldVersion === true ? npmOldVersion(version, releasesOf(doc, deprecated), now) : oldVersion
-  const read = new Map([[version, opened], ...old === null ? [] : [[old, factsOf(old)]]])
+  const old = oldVersion === true ? opened && npmOldVersion(version, releasesOf(doc, deprecated), now) : oldVersion
+  const read = new Map([...opened ? [[version, opened]] : [], ...old === null ? [] : [[old, factsOf(old)]]].filter(([, fact]) => fact))
+  const takenDown = npmPlaceholder(doc.versions?.[doc['dist-tags']?.latest])
   if (cache) {
+    const gone = Object.fromEntries(Object.entries(doc.time ?? {}).filter(([at, when]) => at !== 'created' && at !== 'modified' && isTime(when) && !doc.versions?.[at]))
     await Promise.all([...read].map(([at, fact]) => cache.write('risk/npm/versions', `${name}@${at}`, fact)))
-    await cache.write('risk/npm/packages', name, { at: now, deprecated })
+    await cache.write('risk/npm/packages', name, { at: now, deprecated, takenDown, removed: gone })
     if (oldVersion === true) await cache.write('risk/npm/old-versions', `${name}@${version}`, { at: now, oldVersion: old })
   }
-  return { versions: read, deprecated, oldVersion: old }
+  return { versions: read, removed, deprecated, takenDown, oldVersion: old }
+}
+
+// npm's advisories of `version` of a package, as `npm audit` asks them
+// (upstream's `advisories`), each `{ id, url?, title?, cwe }`: kept
+// ADVISORIES_MS, and given up on once `signal` aborts.
+export async function npmVersionAdvisories(name, version, context) {
+  const what = `${name}@${version}`
+  const { rows } = await kept(context, 'risk/npm/advisories', what, async () => {
+    context.signal?.throwIfAborted()
+    const asked = await untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false }), context.signal).catch(error => {
+      throw context.signal?.aborted ? error : new NpmRiskError(error?.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm's advisories of ${what} couldn't be had: ${error.message}`)
+    })
+    return { at: context.now, rows: asked.map(({ id, url, title, cwe }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe })) }
+  }, hit => context.now - hit.at < ADVISORIES_MS)
+  return rows
 }
 
 // `promise`, given up on once `signal` aborts, its reason thrown: what it
@@ -162,6 +196,7 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
 // unheeded.
 function untilAborted(promise, signal) {
   if (!signal) return promise
+  if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(signal.reason)
     signal.addEventListener('abort', onAbort, { once: true })

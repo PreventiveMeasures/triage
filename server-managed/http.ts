@@ -138,7 +138,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
-import { npmRisk } from './npm-risk.ts'
+import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest } from './rename-diff.ts'
@@ -1420,6 +1420,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
     assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
+    removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
+      teamScoped, privileged: true, signal }),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // alone: no repository's. Each lockfile's audit is bounded on its own, for
     // one npm doesn't answer to fail alone and the scan to carry on.

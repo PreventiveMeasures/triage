@@ -37,11 +37,12 @@ function versionOf(name, version) {
 
 // What the server answers of `name@version` against `otherVersion` (null for
 // none), as it is asked with its package's `downloads`, when each version was
-// published (`times`, where a version held says none) and the open version's
-// minimum release age (`minimumReleaseAge`, two weeks unless given).
-export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE } = {}) {
+// published (`times`, where a version held says none), the open version's
+// minimum release age (`minimumReleaseAge`, two weeks unless given), and the
+// `malware` finding npm's takedown and advisories make of it, where they do.
+export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
   const kept = npmLastingRisk(other, otherVersion === null ? null : versionOf(name, otherVersion))
-  return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published,
-    ...npmAssessmentOf(kept, npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads })) }))
+  const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads })
+  return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
 }

@@ -3732,6 +3732,9 @@ a.npm-compare-publisher {
 .npm-extension:is(.npm-compare-provenance, .npm-compare-deprecated, .npm-compare-file, .is-critical) {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
+/* Malware the open version is told of (npm-overview.js malwareBadge): solid
+   red, first among the chips, as no other is. */
+.npm-extension.npm-malware { color: #fff; background: var(--critical); border-color: var(--critical); font-weight: 600; }
 /* The hosts a version's files name (npm-overview.js hostBadges), in their
    level's color: red as the files above (`is-critical`), orange as a
    warning (`is-warn`), and yellow where they are usually fine. */

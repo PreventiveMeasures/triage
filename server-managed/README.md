@@ -902,17 +902,23 @@ one from git, a tarball with no integrity or a file is listed but not assessed.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour), and told in an `advisories` line,
-each advisory with whether it is of malware: GitHub's CWE-506, embedded
-malicious code, or a title naming malware. The page lists them on a tab of
+each advisory with whether it is of malware, as risk tells it
+(`npmMalwareAdvisory`): GitHub's CWE-506, embedded malicious code, or a title
+naming malware. The page lists them on a tab of
 their own, and a package an advisory of malware names is critical in its risk,
 from npm's registry or a mirror, but where its integrity is found to differ
 from npm's: npm deletes a version it finds malware in, so a mirror's copy of
 one can't be held to npm's integrity, and is told as npm's. Other advisories
-are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's registry hasn't every one of GitHub's malware advisories
-(those of nx's malicious versions, for one), which OSV's records would add.
-Assessments are `spare` ones (`npm-risk.ts`): two at most across the server,
-leaving the rest to readers, and without asking npm of each dependency's
-package. One refused as busy (`npm-busy`), or that npm asked to ask later
+are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's
+registry hasn't every one of GitHub's malware advisories (those of nx's
+malicious versions, for one), which OSV's records would add. A version npm has
+no document of is asked of risk as one npm removed (`npmRiskRemoved`): its
+package taken down by npm is risk's `malware`, critical, whatever version is
+locked, and the page says so in its tooltip; one nothing tells of is told as
+not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
+the server, leaving the rest to readers, and without asking npm of each
+dependency's package, nor of the version's advisories, which a lockfile's are
+asked at once. One refused as busy (`npm-busy`), or that npm asked to ask later
 (risk's `upstream-busy`, as npm's downloads API answers 429 past a burst of
 requests, a hundred or so, for some seconds), is asked again after a wait, so a
 large scan goes at the pace npm allows. A package's risk that still fails tells

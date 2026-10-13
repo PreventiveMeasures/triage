@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
 import publishers from '@preventive/publishers/npm.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk } from '../risk/index.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk, npmMalwareAdvisory } from '../risk/index.js'
 import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
@@ -16,22 +16,29 @@ import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
 const DAY = 24 * 60 * 60_000
+const HOUR = 60 * 60_000
 const NOW = Date.parse('2026-10-12T12:00:00Z')
 const ago = days => new Date(NOW - days * DAY).toISOString()
 
 // A package's whole document, as npm's registry has it, of `{ name, versions:
-// [{ doc, published }], created? }`.
-const documentOf = ({ name, versions, created }) => ({ name, versions: Object.fromEntries(versions.map(({ doc }) => [doc.version, doc])),
-  time: { created: created ?? versions[0].published, modified: versions.at(-1).published, ...Object.fromEntries(versions.map(({ doc, published }) => [doc.version, published])) } })
+// [{ doc, published }], created?, latest?, removed? }`: its `latest` the last
+// version unless given, and the versions npm `removed` since, by when each
+// was published.
+const documentOf = ({ name, versions, created, latest, removed = {} }) => ({ name, 'dist-tags': { latest: latest ?? versions.at(-1).doc.version },
+  versions: Object.fromEntries(versions.map(({ doc }) => [doc.version, doc])),
+  time: { created: created ?? versions[0].published, modified: versions.at(-1).published, ...Object.fromEntries(versions.map(({ doc, published }) => [doc.version, published])), ...removed } })
 
-// npm's registry and downloads API for `packages`, each `{ name, versions:
-// [{ doc, tgz, published }], created? }`, and `downloads` by name; each URL
-// asked, in order.
-function npm(t, packages, downloads = {}) {
+// npm's registry, its advisories and downloads API for `packages`, each
+// `{ name, versions: [{ doc, tgz, published }], created? }`, `downloads` by
+// name, and `advisories` by name, rows as npm's bulk endpoint answers them;
+// each URL asked, in order.
+const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
+function npm(t, packages, downloads = {}, advisories = {}) {
   const asked = []
-  t.mock.method(globalThis, 'fetch', input => Promise.resolve(answer(String(input))))
-  const answer = url => {
+  t.mock.method(globalThis, 'fetch', (input, init) => Promise.resolve(answer(String(input), init)))
+  const answer = (url, init) => {
     asked.push(url)
+    if (url === ADVISORIES) return Response.json(Object.fromEntries(Object.keys(JSON.parse(init.body)).filter(name => advisories[name]).map(name => [name, advisories[name]])))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) {
       const name = decodeURIComponent(url.split('/').at(-1))
       return downloads[name] ? Response.json(downloads[name]) : Response.json({ error: `package ${name} not found` }, { status: 404 })
@@ -190,7 +197,7 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   assert.deepEqual(await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache }), picked)
   assert.deepEqual(asked, [], 'the pick kept: npm isn\'t asked')
   await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW + 2 * 60 * 60_000, downloads: false, cache })
-  assert.deepEqual(asked, [`${REGISTRY}/handed`], 'picked again after an hour, by its document alone')
+  assert.deepEqual(asked, [`${REGISTRY}/handed`, ADVISORIES], 'picked again after an hour, by its document alone, its advisories asked again as they are')
   const alone = await assessNpm('handed', '1.0.0', { oldVersion: true, now: NOW, downloads: false })
   assert.equal(alone.oldVersion, null, 'none below it')
   assert.deepEqual(alone, await assessNpm('handed', '1.0.0', { now: NOW, downloads: false }), 'assessed alone')
@@ -334,14 +341,97 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
   const first = await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW, cache })
   assert.deepEqual(ids(first), ['kept-runs-code', 'new-hosts', 'popularity'], 'eval kept from 1.0.0; a host named anew; few downloads')
   assert.deepEqual(first.findings.at(-1), { id: 'popularity', severity: 'critical', tier: null, level: 'is-unpopular' })
-  assert.deepEqual([...cache.written].toSorted(), ['npm/tarballs', 'risk/npm/assessments', 'risk/npm/downloads', 'risk/npm/packages', 'risk/npm/versions'])
+  assert.deepEqual([...cache.written].toSorted(), ['npm/tarballs', 'risk/npm/advisories', 'risk/npm/assessments', 'risk/npm/downloads', 'risk/npm/packages', 'risk/npm/versions'])
   asked.length = 0
   assert.deepEqual(await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW, cache }), first)
   assert.deepEqual(asked, [], 'everything kept: npm isn\'t asked')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + DAY, cache })
-  assert.deepEqual(asked.map(url => url.replace(/range\/[^/]+/u, 'range/…')), [`${REGISTRY}/kept`, 'https://api.npmjs.org/downloads/range/…/kept'],
-    'a day on, its deprecations asked again, as they are after an hour, and its downloads, another day\'s; no tarball')
+  assert.deepEqual(asked.map(url => url.replace(/range\/[^/]+/u, 'range/…')), [`${REGISTRY}/kept`, ADVISORIES, 'https://api.npmjs.org/downloads/range/…/kept'],
+    'a day on, its deprecations and advisories asked again, as they are after an hour, and its downloads, another day\'s; no tarball')
+})
+
+test('an advisory is of malware where GitHub files it as embedded malicious code, or its title says so', () => {
+  assert.equal(npmMalwareAdvisory({ cwe: ['CWE-506'], title: 'Critical severity vulnerability that affects event-stream and flatmap-stream' }), true)
+  assert.equal(npmMalwareAdvisory({ cwe: ['CWE-94', 'CWE-506'], title: 'Embedded Malicious Code in node-ipc' }), true)
+  assert.equal(npmMalwareAdvisory({ cwe: [], title: 'Malware in chalk' }), true)
+  assert.equal(npmMalwareAdvisory({ cwe: ['CWE-200'], title: 'Modified package published to npm, containing malware that exfiltrates private key material' }), true,
+    '@solana/web3.js\'s GHSA-jcxm-7wvp-g6p5, its CWE not')
+  assert.equal(npmMalwareAdvisory({ cwe: ['CWE-601'], title: 'Open redirect to a malicious URL' }), false, 'not every malicious thing is malware')
+  assert.equal(npmMalwareAdvisory({ cwe: ['CWE-1321'], title: 'Prototype Pollution in lodash' }), false)
+})
+
+// An advisory as npm's registry answers `npm audit`, of malware unless its
+// `cwe` says otherwise.
+const advisory = (id, ghsa, title, range, cwe = ['CWE-506']) => ({ id, url: `https://github.com/advisories/${ghsa}`, title, severity: 'critical',
+  vulnerable_versions: range, cwe, cvss: { score: 0, vectorString: null } })
+
+test('malware first: a package npm took down, whatever version is asked, and an advisory of malware naming it; one npm removed told of by it alone', async t => {
+  const holder = { description: 'security holding package', repository: { type: 'git', url: 'git+https://github.com/npm/security-holder.git' }, _npmUser: { name: 'npm', email: 'npm@npmjs.com' } }
+  const left = version('taken', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(400))
+  const placeholder = version('taken', '0.0.1-security', { 'package.json': '{}', 'README.md': '# Security holding package' }, { dependencies: {}, ...holder }, ago(300))
+  const kept = version('kept', '2.0.0', { 'package.json': '{}' }, { dependencies: {}, deprecated: 'use kept 3' }, ago(30))
+  const posing = version('posing', '0.0.1-security', { 'package.json': '{}' }, { dependencies: {}, ...holder, _npmUser: { name: 'someone', email: 's@example.com' } }, ago(300))
+  const asked = npm(t, [{ name: 'taken', versions: [left, placeholder], latest: '0.0.1-security' }, { name: 'kept', versions: [kept], removed: { '2.0.1': ago(20), '2.0.2': ago(10) } },
+    { name: 'posing', versions: [posing] }], {}, {
+    kept: [advisory(1, 'GHSA-aaaa-bbbb-cccc', 'Critical severity vulnerability that affects kept', '=2.0.1'),
+      advisory(2, 'GHSA-dddd-eeee-ffff', 'Modified package published to npm, containing malware that exfiltrates keys', '=2.0.0', ['CWE-200']),
+      advisory(3, 'GHSA-gggg-hhhh-jjjj', 'Prototype Pollution in kept', '<3.0.0', ['CWE-1321'])],
+  })
+  const assessed = (name, number, options = {}) => assessNpm(name, number, { now: NOW, downloads: false, ...options })
+  for (const number of ['1.0.0', '0.0.1-security']) {
+    assert.deepEqual((await assessed('taken', number)).findings[0], { id: 'malware', severity: 'critical', takenDown: true }, `taken@${number}: its package taken down`)
+  }
+  assert.ok(!(await assessed('posing', '0.0.1-security')).findings.some(({ id }) => id === 'malware'), 'a placeholder published by any account but npm\'s is none')
+  const named = await assessed('kept', '2.0.0')
+  assert.deepEqual(named.findings[0], { id: 'malware', severity: 'critical', advisories: [{ id: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff',
+    title: 'Modified package published to npm, containing malware that exfiltrates keys' }] }, 'its title says malware, its CWE not; a vulnerability isn\'t')
+  assert.deepEqual(ids(named).slice(0, 2), ['malware', 'deprecated'], 'before its deprecation')
+  asked.length = 0
+  const removed = await assessed('kept', '2.0.1')
+  assert.deepEqual(removed, { name: 'kept', version: '2.0.1', oldVersion: null, published: ago(20), removed: true, files: {}, dependencies: { added: [], changed: [] },
+    findings: [{ id: 'malware', severity: 'critical', advisories: [{ id: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Critical severity vulnerability that affects kept' }] }] },
+  'CWE-506, whatever its title; nothing of it left to read')
+  assert.ok(!asked.some(url => url.endsWith('.tgz')), 'no tarball asked')
+  assert.deepEqual(await assessed('kept', '2.0.1', { oldVersion: true }), removed, 'nor a version picked to compare it with')
+  await assert.rejects(assessed('kept', '2.0.2'), error => error.code === 'version-not-found', 'one removed with no malware told of: as npm has none')
+  await assert.rejects(assessed('kept', '2.0.0', { oldVersion: '2.0.1' }), error => error.code === 'version-not-found', 'nor is one removed compared with')
+  asked.length = 0
+  assert.ok(!(await assessed('kept', '2.0.0', { advisories: false })).findings.some(({ id }) => id === 'malware'), 'its advisories not asked')
+  assert.ok(!asked.includes(ADVISORIES))
+})
+
+test('a version npm removes once its facts are kept is told as removed, by its package\'s record, kept an hour, of which npm removed', async t => {
+  const first = version('pulled', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(40))
+  const bad = version('pulled', '1.0.1', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
+  const plain = version('pulled', '1.0.2', { 'package.json': '{}' }, { dependencies: {} }, ago(20))
+  const pkg = { name: 'pulled', versions: [first, bad, plain] }
+  npm(t, [pkg], {}, { pulled: [advisory(1, 'GHSA-pppp-qqqq-rrrr', 'Malware in pulled', '=1.0.1')] })
+  const cache = store()
+  const assessed = (number, at) => assessNpm('pulled', number, { now: at, downloads: false, cache })
+  assert.equal((await assessed('1.0.1', NOW)).removed, undefined, 'published: its facts kept')
+  await assessed('1.0.2', NOW)
+  Object.assign(pkg, { versions: [first], removed: { '1.0.1': ago(30), '1.0.2': ago(20) } })
+  for (const at of [NOW + 2 * HOUR, NOW + 2.5 * HOUR]) {
+    const removed = await assessed('1.0.1', at)
+    assert.deepEqual([removed.removed, ids(removed)], [true, ['malware']], `${(at - NOW) / HOUR} hours on: removed, its malware told`)
+    await assert.rejects(assessed('1.0.2', at), error => error.code === 'version-not-found', `${(at - NOW) / HOUR} hours on: removed with no malware told of`)
+  }
+})
+
+test('a version npm removes once a version was picked to compare it with is compared with none, its pick kept or not', async t => {
+  const versions = ['1.0.0', '1.0.1', '1.1.0'].map((number, i) => version('repicked', number, { 'package.json': '{}' }, { dependencies: {} }, ago(400 - 100 * i)))
+  const pkg = { name: 'repicked', versions }
+  npm(t, [pkg], {}, { repicked: [advisory(1, 'GHSA-ssss-tttt-uuuu', 'Malware in repicked', '=1.1.0')] })
+  const cache = store()
+  const assessed = () => assessNpm('repicked', '1.1.0', { oldVersion: true, now: NOW, downloads: false, cache })
+  assert.equal((await assessed()).oldVersion, '1.0.1', 'picked while published')
+  cache.kept.delete('risk/npm/packages repicked')
+  Object.assign(pkg, { versions: versions.slice(0, 2), removed: { '1.1.0': ago(200) } })
+  for (const when of ['its package\'s record gone, its pick kept', 'its package\'s record kept again']) {
+    const removed = await assessed()
+    assert.deepEqual([removed.removed, removed.oldVersion, ids(removed)], [true, null, ['malware']], when)
+  }
 })
 
 test('npm having no such package or version is said so', async t => {
@@ -372,7 +462,7 @@ test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its 
   const tarball = (name, number) => { read.push([`${name}@${number}`]); return Promise.resolve(own.versions[0].tgz) }
   const assessment = await assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball })
   assert.deepEqual(read, [['hooked', true], ['hooked@1.0.0'], ['dep-like', false]], 'the package assessed with the caller\'s token, its dependency without; its tarball the caller\'s')
-  assert.ok(!asked.some(url => url.startsWith(REGISTRY)), 'npm\'s registry asked nothing')
+  assert.ok(!asked.some(url => url.startsWith(REGISTRY) && url !== ADVISORIES), 'npm\'s registry asked for no document nor tarball')
   const busy = new Error('npm-busy')
   await assert.rejects(assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball: () => Promise.reject(busy) }), error => error === busy, 'a caller\'s failure thrown as it is')
   assert.equal(assessment.dependencies.added[0].level, 'is-unpopular', 'its document read: public, none of its downloads counted')
@@ -438,6 +528,7 @@ test('an assessment given up on as its signal aborts, upstream\'s download still
   let arrive = () => {}
   const fetching = new Promise(resolve => {
     t.mock.method(globalThis, 'fetch', input => {
+      if (String(input) === ADVISORIES) return Promise.resolve(Response.json({}))
       if (String(input) !== slow.doc.dist.tarball) return Promise.resolve(Response.json(documentOf({ name: 'slow', versions: [slow] })))
       resolve()
       return new Promise(answer => { arrive = () => answer(new Response(slow.tgz)) })
@@ -449,6 +540,16 @@ test('an assessment given up on as its signal aborts, upstream\'s download still
   controller.abort(new Error('caller gone'))
   await assert.rejects(assessed, /caller gone/u)
   arrive()
+})
+
+test('an assessment whose signal aborts before its advisories are asked asks none, nor waits', async t => {
+  const late = { name: 'late', versions: [version('late', '1.0.0', { 'package.json': '{}' }, {}, ago(30))] }
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => { asked.push(String(input)); return new Promise(() => {}) })
+  const controller = new AbortController()
+  const packument = () => { controller.abort(new Error('caller gone')); return Promise.resolve(documentOf(late)) }
+  await assert.rejects(assessNpm('late', '1.0.0', { now: NOW, downloads: false, signal: controller.signal, packument }), /caller gone/u)
+  assert.deepEqual(asked, [], 'npm\'s advisories not asked')
 })
 
 test('a new dependency\'s package told by its downloads but its latest two weeks\', and its age where it is new since the version compared with', () => {

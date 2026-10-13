@@ -17,6 +17,7 @@ const assessment = await assessNpm('axios', '1.14.1', {
   oldVersion: '1.14.0', // compared with; true for one risk picks (below); without one, everything of the version is new
   minimumReleaseAge: 14 * 24 * 60 * 60_000, // the default, two weeks; 0 for none, as a caller's own scopes take
   popularity: true, // the default; false for none, as a caller's own scopes take
+  advisories: true, // the default; false to ask none of npm's advisories, as a scan asking them of a lockfile at once does
   owned: name => name.startsWith('@mine/'), // the caller's own packages, a new dependency on one told no tier nor age; none by default
   cache, // as @preventive/upstream's CacheStore: read(type, key) and write(type, key, value)
 })
@@ -35,19 +36,20 @@ The highest is in the open version's branch (`1.x.y`, `0.2.y`, `0.0.y`) where on
 
 What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` (`npm/assess.js`), of versions held as the viewer holds one, and `npmAssessmentOf` makes an assessment of it with what is told fresh: the managed server's, and a test's of versions it holds.
 
-`assessNpm` reads npm's registry and downloads API itself, and keeps what it reads in `cache`, each record under its own type, for the caller to route each type where it belongs:
+`assessNpm` reads npm's registry, its advisories (as `npm audit` asks them, through upstream's `advisories`) and its downloads API itself, and keeps what it reads in `cache`, each record under its own type, for the caller to route each type where it belongs:
 
 | Type | Key | What | Changes |
 | --- | --- | --- | --- |
 | `npm/tarballs` | `<name>@<version>` | a version's tarball, its bytes (upstream's `getTarball`, checked against its integrity) | never |
 | `risk/npm/versions` | `<name>@<version>` | what its document says: manifest, publish time, dist | never |
-| `risk/npm/packages` | `<name>` | its deprecated versions | asked again after an hour |
+| `risk/npm/packages` | `<name>` | its deprecated versions, those npm removed, and whether npm took it down | asked again after an hour |
 | `risk/npm/old-versions` | `<name>@<version>` | the version risk picked to compare it with, or none (`oldVersion: true`) | picked again after an hour |
+| `risk/npm/advisories` | `<name>@<version>` | npm's advisories of it | asked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
 | `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
 
-An assessment kept needs no tarball. Against `oldVersion`, its tarball is read only where its files could change what is found (`npm/compare.js` `npmBaseFilesTell`): the open version's files are read first, and a pair's file findings only ever flag what they hold that the old version's didn't, so where none of them runs code beyond itself, names a service under one of the hosts' tags or a host past `ALLOWED_HOSTS`, bears an obfuscator's fingerprint, has a line over 2,000 characters or is large code, nor could a `binding.gyp` change the old version's install scripts, the old version is told by npm's document of it alone: its publisher, provenance, install scripts and dependencies. What depends on the time (a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
+An assessment kept needs no tarball. Against `oldVersion`, its tarball is read only where its files could change what is found (`npm/compare.js` `npmBaseFilesTell`): the open version's files are read first, and a pair's file findings only ever flag what they hold that the old version's didn't, so where none of them runs code beyond itself, names a service under one of the hosts' tags or a host past `ALLOWED_HOSTS`, bears an obfuscator's fingerprint, has a line over 2,000 characters or is large code, nor could a `binding.gyp` change the old version's install scripts, the old version is told by npm's document of it alone: its publisher, provenance, install scripts and dependencies. What depends on the time (malware, a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
 
 The package assessed is asked for with the npm token the environment has for a scoped one, as upstream asks. Its dependencies' downloads and first publish are asked with none: a private dependency reads as unknown, not unpopular.
 
@@ -63,7 +65,10 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
 
 ## What it tells
 
-- `findings`, each `{ id, severity, … }`, in the order a reviewer reads them. Against `oldVersion`, what changed:
+- `findings`, each `{ id, severity, … }`, in the order a reviewer reads them. First, with or without `oldVersion`:
+  - `malware`, critical (`npm/malware.js`): its package taken down by npm (`takenDown`), whatever version is asked, its latest version npm's placeholder, a "security holding package" from `npm/security-holder` published by npm; and npm's advisories of malware naming the version (`advisories`, each `{ id, url, title }`), CWE-506 (embedded malicious code) whatever their title, or a title naming malware, as @solana/web3.js's GHSA-jcxm-7wvp-g6p5 does with CWE-200 alone. A version npm removed, as it removes every one it finds malware in, is told of by its malware alone (`removed: true`, its `published` from npm's `time`, no files nor dependencies); one removed with no malware told of is `version-not-found`, as one npm never had.
+
+  Against `oldVersion`, what changed:
   - `deprecated`
   - `publisher`: red from a known account, orange between unknown ones, yellow to a known one; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
   - `provenance-lost`
@@ -100,6 +105,7 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `compare.js`: a pair's findings; `held.js`: a version's own.
   - `files.js`: each file read once a version.
   - `diff.js`: renames, as Compare pairs them.
+  - `malware.js`: what tells of malware, npm's takedown and its advisories.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
 
 Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`), but `held.js` `npmVersionFindings`, which takes what npm says of it now: its deprecation, when it was published, and its package's downloads.
