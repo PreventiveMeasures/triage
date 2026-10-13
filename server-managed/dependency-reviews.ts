@@ -22,7 +22,7 @@ export type ReviewChange = { action: 'save'; reviewId: string | null; revision: 
   | { action: 'continue'; reviewId: string; revision: number }
   | { action: 'revoke'; reviewId: string; revision: number }
 export interface DependencyReviewStore {
-  listDependencyReviews(context: ReviewContext, user: string): Promise<DependencyReview[]>
+  listDependencyReviews(context: ReviewContext, user: string, allBases?: boolean): Promise<DependencyReview[]>
   getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity'>): Promise<DependencyReview | null>
   listOwnDependencyReviews(user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null }>
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review_team (
 ) STRICT;
 `
 const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
-const contextWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ? AND base_package = ? AND base_version = ? AND base_integrity = ?'
+const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ?'
+const contextWhere = `${targetWhere} AND base_package = ? AND base_version = ? AND base_integrity = ?`
 const columns = `id, user_id AS user, user_login AS userLogin, ecosystem, package, version, integrity,
   NULLIF(base_package, '') AS basePackage, NULLIF(base_version, '') AS baseVersion, NULLIF(base_integrity, '') AS baseIntegrity,
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
@@ -187,12 +188,12 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
       return true
     },
     listDependencyReviewTeams: user => teams(db, user),
-    async listDependencyReviews(context, user) {
-      const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r WHERE ${contextWhere}
+    async listDependencyReviews(context, user, allBases = false) {
+      const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r WHERE ${allBases ? targetWhere : contextWhere}
         AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
           SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id AND t.hidden = 0
           JOIN managed_team_user m ON m.team_id = rt.team_id WHERE rt.review_id = r.id AND m.user_id = ?)))
-        ORDER BY time, id`).all(...values(context), user, user)
+        ORDER BY time, id`).all(...values(context).slice(0, allBases ? 4 : 7), user, user)
       return expandReviews(db, rows, user)
     },
     async changeDependencyReview(context, sessionId, change, now) {
