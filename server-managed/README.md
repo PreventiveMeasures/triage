@@ -1658,7 +1658,9 @@ files, dependencies }`. Risk is told on this server alone, and the npm viewer
 shows it as told, computing none of it: the Overview a version's own, Compare
 the pair's and each side's files'. A team's own scopes
 are trusted however new (a minimum release age of 0), any other version held
-to two weeks. What it reads is kept by type (npm-risk.ts): a public package's
+to two weeks, and however few download them: a version of one is not flagged
+`popularity`, and a new dependency on a package of one is told no tier nor
+age, nor is npm asked of it (assessNpm `owned`). What it reads is kept by type (npm-risk.ts): a public package's
 assessment in the public npm cache, its versions' documents in the upstream
 cache table, the rest in memory, and nothing of a private one shared.
 Packages' documents are read as the others here are, within their bounds and

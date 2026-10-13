@@ -51,6 +51,10 @@ export interface AssessNpmOptions {
   // Whether its new dependencies' tiers and ages are asked for, a request or
   // two of npm each, where `downloads` is. True unless given.
   dependencies?: boolean
+  // Whether a package is the caller's own, as its own scopes take: a new
+  // dependency on one is told no tier nor age, nor is npm asked of it. None
+  // unless given.
+  owned?: (name: string) => boolean | Promise<boolean>
 }
 
 // What calls for a look, by `id`, with what it found beside.

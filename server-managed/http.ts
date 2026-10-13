@@ -2674,12 +2674,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_SOCKET_PATH) { await reply(doc.private, { name, version: doc.version, socket: await socketOf().catch(() => null) }); return }
     // What calls for a look at the version, as risk tells it (npm-risk.ts),
     // against `otherVersion` where given; trusted however new and however few
-    // download it where a team lists its scope, its own packages.
+    // download it where a team lists its scope, its own packages, as a new
+    // dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
       const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
-      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, privileged, signal: controller.signal })
+      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped,
+        ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await reply(doc.private || old?.private === true, { ...assessment })
