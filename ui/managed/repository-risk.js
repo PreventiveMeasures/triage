@@ -22,7 +22,7 @@ const FINDING_LABELS = {
   'held-exfiltration': 'Exfiltration host',
   'held-obfuscated': 'Obfuscated',
   'non-registry-deps': 'Non-registry dependencies',
-  'unused-deps': 'Unused dependencies',
+  'unused-deps': 'Unused deps',
 }
 
 const ERRORS = {
