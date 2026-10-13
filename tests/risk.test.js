@@ -204,6 +204,15 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const rebuilt = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}' }))
   assert.equal(rebuilt['now-unreadable'].severity, 'high')
   assert.deepEqual(rebuilt['now-unreadable'].files.map(row => row.rebuilt), [true])
+  const elsewhere = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': '{}', 'maps/a.map': '{}' }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'lib/a.js.map': '{"version":3}', 'maps/a.map': '{}' }))
+  assert.equal(elsewhere['now-unreadable'].severity, 'critical', 'the map it names as it was, whatever map beside it changed')
+  const named = found(side('1.0.0', { 'lib/a.js': short, 'maps/a.map': '{}' }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'maps/a.map': '{"version":3}' }))
+  assert.equal(named['now-unreadable'].severity, 'high', 'the map it names, by a path from its own, rebuilt')
+  const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }),
+    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': '{"version":3}' }))
+  assert.equal(inline['now-unreadable'].severity, 'critical', 'a map inline is no map rebuilt beside it')
   const mixed = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}', 'b.js': short }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}', 'b.js': long('b.js') }))
   assert.equal(mixed['now-unreadable'].severity, 'critical', 'one file of them unexplained')
   const major = found(side('1.4.1', { 'a.js': short }, { publisher: 'known', knownAccounts: ['known'] }), side('2.0.0', { 'a.js': long('a.js') }, { publisher: 'new' }))
