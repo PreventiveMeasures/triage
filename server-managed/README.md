@@ -1067,10 +1067,10 @@ anything is answered, for a reader of both (401 or 404 as for one bundle, 400
 `bad-bundle` for an `other` that isn't a bundle ID), whose access is checked
 again before each line. A public link reads its own bundles' alone.
 
-`GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
+`GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=`
 diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the
 `other` bundle's, for Compare's **Hide renamed names**, in steps each checked
-apart, by @preventive/compare's `renamedDiff` (`rename-diff-worker.js`). Both
+apart, by @preventive/compare's `renamedDiffs` (`rename-diff-worker.js`). Both
 files are pretty-printed as `pretty` has them (and kept as it keeps them).
 The old copy is then given the new copy's names: both are parsed
 (oxc-parser) and each name resolved, by JavaScript's scopes, to the variable
@@ -1099,13 +1099,14 @@ has no error oxc's semantic check finds. No file reviewed is ever given to
 Node's `vm` or otherwise compiled or run: only parsed, by oxc. The renamed
 copy is then formatted again, checked to change only its layout and
 again by oxc's minifier as the old copy, else used as it was. The two copies
-are then diffed as they are, `ignoreWhitespace=true` diff -b, and the change
+are then diffed twice, as they are and as diff -b reads them, from the names
+found once, and each diff's change
 blocks checked to take the old copy's lines to the new one's, every line
 between them alike (but for how much whitespace it has, under diff -b) and,
 but for diff -b, the last line in a block where a
 newline was added or dropped after it, by the worker and again by the server, which otherwise
 answers none (422 `undiffable`). It answers Brotli-encoded `{ before,
-blocks, reason, reads, marks }`: the old copy as diffed, each change block
+blocks, reason, reads, marks, ignoringWhitespace }`: the old copy as diffed, each change block
 `{ a0, a1, b0, b1 }` (its lines `[a0, a1)` replaced by the new copy's `[b0,
 b1)`), and, where its names could not be given safely, why (`unparsed`,
 `dynamic` for `eval` or `with`, `jsx`, `block-function` for a function
@@ -1119,17 +1120,51 @@ does; and `marks`, the change blocks of the diff of the two copies as
 pretty-printed whose old lines, given the new names, are their new lines,
 no newline added or dropped after the last (none where names were not
 given), each checked by the server to be such a diff's blocks, in order and
-as many lines on either side; the two files' hashes, `hash` and
+as many lines on either side; `ignoringWhitespace`, the `blocks` and `marks`
+of the diff -b diff, checked alike, so that the viewer's **Hide whitespace
+changes** asks for nothing again; the two files' hashes, `hash` and
 `otherHash`, which the viewer checks are those it asked about; and those of
 the two pretty-printed copies the diff was worked out from, `prettyHash` and
 `otherPrettyHash`, which it checks are those of the copies it draws. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429
 `diff-busy` past that, as Code's one list asks for every file it shows at once),
 for at most a minute, its wait included (504 `diff-timeout`); a file that does
-not format is refused as by `pretty`. The last few answers are kept
+not format is refused as by `pretty`. The last few dozen answers are kept
 in memory by both files' hashes, each side read through the pretty-print
 cache first. The reader needs access to both bundles, checked before and
 again after the diff; a public link answers for two of its own bundles.
+
+`GET /api/bundles/:id/rename-diff?other=`, without a file, diffs every pair
+of JavaScript files minified on both sides that changed between the two
+bundles in one request, as Compare's Diff view and tree want them all:
+paired as the viewer pairs them (`computeBundleDiff`, at one path or renamed,
+within a package as the bundles record their packages, `bundlePkgOf`), in path order, one after another (leaving a
+worker to the files a viewer asks for alone), each from both sides' copies,
+kept or made as `pretty` keeps and makes them. It answers Brotli-encoded
+ndjson as each is worked out, a line each, the answer for that pair asked
+about alone with both files' paths, `path` and `otherPath`, or `{ path, hash,
+otherPath, otherHash, error, status }` where it has none (a file that does
+not format, the server busy). Access is checked as for `pretty?other=`,
+again before each line; a pair the viewer pairs otherwise, or one the server
+was too busy for, it asks for alone.
+
+`GET /api/bundles/:id/type-only?other=` tells which TypeScript files that
+changed between the two bundles changed in types alone, for Compare's **Hide
+type-only changes**: every changed, added and removed file, paired as the
+viewer pairs them, whose change @preventive/compare's `compareTrees` stamps
+`typeOnly` -- each side there a file named as a declaration file (`.d.ts`,
+`.d.mts`, `.d.cts`, `.d.css.ts`) that its `proveTypeOnly` proves holds types
+alone, so that it runs nothing, with an `export {}` kept on both sides or
+neither -- and nothing else decides it. Proving needs Node's type stripping, so
+the viewer can't. Each pair is asked of the engine on its own, as a tree of a
+file a side; two paths it takes for no rename are types only where each of
+their changes is, which is what it stamps of them paired. Proven in a worker
+thread, off the event loop, a comparison at a time per process, up to sixteen
+more waiting (the response cut short past that, or past a minute), and
+answered as Brotli-encoded ndjson once all are proven, a line each, `{ path,
+hash, otherPath, otherHash }`, a side not there null, which the viewer checks
+name the files it shows. Access is checked as for `pretty?other=`; a public
+link answers for two of its own bundles.
 
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
@@ -1855,11 +1890,15 @@ who lost it has the response cut short. A public version's copies are kept by
 content hash under `cache/npm/`, unencrypted, as what they are made from is
 public, and read from there by anyone who may read a public version; a private
 version's are made for each request and never kept. `GET
-/api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace=`
+/api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=`
 diffs one of the version's JavaScript files with one of `otherVersion`'s of
 the same package, from both pretty-printed as `pretty` has them, as a
-bundle's are (`GET /api/bundles/:id/rename-diff`); a diff of two public
-versions' files is kept in memory among the last few, a private one's never,
+bundle's are (`GET /api/bundles/:id/rename-diff`), and without a file every
+pair of them, a line each, as a bundle's; `GET
+/api/npm/type-only?name=&version=&otherVersion=` tells which of their
+TypeScript files changed in types alone, as a bundle's (`GET
+/api/bundles/:id/type-only`), nothing of it kept; a diff of two public
+versions' files is kept in memory among the last few dozen, a private one's never,
 its sides, formatted again for it, read in its turn among the diffs waiting.
 Responses are `private, no-store`. Nothing else derived from a package's
 files is kept on the server; its figures and advisories, which are public,

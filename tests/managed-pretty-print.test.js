@@ -108,15 +108,15 @@ const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?
 const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
 
 // What a rename diff of the two builds below answers: the old one with the
-// new one's names, formatted, diffed with the new one, the two files' hashes
-// and those of the two copies diffed.
-async function renamedBuilds(ignoreWhitespace = false) {
+// new one's names, formatted, diffed with the new one, whitespace changes
+// shown and hidden, the two files' hashes and those of the two copies diffed.
+async function renamedBuilds() {
   const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
   const after = await formatted(rebuilt)
   // No name read; the function's first two lines differ in its renamed names alone.
   const marks = [{ a0: 0, a1: 2, b0: 0, b1: 2 }]
-  return { before, blocks: changeBlocks(before, after, ignoreWhitespace), reason: null, reads: [], marks, hash: fileHash(built), otherHash: fileHash(rebuilt),
-    prettyHash: fileHash(await formatted(built)), otherPrettyHash: fileHash(after) }
+  return { before, blocks: changeBlocks(before, after), reason: null, reads: [], marks, ignoringWhitespace: { blocks: changeBlocks(before, after, true), marks },
+    hash: fileHash(built), otherHash: fileHash(rebuilt), prettyHash: fileHash(await formatted(built)), otherPrettyHash: fileHash(after) }
 }
 // A minifier's two builds of a module: a function's names renamed, a number changed.
 const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
@@ -403,7 +403,6 @@ test('a bundle file is diffed with another bundle\'s, both pretty-printed, renam
   const expected = await renamedBuilds()
   assert.deepEqual(res.json(), expected)
   assert.equal(expected.blocks.length, 1, 'the renamed lines alike, the changed one shown')
-  assert.deepEqual((await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json(), await renamedBuilds(true))
   // Both copies were kept, as the pretty-print toggle's are.
   for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v3'))).length, 1)
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
@@ -452,18 +451,20 @@ async function renameDiffRead(job) {
   return JSON.parse(brotliDecompressSync(Buffer.concat(chunks)).toString())
 }
 const diffSide = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' })
-const diffed = { base: diffSide(built), other: diffSide(rebuilt), ignoreWhitespace: false }
+const diffed = { base: diffSide(built), other: diffSide(rebuilt) }
 const readBuilds = () => Promise.resolve([built, rebuilt])
 
 test('a rename diff with whitespace changes hidden hides how much whitespace a line has alone, as diff -b', async () => {
   // A blank put into a string, which diff -w would read as no change.
   const rerun = 'function f(b){return exec("rm -rf / tmp/x",b)}export{f};\n', run = 'function f(a){return exec("rm -rf /tmp/x",a)}export{f};\n'
-  const asked = { base: diffSide(run), other: diffSide(rerun), ignoreWhitespace: true }
+  const asked = { base: diffSide(run), other: diffSide(rerun) }
   const copies = await Promise.all([run, rerun].map(text => formatted(text)))
   const answer = await renameDiffRead(renameDiffOf(asked, () => Promise.resolve(copies), false))
   assert.equal(answer.reason, null, 'its names given')
-  assert.equal(answer.blocks.length, 1, 'the string\'s change shown')
-  assert.match(answer.before.split('\n')[answer.blocks[0].a0], /"rm -rf \/tmp\/x"/u)
+  for (const { blocks } of [answer, answer.ignoringWhitespace]) {
+    assert.equal(blocks.length, 1, 'the string\'s change shown, whitespace changes shown or hidden')
+    assert.match(answer.before.split('\n')[blocks[0].a0], /"rm -rf \/tmp\/x"/u)
+  }
 })
 
 test('a rename diff waiting its turn has its minute run out there, and leaves the queue', async t => {
@@ -556,4 +557,136 @@ test('a public link diffs its bundles\' files with renamed names hidden, between
   assert.deepEqual(res.json(), await renamedBuilds())
   assert.equal((await h.send(bundleRenameDiff(base, randomUUID(), builds()), null, { headers })).status, 404)
   assert.equal((await h.send(bundleRenameDiff(base, other, { ...builds(), hash: 'nope' }), null, { headers })).status, 400)
+})
+
+const bundleRenameDiffs = (id, other) => `/api/bundles/${id}/rename-diff?${new URLSearchParams({ other })}`
+const npmRenameDiffs = (name, version, otherVersion) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion })}`
+// Two builds' minified files, as the viewer diffs them with renamed names
+// hidden: one at a path both have, its names renamed and a number changed;
+// one renamed with them, a chunk's hash in its name; and one changed into
+// what can't be formatted. Left out: one the same, one plain, one minified
+// on one side alone, and one not JavaScript.
+const renamedLong = long.replace('var a=', 'var q=').replace('a.map(c=>c*b)', 'q.map(r=>r*b*2)')
+const chunk = long.replace('function f', 'function g').replace('export{f}', 'export{g}')
+const pairedBuilds = [
+  { 'dist/app.min.js': long, 'dist/chunk-1a2b.js': chunk, 'dist/broken.js': long, 'dist/same.js': long, 'src/edit.js': 'export const b = 1\n',
+    'dist/half.js': long, 'dist/app.min.css': 'a{b:c}' },
+  { 'dist/app.min.js': renamedLong, 'dist/chunk-3c4d.js': chunk.replace('c*b', 'c*b+1'), 'dist/broken.js': broken, 'dist/same.js': long,
+    'src/edit.js': 'export const b = 2\n', 'dist/half.js': 'export const h = 1\n', 'dist/app.min.css': 'a{b:d}' },
+]
+// Each pair's line: as its diff alone answers, naming its two files.
+async function pairedLines(h, base, other) {
+  const named = (path, otherPath) => ({ path, hash: fileHash(pairedBuilds[0][path]), otherPath, otherHash: fileHash(pairedBuilds[1][otherPath]) })
+  const alone = async (path, otherPath) => ({ ...(await h.send(bundleRenameDiff(base, other, named(path, otherPath)))).json(), path, otherPath })
+  return [await alone('dist/app.min.js', 'dist/app.min.js'), { ...named('dist/broken.js', 'dist/broken.js'), error: 'unformattable', status: 422 },
+    await alone('dist/chunk-1a2b.js', 'dist/chunk-3c4d.js')]
+}
+
+test('the pairs of minified JavaScript files that changed between two bundles are diffed with renamed names hidden in one request, paired as the viewer pairs them', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(pairedBuilds[0]), await h.seed(pairedBuilds[1])]
+  const res = await h.send(bundleRenameDiffs(base, other))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/x-ndjson')
+  assert.equal(res.headers['content-encoding'], 'br')
+  assert.equal(res.headers['cache-control'], 'private, no-store')
+  const lines = linesOf(res)
+  assert.deepEqual(lines, await pairedLines(h, base, other), 'in path order, the one that couldn\'t be formatted told')
+  assert.equal(lines[0].reason, null)
+  assert.equal(lines[0].blocks.length, 1, 'its renamed names hidden, its changed line shown')
+  assert.ok(lines[0].ignoringWhitespace.blocks.length === 1 && lines[0].marks.length > 0, 'whitespace changes hidden too, and renamed lines marked')
+  assert.equal((await h.send(bundleRenameDiffs(base, other), 'outsider')).status, 404)
+  assert.equal((await h.send(bundleRenameDiffs(base, other), null)).status, 401)
+  assert.equal((await h.send(bundleRenameDiffs(base, 'nope'))).status, 400)
+  assert.equal((await h.send(bundleRenameDiffs(base, randomUUID()))).status, 404)
+})
+
+test('an npm version\'s pairs are diffed against another\'s in one request, a private one\'s kept nowhere', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', pairedBuilds[0]), packageOf('lib', '1.1.0', pairedBuilds[1]),
+    { ...packageOf('@corp/lib', '1.0.0', pairedBuilds[0]), private: true }, { ...packageOf('@corp/lib', '1.1.0', pairedBuilds[1]), private: true }])
+  const [base, other] = [await h.seed(pairedBuilds[0]), await h.seed(pairedBuilds[1])]
+  const expected = await pairedLines(h, base, other)
+  const res = await h.send(npmRenameDiffs('lib', '1.0.0', '1.1.0'))
+  assert.equal(res.status, 200)
+  assert.deepEqual(linesOf(res), expected, 'as a bundle\'s')
+  await rm(join(h.dir, 'cache', 'npm'), { recursive: true, force: true })
+  assert.equal((await h.send(npmRenameDiffs('@corp/lib', '1.0.0', '1.1.0'))).status, 404, 'a reader without private access gets nothing')
+  assert.deepEqual(linesOf(await h.send(npmRenameDiffs('@corp/lib', '1.0.0', '1.1.0'), 'admin')), expected)
+  await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
+  assert.equal((await h.send(npmRenameDiffs('lib', '1.0.0', ''))).status, 400)
+  assert.equal((await h.send(npmRenameDiffs('lib', '1.0.0', '1.1.0'), null)).status, 401)
+})
+
+test('a public link diffs the pairs of its own bundles\' files in one request', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(pairedBuilds[0]), await h.seed(pairedBuilds[1])]
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  const res = await h.send(bundleRenameDiffs(base, other), null, { headers })
+  assert.equal(res.status, 200)
+  assert.deepEqual(linesOf(res), await pairedLines(h, base, other))
+  assert.equal((await h.send(bundleRenameDiffs(base, randomUUID()), null, { headers })).status, 404)
+})
+
+const bundleTypeOnly = (id, other) => `/api/bundles/${id}/type-only?${new URLSearchParams({ other })}`
+const npmTypeOnly = (name, version, otherVersion) => `/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`
+// Two builds' TypeScript files: changed in types alone, at one path, renamed,
+// added and removed; and, left out, one that runs code once changed, one whose
+// `export {}` goes, which then runs otherwise once transpiled to CommonJS, one
+// not named as a declaration file, and one the same.
+const members = Array.from({ length: 12 }, (_, i) => `  m${i}: string;\n`).join('')
+const typedBuilds = [
+  { 'types/index.d.ts': 'export interface A { a: string }\n', 'types/old-name.d.ts': `export interface R {\n${members}}\n`, 'lib/gone.d.ts': 'declare const x: number;\n',
+    'types/run.d.ts': 'export interface B {}\n', 'types/inert.d.ts': 'export interface X {}\nexport {};\n', 'src/app.ts': 'export type T = 1;\n', 'types/same.d.ts': 'export type S = 1;\n' },
+  { 'types/index.d.ts': 'export interface A { a: number }\n', 'types/new-name.d.ts': `export interface R {\n${members}  m12: number;\n}\n`, 'lib/added.d.ts': 'export type C = string;\n',
+    'types/run.d.ts': 'export interface B {}\nconsole.log(1);\n', 'types/inert.d.ts': 'export interface X { y: 1 }\n', 'src/app.ts': 'export type T = 2;\n', 'types/same.d.ts': 'export type S = 1;\n' },
+]
+// Those changed in types alone, in path order, a side not there null.
+const typedLines = () => {
+  const [olds, news] = typedBuilds
+  const line = (path, otherPath) => ({ path, hash: path && fileHash(olds[path]), otherPath, otherHash: otherPath && fileHash(news[otherPath]) })
+  return [line(null, 'lib/added.d.ts'), line('lib/gone.d.ts', null), line('types/index.d.ts', 'types/index.d.ts'), line('types/old-name.d.ts', 'types/new-name.d.ts')]
+}
+
+test('the files that changed between two bundles in types alone are told in one request, as @preventive/compare proves them', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(typedBuilds[0]), await h.seed(typedBuilds[1])]
+  const res = await h.send(bundleTypeOnly(base, other))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/x-ndjson')
+  assert.equal(res.headers['cache-control'], 'private, no-store')
+  assert.deepEqual(linesOf(res), typedLines(), 'added, removed, at one path and renamed; none that runs code, drops an `export {}` or is no declaration file')
+  assert.deepEqual(linesOf(await h.send(bundleTypeOnly(other, other))), [], 'none between a bundle and itself')
+  assert.equal((await h.send(bundleTypeOnly(base, other), 'outsider')).status, 404)
+  assert.equal((await h.send(bundleTypeOnly(base, other), null)).status, 401)
+  assert.equal((await h.send(bundleTypeOnly(base, 'nope'))).status, 400)
+  assert.equal((await h.send(bundleTypeOnly(base, randomUUID()))).status, 404)
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  assert.deepEqual(linesOf(await h.send(bundleTypeOnly(base, other), null, { headers })), typedLines(), 'a public link\'s own bundles')
+})
+
+test('the files that changed between two npm versions in types alone are told in one request, a private one\'s to its readers alone', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', typedBuilds[0]), packageOf('lib', '1.1.0', typedBuilds[1]),
+    { ...packageOf('@corp/lib', '1.0.0', typedBuilds[0]), private: true }, { ...packageOf('@corp/lib', '1.1.0', typedBuilds[1]), private: true }])
+  const res = await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'))
+  assert.equal(res.status, 200)
+  assert.deepEqual(linesOf(res), typedLines())
+  assert.equal((await h.send(npmTypeOnly('@corp/lib', '1.0.0', '1.1.0'))).status, 404, 'a reader without private access gets nothing')
+  assert.deepEqual(linesOf(await h.send(npmTypeOnly('@corp/lib', '1.0.0', '1.1.0'), 'admin')), typedLines())
+  assert.equal((await h.send(npmTypeOnly('lib', '1.0.0', ''))).status, 400)
+  assert.equal((await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'), null)).status, 401)
+})
+
+test('a comparison\'s files are paired renamed within a package alone, as the viewer pairs them', async t => {
+  const h = await setup(t)
+  // A chunk renamed within its package, and one like it gone from one package and come in another.
+  const [base, other] = [await h.seed({ 'node_modules/a/dist/x-1a2b.js': chunk, 'node_modules/c/dist/y-1a2b.js': long }),
+    await h.seed({ 'node_modules/b/dist/x-3c4d.js': chunk.replace('c*b', 'c*b+1'), 'node_modules/c/dist/y-3c4d.js': renamedLong })]
+  const pairs = linesOf(await h.send(bundleRenameDiffs(base, other))).map(({ path, otherPath }) => [path, otherPath])
+  assert.deepEqual(pairs, [['node_modules/c/dist/y-1a2b.js', 'node_modules/c/dist/y-3c4d.js']], 'none across packages')
 })

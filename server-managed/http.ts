@@ -39,8 +39,12 @@
 //   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
 //   GET  /api/bundles/<id>/pretty?other= → the files that changed between it and another bundle, both sides' pretty-printed,
 //        Brotli-encoded ndjson | 400/401/404/422/503
-//   GET  /api/bundles/<id>/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript file diffed
-//        with another bundle's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/504
+//   GET  /api/bundles/<id>/rename-diff?path=&hash=&other=&otherPath=&otherHash= → a JavaScript file diffed with another
+//        bundle's, both pretty-printed, renamed names hidden, whitespace changes shown and hidden | 400/401/404/409/413/422/429/504
+//   GET  /api/bundles/<id>/rename-diff?other= → every pair of its JavaScript files and another bundle's the viewer diffs so,
+//        Brotli-encoded ndjson | 400/401/404/422/503
+//   GET  /api/bundles/<id>/type-only?other= → the files that changed between it and another bundle in types alone, as
+//        @preventive/compare proves them, Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -71,8 +75,12 @@
 //   GET  /api/npm/pretty?name=&version=&otherVersion= → the files that changed between it and another version, both sides'
 //        pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
-//   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
-//        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
+//   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash= → a JavaScript file diffed with
+//        another version's, both pretty-printed, renamed names hidden, whitespace changes shown and hidden | 400/401/404/409/413/422/429/502/503/504
+//   GET  /api/npm/rename-diff?name=&version=&otherVersion= → every pair of their JavaScript files the viewer diffs so,
+//        Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/type-only?name=&version=&otherVersion= → the files that changed between two versions in types alone,
+//        Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
@@ -152,8 +160,9 @@ import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, np
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
-import { type PrettyCache, PrettyError, type PrettyRequest, prettyRequest, prettyText } from './pretty-print.ts'
-import { renameDiffOf, renameDiffRequest } from './rename-diff.ts'
+import { type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
+import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
+import { typeOnlyFiles } from './type-only.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -206,13 +215,14 @@ const NPM_SOCKET_PATH = '/api/npm/socket'
 const NPM_PROVENANCE_PATH = '/api/npm/provenance'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
 const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
+const NPM_TYPE_ONLY_PATH = '/api/npm/type-only'
 const NPM_RISK_PATH = '/api/npm/risk'
 // What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
 // having no such package or version, or a tarball unpacking past risk's
 // bounds; npm failing otherwise a 502.
 const NPM_RISK_STATUS: Partial<Record<string, number>> = { 'package-not-found': 404, 'version-not-found': 404, 'package-too-large': 413 }
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
-  NPM_RENAME_DIFF_PATH, NPM_RISK_PATH])
+  NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -1493,9 +1503,13 @@ async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse,
 
 // GET /api/bundles/:id/pretty?other=: the files that changed between it and
 // the `other` bundle, both sides' pretty-printed (pretty-print.ts compared), a
-// line each as it is found kept or formatted, for a reader of both, checked
-// again before each.
-async function handleBundlePrettyChanges(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string) {
+// line each as it is found kept or formatted; GET
+// /api/bundles/:id/rename-diff?other=, the pairs of them its viewer diffs
+// with renamed names hidden (rename-diff.ts renamedPairs), a line each as it
+// is worked out; GET /api/bundles/:id/type-only?other=, those that changed in
+// types alone (type-only.ts). For a reader of both, checked again before each.
+async function handleBundleChanges(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string,
+  linesOf: (cache: PrettyCache, base: ManagedBundle, other: ManagedBundle) => Promise<AsyncIterable<unknown>>) {
   if (!/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-bundle' }); return }
   const access = () => Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
   const [base, other] = await access()
@@ -1503,7 +1517,7 @@ async function handleBundlePrettyChanges(res: ServerResponse, deps: ManagedHttpD
   if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let lines
-  try { lines = await deps.prettyCache.bundleChanges(base.bundle, other.bundle) }
+  try { lines = await linesOf(deps.prettyCache, base.bundle, other.bundle) }
   catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
   await sendLines(res, lines, async () => (await access()).every(snapshot => snapshot?.bundle))
 }
@@ -2789,7 +2803,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff,type-only}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
@@ -2799,13 +2813,13 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // All but the package's own (its versions, figures and advisories) are a version's.
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
-  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
+  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || ((path === NPM_RENAME_DIFF_PATH || path === NPM_TYPE_ONLY_PATH) && !isNpmPackageSpec(otherSpec))
     || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
     || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
-  const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
-  if (path === NPM_RENAME_DIFF_PATH && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
+  const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
+  if (path === NPM_RENAME_DIFF_PATH && params.has('path') && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2907,7 +2921,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
     // Every one of its files that needs it pretty-printed (pretty-print.ts
     // npmAll), or, against another version, the files that changed between
-    // them, both sides' (npmChanges), a line each as it is formatted, or found
+    // them, both sides' (compared), a line each as it is formatted, or found
     // kept for a public version; its files read before anything is answered.
     // A reader who lost their session, or their access, meanwhile has the
     // rest cut short.
@@ -2921,10 +2935,16 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       await sendEncoded(req, res, copy, 'text/plain; charset=utf-8', prettySource(file))
       return
     }
-    if (path === NPM_PRETTY_PATH) {
+    // Against another version, the pairs of its files that changed that the
+    // viewer diffs with renamed names hidden (rename-diff.ts renamedPairs), a
+    // line each as it is worked out, as Compare's pretty-printed files are;
+    // and those that changed in types alone (type-only.ts).
+    if (path === NPM_PRETTY_PATH || path === NPM_TYPE_ONLY_PATH || (path === NPM_RENAME_DIFF_PATH && !diffed)) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
       const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
-      const lines = other ? await deps.prettyCache.npmChanges(doc, other) : await deps.prettyCache.npmAll(doc)
+      const sides = other && await deps.prettyCache.npmSides(doc, other)
+      const lines = path === NPM_RENAME_DIFF_PATH ? renamedPairs(sides!, !doc.private && !other!.private)
+        : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
       if (!(await recheck(isPrivate))) return
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
@@ -3231,16 +3251,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
-    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff)$/iu.exec(path)
+    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff|type-only)$/iu.exec(path)
     if (bundleRead) {
       const id = bundleRead[1]!, part = bundleRead[2]!, { session } = workspaceSession!, { bundleCache, prettyCache } = deps
-      if (part === 'rename-diff') {
+      if (part === 'rename-diff' || part === 'type-only' || (part === 'pretty' && url.searchParams.has('other'))) {
         if (method !== 'GET') { send405(res, 'GET'); return }
-        await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return
-      }
-      if (part === 'pretty' && url.searchParams.has('other')) {
-        if (method !== 'GET') { send405(res, 'GET'); return }
-        await handleBundlePrettyChanges(res, deps, session, id, url.searchParams.get('other')!); return
+        if (part === 'rename-diff' && url.searchParams.has('path')) { await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return }
+        const linesOf = part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs
+        await handleBundleChanges(res, deps, session, id, url.searchParams.get('other') ?? '', async (cache, base, other) => linesOf(await cache.bundleSides(base, other))); return
       }
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       if (part === 'download') { await handleGetBundle(req, res, deps, session, id); return }

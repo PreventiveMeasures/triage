@@ -36,24 +36,29 @@ const MIN_FOLD = 4
 export function lineDiff(before, after, { ignoreWhitespace = false, changes = null, marks = null } = {}) {
   const a = textLines(before), b = textLines(after)
   const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
-  const told = new Set((marks ?? []).map(({ a0, a1, b0, b1 }) => `${a0},${a1},${b0},${b1}`))
-  const marked = new Set()
-  blocks.forEach(({ a0, a1, b0, b1 }, i) => {
-    if (told.has(`${a0},${a1},${b0},${b1}`) && a1 - a0 === b1 - b0) marked.add(i)
-  })
-  let additions = 0, deletions = 0, renamed = 0
-  blocks.forEach((block, i) => {
-    if (marked.has(i)) renamed += block.b1 - block.b0
-    else {
-      additions += block.b1 - block.b0
-      deletions += block.a1 - block.a0
-    }
-  })
   // A last line with no newline after it: shown on a changed row, since a
   // newline added or dropped at the end is a change of that line alone.
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
-  return { a, b, blocks, additions, deletions, renamed, marked, noEol, words: new Map() }
+  return { a, b, blocks, ...markedCounts(blocks, marks), noEol, words: new Map() }
+}
+
+// The lines `blocks` add and remove, those that are one of `marks` (as many
+// lines on either side) counted apart (`renamed`), their indexes `marked`.
+export function markedCounts(blocks, marks) {
+  const told = new Set((marks ?? []).map(({ a0, a1, b0, b1 }) => `${a0},${a1},${b0},${b1}`))
+  const marked = new Set()
+  let additions = 0, deletions = 0, renamed = 0
+  blocks.forEach(({ a0, a1, b0, b1 }, i) => {
+    if (told.has(`${a0},${a1},${b0},${b1}`) && a1 - a0 === b1 - b0) {
+      marked.add(i)
+      renamed += b1 - b0
+    } else {
+      additions += b1 - b0
+      deletions += a1 - a0
+    }
+  })
+  return { additions, deletions, renamed, marked }
 }
 
 // A file's lines added and removed between its two sides as they are, for a

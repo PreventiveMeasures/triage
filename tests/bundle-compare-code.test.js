@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
-import { renamedDiff } from '@preventive/compare/names.js'
+import { compareTrees } from '@preventive/compare'
+import { renamedDiffs } from '@preventive/compare/names.js'
+import { needsPrettyPrint } from '../common/pretty-print.js'
 import { toldVersion } from './_npm-risk.js'
 
 const state = {}
@@ -10,13 +12,20 @@ mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KE
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // The server's pretty-printed copies, by bundle and path, and its diffs of
 // two with renamed names hidden, worked out from them as it does
-// (@preventive/compare's renamedDiff), naming the two files' hashes (each
-// asked for noted; an error in place of the base's copy fails its diff).
-// A comparison's copies are those of either bundle's files, each naming its
-// file's hash, as the view's bundles have them (`viewed`, the latest last),
-// but those it leaves out (`unsent`, by bundle and path), asked for alone;
-// each comparison asked for noted.
-const comparisons = [], pretty = new Map(), renameDiffs = [], unsent = new Set(), viewed = new Set()
+// (@preventive/compare's renamedDiffs, whitespace changes shown and hidden),
+// naming the two files' hashes (each asked for alone noted; an error in place
+// of the base's copy fails its diff). A comparison's copies are those of
+// either bundle's files, each naming its file's hash, as the view's bundles
+// have them (`viewed`, the latest last), but those it leaves out (`unsent`,
+// by bundle and path), asked for alone; each comparison asked for noted. Its
+// rename diffs, those of its files minified on both sides at one path whose
+// copies it has, but those it leaves out (`unsent`), each comparison asked
+// for noted (`renameStreams`).
+const comparisons = [], pretty = new Map(), renameDiffs = [], renameStreams = [], unsent = new Set(), viewed = new Set()
+// Each comparison's proofs of files changed in types alone asked for, as the
+// server proves them (@preventive/compare's compareTrees `typeOnly`), of the
+// view's bundles' files paired as the view pairs them.
+const typeProofs = []
 // The rename diffs the mock server is working out at once, and the most so far;
 // `held`, while set, a promise each waits for before it answers.
 const flying = { now: 0, most: 0, held: null }
@@ -27,6 +36,23 @@ const misanswered = new Set()
 // too long to work out in time: the view asks for them as it paints, even
 // after their test, and none is worked out for seconds while later tests run.
 const tooLong = new Set()
+// Files (`id:path`) the server can't diff as code, whose diffs it refuses.
+const undiffable = new Set()
+// A rename diff as the mock server answers it, of `path` in bundle `id` and
+// `otherPath` in `other`, their files' hashes `hash` and `otherHash`.
+async function renameAnswer(id, other, path, otherPath, hash, otherHash) {
+  if (tooLong.has(`${id}:${path}`)) throw Object.assign(new Error('Comparing this file took too long.'), { status: 504 })
+  if (undiffable.has(`${id}:${path}`)) throw Object.assign(new Error("This file couldn't be compared as code."), { status: 422 })
+  const [before, after] = [pretty.get(`${id}:${path}`), pretty.get(`${other}:${otherPath}`)]
+  if (before instanceof Error) throw before
+  flying.most = Math.max(flying.most, ++flying.now)
+  await flying.held
+  const { warnings, diffs: [shown, hidden], ...diff } = await renamedDiffs(before, after, { whitespace: ['none', 'change'] }).finally(() => { flying.now-- })
+  assert.deepEqual(warnings, [])
+  const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
+  return { ...diff, blocks: shown.blocks, marks: shown.marks, ignoringWhitespace: { blocks: hidden.blocks, marks: hidden.marks },
+    hash: misanswered.has(id) ? `${hash}x` : hash, otherHash, prettyHash, otherPrettyHash }
+}
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
   fetchPrettyNpmFile() {},
@@ -45,19 +71,43 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     }
   },
   fetchPrettyNpmChanges() {},
-  async fetchBundleRenameDiff(id, other, params) {
+  fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
-    if (tooLong.has(`${id}:${params.path}`)) throw Object.assign(new Error('Comparing this file took too long.'), { status: 504 })
-    const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
-    if (before instanceof Error) throw before
-    flying.most = Math.max(flying.most, ++flying.now)
-    await flying.held
-    const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' }).finally(() => { flying.now-- })
-    assert.deepEqual(warnings, [])
-    const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
-    return { ...diff, hash: misanswered.has(id) ? `${params.hash}x` : params.hash, otherHash: params.otherHash, prettyHash, otherPrettyHash }
+    return renameAnswer(id, other, params.path, params.otherPath, params.hash, params.otherHash)
   },
   fetchNpmRenameDiff() {},
+  async fetchBundleRenameDiffs(id, other, onLine) {
+    renameStreams.push({ id, other })
+    const [base, next] = [id, other].map(managedId => [...viewed].findLast(held => held?.managedId === managedId))
+    const [olds, news] = [bundleFilesAsMap(base), bundleFilesAsMap(next)]
+    for (const path of [...news.keys()].toSorted()) {
+      const [before, after] = [olds.get(path), news.get(path)]
+      if (typeof before !== 'string' || typeof after !== 'string' || before === after || [id, other].some(held => !pretty.has(`${held}:${path}`) || unsent.has(`${held}:${path}`))
+        || ![before, after].every(text => needsPrettyPrint(path, text))) continue
+      const [hash, otherHash] = await Promise.all([before, after].map(computeFileHash))
+      let answer
+      try { answer = { ...await renameAnswer(id, other, path, path, hash, otherHash), path, otherPath: path } }
+      catch (err) { answer = { path, hash, otherPath: path, otherHash, status: err.status ?? 422, message: err.message } }
+      await onLine(answer)
+    }
+  },
+  fetchNpmRenameDiffs() {},
+  async fetchBundleTypeOnly(id, other, onLine) {
+    typeProofs.push({ id, other })
+    const [olds, news] = [id, other].map(managedId => bundleFilesAsMap([...viewed].findLast(held => held?.managedId === managedId)))
+    const { changed, onlyBase, onlyOther } = computeBundleDiff(olds, news, () => '.').files
+    const pairs = [...changed.map(({ path, basePath = path }) => [basePath, path]), ...onlyBase.map(({ path, basePath = path }) => [basePath, null]), ...onlyOther.map(({ path }) => [null, path])]
+    for (const [path, otherPath] of pairs) {
+      const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
+      if (![before, after].every(text => text === null || typeof text === 'string')) continue
+      const tree = (name, text) => (name === null ? [] : [{ name, data: text }])
+      const changes = compareTrees(tree(path, before), tree(otherPath, after), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
+      if (changes.length === 0 || !changes.every(change => change.typeOnly)) continue
+      const hash = text => (text === null ? null : computeFileHash(text))
+      await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after) })
+    }
+  },
+  fetchNpmTypeOnly() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 // Prism can't load here, so text is drawn uncolored, unless a test colors it
@@ -283,9 +333,19 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
   const files = bundleFilesAsMap(element.base).get('dist/app.min.js'), others = bundleFilesAsMap(element.other).get('dist/app.min.js')
   assert.deepEqual(renameDiffs, [{ id: 'b1', other: 'b2', path: 'dist/app.min.js', hash: await computeFileHash(files), otherPath: 'dist/app.min.js',
-    otherHash: await computeFileHash(others), ignoreWhitespace: false }], 'asked once, for the files as published')
+    otherHash: await computeFileHash(others) }], 'the file shown asked for alone once, for the files as published')
+  assert.deepEqual(renameStreams.filter(({ id }) => id === 'b1'), [{ id: 'b1', other: 'b2' }], 'and its comparison\'s, once')
+  // Whitespace changes hidden, and shown again, from the same answer.
+  for (const value of [true, false]) {
+    element._setWhitespace(value)
+    assert.match(renderText(element.render()), /var X = 1;/u)
+  }
+  element._setRenames(false)
   renderText(element.render())
-  assert.equal(renameDiffs.length, 1, 'kept')
+  element._setRenames(true)
+  renderText(element.render())
+  assert.equal(renameDiffs.length, 1, 'kept, for either setting')
+  assert.equal(renameStreams.filter(({ id }) => id === 'b1').length, 1)
 })
 
 // Until a file's printed copies came (or failed), the view painted meanwhile.
@@ -555,7 +615,7 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print 1 of 2 files: This file couldn't be read as code\./u)
 })
 
-test('the Diff view marks the renamed lines of every minified file it shows, however many, asking for each once, two at a time', async t => {
+test('the Diff view marks the renamed lines of every minified file it shows, however many, asking for them all in one request', async t => {
   const files = Array.from({ length: 20 }, (_, i) => `dist/m${i}.min.js`)
   t.after(() => {
     state.bundleSourcePretty = false
@@ -587,147 +647,118 @@ test('the Diff view marks the renamed lines of every minified file it shows, how
   for (let i = 0; i < 5; i++) renderText(all.render())
   await new Promise(resolve => { setTimeout(resolve, 20) })
   renderText(all.render())
-  const ours = renameDiffs.slice(asked).filter(({ id }) => id === 'b21')
-  assert.equal(ours.length, files.length, 'each asked for once, past those a few kept, painted again as it may be')
-  assert.ok(flying.most <= 2, `two at a time, as the server works them out (${flying.most})`)
+  assert.deepEqual(renameDiffs.slice(asked).filter(({ id }) => id === 'b21'), [], 'none asked for alone')
+  assert.deepEqual(renameStreams.filter(({ id }) => id === 'b21'), [{ id: 'b21', other: 'b22' }], 'their comparison\'s asked for once, painted again as it may be')
   assert.match(renderText(all.render()), /aria-pressed=false aria-label="Hide renamed names"/u)
 })
 
-test('the Diff view\'s rename diffs past those a few kept are dropped once it is gone, or paints asking for none', async t => {
-  const files = Array.from({ length: 20 }, (_, i) => `dist/k${i}.min.js`)
+// A Diff view of `count` minified files under `dir`, renamed alike, between
+// bundles `ids`, opened anew by `opened()`, each file's copies held by the
+// mock server; and the comparison's rename diffs asked for since `asked`
+// streams and alone requests were, for its base.
+function diffViewOf(t, dir, count, ids) {
+  const files = Array.from({ length: count }, (_, i) => `${dir}${i}.min.js`)
   t.after(() => {
     state.bundleSourcePretty = false
-    for (const path of files) for (const id of ['b37', 'b38']) pretty.delete(`${id}:${path}`)
+    for (const path of files) for (const id of ids) pretty.delete(`${id}:${path}`)
   })
-  await import('../ui/view/bundle-compare-all.js')
   const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
     Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
-  code.base.managedId = 'b37'
-  code.other.managedId = 'b38'
+  ;[code.base.managedId, code.other.managedId] = ids
   for (const path of files) {
-    pretty.set(`b37:${path}`, 'var Y = 1;\nq(Y);\nh();\nmodule.exports = 1;\n')
-    pretty.set(`b38:${path}`, 'var X = 1;\nq(X);\nh();\nmodule.exports = 2;\n')
+    pretty.set(`${ids[0]}:${path}`, `var Y = 1;\nq(Y);\nh(${JSON.stringify(path)});\nmodule.exports = 1;\n`)
+    pretty.set(`${ids[1]}:${path}`, `var X = 1;\nq(X);\nh(${JSON.stringify(path)});\nmodule.exports = 2;\n`)
   }
   const opened = () => {
     const all = new (customElements.get('bundle-compare-all'))()
     for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
     all.willUpdate(new Map([['base'], ['other'], ['files']]))
-    all._query = 'dist/k'
+    all._query = dir
     return all
   }
-  // Painted until every file's diff came, then those asked for again, of ours,
-  // in path order: each is sent once its texts' hashes are found, in whatever
-  // order that ends.
-  const settled = async all => {
-    const asked = renameDiffs.length
-    const deadline = Date.now() + 20_000
-    while (files.some(path => all._fileState(path, all._entries.get(path)).changes?.status !== 'ready') && Date.now() < deadline) {
-      renderText(all.render())
-      await new Promise(resolve => { setTimeout(resolve, 5) })
-    }
-    return renameDiffs.slice(asked).filter(({ id }) => id === 'b37').map(({ path }) => path).toSorted()
+  const since = (streams, alone) => ({ streams: renameStreams.slice(streams).filter(({ id }) => id === ids[0]).length, alone: renameDiffs.slice(alone).filter(({ id }) => id === ids[0]).length })
+  return { files, opened, since }
+}
+
+// Painted until every one of `files` has its rename diff.
+async function settledRenames(all, files) {
+  const deadline = Date.now() + 20_000
+  while (files.some(path => all._fileState(path, all._entries.get(path)).changes?.status !== 'ready') && Date.now() < deadline) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
   }
+  return files.every(path => all._fileState(path, all._entries.get(path)).changes?.status === 'ready')
+}
+
+test('the Diff view\'s rename diffs are kept for its comparison: opened again, whitespace hidden, or pretty-print turned off and on, it asks for none again', async t => {
+  await import('../ui/view/bundle-compare-all.js')
+  const { files, opened, since } = diffViewOf(t, 'dist/k', 20, ['b37', 'b38'])
+  const [streams, alone] = [renameStreams.length, renameDiffs.length]
   state.bundleSourcePretty = true
   const first = opened()
-  assert.equal((await settled(first)).length, files.length, 'each asked for')
-  // Gone: the four least recent, past the sixteen kept, dropped.
+  assert.ok(await settledRenames(first, files), 'each file\'s diff came')
   first.disconnectedCallback()
   const again = opened()
-  assert.deepEqual(await settled(again), files.slice(0, 4), 'those dropped asked for again, opened again')
-  // Pretty-print turned off: the one paint it asks for asks none, and the same
-  // are dropped as it ends.
+  assert.ok(await settledRenames(again, files), 'opened again, at once')
+  again._setWhitespace(true)
+  assert.ok(await settledRenames(again, files), 'with whitespace changes hidden')
+  again._setWhitespace(false)
   state.bundleSourcePretty = false
-  await new Promise(resolve => { setTimeout(resolve, 0) })
   renderText(again.render())
-  await new Promise(resolve => { setTimeout(resolve, 0) })
   state.bundleSourcePretty = true
-  assert.deepEqual(await settled(again), files.slice(0, 4), 'and turned back on')
+  assert.ok(await settledRenames(again, files), 'pretty-print turned off and on')
+  assert.deepEqual(since(streams, alone), { streams: 1, alone: 0 }, 'one request for them all, none alone')
 })
 
-test('the Diff view filtered before its rename diffs all came asks for none of those it shows no longer, as their turns come', async t => {
-  const files = Array.from({ length: 10 }, (_, i) => `dist/s${i}.min.js`)
-  t.after(() => {
-    state.bundleSourcePretty = false
-    for (const path of files) for (const id of ['b27', 'b28']) pretty.delete(`${id}:${path}`)
-  })
+test('the Diff view asks alone for a rename diff its comparison\'s came without, or couldn\'t work out then, once they came; one refused is told', async t => {
   await import('../ui/view/bundle-compare-all.js')
-  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
-    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
-  code.base.managedId = 'b27'
-  code.other.managedId = 'b28'
-  for (const path of files) {
-    pretty.set(`b27:${path}`, `var Y = 1;\nq(Y);\nh(${JSON.stringify(path)});\nmodule.exports = 1;\n`)
-    pretty.set(`b28:${path}`, `var X = 1;\nq(X);\nh(${JSON.stringify(path)});\nmodule.exports = 2;\n`)
-  }
-  const all = new (customElements.get('bundle-compare-all'))()
-  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
-  all.willUpdate(new Map([['base'], ['other'], ['files']]))
-  all._query = 'dist/s'
-  // The server's answers held, the view asks for all ten: two on their way, the rest waiting their turn.
-  let release
-  flying.held = new Promise(resolve => { release = resolve })
-  t.after(() => { release(); flying.held = null })
+  const { files, opened, since } = diffViewOf(t, 'dist/f', 4, ['b39', 'b40'])
+  // Left out of the comparison's, as the server pairs it otherwise; given up on there, as the server was busy; refused.
+  unsent.add(`b39:${files[1]}`)
+  tooLong.add(`b39:${files[2]}`)
+  undiffable.add(`b39:${files[3]}`)
+  t.after(() => { unsent.delete(`b39:${files[1]}`); tooLong.delete(`b39:${files[2]}`); undiffable.delete(`b39:${files[3]}`) })
+  const [streams, alone] = [renameStreams.length, renameDiffs.length]
   state.bundleSourcePretty = true
-  for (let i = 0; i < 400 && flying.now < 2; i++) {
+  const all = opened()
+  const asked = () => renameDiffs.slice(alone).filter(({ id }) => id === 'b39').map(({ path }) => path).toSorted()
+  const changes = path => all._fileState(path, all._entries.get(path)).changes
+  for (let i = 0; i < 400 && (asked().length < 2 || files.slice(0, 2).some(path => changes(path)?.status !== 'ready')); i++) {
     renderText(all.render())
     await new Promise(resolve => { setTimeout(resolve, 5) })
   }
-  assert.equal(flying.now, 2, 'two on their way')
-  const asked = renameDiffs.length
-  // Filtered to one file, painted once, in a task of its own, as the view is.
+  assert.deepEqual(files.slice(0, 2).map(path => changes(path)?.status), ['ready', 'ready'], 'the comparison\'s, and the one it came without')
+  assert.deepEqual(asked(), files.slice(1, 3), 'those two asked for alone, once the comparison\'s came')
+  assert.deepEqual([changes(files[3]).status, changes(files[3]).message], ['error', "This file couldn't be compared as code."], 'the refused one told, not asked again')
+  assert.equal(since(streams, alone).streams, 1)
+})
+
+test('the Diff view filtered, or with pretty-print turned off, while its rename diffs come asks for none again, and none alone', async t => {
+  await import('../ui/view/bundle-compare-all.js')
+  const { files, opened, since } = diffViewOf(t, 'dist/s', 10, ['b27', 'b28'])
+  // The server's answers held: the first on its way, the rest waiting behind it.
+  let release
+  flying.held = new Promise(resolve => { release = resolve })
+  t.after(() => { release(); flying.held = null })
+  const [streams, alone] = [renameStreams.length, renameDiffs.length]
+  state.bundleSourcePretty = true
+  const all = opened()
+  for (let i = 0; i < 400 && flying.now < 1; i++) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(flying.now, 1, 'one on its way')
+  // Filtered to one file, and pretty-print turned off and on, painted each time.
   all._query = 'dist/s9.'
-  await new Promise(resolve => { setTimeout(resolve, 0) })
   renderText(all.render())
-  release()
-  flying.held = null
-  const one = () => all._fileState(files[9], all._entries.get(files[9])).changes?.status
-  for (let i = 0; i < 400 && (one() !== 'ready' || flying.now > 0); i++) {
-    renderText(all.render())
-    await new Promise(resolve => { setTimeout(resolve, 5) })
-  }
-  assert.equal(one(), 'ready', 'the file shown marked')
-  const others = renameDiffs.slice(asked).filter(({ id, path }) => id === 'b27' && path !== files[9])
-  assert.deepEqual(others, [], 'those shown no longer not asked for as their turns came')
-})
-
-test('the Diff view with pretty-print turned off before its rename diffs all came asks for none of them, as their turns come', async t => {
-  const files = Array.from({ length: 6 }, (_, i) => `dist/o${i}.min.js`)
-  t.after(() => {
-    state.bundleSourcePretty = false
-    for (const path of files) for (const id of ['b29', 'b30']) pretty.delete(`${id}:${path}`)
-  })
-  await import('../ui/view/bundle-compare-all.js')
-  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
-    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
-  code.base.managedId = 'b29'
-  code.other.managedId = 'b30'
-  for (const path of files) {
-    pretty.set(`b29:${path}`, `var Y = 1;\nq(Y);\nh(${JSON.stringify(path)});\nmodule.exports = 1;\n`)
-    pretty.set(`b30:${path}`, `var X = 1;\nq(X);\nh(${JSON.stringify(path)});\nmodule.exports = 2;\n`)
-  }
-  const all = new (customElements.get('bundle-compare-all'))()
-  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
-  all.willUpdate(new Map([['base'], ['other'], ['files']]))
-  all._query = 'dist/o'
-  let release
-  flying.held = new Promise(resolve => { release = resolve })
-  t.after(() => { release(); flying.held = null })
-  state.bundleSourcePretty = true
-  for (let i = 0; i < 400 && flying.now < 2; i++) {
-    renderText(all.render())
-    await new Promise(resolve => { setTimeout(resolve, 5) })
-  }
-  assert.equal(flying.now, 2, 'two on their way, the rest waiting their turn')
-  const asked = renameDiffs.length
-  // Pretty-print turned off: the one paint that follows asks for no diff.
   state.bundleSourcePretty = false
-  await new Promise(resolve => { setTimeout(resolve, 0) })
+  renderText(all.render())
+  state.bundleSourcePretty = true
   renderText(all.render())
   release()
   flying.held = null
-  for (let i = 0; i < 100 && flying.now > 0; i++) await new Promise(resolve => { setTimeout(resolve, 5) })
-  await new Promise(resolve => { setTimeout(resolve, 20) })
-  assert.deepEqual(renameDiffs.slice(asked).filter(({ id }) => id === 'b29'), [], 'none of those waiting sent')
+  assert.ok(await settledRenames(all, [files[9]]), 'the file shown marked once its diff came')
+  assert.deepEqual(since(streams, alone), { streams: 1, alone: 0 }, 'its comparison\'s asked for once, none alone')
 })
 
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {
@@ -1659,9 +1690,10 @@ test('with renamed names hidden, Hide whitespace changes is offered where the se
   assert.match(shown, /aria-pressed=false\s+aria-label=Hide whitespace changes/u)
   assert.match(shown, /aria-label="Hide renamed names"[^]*aria-label=Hide whitespace changes[^]*aria-label="Pretty-print"[^]*aria-label="Diff layout"/u,
     'renamed names, then whitespace, then pretty-print, then the layout')
+  const asked = [renameDiffs.length, renameStreams.length]
   element._setWhitespace(true)
   const hidden = await settled()
-  assert.equal(renameDiffs.at(-1).ignoreWhitespace, true, 'the server diffs them with whitespace changes hidden')
+  assert.deepEqual([renameDiffs.length, renameStreams.length], asked, 'the server\'s diff hid them already: none asked for again')
   assert.match(hidden, /Only whitespace and renamed names changed in this file\./u)
   assert.match(hidden, /aria-pressed=true\s+aria-label=Hide whitespace changes/u, 'still there to turn off')
 })
@@ -1880,7 +1912,7 @@ test('the tree keeps `=` for a file renamed as it was, whatever the settings', t
   assert.match(rowCounts(renderText(element.render()))['lib/same.js'], /unchanged" aria-label="No line changes">=/u)
 })
 
-test('the tree counts a minified file with renamed names hidden, once the server\'s diff came, though the file is not drawn, and asks for it once', async t => {
+test('the tree counts a minified file as its head does once the server\'s diff came, its renamed lines marked apart or hidden, though the file is not drawn', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
   const element = view('src/api.js', [{ 'dist/tree.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
     { 'dist/tree.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
@@ -1888,15 +1920,22 @@ test('the tree counts a minified file with renamed names hidden, once the server
   element.other.managedId = 'b64'
   pretty.set('b63:dist/tree.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
   pretty.set('b64:dist/tree.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  const [streams, alone] = [renameStreams.length, renameDiffs.length]
   state.bundleSourcePretty = true
-  const printed = rowCounts(await paintUntil(element, markup => /\+6/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
-  assert.match(printed['dist/tree.min.js'], /data-tooltip=With Pretty-print As published: \+1 −1> <span class=add>\+6<\/span> <span class=del>−5<\/span>/u, 'each copy line by line')
-  const asked = renameDiffs.length
+  const marked = rowCounts(await paintUntil(element, markup => /marked/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
+  assert.match(marked['dist/tree.min.js'], /data-tooltip=With Pretty-print ≈3 lines differing in renamed names alone, marked As published: \+1 −1> <span class=add>\+3<\/span> <span class=del>−2<\/span>/u,
+    'the lines differing in renamed names alone counted apart')
+  // As its head counts them, drawn.
+  element.path = 'dist/tree.min.js'
+  const head = /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(await paintUntil(element, markup => /≈3/u.test(markup)))[1]
+  assert.match(head, /class="add">\+3<\/span><span class="del">−2<\/span>[^]*≈3/u)
+  element.path = 'src/api.js'
   element._setRenames(true)
-  const hidden = rowCounts(await paintUntil(element, markup => /\+1<\/span> <span class=del>−0/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
+  const hidden = rowCounts(await paintUntil(element, markup => /Hide renamed names/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
   assert.match(hidden['dist/tree.min.js'], /data-tooltip=With Pretty-print, Hide renamed names As published: \+1 −1> <span class=add>\+1<\/span> <span class=del>−0<\/span>/u, 'what is new alone')
   for (let i = 0; i < 3; i++) renderText(element.render())
-  assert.equal(renameDiffs.length, asked + 1, 'asked for once, kept as the tree paints')
+  assert.equal(renameStreams.length - streams, 1, 'its comparison\'s asked for once')
+  assert.ok(renameDiffs.length - alone <= 1, 'and the file alone at most once, drawn')
 })
 
 test('the Diff view\'s pretty-print toggle lists the files it prints, counted past five', async t => {
@@ -2167,7 +2206,6 @@ test('a minified file whose rename diff failed for a reason that may pass is ask
   for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
   assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
-  assert.equal(state_().changes.tries, 0, 'its failure forgotten once it is taken, a later one waiting anew')
 })
 
 test('a minified file whose rename diff was worked out from other copies than those drawn is asked again a while after, and marked then', async t => {
@@ -2205,18 +2243,17 @@ test('a minified file whose rename diff was worked out from other copies than th
 
 test('a rename diff that failed for a reason that may pass paints the view opened since once due, the one it failed for gone', async t => {
   const now = Date.now, wait = globalThis.setTimeout
-  // The retry's timer kept, to be fired once it is due.
+  // The retry's timer kept, to be fired once it is due: the rename diff's, not
+  // those of copies earlier tests still ask for.
   const timers = []
-  globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 5_000 ? (timers.push(fn), {}) : wait(fn, ms, ...rest))
+  globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 5_000 && new Error().stack.includes('/rename-diff.js') ? (timers.push(fn), {}) : wait(fn, ms, ...rest))
   t.after(() => { Date.now = now; globalThis.setTimeout = wait; state.bundleSourcePretty = false })
   const files = [{ 'dist/reopened.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/reopened.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }]
-  // A view of the file, of the bundles another view has where given.
+  // A view of the file, of the bundles another view has where given: theirs
+  // alone, so that no other file's copy is asked for.
   const opened = (as = null) => {
-    const element = view('dist/reopened.min.js', files)
-    if (as) {
-      Object.assign(element, { base: as.base, other: as.other })
-      element.willUpdate(new Map([['base'], ['other']]))
-    }
+    const { element } = compareOf(as?.base ?? version('reopened-a', files[0]), as?.other ?? version('reopened-b', files[1]))
+    element.path = 'dist/reopened.min.js'
     element.base.managedId = 'b35'
     element.other.managedId = 'b36'
     return element
@@ -2493,4 +2530,52 @@ test('collapsing the review tree clears search and stays collapsed until a new f
   viewer.render()
   assert.equal(viewer._open.get('src'), true)
   assert.equal(viewer._open.get('src/features'), true)
+})
+
+test('changes in types alone, as the server proves them, are hidden where asked: told as such, `≈` in the tree, offered only where there are any', async t => {
+  t.after(() => { element._setTypes(false) })
+  const files = [{ 'types/api.d.ts': 'export interface A { a: string }\n', 'types/run.d.ts': 'export interface B {}\n', 'old/gone.d.ts': 'declare const g: number;\n' },
+    { 'types/api.d.ts': 'export interface A { a: number }\n', 'types/run.d.ts': 'export interface B {}\nconsole.log(1);\n', 'types/added.d.ts': 'export type C = string;\n' }]
+  const element = view('types/api.d.ts', files)
+  element.base.managedId = 'b71'
+  element.other.managedId = 'b72'
+  const proofs = typeProofs.length
+  const shown = await paintUntil(element, markup => /aria-label=Hide type-only changes/u.test(markup))
+  assert.match(shown, /aria-pressed=false aria-label=Hide type-only changes/u, 'offered, once the server proved it')
+  assert.match(shown, /class=diff-row del/u, 'the change shown till it is pressed')
+  element.path = 'types/run.d.ts'
+  assert.doesNotMatch(renderText(element.render()), /Hide type-only changes/u, 'not where the change runs code')
+  element.path = 'types/api.d.ts'
+  element._setTypes(true)
+  const hidden = renderText(element.render())
+  assert.match(hidden, /Only types changed in this file\./u)
+  assert.doesNotMatch(hidden, /class=diff-row del/u)
+  assert.match(hidden, /aria-pressed=true aria-label=Hide type-only changes/u, 'still there to turn off')
+  assert.doesNotMatch(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(hidden)[1], /class="add">/u, 'no lines counted in its head')
+  const counts = rowCounts(hidden)
+  for (const [path, published] of [['types/api.d.ts', '+1 −1'], ['types/added.d.ts', '+1 −0'], ['old/gone.d.ts', '+0 −1']]) {
+    assert.match(counts[path], new RegExp(`unchanged[^]*data-tooltip=No line changes with Hide type-only changes As published: \\${published}>≈`, 'u'), `${path}: ≈`)
+  }
+  assert.match(counts['types/run.d.ts'], /class=add>\+1<\/span>/u, 'the one that runs code counted')
+  element.path = 'types/run.d.ts'
+  assert.match(renderText(element.render()), /class=diff-row add/u, 'and drawn')
+  assert.equal(typeProofs.length - proofs, 1, 'asked for once, for the comparison')
+})
+
+test('the Diff view offers to hide changes in types alone where any file it shows has them', async t => {
+  t.after(() => { all._setTypes(false) })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [{ 'types/x.d.ts': 'export type X = 1;\n', 'types/y.d.ts': 'export type Y = 1;\n' }, { 'types/x.d.ts': 'export type X = 2;\n', 'types/y.d.ts': 'export type Y = 1;\nfoo();\n' }])
+  code.base.managedId = 'b73'
+  code.other.managedId = 'b74'
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'types/'
+  const offered = await paintUntil(all, markup => /aria-label=Hide type-only changes/u.test(markup))
+  assert.match(offered, /aria-pressed=false aria-label=Hide type-only changes/u)
+  all._setTypes(true)
+  const hidden = renderText(all.render())
+  assert.equal(hidden.match(/Only types changed in this file\./gu)?.length, 1, 'the one changed in types alone')
+  assert.match(hidden, /foo\(\);/u, 'the other drawn')
 })

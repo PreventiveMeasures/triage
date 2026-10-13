@@ -15,7 +15,6 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, prettyToggle } from './bundle-compare-code.js'
-import { paintingRenameDiffs } from './rename-diff.js'
 
 export const COMBINED_DIFF_MAX = 25_000
 // Files drawn at a time, as Review's whole diff draws them.
@@ -69,6 +68,10 @@ export class BundleCompareAll extends BundleCompareCode {
     this._modelCap = Infinity
     this._fileLimit = FILE_BATCH
   }
+
+  // Every file drawn takes its diff with renamed names hidden from its
+  // comparison's, asked for at once (rename-diff.js), none alone.
+  _renamesAlone = false
 
   willUpdate(changed) {
     super.willUpdate(changed)
@@ -202,7 +205,6 @@ export class BundleCompareAll extends BundleCompareCode {
   }
 
   render() {
-    paintingRenameDiffs()
     const rail = this._railState()
     const prefix = this.extensions?.fullPaths ? '' : rail.prefix
     const order = this.extensions?.filterContent === false ? rail.allOrder : rail.order
@@ -230,12 +232,12 @@ export class BundleCompareAll extends BundleCompareCode {
       : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
     const pretty = toggle && { ...toggle, affects: printed.map(({ path }) => path) }
     // The diff's controls, while any file shows a change or hides one they can show.
-    const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
+    const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding || file.types)
     return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.renamed), shown.some(({ file }) => file.whitespace === 'hideable'))}
+          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.renamed), shown.some(({ file }) => file.whitespace === 'hideable'), shown.some(({ file }) => file.types))}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`

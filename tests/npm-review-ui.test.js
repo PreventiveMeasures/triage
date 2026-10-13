@@ -22,7 +22,7 @@ mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
 } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {},
+  fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {}, fetchBundleRenameDiffs() {}, fetchNpmRenameDiffs() {}, fetchBundleTypeOnly() {}, fetchNpmTypeOnly() {},
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
