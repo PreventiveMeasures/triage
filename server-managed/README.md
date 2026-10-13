@@ -242,7 +242,9 @@ reach for `credentials` (a path to `.npmrc`, `.ssh` or `.aws`, or
 `NPM_TOKEN` or `GITHUB_TOKEN` where its value is read, as
 `process.env.GITHUB_TOKEN || null`, `process.env['NPM_TOKEN']` or a shell's or
 `.npmrc`'s `$GITHUB_TOKEN` and `${NPM_TOKEN}` do, not where its absence is
-told, `!process.env.GITHUB_TOKEN`, it is deleted, or text names it); read out
+told, `!process.env.GITHUB_TOKEN` (but for what is read of it,
+`!process.env.GITHUB_TOKEN.trim()`), it is deleted or only set
+(`process.env.NPM_TOKEN = token`), or text names it); read out
 the `whole env`, as
 `JSON.stringify(process.env)` or `Object.entries(process.env)` do, not where
 it is handed to a program, its names listed, or its entries picked among as
