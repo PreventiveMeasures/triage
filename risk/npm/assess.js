@@ -1,7 +1,7 @@
 // A package version's risk, as the managed server asks it: what calls for a
-// look at it, against the version before it where one is given, each file's
-// stamps, and its dependencies', from npm's registry, kept in the caller's
-// cache (registry.js) as it goes.
+// look at it, against the version before it where one is given or risk picks
+// one (old-version.js), each file's stamps, and its dependencies', from npm's
+// registry, kept in the caller's cache (registry.js) as it goes.
 import { npmBaseFilesTell, npmCompareFindings, npmDependencyFindings } from './compare.js'
 import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
@@ -140,8 +140,11 @@ async function addedDependencies(added, published, context, owned) {
 }
 
 // What calls for a look at `version` of package `name`, as JSON holds it:
-// against `oldVersion` where given (compare.js npmCompareFindings's order),
-// else what it holds (held.js npmHeldFindings), a deprecation first, and last
+// against `oldVersion` where given, true for the one of its versions most
+// likely free of what an attack injects, as risk picks it by npm's document
+// (old-version.js npmOldVersion; none where none is below it), the one it
+// picked said as `oldVersion` (compare.js npmCompareFindings's order), else
+// what it holds (held.js npmHeldFindings), a deprecation first, and last
 // one younger than `minimumReleaseAge` (two weeks unless given; 0 for none, as
 // a caller's own scopes take), and the package's tier past the top 20,000
 // (`popularity`, held.js npmVersionFindings, unless `popularity` is given
@@ -158,14 +161,15 @@ async function addedDependencies(added, published, context, owned) {
 // or can't be asked.
 export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, owned = () => false } = {}) {
   const context = { cache, packument, tarball, now, signal }
-  const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
+  const facts = await npmPackageFacts(name, version, oldVersion, context)
+  const old = facts.oldVersion
   const { published } = facts.versions.get(version)
-  const kept = await lasting(name, version, oldVersion, facts, context)
+  const kept = await lasting(name, version, old, facts, context)
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
-  const was = oldVersion === null ? null : facts.versions.get(oldVersion).published
+  const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
-  return { name, version, oldVersion, published, ...npmAssessmentOf(kept, own, added) }
+  return { name, version, oldVersion: old, published, ...npmAssessmentOf(kept, own, added) }
 }
 
 // An assessment of what of it holds whatever the time (`kept`,

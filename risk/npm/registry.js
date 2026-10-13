@@ -10,6 +10,10 @@
 // - `risk/npm/packages`, `<name>`: the versions npm says are deprecated, as
 //   `at` a time, asked again after an hour, as npm deprecates a version any
 //   time.
+// - `risk/npm/old-versions`, `<name>@<version>`: the version it is compared
+//   with where risk picks it (old-version.js npmOldVersion), or none, as `at`
+//   a time, picked again after an hour, as npm publishes and deprecates
+//   versions any time and those it has grow older.
 // - `risk/npm/public`, `<name>`: when a package anyone can read was first
 //   published, or `{ missing: true }`, as `at` a time, asked again after an
 //   hour.
@@ -28,6 +32,7 @@
 // tarball unpacking past tarball.js's, `package-too-large`.
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
+import { npmOldVersion } from './old-version.js'
 import { npmTarballVersion } from './tarball.js'
 import { DAY_MS } from './downloads.js'
 
@@ -106,27 +111,49 @@ function packageDocument(name, context, authorized) {
 const firstPublished = doc => Object.entries(doc?.time ?? {}).filter(([key, at]) => key !== 'modified' && isTime(at)).map(([, at]) => at)
   .reduce((first, at) => first === null || Date.parse(at) < Date.parse(first) ? at : first, null)
 
-// What risk reads of `versions` of a package, and of the package: `versions`,
-// each one's `{ manifest, published, dist }`, and `deprecated`, by version.
-export async function npmPackageFacts(name, versions, context) {
+// Each version a package's document lists, as old-version.js npmOldVersion
+// picks among them: `{ version, published, publisher, known, deprecated }`,
+// its publisher's account as manifest.js reads it, and whether that is known;
+// none it lists no document of, as npmPackageFacts reads none of it.
+const releasesOf = (doc, deprecated) => Object.entries(doc.versions ?? {}).filter(([, json]) => json).map(([version, json]) => {
+  const { publisher = null, knownAccounts } = npmVersionManifest(json)
+  return { version, published: isTime(doc.time?.[version]) ? doc.time[version] : null, publisher, known: Boolean(knownAccounts), deprecated: Object.hasOwn(deprecated, version) }
+})
+
+// What risk reads of `version` of a package, of the one it is compared with
+// (`oldVersion`: one, null for none, or true for the one old-version.js
+// npmOldVersion picks of its versions, by its document), and of the package:
+// `versions`, each one's `{ manifest, published, dist }`, `deprecated`, by
+// version, and `oldVersion`, the one compared with or null. Its document is
+// read once at most, and not at all where all of it is kept and fresh.
+export async function npmPackageFacts(name, version, oldVersion, context) {
   const { cache, now } = context
-  const [facts, pkg] = await Promise.all([Promise.all(versions.map(version => cache ? cache.read('risk/npm/versions', `${name}@${version}`) : null)),
-    cache ? cache.read('risk/npm/packages', name) : null])
-  if (facts.every(Boolean) && pkg && now - pkg.at < PACKAGE_MS) return { versions: new Map(versions.map((version, i) => [version, facts[i]])), deprecated: pkg.deprecated }
+  const fresh = hit => hit != null && now - hit.at < PACKAGE_MS
+  const picked = cache && oldVersion === true ? await cache.read('risk/npm/old-versions', `${name}@${version}`) : null
+  const given = oldVersion === true ? fresh(picked) ? picked.oldVersion : undefined : oldVersion
+  if (cache && given !== undefined) {
+    const wanted = given === null ? [version] : [version, given]
+    const [facts, pkg] = await Promise.all([Promise.all(wanted.map(at => cache.read('risk/npm/versions', `${name}@${at}`))), cache.read('risk/npm/packages', name)])
+    if (facts.every(Boolean) && fresh(pkg)) return { versions: new Map(wanted.map((at, i) => [at, facts[i]])), deprecated: pkg.deprecated, oldVersion: given }
+  }
   const doc = await packageDocument(name, context, true)
   if (!doc) throw new NpmRiskError('package-not-found', `npm has no package ${name}`)
-  const read = new Map(versions.map(version => {
-    const json = doc.versions?.[version]
-    if (!json) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
+  const factsOf = at => {
+    const json = doc.versions?.[at]
+    if (!json) throw new NpmRiskError('version-not-found', `npm has no ${name}@${at}`)
     const { deprecated: _, ...manifest } = npmVersionManifest(json)
-    return [version, { manifest, published: isTime(doc.time?.[version]) ? doc.time[version] : null, dist: { tarball: json.dist?.tarball, integrity: json.dist?.integrity } }]
-  }))
-  const deprecated = Object.fromEntries(Object.entries(doc.versions ?? {}).filter(([, json]) => typeof json?.deprecated === 'string' && json.deprecated !== '').map(([version, json]) => [version, json.deprecated]))
-  if (cache) {
-    await Promise.all([...read].map(([version, fact]) => cache.write('risk/npm/versions', `${name}@${version}`, fact)))
-    await cache.write('risk/npm/packages', name, { at: now, deprecated })
+    return { manifest, published: isTime(doc.time?.[at]) ? doc.time[at] : null, dist: { tarball: json.dist?.tarball, integrity: json.dist?.integrity } }
   }
-  return { versions: read, deprecated }
+  const opened = factsOf(version)
+  const deprecated = Object.fromEntries(Object.entries(doc.versions ?? {}).filter(([, json]) => typeof json?.deprecated === 'string' && json.deprecated !== '').map(([at, json]) => [at, json.deprecated]))
+  const old = oldVersion === true ? npmOldVersion(version, releasesOf(doc, deprecated), now) : oldVersion
+  const read = new Map([[version, opened], ...old === null ? [] : [[old, factsOf(old)]]])
+  if (cache) {
+    await Promise.all([...read].map(([at, fact]) => cache.write('risk/npm/versions', `${name}@${at}`, fact)))
+    await cache.write('risk/npm/packages', name, { at: now, deprecated })
+    if (oldVersion === true) await cache.write('risk/npm/old-versions', `${name}@${version}`, { at: now, oldVersion: old })
+  }
+  return { versions: read, deprecated, oldVersion: old }
 }
 
 // `promise`, given up on once `signal` aborts, its reason thrown: what it

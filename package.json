@@ -263,6 +263,7 @@
     "risk/npm/install-scripts.js",
     "risk/npm/manifest.js",
     "risk/npm/new-dependency.js",
+    "risk/npm/old-version.js",
     "risk/npm/registry.js",
     "risk/npm/release.js",
     "risk/npm/specs.js",

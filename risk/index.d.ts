@@ -21,8 +21,11 @@ export class NpmRiskError extends Error {
 }
 
 export interface AssessNpmOptions {
-  // The version to compare with; without one, everything of the version is new.
-  oldVersion?: string | null
+  // The version to compare with; true for the one of the package's versions
+  // most likely free of what an attack injects, as risk picks it by npm's
+  // document (risk/npm/old-version.js), none where none is below it; without
+  // one, everything of the version is new.
+  oldVersion?: string | true | null
   // Younger than this, in ms, a version is `too-new`; 0 for none, as a
   // caller's own scopes take. Two weeks unless given.
   minimumReleaseAge?: number
@@ -32,7 +35,8 @@ export interface AssessNpmOptions {
   popularity?: boolean
   // Where what is read is kept, by type (risk/npm/registry.js and assess.js
   // name each): `npm/tarballs`, `risk/npm/versions`, `risk/npm/packages`,
-  // `risk/npm/public`, `risk/npm/downloads` and `risk/npm/assessments`.
+  // `risk/npm/old-versions`, `risk/npm/public`, `risk/npm/downloads` and
+  // `risk/npm/assessments`.
   cache?: CacheStore | false
   // Asks for a package's whole document in risk's stead, as the managed
   // server does within its bounds: null where npm has none for this asker.
@@ -103,6 +107,7 @@ export interface DependencyRisk {
 export interface NpmAssessment {
   name: string
   version: string
+  // The version compared with, as given or as risk picked it; null for none.
   oldVersion: string | null
   published: string | null
   findings: Finding[]

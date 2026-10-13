@@ -14,13 +14,23 @@ Risk is told on the managed server alone (`GET /api/npm/risk`, server-managed/np
 import { assessNpm } from './risk/index.js'
 
 const assessment = await assessNpm('axios', '1.14.1', {
-  oldVersion: '1.14.0', // compared with; without one, everything of the version is new
+  oldVersion: '1.14.0', // compared with; true for one risk picks (below); without one, everything of the version is new
   minimumReleaseAge: 14 * 24 * 60 * 60_000, // the default, two weeks; 0 for none, as a caller's own scopes take
   popularity: true, // the default; false for none, as a caller's own scopes take
   owned: name => name.startsWith('@mine/'), // the caller's own packages, a new dependency on one told no tier nor age; none by default
   cache, // as @preventive/upstream's CacheStore: read(type, key) and write(type, key, value)
 })
 ```
+
+## Picking the version compared with
+
+A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
+
+1. Where an account npm doesn't know published it, one another account published, as an attack may have published more than one; and where the highest of those a known account published (`knownAccounts`), as when a package is taken from its maintainers, one a known account published, trusted however new.
+2. Else one published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at.
+3. One npm doesn't say is deprecated, as one a maintainer took back.
+
+The highest is in the open version's branch (`1.x.y`, `0.2.y`, `0.0.y`) where one is there, else in the closest branch below. The pick is told by npm's document alone, read at most once an assessment, and kept an hour: no tarball is read for it, and the one picked has its tarball read only where its files could change what is found, as any version compared with.
 
 What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` (`npm/assess.js`), of versions held as the viewer holds one, and `npmAssessmentOf` makes an assessment of it with what is told fresh: the managed server's, and a test's of versions it holds.
 
@@ -31,6 +41,7 @@ What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` 
 | `npm/tarballs` | `<name>@<version>` | a version's tarball, its bytes (upstream's `getTarball`, checked against its integrity) | never |
 | `risk/npm/versions` | `<name>@<version>` | what its document says: manifest, publish time, dist | never |
 | `risk/npm/packages` | `<name>` | its deprecated versions | asked again after an hour |
+| `risk/npm/old-versions` | `<name>@<version>` | the version risk picked to compare it with, or none (`oldVersion: true`) | picked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
 | `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
@@ -84,6 +95,7 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `stamps.js`: all of a file's stamps.
 - `npm/`: a version's and a pair's.
   - `specs.js`, `dependencies.js`, `install-scripts.js`, `downloads.js`, `release.js`, `new-dependency.js`
+  - `old-version.js`: the version compared with, where risk picks it.
   - `compare.js`: a pair's findings; `held.js`: a version's own.
   - `files.js`: each file read once a version.
   - `diff.js`: renames, as Compare pairs them.
