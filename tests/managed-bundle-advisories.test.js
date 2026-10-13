@@ -251,6 +251,24 @@ test('npm packages anyone may read are asked of OSV too, its malware with them, 
     'npm asked only of scoped packages whether anyone may read them, an unscoped one always public')
 })
 
+test('a scoped package npm is slow to tell of is taken as private once its time is up, the audit going on', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
+    if (options.method === 'HEAD') return new Promise((_resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
+    if (String(url).endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (String(url).endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
+    throw new Error(`unexpected ${url}`)
+  })
+  const audit = fetchBundleAdvisories([{ ecosystem: 'npm', name: '@slow/pkg', versions: ['1.0.0'] }, { ecosystem: 'npm', name: 'open', versions: ['1.0.0'] }], signal())
+  while (!calls.some(call => call.method === 'HEAD')) await new Promise(resolve => { setImmediate(resolve) })
+  t.mock.timers.tick(10_000)
+  assert.deepEqual(await audit, { status: 200, body: [] })
+  assert.deepEqual(calls.filter(call => call.url.endsWith('/v1/querybatch')).flatMap(call => call.body.queries.map(query => query.package.name)), ['open'],
+    'its name never sent to OSV, the unscoped one\'s still')
+})
+
 test('empty, canceled and invalid inventories never send requests', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('must not contact upstream') })
   assert.deepEqual(await fetchBundleAdvisories([], signal()), { status: 200, body: [] })

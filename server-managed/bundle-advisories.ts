@@ -31,15 +31,23 @@ async function isPublicNpmPackage(name: string, signal: AbortSignal): Promise<bo
 }
 
 // The npm packages anyone may read (isPublicNpmPackage), a few asked at a
-// time.
+// time, within PUBLIC_BUDGET_MS, a third of the audit's: a scoped one npm
+// hasn't told of by then is taken as private, asked of npm alone, for the
+// audit to keep the rest of its time.
+const PUBLIC_BUDGET_MS = 10_000
 async function publicNpmNames(packages: Package[], signal: AbortSignal): Promise<Set<string>> {
   const names = [...new Set(packages.filter(pkg => pkg.ecosystem === 'npm').map(pkg => pkg.name))]
   const open = new Set<string>()
-  for (let at = 0; at < names.length; at += PUBLIC_AT_ONCE) {
-    const chunk = names.slice(at, at + PUBLIC_AT_ONCE)
-    const checked = await Promise.all(chunk.map(name => isPublicNpmPackage(name, signal)))
-    for (const [i, name] of chunk.entries()) if (checked[i]) open.add(name)
-  }
+  const budget = new AbortController()
+  const timer = setTimeout(() => { budget.abort(new Error('public-check-budget')) }, PUBLIC_BUDGET_MS)
+  const asking = AbortSignal.any([signal, budget.signal])
+  try {
+    for (let at = 0; at < names.length; at += PUBLIC_AT_ONCE) {
+      const chunk = names.slice(at, at + PUBLIC_AT_ONCE)
+      const checked = await Promise.all(chunk.map(name => isPublicNpmPackage(name, asking)))
+      for (const [i, name] of chunk.entries()) if (checked[i]) open.add(name)
+    }
+  } finally { clearTimeout(timer) }
   return open
 }
 
