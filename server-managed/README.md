@@ -2092,7 +2092,7 @@ verdicts: **Accept**, **Accept with nits (non-blocking)**, **Request changes**, 
 npm scopes count. Only enabled, visible teams the author belongs to are offered
 for publication. A sole eligible team is selected initially; with multiple teams none are preselected.
 **Publish** requires at least one selected team.
-The account menu and review page link to **My reviews** (`/reviews`), a paginated
+The account menu and review page link to **My reviews** (`/my/reviews`), a paginated
 list of the user's unpublished, published, and revoked review sets.
 Authors can discard an unpublished set from My reviews after an explicit
 confirmation. `POST /api/npm/reviews/discard` requires its ID and current revision;
