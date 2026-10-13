@@ -479,7 +479,11 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.stats['@babel/vouched'] = answers.stats.flagged
   const scoped = await badges(side('@babel/vouched', '1.0.0'), side('@babel/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } }))
   assert.match(scoped, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · In @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in\s/u,
-    'a level lower, yellow, in a known scope, as a CI that names no account publishes it, its tooltip saying so')
+    'yellow, in a known scope, as a CI that names no account publishes it, its tooltip saying so')
+  answers.stats['@dougwilson/vouched'] = answers.stats.flagged
+  const owned = await badges(side('@dougwilson/vouched', '1.0.0'), side('@dougwilson/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } }))
+  assert.match(owned, /npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · In @dougwilson, the scope of ~dougwilson, an account that publishes one of npm's most downloaded packages\s/u,
+    'yellow in a known account\'s own scope, its tooltip naming the account')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
   answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }
