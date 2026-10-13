@@ -13,7 +13,7 @@ mock.module('../server-managed/static.ts', { namedExports: { loadManagedStatic: 
 const { createManagedApp } = await import('../server-managed/index.ts')
 
 const HOUR = 3_600_000
-async function fixture(t) {
+async function fixture(t, more = {}) {
   let now = Date.now()
   t.mock.method(Date, 'now', () => now)
   t.mock.method(globalThis, 'setInterval', () => { throw new Error('serverless maintenance must not create timers') })
@@ -24,7 +24,7 @@ async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
   const { sdk, objects } = sdkFixture()
   const storage = await vercelStores(t, 'test', sdk, db)
-  nextStorage = { db, ...storage }
+  nextStorage = { db, ...storage, ...more }
   const app = await createManagedApp(config)
   let closing
   const close = () => closing ??= app.close()
@@ -58,6 +58,14 @@ test('ordinary managed traffic reaps three-day-old parts and expired sessions wi
   assert.ok(await readSession(config, db, current.setCookie.split(';')[0], Date.now()))
   assert.equal(logs.length, 1)
   assert.match(logs[0], /managed-reaper: removed 1 expired session\(s\), 1 stale upload part\(s\)/u)
+})
+
+test('ordinary managed traffic removes earlier versions\' public npm pretty copies too', async t => {
+  const signals = []
+  const { request } = await fixture(t, { reapPrettyCopies: signal => { signals.push(signal); return Promise.resolve() } })
+  await request().done
+  assert.equal(signals.length, 1)
+  assert.ok(signals[0] instanceof AbortSignal, 'given maintenance\'s signal, which shutdown aborts')
 })
 
 test('traffic throttles successful sweeps hourly while explicit cleanup remains available', async t => {

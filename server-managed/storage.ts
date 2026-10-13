@@ -2,7 +2,7 @@
 import { dirname } from 'node:path'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
 import { createBundleCache } from './bundle-cache.ts'
-import { createPrettyCache } from './pretty-print.ts'
+import { createPrettyCache, stalePrettyRemover } from './pretty-print.ts'
 import { createReportSourcesCache } from './report-sources.ts'
 import { openNeonManagedDb } from './db-neon.ts'
 import type { ManagedConfig } from './config.ts'
@@ -56,6 +56,7 @@ export async function openManagedStorage(config: ManagedConfig) {
     return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined, bundleCache,
       reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore, bundle => bundleCache.sourcemapEdges(bundle)),
       prettyCache: createPrettyCache(storage.cacheStorage, storage.npmCacheStorage, db, storage.bundleStore),
+      reapPrettyCopies: stalePrettyRemover(storage.npmCacheStorage),
       async reapStorage(signal?: AbortSignal) {
         if (!config.storageEncryptionMigrate || signal?.aborted) return
         const state = await db.getStorageEncryption()

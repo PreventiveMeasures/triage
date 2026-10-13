@@ -60,8 +60,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     isShuttingDown, track,
   })
 
-  let cleanup: Promise<void> | undefined
-  let nextCleanupAt = 0
+  let cleanup: Promise<void> | undefined, nextCleanupAt = 0
   const maintenance = new AbortController()
   function reap(automatic = false): Promise<void> {
     if (cleanup) return cleanup
@@ -77,6 +76,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
         await runReapers({
           sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
           ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!(maintenance.signal) } } : {}),
+          ...('reapPrettyCopies' in storage ? { prettyCopies: () => storage.reapPrettyCopies(maintenance.signal) } : {}),
           ...('reapStorage' in storage ? { storage: () => storage.reapStorage(maintenance.signal) } : {}),
         })
         succeeded = true
