@@ -225,7 +225,7 @@ test('the shown managed bundle comes from its details, or its catalogue entry wh
 test('Compare and Review keep the selected base until a review has started on another base', () => {
   const state = { selectedBundle: 'npm', bundleDetailsTab: 'compare', managedSession: { id: 'alice' },
     bundles: [{ integrity: 'npm', npm: { name: '@scope/pkg', version: '3.0.0' } }],
-    bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'code' } }
+    bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'diff' } }
   prepareNpmReviewTab(state, 'review')
   assert.deepEqual(state.npmReview, { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', resume: true })
   state.bundleCompare.target = '2.0.0'

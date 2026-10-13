@@ -208,14 +208,16 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
   assert.deepEqual(page._allowedVerdicts, ['reject'])
 })
 
-test('review URLs round trip scoped dependencies, version-only shorthand and Diff mode', () => {
+test('review URLs round trip scoped dependencies and version-only shorthand, ignoring the obsolete mode', () => {
   assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/reviews'))), '/reviews')
   for (const path of ['/npm/lib@2.0.0/review', '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0',
-    '/npm/@scope/lib/review/@other/base@next?mode=diff']) {
+    '/npm/@scope/lib/review/@other/base@next']) {
     const parsed = parseManagedRoute(new URL(path, 'https://test'))
     assert.equal(parsed.bundleTab, 'review')
     assert.equal(managedRoutePath(parsed), path)
   }
+  assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/npm/@scope/lib/review/@other/base@next?mode=diff'))),
+    '/npm/@scope/lib/review/@other/base@next')
   const shorthand = parseManagedRoute(new URL('https://test/npm/lib@2.0.0/review/1.0.0'))
   assert.equal(managedRoutePath(shorthand), '/npm/lib@2.0.0/review/lib@1.0.0')
   assert.equal(parseManagedRoute(new URL('https://test/npm/lib@2/review/@bad')), null)
@@ -1032,7 +1034,7 @@ test('review automatically uses whole diff below both line and byte limits', () 
   assert.equal(reviewViewMode([{ before: '', after: { format: 'digest', size: 2 * 1024 * 1024 } }]), 'code')
 })
 
-test('the shared tree keeps review decorations, progress and next-unchecked behavior', () => {
+test('the shared tree keeps review decorations, progress and unchecked filtering', () => {
   const page = component()
   page._files = ['src/a.js', 'src/b.js', 'index.js']; page._path = 'src/b.js'
   page._reviews = [{ ...review, entries: [{ ...file, file: 'src/a.js', status: 'accept' }, { ...file, file: 'src/b.js', status: null }] }]
@@ -1042,10 +1044,6 @@ test('the shared tree keeps review decorations, progress and next-unchecked beha
   assert.match(text(extras.fileSuffix('src/b.js')), /Has notes/u)
   assert.equal(extras.fileLabel('src/a.js'), 'src/a.js, Accept')
   assert.match(text(extras.filters), /Unchecked 2/u)
-  const selected = []
-  const footer = extras.footer(path => selected.push(path))
-  footer.values.find(value => typeof value === 'function')()
-  assert.deepEqual(selected, ['index.js'])
   page._unchecked = true
   const filtered = reviewExtensions(page)
   assert.equal(filtered.fileFilter('src/a.js'), false)

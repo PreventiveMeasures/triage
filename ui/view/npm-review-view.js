@@ -197,10 +197,6 @@ export function reviewExtensions(page) {
       <button type="button" class="npm-review-button" aria-pressed=${String(!page._unchecked)} @click=${() => { page._unchecked = false }}>All ${page._files.length}</button>
       <button type="button" class="npm-review-button" aria-pressed=${String(!!page._unchecked)} @click=${() => { page._unchecked = true }}>Unchecked ${page._files.length - checked}</button>
     </div>`,
-    footer: select => html`<footer class="npm-review-tree-footer"><span>Checked / total</span><button type="button" class="npm-review-button" ?disabled=${page._blocked || page._files.length === checked}
-      @click=${() => { const at = page._files.indexOf(page._path);
-        const next = page._files.find((path, index) => index > at && !states.get(path)?.status) ?? page._files.find(path => !states.get(path)?.status);
-        select(next) }}>Next unchecked ${NEXT_ICON}</button></footer>`,
     fileActions: (path, inline) => renderReviewEditor(page, path, inline),
   }
 }

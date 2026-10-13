@@ -49,7 +49,7 @@ export class NpmReview extends LitElement {
     if (state.bundleDetailsTab !== 'review' || state.selectedBundle !== this.entry?.integrity || !this._context || (!this._activeReview && this._ownPublished.length === 0 && !this._unsaved)) return
     state.npmReview = { bundle: this.entry.integrity,
       ...(this._context.basePackage ? { reviewPackage: this._context.basePackage, reviewSpec: this._context.baseVersion } : {}),
-      ...(this._mode === 'diff' ? { reviewMode: 'diff' } : {}), started: true, user: this.session?.id }
+      started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
   get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))
@@ -80,11 +80,11 @@ export class NpmReview extends LitElement {
       && this._summary.checkedFiles > 0 && !this._needsPackageJson && !this._unchangedContinuation
       && this._selectedTeams.size > 0 && !this._unsaved && this._allowedVerdicts.includes(this._finalStatus)
   }
-  _location(target, mode = this._mode) {
+  _location(target) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
-    return { ...(parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}), ...(mode === 'diff' ? { reviewMode: 'diff' } : {}) }
+    return parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}
   }
-  _navigate(target, mode) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, mode))) }
+  _navigate(target) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target))) }
   async _navigateTo(route) {
     if (this._blocked || this._loading) return
     const key = this._key, navigation = this._navigation = {}

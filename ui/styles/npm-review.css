@@ -43,7 +43,6 @@ npm-review textarea {
 .npm-review-toolbar,
 .npm-review-toolbar-group,
 .npm-review-filters,
-.npm-review-tree-footer,
 .npm-review-history-heading,
 .npm-review-coverage > div:first-child,
 .npm-review-decision > header { display: flex; align-items: center; }
@@ -79,19 +78,11 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
-npm-review :is(.npm-review-filters, .npm-review-tree-footer) button { padding: 0; border: 0; background: transparent; }
-npm-review .npm-review-filters button { min-height: 1.4rem; color: var(--muted); font-size: .68rem; }
+npm-review .npm-review-filters button {
+  padding: 0; border: 0; background: transparent; min-height: 1.4rem; color: var(--muted); font-size: .68rem;
+  }
 npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text); }
 .npm-review-note-dot { color: var(--muted); }
-.npm-review-tree-footer {
-  justify-content: space-between;
-  gap: .4rem;
-  padding: .35rem .65rem;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: .65rem;
-  }
-npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
 .npm-review-decision, .npm-review-entry, .npm-review-dialog-body { display: flex; flex-direction: column; gap: .55rem; }
 .npm-review-decision {
   align-items: flex-start;

@@ -179,7 +179,7 @@ window also navigate to their managed page URL.
 | `/npm` | npm package lookup |
 | `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
 | `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
-| `/npm/:name@:version/review[/:baseName@:baseVersion]` | Review a package or update; `?mode=diff` shows all changed files |
+| `/npm/:name@:version/review[/:baseName@:baseVersion]` | Review a package or update; automatically chooses whole-diff or per-file display |
 | `/npm/:name@:version/compare[/:otherVersion[/code\|/diff]]` | Its Compare tab, with another version, in its Code or Diff mode |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
