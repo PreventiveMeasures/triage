@@ -57,9 +57,11 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     + 'client ?? createClient({ token: env.GITHUB_TOKEN || null })\nexec(\'curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com\')\n'
     + 'write(\'//registry.npmjs.org/:_authToken=${NPM_TOKEN}\')\nexec(\'echo %NPM_TOKEN%\')\n'), { tokens: [1, 2, 3, 4, 5] }, 'a token\'s value read, or expanded by a shell or .npmrc')
   assert.equal(found('a.js', 'if (repoAdvisories && !process.env.GITHUB_TOKEN) fail(\'Error: --repo-advisories requires a GitHub token in GITHUB_TOKEN\')\n'
-    + 'delete process.env.NPM_TOKEN\nif (! env . NPM_TOKEN) ask()\nif (!process.env[\'NPM_TOKEN\']) ask()\ndelete process.env [ "GITHUB_TOKEN" ]\n'), null,
+    + 'delete process.env.NPM_TOKEN\nif (! env . NPM_TOKEN) ask()\nif (!process.env[\'NPM_TOKEN\']) ask()\ndelete process.env [ "GITHUB_TOKEN" ]\n'
+    + 'if (!(process.env.GITHUB_TOKEN)) ask()\nif (!( process.env[\'NPM_TOKEN\'] )) ask()\ndelete (process.env.NPM_TOKEN)\n'), null,
     'its absence told, or the token dropped, dotted or as a key, and text naming it')
-  assert.deepEqual(found('a.js', 'const token = process.env[\'NPM_TOKEN\']\nif (process.env?.[\'GITHUB_TOKEN\']) use()\n'), { tokens: [1, 2] }, 'read as a key')
+  assert.deepEqual(found('a.js', 'const token = process.env[\'NPM_TOKEN\']\nif (process.env?.[\'GITHUB_TOKEN\']) use()\nif (!check(process.env.GITHUB_TOKEN)) ask()\n'),
+    { tokens: [1, 2, 3] }, 'read as a key, or handed on')
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),
     { env: [1, 2, 3, 4] }, 'the environment\'s values read out whole, a kind of its own')
   assert.deepEqual(found('a.js', 'fetch(url, { body: JSON.stringify({ ...process.env }) })\nnew URLSearchParams({ ...process.env, host })\n'), { env: [1, 2] },

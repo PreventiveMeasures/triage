@@ -62,11 +62,12 @@ const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60
 const GLOBAL = 'globalThis|window|global|self'
 const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:${GLOBAL})${GAP}\??\.${GAP})?${name}`
 // A token's name, as its value is read (`process.env.GITHUB_TOKEN || null`,
-// `env.NPM_TOKEN`), not where its absence is told (`!process.env.GITHUB_TOKEN`)
-// or it is dropped (`delete process.env.NPM_TOKEN`); looked back on, a few
-// names and dots at most, only where the name starts.
+// `env.NPM_TOKEN`), not where its absence is told (`!process.env.GITHUB_TOKEN`,
+// `!(process.env.GITHUB_TOKEN)`) or it is dropped (`delete
+// process.env.NPM_TOKEN`); looked back on, a few names and dots at most, only
+// where the name starts.
 const TOKEN_VAR = '(?:NPM|GITHUB)_TOKEN'
-const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!(?:!|\bdelete\s)\s{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})${TOKEN_VAR}(?![\p{ID_Continue}$])`
+const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})${TOKEN_VAR}(?![\p{ID_Continue}$])`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
@@ -92,7 +93,7 @@ const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 // Before a token's name as a key, its absence told or the token dropped, as
 // TOKEN_NAME tells of one as a name (`!process.env['GITHUB_TOKEN']`,
 // `delete process.env['NPM_TOKEN']`): a few names and dots at most.
-const KEY_ABSENT = /(?:!|\bdelete\s)\s{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
+const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
