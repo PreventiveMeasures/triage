@@ -41,7 +41,7 @@ import { railHitText } from './search-marks.js'
 import { PRETTY_ICON, comparedCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
 import { utf8ByteLength } from '../../common/utf8.js'
-import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
+import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
@@ -1332,14 +1332,16 @@ export class BundleCompareCode extends LitElement {
   }
 
   // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
-  // UTF-8, Minified, Controls, ...): as it reads now, after how it read where
-  // that differs; every other label it has as it reads now (its controls and
-  // long lines, minified or not) beside that, as Obfuscated is
-  // (file-readability.js npmReadabilityFlags).
+  // UTF-8, Minified, Controls, ...), and how its text is encoded beside a tag
+  // that says something else (Minified ASCII, file-readability.js
+  // npmTextKindTag): as it reads now, after how it read where that differs;
+  // every other label it has as it reads now (its controls and long lines,
+  // minified or not) beside that, as Obfuscated is (npmReadabilityFlags).
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
-    const tag = !was || !now || npmTaggedCategory(was) === npmTaggedCategory(now) ? npmEncodingTag(now ?? was)
-      : html`<span class="bundle-compare-code-readability">${npmEncodingTag(was)}<span aria-hidden="true">→</span>${npmEncodingTag(now)}</span>`
+    const reads = read => html`${npmEncodingTag(read)}${npmTextKindTag(read)}`
+    const tag = !was || !now || (npmTaggedCategory(was) === npmTaggedCategory(now) && was.kind === now.kind) ? reads(now ?? was)
+      : html`<span class="bundle-compare-code-readability">${reads(was)}<span aria-hidden="true">→</span>${reads(now)}</span>`
     return html`${npmReadabilityFlags(now ?? was)}${tag}`
   }
 
