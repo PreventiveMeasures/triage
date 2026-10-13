@@ -725,17 +725,18 @@ const TIP_FILES = 8
 // What the open version's files hold that calls for a look, as risk finds it
 // (risk/npm/held.js, combined.js), each in its severity's color, orange as a
 // file's tags are, or red where it changed (SEVERITY_CHIPS): what any of them
-// runs beyond itself, the kinds named, red where a file runs one anew; the
-// services under a hosts' tag (hostBadges); a large code file it adds; a file
-// become unreadable, its longest line before and now (unreadableBadge); and an
-// obfuscator's fingerprint, red where it is new to a file. Each lists its
+// runs beyond itself, the kinds alone named, as its files' tags are, red
+// where a file runs one anew; the services under a hosts' tag (hostBadges);
+// a large code file it adds; a file become unreadable, its longest line
+// before and now (unreadableBadge); and an obfuscator's fingerprint, red
+// where it is new to a file. Each lists its
 // files in its tooltip, what each holds, what is new to it so said.
 function fileBadges(sides, found) {
   const rows = id => found.get(id)?.files ?? []
   const tinted = (id, kind) => `${SEVERITY_CHIPS[found.get(id)?.severity]} npm-held-file ${kind}`
   return [
     listBadge(tinted('held-runs-code', 'npm-files-runs'), 'Runs code', rows('held-runs-code'), row => npmRunsCodeSaid(row.found, row.added),
-      npmRunsCodeKinds(rows('held-runs-code').map(row => row.found))),
+      npmRunsCodeKinds(rows('held-runs-code').map(row => row.found)), null, false),
     ...hostBadges(found),
     fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
     unreadableBadge(found.get('now-unreadable')),
@@ -770,8 +771,9 @@ function fileBadge(kind, ...rest) {
 // A chip on `rows`, each with a `path`, counting them where there are
 // several, or saying `value` of them all, the rows in its tooltip alone, each
 // with what `said` of it (a line, or a list of them), and nothing more; a
-// button, where it is to `open` what it says.
-function listBadge(classes, label, rows, said, value = null, open = null) {
+// button, where it is to `open` what it says. Not `labelled`, its `value`
+// alone shows, its label read out and heading its tooltip.
+function listBadge(classes, label, rows, said, value = null, open = null, labelled = true) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
@@ -783,7 +785,8 @@ function listBadge(classes, label, rows, said, value = null, open = null) {
         ? html`<span class="compare-tip-lines">${lines(row).map(line => html`<span>${line}</span>`)}</span>` : said(row)}</span>`)}</div>
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
     </div>`
-  const inner = html`<span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}`
+  const inner = html`${labelled ? html`<span>${label}</span>` : html`<span class="sr-only">${label}</span>`}${value !== null || rows.length > 1
+    ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}`
   return open
     ? html`<li><button type="button" class=${`npm-extension is-open ${classes}`}
       data-tooltip=${tooltip}
@@ -917,8 +920,9 @@ function socketBadges(sides, affecting, malware = null) {
   })
 }
 
-// A popularity chip's tint, by its finding's severity, as the other chips'.
-const POPULARITY_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-moderate' }
+// A popularity chip's tint, by its finding's severity: its tier's tag's, as
+// beside its downloads (npm-downloads-chart.js), red, orange or yellow.
+const POPULARITY_LEVELS = { critical: 'is-unpopular', high: 'is-low', moderate: 'is-mid' }
 
 // Why a version's popularity is yellow at most, as its `popularity` finding
 // tells it (risk/npm/held.js): a known account published the version
@@ -935,13 +939,14 @@ function knownNote({ known, scope, account } = {}) {
 // A package's tier among npm's by its downloads, as risk tells it (`{ tier,
 // level }`, its rank, Infinity past the last, and its tint), its `last`
 // complete month's downloads in its tooltip where known, over the month's
-// name (npm-downloads-chart.js npmLastMonth); a `chip` as the chips beside
-// it are, in its finding's severity's tint, red, orange or yellow, yellow
-// at most where it is known (knownNote), as its tooltip says.
+// name (npm-downloads-chart.js npmLastMonth); a `chip` shaped as the chips
+// beside it are, tinted as its tier's tag beside its downloads is, by its
+// finding's severity, red, orange or yellow, yellow at most where it is
+// known (knownNote), as its tooltip says.
 function tierTag(finding, last = null, chip = false) {
   const { tier, level, severity } = finding
   const total = last?.total.toLocaleString('en')
-  const kind = chip ? `npm-extension npm-popularity ${POPULARITY_TINTS[severity] ?? 'is-warn'}` : `npm-downloads-tier ${level}`
+  const kind = chip ? `npm-extension npm-popularity npm-downloads-tier ${POPULARITY_LEVELS[severity] ?? 'is-low'}` : `npm-downloads-tier ${level}`
   const note = chip ? knownNote(finding) : null
   const tooltip = [last && `${total} downloads/month, ${last.month}`, note].filter(Boolean).join(' · ')
   return html`<span class=${kind} data-tooltip=${tooltip || nothing}

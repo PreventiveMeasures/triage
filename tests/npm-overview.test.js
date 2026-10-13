@@ -492,26 +492,26 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   'styled, a row for each version, its severities in their colors')
   assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u, 'the open one under its bar, from the one compared with')
   assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Quality|Maintenance)</u, 'the open one at or over their bars, its quality 90 though 1.0.0\'s was 30')
-  assert.match(flagged, /<span class=npm-extension npm-popularity is-warn data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
-    'a chip as the others, orange as a warning; last month\'s downloads over the month\'s name')
+  assert.match(flagged, /<span class=npm-extension npm-popularity npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
+    'a chip as the others, orange as its tier\'s tag beside its downloads is; last month\'s downloads over the month\'s name')
   answers.versions['@team/quiet'] = { versions: [], teamScoped: true }
   answers.stats['@team/quiet'] = answers.stats.flagged
   assert.doesNotMatch(await badges(side('@team/quiet', '1.0.0'), side('@team/quiet', '2.0.0')), /npm-popularity/u, 'not a team\'s own')
   answers.stats.vouched = answers.stats.flagged
   const vouched = await badges(side('vouched', '1.0.0'), side('vouched', '2.0.0', { manifest: { publisher: 'known', knownAccounts: ['known'] } }))
-  assert.match(vouched, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published by an account that publishes one of npm's most downloaded packages\s/u,
+  assert.match(vouched, /<span class=npm-extension npm-popularity npm-downloads-tier is-mid data-tooltip=15,000 downloads\/month, September 2026 · Published by an account that publishes one of npm's most downloaded packages\s/u,
     'a level lower, yellow, where a known account published the open version, its tooltip saying so')
   assert.match(vouched, /compare-tip-note">September 2026<\/div><div class="compare-tip-note">Published by an account that publishes one of npm's most downloaded packages</u)
   answers.stats['@babel/vouched'] = answers.stats.flagged
   const scoped = await badges(side('@babel/vouched', '1.0.0'), side('@babel/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions', provenance: true } }))
-  assert.match(scoped, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in\s/u,
+  assert.match(scoped, /<span class=npm-extension npm-popularity npm-downloads-tier is-mid data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in\s/u,
     'yellow, in a known scope, as a CI that names no account publishes it with provenance, its tooltip saying so')
   answers.stats['@babel/unproven'] = answers.stats.flagged
   assert.match(await badges(side('@babel/unproven', '1.0.0'), side('@babel/unproven', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions' } })),
-    /<span class=npm-extension npm-popularity is-warn /u, 'orange in it without provenance, as a stolen token publishes')
+    /<span class=npm-extension npm-popularity npm-downloads-tier is-low /u, 'orange in it without provenance, as a stolen token publishes')
   answers.stats['@dougwilson/vouched'] = answers.stats.flagged
   const owned = await badges(side('@dougwilson/vouched', '1.0.0'), side('@dougwilson/vouched', '2.0.0', { manifest: { trustedPublisher: 'GitHub Actions', provenance: true } }))
-  assert.match(owned, /npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @dougwilson, the scope of ~dougwilson, an account that publishes one of npm's most downloaded packages\s/u,
+  assert.match(owned, /npm-popularity npm-downloads-tier is-mid data-tooltip=15,000 downloads\/month, September 2026 · Published with provenance in @dougwilson, the scope of ~dougwilson, an account that publishes one of npm's most downloaded packages\s/u,
     'yellow in a known account\'s own scope, its tooltip naming the account')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
@@ -1029,8 +1029,10 @@ test('the Overview flags what the version holds with Compare\'s chips, none only
   npmOverviewBadges(entry); await new Promise(resolve => { setImmediate(resolve) })
   const shown = rendered(npmOverviewBadges(entry))
   const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
-  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry deps', 'Unused deps', 'Runs code', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
-    'in Compare\'s order; not its tier, unpopular as it is, which its downloads\' card shows')
+  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry deps', 'Unused deps', 'eval, child_process', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
+    'in Compare\'s order, what it runs by its kinds alone; not its tier, unpopular as it is, which its downloads\' card shows')
+  assert.match(shown, />\s*<span class="sr-only">Runs code<\/span><span class="npm-extension-count">eval, child_process<\/span><\/span><\/li>/u,
+    'its name read out, and heading its tooltip')
   assert.equal(npmRisk(entry.npm)?.findings.find(({ id }) => id === 'popularity')?.level, 'is-unpopular', 'risk finds it so')
   assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
   assert.match(shown, /npm-compare-install"\s+data-tooltip=1\.0\.0: postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')

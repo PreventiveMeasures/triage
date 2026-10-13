@@ -1454,13 +1454,15 @@ control. A version shows in the bundle view with four tabs:
   version to another tells (a publisher, provenance lost, files and hosts
   new): its deprecation, its install scripts (named, their commands in the
   tooltip), dependencies from elsewhere than npm's registry or imported by
-  nothing of it, in orange what any of its files runs beyond itself (`Runs
-  code`, the kinds named), the hosts its files name, a chip for each tag
+  nothing of it, in orange what any of its files runs beyond itself (the
+  kinds alone, `eval, child_process`, `Runs code` heading its tooltip), the
+  hosts its files name, a chip for each tag
   (Exfiltration in red, Remote in orange, IP lookup in yellow, the services
   named), and an obfuscator's fingerprint, each listing its files and their
   lines in its tooltip, its age under two weeks, the advisories affecting
   it, tinted by the worst, Socket's scores under their bars, and its tier by
-  downloads where it is orange or red. Over the facts, where npm's security team took the
+  downloads where it is orange or red, tinted as its tag beside its downloads
+  is. Over the facts, where npm's security team took the
   package down (npm's "security holding package" placeholder, told by its
   description or its npm/security-holder repository with npm as its
   publisher, or with a `-security` version as npm's staff publish it), a
@@ -1583,9 +1585,9 @@ control. A version shows in the bundle view with four tabs:
   adds among them, not one it drops), each version's with their commands in
   its tooltip; in red, though their tags on the files say little of one
   alone or warn of it in orange, code that runs beyond itself new to a file
-  the open version adds or changes (`Runs code`, the kinds named as the
-  file's tags say them: eval, child_process, credentials, whole env,
-  publish), its tooltip listing each file with its new kinds and their lines,
+  the open version adds or changes (the kinds alone, as the file's tags say
+  them: eval, child_process, credentials, whole env, publish, `Runs code`
+  heading its tooltip), its tooltip listing each file with its new kinds and their lines,
   each way a string runs as code by its own name (`Function (line 2)`); a
   host new to a file the open version adds or changes, a chip for each tag a
   level higher than the tag's own (`Exfiltration` and `Remote` in red, `IP
@@ -1601,8 +1603,9 @@ control. A version shows in the bundle view with four tabs:
   them, each with its size, its longest line before and now, or what its
   fingerprint holds; in orange, as the files' tags are, what any file of the
   open version runs beyond itself that the red chip doesn't name, kept from
-  the one compared with (`Runs code`, the kinds named), its tooltip listing
-  each file with its kinds and their lines; in orange, as install scripts are, the hosts the open
+  the one compared with (the kinds alone), its tooltip listing
+  each file with its kinds and their lines; in orange, the whole chip, as one
+  naming its issue is, the hosts the open
   version's code names that the one compared with's named in none of its
   (`New hosts`, the host where it is one, else how many): a URL's in a
   script's strings, regular expressions and template literals, its comments

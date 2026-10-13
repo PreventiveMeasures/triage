@@ -3493,19 +3493,24 @@ npm-downloads-chart {
 }
 /* Its tier among npm's packages by downloads, beside its figures: solid
    green to the top 200, then tinted green, yellow, orange, and red for the
-   unpopular, blended with the text's colors as a hint. */
-:is(.npm-stat dd, .bundle-compare-row span, .bundle-compare-code-dep span).npm-downloads-tier {
-  align-self: center; padding: 0 .4rem;
+   unpopular, blended with the text's colors as a hint; among a version's
+   chips too (npm-overview.js tierTag), shaped as they are, its tint this. */
+:is(.npm-stat dd, .bundle-compare-row span, .bundle-compare-code-dep span, .npm-extension).npm-downloads-tier {
   color: color-mix(in srgb, var(--tier) 55%, var(--text));
   background: color-mix(in srgb, var(--tier) 10%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--tier) 50%, var(--border)); border-radius: var(--ui-radius, 3px);
-  font-size: .7rem; font-weight: 500; line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--tier) 50%, var(--border));
 
   &.is-solid { color: var(--bg); background: var(--green); border-color: var(--green); }
   &.is-top { --tier: var(--green); }
   &.is-mid { --tier: var(--yellow); }
   &.is-low { --tier: var(--high); }
   &.is-unpopular { --tier: var(--critical); }
+}
+:is(.npm-stat dd, .bundle-compare-row span, .bundle-compare-code-dep span).npm-downloads-tier {
+  align-self: center; padding: 0 .4rem;
+  border-radius: var(--ui-radius, 3px);
+  font-size: .7rem; font-weight: 500; line-height: 1.5;
+
   /* Beside a new dependency's name over package.json, as small as the tags
      beside it. */
   .bundle-compare-code-dep & { font-size: .6rem; line-height: 1.35; }
@@ -3708,13 +3713,15 @@ a.npm-compare-publisher {
 /* A chip's text in its warning's color, one color to a warning: its value,
    and the whole of a chip that names its issue (the open version's age, its
    provenance lost, its deprecation, what it does to its files, a count and
-   all, its dependencies from elsewhere than the registry or unused). Only a
+   all, its dependencies from elsewhere than the registry or unused, the
+   hosts it names anew). Only a
    chip's type, the same whatever
    its tint (Socket's scores', the publisher's, the advisories', the install
    scripts'), reads in the text's own color. Each npm account a publisher's
    chip names, there and in its tooltip, green where it is known to publish,
    yellow where it is one of the package's maintainers, else orange. */
-:is(.npm-compare-account.is-unknown, .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported),
+:is(.npm-compare-account.is-unknown,
+  .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported, .npm-compare-hosts),
   :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts, .npm-held-file) .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
