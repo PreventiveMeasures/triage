@@ -1,5 +1,7 @@
 import type { ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
+import { pipeline } from 'node:stream/promises'
+import { createBrotliCompress, constants as zlibConstants } from 'node:zlib'
 import { UPLOAD_CHUNK_BYTES } from './uploads.ts'
 
 // Keep the header ASCII while filename* carries the original UTF-8 name.
@@ -21,4 +23,28 @@ export function writeResponse(res: ServerResponse, body: string | Buffer): void 
 export function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
   writeResponse(res, JSON.stringify(body))
+}
+
+// Lines of JSON, Brotli-encoded and sent as each is written, so the reader
+// has each while the next is made. A reader gone, or no longer `allowed`
+// before a line, has the response cut short, as is one whose lines fail: a
+// response that ends is one with every line.
+export async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, allowed: () => Promise<boolean>) {
+  res.writeHead(200, { 'content-type': 'application/x-ndjson', 'content-encoding': 'br', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
+  const encoder = createBrotliCompress({ params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
+  const sent = pipeline(encoder, res).catch(() => {})
+  const closed = new Promise(resolve => { res.once('close', resolve) })
+  try {
+    for await (const line of lines) {
+      if (res.destroyed || !await allowed()) { res.destroy(); return }
+      encoder.write(`${JSON.stringify(line)}\n`)
+      await Promise.race([new Promise<void>(resolve => { encoder.flush(() => { resolve() }) }), closed])
+    }
+  } catch (err) {
+    console.warn('managed: a streamed response failed:', err)
+    res.destroy()
+    return
+  }
+  encoder.end()
+  await sent
 }

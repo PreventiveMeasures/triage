@@ -178,7 +178,25 @@ export async function* responseLines(response) {
 // `{ path, source, status, message }` where it has none, `source` as above.
 // Resolves once the server sent them all; refused as the version's files are.
 export function fetchPrettyNpmFiles(name, version, onLine, { signal } = {}) {
-  return request(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, async response => {
+  return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, onLine, signal)
+}
+
+// The files that changed between two bundles, or two versions of a package,
+// both sides' pretty-printed by the server in one request, those it kept
+// first: `onLine` called with each as it comes, as above, with the `side` it
+// is of, `base` (the one asked about) or `other`.
+export function fetchPrettyBundleChanges(id, other, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal)
+}
+
+export function fetchPrettyNpmChanges(name, version, otherVersion, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
+}
+
+// Pretty-printed files' lines, each told to `onLine` as it comes, a failed
+// one's error told as `message`; refused as `errors` name it.
+function requestPrettyLines(url, errors, onLine, signal) {
+  return request(url, errors, async response => {
     const generation = managedAppState.generation
     for await (const { error, status, ...line } of responseLines(response)) {
       if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')

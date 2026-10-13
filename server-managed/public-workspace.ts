@@ -5,7 +5,7 @@ import type { ManagedHttpDeps } from './http.ts'
 import type { ManagedBundle } from './db.ts'
 import type { OpenedBlob } from './blob-store.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
-import { sendJson, writeResponse } from './http-response.ts'
+import { sendJson, sendLines, writeResponse } from './http-response.ts'
 import { hashToken } from './crypto.ts'
 import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamReportVisibility } from './team-reports.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -100,9 +100,10 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const bundle = snapshot.bundles.find(item => item.id === bundleRoute![1])
   if (!bundle) { json(res, 404, { error: 'no-bundle' }); return }
   if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
-  if (bundleRoute![2] === 'rename-diff') {
+  if (bundleRoute![2] === 'rename-diff' || (bundleRoute![2] === 'pretty' && url.searchParams.has('other'))) {
     if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
-    await serveRenameDiff(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), url, stream); return
+    const other = snapshot.bundles.find(item => item.id === url.searchParams.get('other'))
+    await (bundleRoute![2] === 'rename-diff' ? serveRenameDiff(res, deps, bundle, other, url, stream) : servePrettyChanges(res, deps, bundle, other, recheck)); return
   }
   await serveBundle(res, deps, bundle, bundleRoute![2]!, url, recheck, stream)
 }
@@ -125,6 +126,22 @@ async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundl
     throw err
   }
   await stream(diff, 'br')
+}
+
+// The files that changed between a bundle and `other`, another of the link's
+// bundles, both sides' pretty-printed (pretty-print.ts compared), the link
+// checked again before each line.
+async function servePrettyChanges(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, recheck: () => Promise<void>) {
+  if (!other) { json(res, 404, { error: 'no-bundle' }); return }
+  if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
+  let lines
+  try { lines = await deps.prettyCache.bundleChanges(bundle, other) }
+  catch (err) {
+    if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
+    throw err
+  }
+  await recheck()
+  await sendLines(res, lines, () => recheck().then(() => true, () => false))
 }
 
 async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, part: string, url: URL,

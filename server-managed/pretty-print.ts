@@ -1,9 +1,11 @@
 // Minified files pretty-printed for the Code tab (GET /api/bundles/:id/pretty
-// one file at a time, GET /api/npm/pretty all a version's at once), named by
-// path and content hash, formatted with oxfmt once and kept Brotli-encoded by
-// that hash: a bundle's in its cache directory (so only made from, and read
-// by readers of, that bundle), a public npm version's under `cache/npm/`; a
-// private version's are never kept. Access is the caller's to check.
+// one file at a time, GET /api/npm/pretty all a version's at once), and the
+// files that changed between two bundles or versions for Compare (the same
+// with `other`, or `otherVersion`), named by path and content hash, formatted
+// with oxfmt once and kept Brotli-encoded by that hash: a bundle's in its
+// cache directory (so only made from, and read by readers of, that bundle), a
+// public npm version's under `cache/npm/`; a private version's are never
+// kept. Access is the caller's to check.
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
@@ -43,6 +45,25 @@ export interface PrettyRequest { path: string; hash: string; extension: string }
 // hash of the file it was formatted from: its copy's text, or why it has
 // none, as a PrettyError tells it.
 export type PrettyLine = { path: string; source: string; text: string } | { path: string; source: string; error: string; status: number }
+
+// Which of a comparison's two its files are of: the bundle or version asked
+// about, or the `other`.
+type Side = 'base' | 'other'
+
+// One of a comparison's changed files pretty-printed (compared), as a
+// version's is, with the side it is of.
+export type ComparedLine = PrettyLine & { side: Side }
+
+// A side of a comparison: its files that can be formatted, with their texts,
+// and every one of its files' hashes; the copy kept for one, or null; and one
+// made, kept where the side keeps copies.
+interface ComparedSide {
+  side: Side
+  files: Array<PrettyRequest & { text: string }>
+  hashes: Set<string>
+  kept(request: PrettyRequest): Promise<OpenedBlob | null>
+  made(request: PrettyRequest, text: string): Promise<OpenedBlob>
+}
 
 // The file a request's `path` and `hash` name, or null for one that can't be
 // formatted.
@@ -118,23 +139,111 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
   }
 }
 
-export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage, db: Pick<ManagedDb, 'getBundle'>, store: BundleStore) {
-  // Copies being made; readers asking for one meanwhile share it.
-  const pending = new Map<string, Promise<Buffer>>()
-  function shared(key: string, make: () => Promise<Buffer>): Promise<Buffer> {
+// The files that changed between two sides, pretty-printed: each side's
+// formattable files whose text the other has nowhere (one renamed, or moved
+// with its tree, unchanged, has its text there), so both of every pair the
+// viewer diffs, by the paths each side has them at. As they are iterated, in
+// path order, the base's first where both have one: those kept, at once; then
+// the rest, formatted one after another, the minified before the others
+// (needsPrettyPrint), as the viewer prints those unasked.
+function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
+  const changed = sides.flatMap((own, i) => own.files.filter(file => !sides[1 - i]!.hashes.has(file.hash)).map(file => ({ own, file })))
+    .toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
+  return (async function* () {
+    const unkept: typeof changed = []
+    for (const { own, file } of changed) {
+      const copy = await own.kept(file)
+      if (copy) yield { side: own.side, ...await prettyLine(file, () => Promise.resolve(copy)) }
+      else unkept.push({ own, file })
+    }
+    const minified = new Map(unkept.map(({ file }) => [file, needsPrettyPrint(file.path, file.text)]))
+    for (const { own, file } of unkept.toSorted((a, b) => Number(minified.get(b.file)) - Number(minified.get(a.file)))) {
+      yield { side: own.side, ...await prettyLine(file, () => own.made(file, file.text)) }
+    }
+  })()
+}
+
+// Jobs by key, readers asking for one while it runs sharing it.
+function sharing<T>(): (key: string, make: () => Promise<T>) => Promise<T> {
+  const pending = new Map<string, Promise<T>>()
+  return (key, make) => {
     let job = pending.get(key)
     if (!job) pending.set(key, job = make().finally(() => pending.delete(key)))
     return job
   }
-  // Bundles are read one at a time: reading one decodes all of it.
+}
+
+// Work done one job at a time, in the order asked.
+function serial(): <T>(work: () => Promise<T>) => Promise<T> {
   let queue = Promise.resolve()
-  function enqueue<T>(work: () => Promise<T>): Promise<T> {
+  return work => {
     const job = queue.then(work)
     queue = job.then(() => undefined, () => undefined)
     return job
   }
-  async function keep(put: () => Promise<void>) {
-    try { await put() } catch (err) { console.warn('managed: pretty-print cache write failed:', err) }
+}
+
+async function keep(put: () => Promise<void>) {
+  try { await put() } catch (err) { console.warn('managed: pretty-print cache write failed:', err) }
+}
+
+// A copy kept, or null where none is.
+async function kept(open: () => Promise<OpenedBlob>): Promise<OpenedBlob | null> {
+  try { return await open() }
+  catch (err) { if (err instanceof CacheMissError) return null; throw err }
+}
+
+// A side's files that can be formatted, with their texts, and every one of
+// its files' hashes, from their paths and contents: texts, or bytes, read as
+// text where they are.
+async function sideFiles(entries: Iterable<[string, string | Uint8Array]>): Promise<Pick<ComparedSide, 'files' | 'hashes'>> {
+  const files: ComparedSide['files'] = [], hashes = new Set<string>()
+  for (const [path, content] of entries) {
+    const hash = await computeFileHash(content)
+    hashes.add(hash)
+    const extension = prettyExtension(path)
+    if (extension === null || (typeof content === 'string' ? Buffer.byteLength(content) : content.byteLength) > MAX_PRETTY_BYTES) continue
+    const text = typeof content === 'string' ? content : npmFileText(content)
+    if (text !== null) files.push({ path, hash, extension, text })
+  }
+  return { files, hashes }
+}
+
+// A version's files by path, from one load of them.
+async function npmFiles(doc: NpmVersionDocument): Promise<Array<[string, Uint8Array]>> {
+  const load = loadNpmFiles(doc)
+  try { return (await load.result).map(({ path, bytes }) => [path, bytes]) }
+  finally { load.release() }
+}
+
+export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage, db: Pick<ManagedDb, 'getBundle'>, store: BundleStore) {
+  // Copies being made; readers asking for one meanwhile share it.
+  const shared = sharing<Buffer>()
+  // Bundles are read one at a time: reading one decodes all of it.
+  const enqueue = serial()
+  function bundleSources(record: ManagedBundle): Promise<Map<string, string>> {
+    return enqueue(async () => {
+      const details = await readBundleDetails(record, store)
+      if (!details) throw new PrettyError(422, 'bundle-unavailable')
+      return bundleSourcesAsMap(details)
+    })
+  }
+  // A bundle's file pretty-printed from the text `read` reads, and kept in
+  // its cache.
+  function bundleCopy(record: ManagedBundle, request: PrettyRequest, read: () => Promise<string>): Promise<Buffer> {
+    const file = prettyFile(request)
+    return shared(`bundle ${record.id} ${file}`, async () => {
+      const body = await prettyBody(await read(), request.extension)
+      // As for its metadata (bundle-cache.ts): a bundle deleted meanwhile
+      // keeps no copy, nor does one deleted while it was written.
+      if (!await db.getBundle(record.id)) throw new PrettyError(404, 'no-bundle')
+      await keep(() => bundles.put(record.id, file, body))
+      if (!await db.getBundle(record.id)) {
+        await bundles.delete(record.id)
+        throw new PrettyError(404, 'no-bundle')
+      }
+      return body
+    })
   }
   // A version's file pretty-printed, `read` reading its text (and checking
   // it is the file named): from the copy kept for a public version, else
@@ -153,27 +262,13 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
   }
   return {
     async bundle(record: ManagedBundle, request: PrettyRequest): Promise<OpenedBlob> {
-      const { path, hash, extension } = request, file = prettyFile(request)
-      try { return await bundles.open(record.id, file) }
-      catch (err) { if (!(err instanceof CacheMissError)) throw err }
-      return opened(await shared(`bundle ${record.id} ${file}`, async () => {
-        const text = await enqueue(async () => {
-          const details = await readBundleDetails(record, store)
-          if (!details) throw new PrettyError(422, 'bundle-unavailable')
-          return bundleSourcesAsMap(details).get(path)
-        })
+      const copy = await kept(() => bundles.open(record.id, prettyFile(request)))
+      if (copy) return copy
+      return opened(await bundleCopy(record, request, async () => {
+        const text = (await bundleSources(record)).get(request.path)
         if (text === undefined) throw new PrettyError(404, 'no-file')
-        if (await computeFileHash(text) !== hash) throw new PrettyError(409, 'hash-mismatch')
-        const body = await prettyBody(text, extension)
-        // As for its metadata (bundle-cache.ts): a bundle deleted meanwhile
-        // keeps no copy, nor does one deleted while it was written.
-        if (!await db.getBundle(record.id)) throw new PrettyError(404, 'no-bundle')
-        await keep(() => bundles.put(record.id, file, body))
-        if (!await db.getBundle(record.id)) {
-          await bundles.delete(record.id)
-          throw new PrettyError(404, 'no-bundle')
-        }
-        return body
+        if (await computeFileHash(text) !== request.hash) throw new PrettyError(409, 'hash-mismatch')
+        return text
       }))
     },
     // The version's file, from its files loaded as the viewer's are (and
@@ -200,6 +295,20 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
       return (async function* () {
         for (const { text, ...request } of files) yield await prettyLine(request, () => npmCopy(doc, request, () => Promise.resolve(text)))
       })()
+    },
+    // The files that changed between two bundles, or two versions, both
+    // sides' pretty-printed (compared), the sides read before this resolves.
+    async bundleChanges(base: ManagedBundle, other: ManagedBundle): Promise<AsyncGenerator<ComparedLine>> {
+      const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await bundleSources(record)),
+        kept: request => kept(() => bundles.open(record.id, prettyFile(request))),
+        made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
+      return compared([await sideOf(base, 'base'), await sideOf(other, 'other')])
+    },
+    async npmChanges(base: NpmVersionDocument, other: NpmVersionDocument): Promise<AsyncGenerator<ComparedLine>> {
+      const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc)),
+        kept: request => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request)))),
+        made: (request, text) => npmCopy(doc, request, () => Promise.resolve(text)) })
+      return compared([await sideOf(base, 'base'), await sideOf(other, 'other')])
     },
   }
 }
