@@ -32,6 +32,11 @@ const GAP = String.raw`(?:\s|${COMMENT})*`
 // apply (`Function.call(null, …)`), each making a function of its last
 // argument.
 const FUNCTION_CALLED = String.raw`(?:${GAP}\??\.${GAP}(?:call|apply))?${GAP}(?:\?\.${GAP})?\(`
+// But not where the function made returns `this` alone
+// (`Function('return this')()`, `new Function("return this;")`): the global
+// object, as older code finds it where `globalThis` may not be, lodash's and
+// core-js's among them, running nothing of its own.
+const GLOBAL_FOUND = String.raw`(?!${GAP}(?<quote>["'\u0060])\s*return\s+this\s*;?\s*\k<quote>${GAP}\))`
 // The environment, whole: not one variable of it (`process.env.HOME`,
 // `process.env[name]`).
 const ENV = String.raw`process${GAP}\.${GAP}env(?![\p{ID_Continue}$])(?!${GAP}(?:\??\.|\[))`
@@ -62,12 +67,13 @@ const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?:NPM|GITHUB
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
-// none of its own), and Function called; Module's _compile, called
+// none of its own), and Function called, but to find the global object;
+// Module's _compile, called
 // (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
 // = …`), not named in a type (`typeof Module.prototype._compile`); a token's
 // name; the environment read out whole; and a PUT request's
 // call (`axios.put(…)`).
-const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED})`
+const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED}${GLOBAL_FOUND})`
   + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<credentials>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
