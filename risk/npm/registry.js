@@ -198,8 +198,9 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
 
 // npm's advisories of `version` of a package, as `npm audit` asks them
 // (upstream's `advisories`), each `{ id, url?, title?, cwe }`, and where
-// `osv`, OSV's records of malware naming it that npm's don't, by id or alias
-// (osvRecords, malware.js npmMalwareAdvisory), as the malicious packages' of
+// `osv`, OSV's records of malware naming it that npm's of malware don't, by
+// id or alias, so that one npm's tell as no malware is kept (osvRecords,
+// malware.js npmMalwareAdvisory), as the malicious packages' of
 // nx's versions are (MAL-2025-41443, of GHSA-cxm3-wv7p-598c, which npm's
 // registry hasn't): kept ADVISORIES_MS, and given up on once `signal`
 // aborts.
@@ -211,7 +212,7 @@ export async function npmVersionAdvisories(name, version, osv, context) {
       throw context.signal?.aborted ? error : new NpmRiskError(error?.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm's advisories of ${what} couldn't be had: ${error.message}`)
     }), osv ? osvRecords(name, version, context) : []])
     const told = registry.map(({ id, url, title, cwe }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe }))
-    const named = new Set(told.map(({ id }) => id))
+    const named = new Set(told.filter(npmMalwareAdvisory).map(({ id }) => id))
     const malware = records.filter(record => npmMalwareAdvisory(record) && ![record.id, ...record.aliases].some(id => named.has(id)))
       .map(({ id, url, title, cwe }) => ({ id, url, ...title ? { title } : {}, cwe }))
     return { at: context.now, osv, rows: [...told, ...malware] }

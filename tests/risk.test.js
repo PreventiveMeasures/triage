@@ -546,13 +546,15 @@ test('OSV\'s records of malware npm\'s advisories haven\'t tell of it too, as th
   const osvRecord = (id, summary, aliases = [], cwe = []) => ({ id, summary, aliases, database_specific: { cwe_ids: cwe } })
   const listed = version('listed', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
   npm(t, [{ name: 'listed', versions: [listed], removed: { '1.0.1': ago(20) } }], {}, {
-    listed: [advisory(1, 'GHSA-aaaa-bbbb-cccc', 'Malware in listed', '=1.0.0')],
+    listed: [advisory(1, 'GHSA-aaaa-bbbb-cccc', 'Malware in listed', '=1.0.0'), advisory(2, 'GHSA-kkkk-mmmm-nnnn', 'Exposure of secrets in listed', '=1.0.0', ['CWE-200'])],
   }, {
-    'listed@1.0.0': [osvRecord('MAL-2025-00001', 'Malicious code in listed (npm)', ['GHSA-aaaa-bbbb-cccc']), osvRecord('GHSA-dddd-eeee-ffff', 'Prototype Pollution in listed', [], ['CWE-1321'])],
+    'listed@1.0.0': [osvRecord('MAL-2025-00001', 'Malicious code in listed (npm)', ['GHSA-aaaa-bbbb-cccc']), osvRecord('GHSA-dddd-eeee-ffff', 'Prototype Pollution in listed', [], ['CWE-1321']),
+      osvRecord('MAL-2025-00005', 'Malicious code in listed (npm)', ['GHSA-kkkk-mmmm-nnnn'])],
     'listed@1.0.1': [osvRecord('MAL-2025-00002', 'Malicious code in listed (npm)', ['GHSA-gggg-hhhh-jjjj'])],
   })
   const malware = async number => (await assessNpm('listed', number, { now: NOW, downloads: false })).findings.find(({ id }) => id === 'malware')
-  assert.deepEqual((await malware('1.0.0')).advisories.map(({ id }) => id), ['GHSA-aaaa-bbbb-cccc'], 'OSV\'s of npm\'s told once; its vulnerability none')
+  assert.deepEqual((await malware('1.0.0')).advisories.map(({ id }) => id), ['GHSA-aaaa-bbbb-cccc', 'MAL-2025-00005'],
+    'OSV\'s of npm\'s malware told once, of one npm\'s tell as no malware told still; its vulnerability none')
   assert.deepEqual((await malware('1.0.1')).advisories, [{ id: 'MAL-2025-00002', url: 'https://osv.dev/vulnerability/MAL-2025-00002', title: 'Malicious code in listed (npm)' }],
     'a version npm removed, its malware OSV\'s alone')
 })
