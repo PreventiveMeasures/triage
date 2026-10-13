@@ -903,9 +903,11 @@ registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour), and told in an `advisories` line,
 each advisory with whether it is of malware: GitHub's CWE-506, embedded
 malicious code, or a title naming malware. The page lists them on a tab of
-their own, and a package an advisory of malware names is critical in its risk;
-other advisories are vulnerabilities, not a supply chain's risk, and stay on
-their tab. npm's registry hasn't every one of GitHub's malware advisories
+their own, and a package an advisory of malware names is critical in its risk,
+from npm's registry or a mirror, but where its integrity is found to differ
+from npm's: npm deletes a version it finds malware in, so a mirror's copy of
+one can't be held to npm's integrity, and is told as npm's. Other advisories
+are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's registry hasn't every one of GitHub's malware advisories
 (those of nx's malicious versions, for one), which OSV's records would add.
 Assessments are `spare` ones (`npm-risk.ts`): two at most across the server,
 leaving the rest to readers, and without asking npm of each dependency's

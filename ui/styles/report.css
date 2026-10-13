@@ -3488,7 +3488,8 @@ npm-downloads-chart {
 /* Its tier among npm's packages by downloads, beside its figures: solid
    green to the top 200, then tinted green, yellow, orange, and red for the
    unpopular, blended with the text's colors as a hint. */
-:is(.npm-stat dd, .npm-compare-badges span, .bundle-compare-row span, .bundle-compare-code-dep span).npm-downloads-tier {
+:is(.npm-stat dd, :is(.npm-compare-badges, .npm-overview-badges) span, .bundle-compare-row span,
+  .bundle-compare-code-dep span).npm-downloads-tier {
   align-self: center; padding: 0 .4rem;
   color: color-mix(in srgb, var(--tier) 55%, var(--text));
   background: color-mix(in srgb, var(--tier) 10%, var(--bg));
@@ -3500,9 +3501,10 @@ npm-downloads-chart {
   &.is-mid { --tier: var(--yellow); }
   &.is-low { --tier: var(--high); }
   &.is-unpopular { --tier: var(--critical); }
-  /* In Compare's badges, as tall as the chips beside it; beside a new
-     dependency's name over package.json, as small as the tags beside it. */
-  .npm-compare-badges & { padding: .05rem .4rem; line-height: 1.45; }
+  /* In Compare's and the Overview's badges, as tall as the chips beside it;
+     beside a new dependency's name over package.json, as small as the tags
+     beside it. */
+  :is(.npm-compare-badges, .npm-overview-badges) & { padding: .05rem .4rem; line-height: 1.45; }
   .bundle-compare-code-dep & { font-size: .6rem; line-height: 1.35; }
 }
 /* Under the switch, the period under the pointer's downloads, on a line

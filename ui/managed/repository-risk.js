@@ -62,9 +62,11 @@ const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 
 const assessable = source => source === 'registry' || source === 'mirror'
 
 // The malware advisories name in a package. They speak of npm's artifact:
-// not of one risk finds differs from npm's, and of a mirror's only once risk
-// finds it is npm's, as one of a private package of a public one's name isn't.
-const malwareOf = row => (row.source === 'mirror' ? row.risk && !row.risk.error : row.risk?.error !== 'integrity-mismatch') ? row.malware ?? null : null
+// not of one risk finds differs from npm's, as a private package of a public
+// one's name does, from npm's registry or a mirror. A mirror's copy can't be
+// held to npm's integrity where npm deleted the version, as it deletes every
+// one it finds malware in: it is npm's unless found otherwise.
+export const malwareOf = row => row.risk?.error === 'integrity-mismatch' ? null : row.malware ?? null
 // A package row's risk, its malware first, as critical.
 const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
 const findingsOf = row => [...malwareOf(row) ? [{ id: 'malware', severity: 'critical' }] : [], ...row.risk?.findings ?? []]
