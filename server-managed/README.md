@@ -1853,9 +1853,9 @@ without credentials. That answer alone is kept, never one read with the token:
 documents and tarballs that a bundle build fetched with the token can remain in
 upstream's caches, readable without one, so leaving the token out is not
 enough. An exact version's document npm answered anonymously is kept in the
-database (`npm-kept.ts`, of only the fields read of it), and the viewer and
-repository risk scans read it from there for a day rather than ask npm on every
-read, then ask again: npm never changes a version's files, but its document can
+database (`npm-kept.ts`, of only the fields read of it), and the viewer,
+dependency reviews and repository risk scans read it from there for a day
+rather than ask npm on every read, then ask again: npm never changes a version's files, but its document can
 change within that day, as its owner deprecates it or makes a scoped package
 private (a private answer is never kept), or npm removes it. A dist-tag such as
 `latest` is asked each time. A version npm removed stays readable for that day
