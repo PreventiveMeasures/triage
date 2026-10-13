@@ -126,8 +126,8 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // `dependencies`), nor its advisories, which a scan asks of a lockfile's
 // packages at once (repository-risk.ts).
 export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
-  { teamScoped, ownScope = () => Promise.resolve(false), privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean;
-    ownScope?: (scope: string) => Promise<boolean>; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
+  { teamScoped, ownScope = () => Promise.resolve(false), fromEmpty = false, privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean;
+    ownScope?: (scope: string) => Promise<boolean>; fromEmpty?: boolean; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
   const scopes = new Map<string, Promise<boolean>>()
   const owned = (name: string) => {
     const scope = npmPackageScope(name)
@@ -135,7 +135,7 @@ export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
     if (!scopes.has(scope)) scopes.set(scope, ownScope(scope))
     return scopes.get(scope)!
   }
-  return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
+  return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, fromEmpty, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
     popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, osv: !doc.private, owned,
     packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
     tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) }))

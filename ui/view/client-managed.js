@@ -209,3 +209,16 @@ export async function watchTeamFeed(teamId, options) {
 export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false) {
   return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason, repoAdvisories, details)
 }
+
+export async function dependencyReviews(...args) {
+  return (await loadManagedBundle()).dependencyReviews(...args)
+}
+export async function myDependencyReviews(...args) {
+  return (await loadManagedBundle()).myDependencyReviews(...args)
+}
+export async function discardDependencyReview(...args) {
+  return (await loadManagedBundle()).discardDependencyReview(...args)
+}
+export async function latestDependencyReview(...args) {
+  return (await loadManagedBundle()).latestDependencyReview(...args)
+}

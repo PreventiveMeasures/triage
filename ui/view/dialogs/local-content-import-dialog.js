@@ -17,17 +17,6 @@ class LocalContentImportDialog extends ConfirmationDialog {
     this.selected = new Set(this.plan.items.filter(item => item.synced && !item.present && !item.error).map(item => item.value))
   }
 
-  firstUpdated() {
-    if (this.signal?.aborted) { this._onCancel(); return }
-    this.signal?.addEventListener('abort', this._onCancel, { once: true })
-    super.firstUpdated()
-  }
-
-  disconnectedCallback() {
-    this.signal?.removeEventListener('abort', this._onCancel)
-    super.disconnectedCallback()
-  }
-
   toggle(item, checked) {
     if (item.present || item.error) return
     const selected = new Set(this.selected)

@@ -112,6 +112,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_bundle', 'provenance', 'TEXT')
     ensureColumn(db, 'managed_bundle', 'build_conditions', 'TEXT')
     ensureColumn(db, 'managed_team', 'hidden', 'INTEGER NOT NULL DEFAULT 0')
+    ensureColumn(db, 'managed_team', 'dependency_review', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_url', 'TEXT')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_checked_at', 'INTEGER')
     ensureColumn(db, 'managed_selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')

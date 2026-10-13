@@ -672,7 +672,8 @@ h6,
    container, and a wildcard matching the span DIRECTLY beats an
    inherited value. Equal specificity to the wildcards, so it is
    source order that wins it — keep this rule below them. */
-input,
+input:not([type='checkbox'], [type='radio'], [type='button'], [type='submit'], [type='reset'],
+  [type='color'], [type='range'], [type='file'], [type='image']),
 textarea,
 [contenteditable],
 pre,

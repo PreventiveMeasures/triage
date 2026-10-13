@@ -365,9 +365,9 @@
   position: relative;
   background: var(--graph-canvas-bg);
   overflow: hidden;
-  cursor: grab;
+  cursor: default;
 
-  &:active { cursor: grabbing; }
+  &:active { cursor: default; }
   & canvas {
     position: absolute; inset: 0;
     width: 100%; height: 100%;

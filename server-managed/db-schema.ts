@@ -1,3 +1,4 @@
+import { DEPENDENCY_REVIEW_SCHEMA } from './dependency-reviews.ts'
 import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
@@ -193,6 +194,7 @@ CREATE TABLE IF NOT EXISTS managed_team (
   slug        TEXT NOT NULL,
   name        TEXT NOT NULL UNIQUE,
   hidden      INTEGER NOT NULL DEFAULT 0,
+  dependency_review INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 ) STRICT;
@@ -222,4 +224,4 @@ CREATE TABLE IF NOT EXISTS managed_team_user (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS team_user_user_idx ON managed_team_user(user_id);
-` + WORKSPACE_SHARE_SCHEMA + LINK_REPORT_SCHEMA + REPOSITORY_ALIAS_SCHEMA + TEAM_NPM_SCOPE_SCHEMA
+` + WORKSPACE_SHARE_SCHEMA + LINK_REPORT_SCHEMA + REPOSITORY_ALIAS_SCHEMA + TEAM_NPM_SCOPE_SCHEMA + DEPENDENCY_REVIEW_SCHEMA

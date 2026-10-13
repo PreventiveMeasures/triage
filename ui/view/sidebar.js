@@ -938,7 +938,7 @@ async function onSidebarClick(e) {
   if (bundleEl) {
     // Missing-bundle rows (imported workspace claims an integrity the
     // recipient doesn't have locally) are advertised as non-interactive
-    // via muted italic styling + `cursor: help`. Without this gate,
+    // via muted italic styling. Without this gate,
     // clicking flipped the view to bundles and set `state.selectedBundle`
     // to the missing integrity — `openBundle` then silently returned
     // (no matching entry in state.bundles), leaving the user on the
@@ -1218,6 +1218,11 @@ async function onSidebarClick(e) {
     void stopViewing(state.managedSession?.csrfToken)
     return
   }
+  if (e.target.closest('[data-action="my-reviews"]')) {
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void managedHistory.navigate({ view: 'reviews' })
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1366,6 +1371,7 @@ function renderAuthStatus() {
         </span>
       </div>
       ${session.viewer ? html`<button type="button" class="user-menu-row" data-action="view-as-stop">Return to @${session.viewer.login}</button>` : nothing}
+      ${session.role === 'none' ? nothing : html`<button type="button" class="user-menu-row" data-action="my-reviews">My reviews</button>`}
       <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
@@ -1706,7 +1712,7 @@ function onSidebarDragstart(e) {
     // handler would write the missing integrity into dataTransfer; a
     // subsequent drop on another workspace would attach a bundle
     // nobody has locally, contradicting the row's "non-interactive"
-    // affordance (cursor:help, italic muted styling, click gated).
+    // affordance (italic muted styling, click gated).
     if (bundleEl.classList.contains('bundle-missing')) {
       e.preventDefault()
       return
@@ -2180,7 +2186,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
       && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role) managedHistory.replaceRoute({ view: 'home' })
     return isCurrent()
   }
-  if (!managedNavigationPending && (state.currentWorkspace || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
+  if (!managedNavigationPending && (state.currentWorkspace || state.bundleDetails?.npm || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
   renderSidebar()
   // Catalog invalidation above also evicts the cached team report response.
   // Refresh list counts after every confirmed snapshot, including unchanged
@@ -2277,6 +2283,17 @@ async function restoreManagedPageContent(route, isCurrent) {
   }
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
+  if (route.view === 'reviews') {
+    if (state.managedSession.publicShare) return false
+    cleanupGraph2()
+    state.currentView = 'reviews'
+    state.currentManagedTeam = null
+    state.currentManagedReport = null
+    document.body.classList.remove('report-fullscreen')
+    render({ animate: false })
+    renderSidebar()
+    return route
+  }
   if (route.view === 'manage-deduplication' && route.linkId) {
     return canAccessManagedPage(route.view) && await switchToManagedDeduplication(route.linkId)
   }

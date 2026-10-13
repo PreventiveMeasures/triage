@@ -179,6 +179,7 @@ window also navigate to their managed page URL.
 | `/npm` | npm package lookup |
 | `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
 | `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
+| `/npm/:name@:version/review[/:baseName@:baseVersion]` | Review a package or update; `?mode=diff` shows all changed files |
 | `/npm/:name@:version/compare[/:otherVersion[/code\|/diff]]` | Its Compare tab, with another version, in its Code or Diff mode |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
@@ -1710,6 +1711,8 @@ earliest time the document lists, which npm's own `created` can postdate, as
 a placeholder's does for a package npm took down),
 `teamScoped` whether any visible team lists its scope, whatever teams the
 reader is in, and `GET /api/npm/download?name=&version=` the tarball.
+`otherVersion=(empty)` compares every file against an empty package for initial dependency reviews, using the same risk findings and chips.
+
 `GET /api/npm/risk?name=&version=&otherVersion=` returns what calls for a
 look at a version, as risk tells it (risk/README.md, `assessNpm`), against
 `otherVersion` where given: `{ name, version, oldVersion, published, findings,
@@ -1968,3 +1971,76 @@ the saved URL and the submitted content. If the final workspace access check
 fails, the response confirms creation without exposing the issue URL or details;
 the dialog offers a status check instead of another creation. Pending responses
 link to the repository's issue list, never its new-issue form.
+
+### Dependency reviews
+
+A package's **Review** tab opens `/npm/<package>@<version>/review`. With no base,
+all package files are reviewed as additions. Append `/<basePackage>@<baseVersion>`
+to review an update; a bare base version is accepted as a same-package shortcut.
+The tab is shown only to users belonging to a visible team with dependency review enabled.
+Tags resolve to exact versions. Review uses the Compare header and stats.
+Clicking Review reopens the author's latest review for that exact package version
+and integrity, including its original base. Explicit review links keep their base.
+Changed files totaling less than 50,000 lines and 2 MiB across both versions use
+the whole diff; larger reviews use the per-file Code view. Both views support
+file reviews and whole-diff notes (a null file path).
+
+Triage users and above can save private review sets with notes and optional
+verdicts: **Accept**, **Accept with nits (non-blocking)**, **Request changes**, or
+**Reject**. In Manage teams, the **Enable dependency review** switch follows the
+npm scopes count. Only enabled, visible teams the author belongs to are offered
+for publication. A sole eligible team is selected initially; with multiple teams none are preselected.
+**Publish** requires at least one selected team.
+The account menu and review page link to **My reviews** (`/reviews`), a paginated
+list of the user's unpublished, published, and revoked review sets.
+Authors can discard an unpublished set from My reviews after an explicit
+confirmation. `POST /api/npm/reviews/discard` requires its ID and current revision;
+it atomically deletes the set and its file rows. Published and revoked sets cannot
+be discarded. Discarding does not require fetching the package again.
+
+Selecting a file verdict saves it immediately. Review always wraps source lines.
+Notes save when their field loses focus. Finalize also saves pending notes before
+opening confirmation.
+Each file has one verdict and one text note; later saves update that same row.
+The note editor is shown for Accept with nits, Request changes, and Reject.
+At least one changed file must have a saved verdict before publishing.
+
+**Finalize review** opens a separate confirmation step with a required final
+verdict and optional final comment. File verdicts limit the final verdict: it
+cannot be more favorable than the least favorable file verdict. A final verdict
+does not check any remaining files. Every published set is classified **Full**
+or **Partial** using the exact changed paths from the same diff engine as the UI,
+including added, removed, renamed, and binary files. Notes alone do not check a
+file; checking three of four files produces a partial review. The changed paths
+are frozen on first publication, along with the final verdict and comment.
+
+A full, non-revoked published review whose final verdict is **Accept** or
+**Accept with nits** offers **Copy audit Markdown**. This includes the package,
+version and integrity, its base when present, and any file or final notes.
+
+Publication freezes the entire set. Its author can publish that same snapshot to
+additional eligible teams or **Revoke** it. Revocation is permanent and keeps its
+file reviews and team links visible, labeled revoked. **Continue in a new review**
+copies the set into new private review and file-review rows; it never edits the
+published original. Only one unpublished set per author and comparison is active.
+
+`GET /api/npm/reviews` takes `ecosystem=npm`, `package`, exact `version`,
+`integrity`, and optional `basePackage`, `baseVersion`, `baseIntegrity`. It returns
+the author's own sets, published sets shared with their current visible teams,
+and eligible publication teams. Private npm access is checked for both sides.
+`POST` takes that context plus `action`: `start` (an empty private set), `save` (file, comment, optional status,
+optional reviewId/revision/entryId), `publish` (reviewId, revision, teamIds,
+and required finalStatus/optional finalComment on first publication),
+`revoke`, or `continue` (reviewId, revision). Every mutation requires a session,
+CSRF token and triage role. `GET /api/npm/reviews/mine` lists only the current
+user's sets in pages of 50, with an optional beforeTime/beforeId cursor.
+Revision conflicts return 409. Version and integrity
+mismatches also return 409; unknown file paths are refused, including paths not
+present on either side. Notes are limited to 20,000 characters.
+
+Storage uses three tables: `managed_dependency_review` for author, comparison,
+changed paths, final verdict/comment, revision and publication/revocation times; `managed_dependency_file_review` for
+file paths, comments, verdicts and times; and `managed_dependency_review_team`
+for publication links. There is no draft flag. `managed_team.dependency_review`
+controls publication eligibility, defaulting off. Both SQLite and Postgres
+migrate existing installations without altering their existing team membership.

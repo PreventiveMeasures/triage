@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { BUNDLE_TABS } from '../common/bundle-tabs.js'
 import { managedRouteForIds, managedRoutePath, parseManagedRoute, resolveManagedRoute } from '../common/managed/routes.js'
-import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedCompareLocation, managedTabLocation, managedTeamBundleEntries, shownManagedBundleId } from '../ui/view/managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedCompareLocation, managedTabLocation, managedTeamBundleEntries, prepareNpmReviewTab, shownManagedBundleId } from '../ui/view/managed-bundle-navigation.js'
 import { bundleComparisonCandidates } from '../ui/view/bundle-comparison-candidates.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -219,4 +219,31 @@ test('the shown managed bundle comes from its details, or its catalogue entry wh
   assert.equal(shown({ bundleDetails: { integrity: local.integrity }, selectedBundle: local.integrity }), null, 'a local bundle')
   assert.equal(shown({ selectedBundle: local.integrity }), null)
   assert.equal(shown({ currentView: 'findings' }), null)
+})
+
+
+test('Compare and Review keep the selected base until a review has started on another base', () => {
+  const state = { selectedBundle: 'npm', bundleDetailsTab: 'compare', managedSession: { id: 'alice' },
+    bundles: [{ integrity: 'npm', npm: { name: '@scope/pkg', version: '3.0.0' } }],
+    bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'code' } }
+  prepareNpmReviewTab(state, 'review')
+  assert.deepEqual(state.npmReview, { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.0.0', resume: true })
+  state.bundleCompare.target = '2.0.0'
+  prepareNpmReviewTab(state, 'review')
+  assert.equal(state.npmReview.reviewSpec, '2.0.0', 'an unstarted review follows Compare')
+  state.npmReview.started = true; state.npmReview.user = 'alice'
+  state.bundleCompare.target = '1.0.0'
+  prepareNpmReviewTab(state, 'review')
+  assert.equal(state.npmReview.reviewSpec, '2.0.0', 'a started review keeps its own base')
+  state.bundleDetailsTab = 'review'
+  assert.deepEqual(managedTabLocation(state), { reviewPackage: '@scope/pkg', reviewSpec: '2.0.0' })
+  prepareNpmReviewTab(state, 'compare')
+  assert.equal(state.bundleCompare.target, '2.0.0')
+  state.bundleDetailsTab = 'compare'; state.managedSession.id = 'bob'; state.bundleCompare.target = '1.0.0'
+  prepareNpmReviewTab(state, 'review')
+  assert.equal(state.npmReview.reviewSpec, '1.0.0', 'another user does not inherit the started review')
+  state.bundleDetailsTab = 'overview'; state.npmReview = null
+  prepareNpmReviewTab(state, 'review')
+  assert.deepEqual(state.npmReview, { bundle: 'npm', resume: true }, 'Review clicks from any tab look up the saved review')
+  assert.deepEqual(managedTabLocation(state, 'review'), {}, 'the resume hint never leaks into the URL')
 })

@@ -7,12 +7,23 @@ import listCSS from './dialog-list.css'
 export class ConfirmationDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
 
+  firstUpdated() {
+    if (this.signal?.aborted) { this._onCancel(); return }
+    this.signal?.addEventListener('abort', this._onCancel, { once: true })
+    super.firstUpdated()
+  }
+
+  disconnectedCallback() {
+    this.signal?.removeEventListener('abort', this._onCancel)
+    super.disconnectedCallback()
+  }
+
   focusInitial() {
     this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
   }
 
   confirmationResult(confirmed) {
-    return { confirmed }
+    return { confirmed: confirmed && !this.signal?.aborted }
   }
 
   _finish(confirmed) {

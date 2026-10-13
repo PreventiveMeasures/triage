@@ -1824,6 +1824,14 @@ test('a long tree counts its lines a little at a time, so it paints at once and 
   assert.equal(update.mock.callCount(), 1, 'another render is asked for, once')
   for (let i = 0; i < 20; i++) renderText(element.render())
   assert.deepEqual(rowCounts(renderText(element.render())), all, 'filled in, as counted at once')
+  element._counted.clear()
+  renderText(element.render())
+  element.disconnectedCallback()
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 1, 'no delayed rendering after leaving the viewer')
+  renderText(element.render())
+  t.mock.timers.tick(0)
+  assert.equal(update.mock.callCount(), 2, 'a reused viewer resumes counting')
 })
 
 test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
@@ -2283,3 +2291,96 @@ test('a file whose names the server could not give the new side\'s says why, its
   assert.doesNotMatch(off, /Hide renamed names|Renamed names are shown/u, 'neither, off: none of its lines marked')
 })
 
+
+test('review whole diff keeps actions outside the sticky file content', async () => {
+  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
+  const code = view(), viewer = new BundleCompareAll()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) viewer[name] = code[name]
+  viewer.extensions = { fileActions: () => 'REVIEW_ACTIONS', filterContent: false }
+  viewer.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const markup = renderText(viewer.render())
+  const sections = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)]
+  assert.equal(sections.length, viewer._entries.size)
+  for (const [, , body] of sections) {
+    assert.match(body, /<div class="bundle-compare-file-content"><header class="bundle-code-main-bar bundle-compare-all-file-head">/u)
+    assert.match(body, /<\/div>\s*REVIEW_ACTIONS\s*$/u, 'actions follow the wrapper that bounds the sticky header')
+  }
+})
+
+test('review verdict decorations keep file icons and chips in both viewers', async () => {
+  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
+  const source = view('added.js', [{}, { 'added.js': 'Function(input)\n' }])
+  for (const Component of [CompareCode, BundleCompareAll]) {
+    const viewer = Object.assign(new Component(), { base: source.base, other: source.other, files: source.files,
+      extensions: { filePrefix: () => 'VERDICT' } })
+    viewer.willUpdate(new Map([['files']]))
+    const row = [...renderText(viewer.render()).matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+      .map(([markup]) => markup).find(markup => markup.includes('data-tooltip=added.js>'))
+    assert.match(row, /VERDICT<svg class="source-file-icon" data-file-type=js[^]*npm-runs-code/u)
+  }
+})
+
+test('review filters affect the shared rail without changing file navigation or whole diff contents', async () => {
+  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
+  const source = view('src/api.js')
+  for (const Component of [CompareCode, BundleCompareAll]) {
+    const element = new Component()
+    for (const key of ['base', 'other', 'files', 'path']) element[key] = source[key]
+    element.extensions = { fullPaths: true, filterContent: false, fileFilter: path => path !== 'src/api.js' }
+    element.willUpdate(new Map([['files'], ['path']]))
+    const unfiltered = element._railState().allOrder
+    element._query = 'legacy'
+    assert.deepEqual(element._railState().order, ['src/legacy.js'])
+    const markup = renderText(element.render())
+    assert.deepEqual(element._order, unfiltered)
+    assert.equal(element._current, 'src/api.js')
+    assert.match(markup, /export const a/u, 'the selected checked file remains visible')
+    if (element instanceof BundleCompareAll) assert.equal((markup.match(/<section class="bundle-compare-all-file"/gu) ?? []).length, unfiltered.length)
+  }
+})
+
+test('shared whole-diff scrolling updates selection without a scroll feedback loop or bypassing the save guard', async t => {
+  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
+  const frames = [], previousFrame = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = fn => { frames.push(fn); return frames.length }
+  t.after(() => { if (previousFrame) globalThis.requestAnimationFrame = previousFrame; else delete globalThis.requestAnimationFrame })
+  const selected = [], viewer = new BundleCompareAll()
+  let blocked = false
+  viewer.extensions = { canSelect: () => !blocked }
+  viewer._order = ['a.js', 'b.js']; viewer._current = 'a.js'
+  viewer.dispatchEvent = event => selected.push(event.detail.path)
+  viewer.querySelector = () => ({ getBoundingClientRect: () => ({ top: 100, bottom: 500 }), querySelectorAll: () => [
+    { dataset: { path: 'a.js' }, getBoundingClientRect: () => ({ top: -200, bottom: 90 }) },
+    { dataset: { path: 'b.js' }, getBoundingClientRect: () => ({ top: 95, bottom: 600 }) },
+  ] })
+  viewer._spy(); frames.shift()()
+  assert.deepEqual(selected, ['b.js'])
+  viewer.path = 'b.js'; viewer.willUpdate(new Map([['path']]))
+  assert.equal(viewer._goTo, undefined, 'the parent accepting a scroll selection must not scroll back to the file header')
+  viewer._spy(); frames.shift()()
+  assert.deepEqual(selected, ['b.js'], 'unchanged scroll selection does not reset the editor')
+  blocked = true
+  viewer._spy(); viewer._select('a.js')
+  assert.equal(frames.length, 0)
+  assert.deepEqual(selected, ['b.js'])
+})
+
+test('collapsing the review tree clears search and stays collapsed until a new file is selected', async () => {
+  const { BundleCompareAll } = await import('../ui/view/bundle-compare-all.js')
+  const source = view('src/api.js'), viewer = new BundleCompareAll()
+  for (const key of ['base', 'other', 'files', 'path']) viewer[key] = source[key]
+  viewer.extensions = { fullPaths: true, filterContent: false, collapseClearsSearch: true, treePageSize: 300 }
+  viewer.willUpdate(new Map([['files'], ['path']]))
+  viewer.render(); viewer._goTo = null; viewer._shownPath = viewer._current
+  viewer._query = 'api'; viewer._treeLimit = 900
+  viewer._collapseAll(viewer._railState().tree)
+  viewer.render()
+  assert.equal(viewer._query, '')
+  assert.equal(viewer._treeLimit, 300)
+  assert.equal(viewer._open.get('src'), false)
+  viewer.dispatchEvent = () => {}
+  viewer._select('src/features/search.js')
+  viewer.render()
+  assert.equal(viewer._open.get('src'), true)
+  assert.equal(viewer._open.get('src/features'), true)
+})

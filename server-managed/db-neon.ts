@@ -1,3 +1,4 @@
+import { DEPENDENCY_REVIEW_SCHEMA } from './dependency-reviews.ts'
 import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { TEAM_NPM_SCOPE_SCHEMA } from './team-npm-scopes.ts'
@@ -35,7 +36,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 26 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 27 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -134,6 +135,13 @@ async function migrateTeamNpmScopes(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (26)')
 }
 
+async function migrateDependencyReviews(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 27')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_team ADD COLUMN IF NOT EXISTS dependency_review INTEGER NOT NULL DEFAULT 0')
+  await db.query(postgresSchema(DEPENDENCY_REVIEW_SCHEMA))
+  await db.query('INSERT INTO managed_schema_version VALUES (27)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -207,7 +215,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

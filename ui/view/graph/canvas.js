@@ -1498,7 +1498,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const hit = pickNode(sx, sy)
     const prev = hovered
     hovered = hit?.file ?? null
-    canvas.style.cursor = hit ? 'default' : 'grab'
+    canvas.style.cursor = 'default'
     if (hit) {
       if (pkgViewOn() || dependencyPackagesOn()) showPkgTooltip(hit, e.clientX, e.clientY)
       else showTooltip(hit, e.clientX, e.clientY)

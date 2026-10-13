@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 // Keep the real modal completion logic; only stub its document-level imports.
 mock.module('../ui/view/dom.js', { namedExports: { makeStackedModalError: cause => new Error('Modal conflict', { cause }) } })
 mock.module('../ui/view/tooltip.js', { namedExports: { installShadowTooltipListener() {} } })
-for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import', 'local-content-import', 'triage-comparison']) {
+for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'discard-review', 'local-triage-import', 'local-content-import', 'triage-comparison']) {
   await import(`../ui/view/dialogs/${name}-dialog.js`)
 }
 
@@ -26,7 +26,7 @@ function createDialog(name) {
 }
 
 test('delete and detach prompts focus Cancel and settle once for every completion path', () => {
-  for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle']) {
+  for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'discard-review']) {
     for (const action of ['_onConfirm', '_onCancel', '_onClose']) {
       const view = createDialog(name)
       view.dialog.focusInitial()
@@ -70,19 +70,22 @@ test('local triage confirmation focuses Cancel, cancels on close, and cannot app
   }
 })
 
-test('local triage confirmation closes on cancellation before or after opening', () => {
-  for (const beforeOpen of [false, true]) {
-    const view = createDialog('local-triage-import')
-    const controller = new AbortController()
-    view.dialog.matched = 2
-    view.dialog.signal = controller.signal
-    if (beforeOpen) controller.abort()
-    view.dialog.firstUpdated()
-    if (!beforeOpen) controller.abort()
-    view.dialog._onConfirm()
-    assert.deepEqual(view.results, [{ confirmed: false }])
-    assert.equal(view.closes(), 1)
-    view.dialog.disconnectedCallback()
+test('confirmations cannot approve after their session is cancelled, before or after opening', () => {
+  for (const name of ['local-triage-import', 'local-content-import', 'triage-comparison', 'discard-review']) {
+    for (const beforeOpen of [false, true]) {
+      const view = createDialog(name)
+      const controller = new AbortController()
+      view.dialog.matched = 2
+      if (name === 'local-content-import') view.dialog.plan = { items: [{ value: 'bundle', synced: true }] }
+      view.dialog.signal = controller.signal
+      if (beforeOpen) controller.abort()
+      view.dialog.firstUpdated()
+      if (!beforeOpen) controller.abort()
+      view.dialog._onConfirm()
+      assert.deepEqual(view.results, [{ confirmed: false, ...(name === 'local-content-import' ? { selected: [] } : {}) }])
+      assert.equal(view.closes(), 1)
+      view.dialog.disconnectedCallback()
+    }
   }
 })
 
@@ -102,26 +105,4 @@ test('content import defaults to synced files, permits local selection, and neve
   dialog.toggle(items[3], true)
   assert.deepEqual(dialog.confirmationResult(true), { confirmed: true, selected: ['local'] })
   assert.deepEqual(dialog.confirmationResult(false), { confirmed: false, selected: [] })
-})
-
-test('content confirmation cannot approve after its import session is cancelled', () => {
-  const { dialog, results } = createDialog('local-content-import')
-  const controller = new AbortController()
-  dialog.signal = controller.signal
-  dialog.plan = { items: [{ value: 'bundle', synced: true }] }
-  dialog.firstUpdated()
-  controller.abort()
-  dialog._onConfirm()
-  assert.deepEqual(results, [{ confirmed: false, selected: [] }])
-  dialog.disconnectedCallback()
-})
-
-test('triage comparison is dismissible and closes when its session is cancelled', () => {
-  const { dialog, results } = createDialog('triage-comparison')
-  const controller = new AbortController()
-  dialog.signal = controller.signal
-  dialog.firstUpdated()
-  controller.abort()
-  assert.deepEqual(results, [{ confirmed: false }])
-  dialog.disconnectedCallback()
 })

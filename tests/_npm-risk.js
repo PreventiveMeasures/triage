@@ -50,7 +50,7 @@ const standingOf = (name, at, times) => npmAccountStanding([...held.values()].fi
 // `malware` finding npm's takedown and advisories make of it, where they do.
 export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
-  const kept = otherVersion === null ? npmLastingRisk(other) : npmLastingRisk(other, versionOf(name, otherVersion), standingOf(name, published, times))
+  const kept = otherVersion === null ? npmLastingRisk(other) : npmLastingRisk(other, otherVersion === '(empty)' ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : versionOf(name, otherVersion), standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
     known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name) })
   return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))

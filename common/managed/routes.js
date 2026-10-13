@@ -37,6 +37,7 @@ function findingPath(id) {
 export function managedRoutePath(route) {
   if (!route) return null
   if (route.view === 'home') return '/'
+  if (route.view === 'reviews') return '/reviews'
   if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
     return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
@@ -85,12 +86,17 @@ export function managedRoutePath(route) {
 // its file by number and its lines in the fragment, as a bundle's Code
 // does: `/code/<file>#L4`. Compare names the version compared with, then
 // its mode past the Overview: `/compare/<version>/code` or `/diff`.
-export const NPM_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
+export const NPM_TABS = new Set(['overview', 'code', 'compare', 'review', 'treemap'])
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
   if (!isNpmPackageName(route.packageName) || (route.packageSpec != null && !isNpmPackageSpec(route.packageSpec)) || !NPM_TABS.has(tab)
       || (route.compareSpec != null && !isNpmPackageSpec(route.compareSpec))) return null
+  if (tab === 'review') {
+    if (route.reviewPackage != null && !isNpmPackageName(route.reviewPackage) || route.reviewSpec != null && !isNpmPackageSpec(route.reviewSpec)) return null
+    const base = route.reviewPackage == null ? '' : `/${route.reviewPackage}${route.reviewSpec == null ? '' : `@${route.reviewSpec}`}`
+    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${route.reviewMode === 'diff' ? '?mode=diff' : ''}`
+  }
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
   const lines = file && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
@@ -98,7 +104,17 @@ function npmPackagePath(route) {
   return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
 }
 
-function parseNpmRoute(path, hash) {
+function parseNpmRoute(path, hash, params) {
+  const review = /^\/npm\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?\/review(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?)?$/u.exec(path)
+  if (review) {
+    if (!isNpmPackageName(review[1]) || review[2] != null && !isNpmPackageSpec(review[2])
+      || review[3] != null && !isNpmPackageName(review[3]) || review[4] != null && !isNpmPackageSpec(review[4])) return null
+    // The full dependency form is canonical; a bare version is a shortcut.
+    const versionOnly = review[3] && /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(review[3]) && review[4] == null
+    return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
+      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}),
+      ...(params.get('mode') === 'diff' ? { reviewMode: 'diff' } : {}) }
+  }
   const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
   if (match[1] == null) return { view: 'npm' }
@@ -128,6 +144,7 @@ function codeLines(hash) {
 export function parseManagedRoute(url) {
   const path = url.pathname.replace(/\/$/u, '') || '/'
   if (path === '/' || path === '/index.html') return { view: 'home' }
+  if (path === '/reviews') return { view: 'reviews' }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) {
     const createRepoId = Number(url.searchParams.get('createRepo'))
@@ -151,7 +168,7 @@ export function parseManagedRoute(url) {
     if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
     return { ...route, file, ...codeLines(url.hash) }
   }
-  const npm = parseNpmRoute(path, url.hash)
+  const npm = parseNpmRoute(path, url.hash, url.searchParams)
   if (npm !== undefined) return npm
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }

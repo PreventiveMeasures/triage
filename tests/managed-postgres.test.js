@@ -1408,3 +1408,26 @@ test('Postgres upgrades saved issues and retains derived fixes after restart', a
   t.after(() => reopened.close())
   assert.equal((await reopened.getManagedIssue('f')).autoFixUrl, fix)
 })
+
+test('dependency reviews publish, revoke and continue as frozen sets (Postgres)', async t => {
+  const { db } = await database(t)
+  const { checkDependencyReviews } = await import('./_managed-dependency-reviews.js')
+  await checkDependencyReviews(db)
+})
+
+
+test('Postgres upgrades dependency reviews on an existing installation', async t => {
+  const { db, connect } = await database(t)
+  await db.createTeam('team', 'Existing team', 100)
+  const legacy = await connect()
+  try {
+    await legacy.query(`DROP TABLE managed_dependency_review_team; DROP TABLE managed_dependency_file_review;
+      DROP TABLE managed_dependency_review; ALTER TABLE managed_team DROP COLUMN dependency_review;
+      DELETE FROM managed_schema_version WHERE version = 27;`)
+  } finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal((await upgraded.getTeam('team')).name, 'Existing team')
+  assert.deepEqual(await upgraded.listDependencyReviewEnabledTeams(), [])
+})

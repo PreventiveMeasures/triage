@@ -350,6 +350,11 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   // What the version's Compare compared with stays while another of its tabs
   // is open, as Back gives, for Compare to open with again.
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
+  if (tab === 'review') {
+    state.npmReview = { bundle: entry.integrity,
+      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}),
+      ...(route.reviewMode === 'diff' ? { reviewMode: 'diff' } : {}) }
+  }
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)
   if (tab === 'code' && route.file != null) {

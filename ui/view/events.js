@@ -1,3 +1,4 @@
+import { prepareNpmReviewTab } from './managed-bundle-navigation.js'
 import { setFindingTriage } from '../../client/ignored-triage.js'
 import { compareModeField, compareModeOf, managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
@@ -716,7 +717,7 @@ report.addEventListener('click', (e) => {
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (BUNDLE_TABS.has(tab)) {
+    if (BUNDLE_TABS.has(tab) || tab === 'review' && state.bundleDetails?.npm) {
       // Re-clicking the active tab is a UI no-op. Without this, the
       // reset below wiped the Code slide's open file (and the
       // Search sidebar) on a click that navigates nowhere. The
@@ -742,6 +743,7 @@ report.addEventListener('click', (e) => {
       // selection, or modal opened from the Files tab) doesn't
       // re-render the wrong view in the new tab — the modal
       // renders over non-slide tabs whenever the pointer is set.
+      prepareNpmReviewTab(state, tab)
       selectBundleTab(tab)
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
       render()

@@ -27,6 +27,9 @@ import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } f
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { HOST_TAGS, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.js'
 import { npmHostFinding } from '../../risk/npm/held.js'
+import { npmReviewVerdictLimit, npmTakenDown } from '../../common/dependency-reviews.js'
+
+export { npmTakenDown } from '../../common/dependency-reviews.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -134,13 +137,8 @@ export const npmSocketFileTags = (alerts = []) => alerts.map(alert => {
     data-tooltip=${`Socket: ${socketAlertName(alert.type)}, ${severity}${alert.note ? ` · ${alert.note}` : ''}`}>${socketAlertName(alert.type)}</span>`
 })
 
-// A version npm publishes in place of a package its security team took down,
-// as it does for malicious code: a "security holding package" from
-// npm/security-holder, published by npm, or by one of its staff as
-// `0.0.1-security`.
-export function npmTakenDown({ npm: { version, manifest } }) {
-  const npms = manifest.description === 'security holding package' || manifest.github?.github?.toLowerCase() === 'npm/security-holder'
-  return npms && (manifest.publisher === 'npm' || /-security(?:\.\d+)?$/u.test(version))
+export function npmReviewLimit(entry, base) {
+  return npmReviewVerdictLimit(entry.npm, npmPackageAdvisories(entry.npm.name), npmSocketReport(entry), npmRisk(entry.npm, base ? base.npm?.version ?? '(empty)' : null))
 }
 
 // Over the summary: where npm took the package down, saying so, its readme
@@ -532,10 +530,12 @@ export const npmCompareFiles = {
 // a deprecated open version, only under DEPRECATED_MAINTENANCE). Each once
 // it arrives.
 export function npmCompareBadges(base, other) {
-  if (!base?.npm || !other?.npm) return nothing
-  const sides = [base.npm, other.npm]
+  if (!base || !other?.npm) return nothing
+  // A review may start from no package. Its display-only baseline has no
+  // advisories or Socket report; never request an invented version upstream.
+  const sides = [base.npm ?? { name: other.npm.name, version: 'Empty package', private: true }, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const found = new Map((npmRisk(other.npm, base.npm.version)?.findings ?? []).map(finding => [finding.id, finding]))
+  const found = new Map((npmRisk(other.npm, base.npm?.version ?? '(empty)')?.findings ?? []).map(finding => [finding.id, finding]))
   const chips = [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),
     installScriptsBadge(sides, found.get('install-scripts')), ...dependencyBadges(sides, found), ...fileBadges(found), hostsBadge(found.get('new-hosts')),
     recentBadge(found.get('too-new')), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting, found.get('malware')), popularityBadge(other.npm.name, found.get('popularity'))]

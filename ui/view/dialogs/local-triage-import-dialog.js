@@ -11,17 +11,6 @@ class LocalTriageImportDialog extends ConfirmationDialog {
     this.available = 0
   }
 
-  firstUpdated() {
-    if (this.signal?.aborted) { this._onCancel(); return }
-    this.signal?.addEventListener('abort', this._onCancel, { once: true })
-    super.firstUpdated()
-  }
-
-  disconnectedCallback() {
-    this.signal?.removeEventListener('abort', this._onCancel)
-    super.disconnectedCallback()
-  }
-
   confirmationResult(confirmed) {
     return { confirmed: confirmed && this.matched > 0 && !this.signal?.aborted }
   }

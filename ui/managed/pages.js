@@ -31,6 +31,7 @@ import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
+import '../view/mode-switch.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { managedReportSources } from '../scan/report-source.js'
@@ -1491,7 +1492,10 @@ class ManagedAdminTeams extends ManagedPage {
     const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
     return html`<div class="sub npm-scopes">
       <div class="sub-head">
-        <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span></h3>
+        <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span>
+          <mode-switch class="npm-review-toggle" label="Enable dependency review" .checked=${Boolean(team.dependencyReview)} .disabled=${this._busy}
+            @click=${() => { if (!this._busy) void this._do(() => postTeam('/api/admin/teams/set-dependency-review', this._csrf, { teamId: team.id, enabled: !team.dependencyReview })) }}></mode-switch>
+        </h3>
         <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
       </div>
       <div class="add-row npm-scope-row">

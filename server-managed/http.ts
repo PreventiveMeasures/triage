@@ -54,7 +54,11 @@
 //   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
+//   POST /api/admin/teams/set-dependency-review → admin toggles dependency review publication for a team | 400/401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
+//   GET/POST /api/npm/reviews → read private/team reviews; save, publish, revoke or continue a set | 400/401/403/404/409
+//   POST /api/npm/reviews/discard → author discards an unpublished review and its file rows | 400/401/403/409
+//   GET /api/npm/reviews/latest → latest own review for exact target bytes, across all bases | 400/401/403
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
@@ -138,8 +142,11 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
-import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { computeBundleDiff } from '../common/bundle-compare-diff.js'
+import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
+import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
 import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
@@ -2388,8 +2395,9 @@ async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cooki
   const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
   const scopes = await deps.db.listTeamNpmScopes()
+  const reviewTeams = new Set(await deps.db.listDependencyReviewEnabledTeams())
   sendJson(res, 200, {
-    teams: (await deps.db.listTeams()).map(team => ({ ...team, npmScopes: scopes[team.id] ?? [] })),
+    teams: (await deps.db.listTeams()).map(team => ({ ...team, npmScopes: scopes[team.id] ?? [], dependencyReview: reviewTeams.has(team.id) })),
     users: await deps.db.listUserOptions(),
     repos: selectableRepos(await deps.db.listSelectedRepos()),
     permissions: VISIBILITY_PERMISSIONS,
@@ -2550,6 +2558,16 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true })
 }
 
+async function handleSetTeamDependencyReview(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await adminMutation(req, res, deps, cookie)
+  if (!s) return
+  let body
+  try { body = await readJsonBody(req) as { teamId?: unknown; enabled?: unknown } } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  if (typeof body?.teamId !== 'string' || typeof body?.enabled !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!await deps.db.setTeamDependencyReview(s.session.id, body.teamId, body.enabled)) { sendJson(res, 404, { error: 'no-team' }); return }
+  sendJson(res, 200, { ok: true })
+}
+
 // POST /api/admin/teams/set-npm-scopes — replace the npm scopes whose private
 // packages the team's members may read. Body { teamId, scopes: ['@scope'] }.
 async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
@@ -2582,6 +2600,184 @@ function found<T>(value: T | null | undefined): T {
   return value
 }
 
+// Lists must enforce the same target and base access as the review itself,
+// including permission changes while the registry requests are in flight.
+async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[]): Promise<T[] | null> {
+  const controller = new AbortController()
+  const onClose = () => { if (!res.writableEnded) controller.abort() }
+  res.on('close', onClose)
+  try {
+    const reader = await npmReader(deps, cookie)
+    if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    const documents = new Map<string, Promise<NpmVersionDocument | null>>()
+    const read = (name: string, version: string) => {
+      const key = `${name}@${version}`
+      if (!documents.has(key)) documents.set(key, readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal))
+      return documents.get(key)!
+    }
+    const packages = await Promise.all(reviews.map(review => Promise.all([
+      read(review.package, review.version), ...(review.basePackage ? [read(review.basePackage, review.baseVersion!)] : []),
+    ])))
+    const current = await npmReader(deps, cookie)
+    if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
+  } catch (error) {
+    if (controller.signal.aborted) return null
+    if (error instanceof NpmPackageError) { sendJson(res, error.status, { error: error.message }); return null }
+    throw error
+  } finally { res.off('close', onClose) }
+}
+
+const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
+
+function npmAdvisoryOptions(deps: ManagedHttpDeps, githubToken: NpmAdvisoryOptions['githubToken'], latestDoc: () => Promise<NpmVersionDocument | null>): NpmAdvisoryOptions {
+  return {
+    githubToken,
+    repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
+    cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+    lastListing: repo => lastListing(deps.config.upstreamCacheDir, deps.db, repo, deps.config.debug),
+    debug: deps.config.debug,
+  }
+}
+
+// Read the same target-version evidence as the viewer. Missing upstream
+// reports impose no extra verdict restriction; detected findings do.
+async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReader, doc: NpmVersionDocument, signal: AbortSignal) {
+  if (npmTakenDown({ npm: doc })) return 'reject' as const
+  const privileged = canReadPrivateNpm(reader, doc.name)
+  const advisories = async () => {
+    const versions = await readNpmVersions(doc.name, privileged, signal)
+    if (!versions) return null
+    return npmAdvisories(doc.name, versions.versions, npmAdvisoryOptions(deps,
+      () => ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
+      () => readNpmVersion(doc.name, 'latest', privileged, signal)))
+  }
+  const [list, socket, risk] = await Promise.all([advisories().catch(() => null), doc.private ? null : npmSocketReport(doc.name, doc.version).catch(() => null),
+    npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped: true, privileged, signal })])
+  return npmReviewVerdictLimit(doc, list, socket, risk)
+}
+
+// Reviews are scoped to the bytes actually displayed, including the base.
+// Access to both versions is rechecked before returning or saving annotations.
+async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (!['GET', 'POST'].includes(method)) { send405(res, 'GET, POST'); return }
+  const mutation = method !== 'GET'
+  const session = mutation ? await checkMutation(req, res, deps, cookie) : await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!session) { if (!mutation) sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!roleAtLeast(session.user.role, mutation ? 'triage' : 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: Record<string, unknown> = {}
+  if (mutation) {
+    try {
+      const raw = await readJsonBody(req, 128 * 1024)
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('bad-body')
+      body = raw as Record<string, unknown>
+    } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  }
+  const field = (key: string) => mutation ? body[key] : params.get(key)
+  const name = field('package')
+  const version = field('version')
+  const integrity = field('integrity')
+  const basePackage = field('basePackage') ?? null
+  const baseVersion = field('baseVersion') ?? null
+  const baseIntegrity = field('baseIntegrity') ?? null
+  const validIntegrity = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024
+  if (field('ecosystem') !== 'npm' || !isNpmPackageName(name) || !isNpmPackageSpec(version) || !validIntegrity(integrity)
+    || (basePackage !== null || baseVersion !== null || baseIntegrity !== null)
+      && (!isNpmPackageName(basePackage) || !isNpmPackageSpec(baseVersion) || !validIntegrity(baseIntegrity))) {
+    sendJson(res, 400, { error: 'bad-review-context' }); return
+  }
+  const context: ReviewContext = { ecosystem: 'npm', package: name, version, integrity,
+    basePackage: basePackage as string | null, baseVersion: baseVersion as string | null, baseIntegrity: baseIntegrity as string | null }
+  let change: ReviewChange | null = null
+  if (mutation) {
+    const action = body['action'], reviewId = body['reviewId'] ?? null, revision = body['revision'] ?? null
+    if (typeof action !== 'string' || !['start', 'save', 'publish', 'continue', 'revoke'].includes(action)
+      || (reviewId !== null && (typeof reviewId !== 'string' || reviewId.length === 0 || reviewId.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1))
+      || (!['save', 'start'].includes(action) && reviewId === null) || (action === 'start' && reviewId !== null)) { sendJson(res, 400, { error: 'bad-review' }); return }
+    if (action === 'start') change = { action, reviewId: null, revision: null }
+    else if (action === 'publish') {
+      const teamIds = body['teamIds']
+      if (!Array.isArray(teamIds) || teamIds.length === 0 || teamIds.length > 100 || teamIds.some(id => typeof id !== 'string' || id.length > 100)) {
+        sendJson(res, 400, { error: 'bad-review-teams' }); return
+      }
+      const finalComment = body['finalComment'] ?? '', finalStatus = body['finalStatus'] ?? null
+      if (typeof finalComment !== 'string' || finalComment.length > 20000 || finalStatus !== null
+        && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
+        sendJson(res, 400, { error: 'bad-final-verdict' }); return
+      }
+      change = { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
+        final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
+    } else if (action === 'continue' || action === 'revoke') change = { action, reviewId: reviewId as string, revision: revision as number }
+    else {
+      const file = body['file'] ?? null
+      const comment = body['comment']
+      const status = body['status'] ?? null
+      const entryId = body['entryId'] ?? null
+      if ((file !== null && (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')))
+        || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
+        || typeof comment !== 'string' || comment.length > 20000
+        || (status !== null && (file === null || typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && !comment.trim() && entryId === null)) {
+        sendJson(res, 400, { error: 'bad-review' }); return
+      }
+      change = { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
+        entry: { file: file as string | null, comment, status: status as ReviewInput['status'] } }
+    }
+  }
+  const controller = new AbortController()
+  const onClose = () => { if (!res.writableEnded) controller.abort() }
+  res.on('close', onClose)
+  try {
+    const reader = await npmReader(deps, cookie)
+    if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+    const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal)
+    const [doc, base] = await Promise.all([read(name, version), context.basePackage ? read(context.basePackage, context.baseVersion!) : null])
+    if (!doc || (context.basePackage && !base)) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    if (doc.version !== version || doc.dist.integrity !== integrity
+      || (base && (base.version !== baseVersion || base.dist.integrity !== baseIntegrity))) {
+      sendJson(res, 409, { error: 'review-content-changed' }); return
+    }
+    if (change?.action === 'publish' || change?.action === 'save' && change.entry.file !== null) {
+      const loads = [doc, ...base ? [base] : []].map(loadNpmFiles)
+      try {
+        const files = await Promise.all(loads.map(load => load.result))
+        const maps = files.map(list => new Map<string, unknown>(npmFileRows(list).map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
+        const after = maps[0]!, before = maps[1] ?? new Map<string, unknown>()
+        const diff = computeBundleDiff(before, after, () => '.')
+        const changed: { path: string; basePath?: string }[] = [...diff.files.onlyBase, ...diff.files.onlyOther, ...diff.files.changed]
+        const reviewable = (file: typeof changed[number]) => isReviewableFile(before.get(file.basePath ?? file.path), after.get(file.path))
+        const reviewedPath = change.action === 'save' ? change.entry.file : null
+        const reviewedFile = changed.find(file => file.path === reviewedPath)
+        if (change.action === 'save' && !reviewedFile) { sendJson(res, 400, { error: 'unknown-review-file' }); return }
+        if (change.action === 'save' && change.entry.status !== null && reviewedFile && !reviewable(reviewedFile)) { sendJson(res, 400, { error: 'non-text-review-file' }); return }
+        if (change.action === 'publish') {
+          change.files = changed.map(file => file.path)
+          change.nonTextFiles = changed.filter(file => !reviewable(file)).map(file => file.path)
+        }
+      } finally { loads.forEach(load => load.release()) }
+    }
+    const limit = change?.action === 'publish' && change.final && change.final.status !== 'reject'
+      ? await npmReviewPublicationLimit(deps, reader, doc, controller.signal) : 'accept'
+    const current = await npmReader(deps, cookie)
+    if (!current || current.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+    if ([doc, base].some(item => item?.private && !canReadPrivateNpm(current, item.name))) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    if (!change) { sendJson(res, 200, { reviews: await deps.db.listDependencyReviews(context, current.userId), teams: await deps.db.listDependencyReviewTeams(current.userId) }); return }
+    const checked = await checkMutation(req, res, deps, cookie)
+    if (!checked) return
+    if (checked.user.id !== current.userId || !roleAtLeast(checked.user.role, 'triage')) { sendJson(res, 403, { error: 'forbidden' }); return }
+    if (change.action === 'publish' && change.final && !allowedReviewVerdicts([], limit).includes(change.final.status)) {
+      sendJson(res, 400, { error: limit === 'reject' ? 'review-malware' : 'review-critical-vulnerability' }); return
+    }
+    const review = await deps.db.changeDependencyReview(context, checked.session.id, change, Date.now())
+    sendJson(res, 200, { review })
+  } catch (err) {
+    if (controller.signal.aborted) return
+    if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
+    if (err instanceof NpmRiskError) { sendJson(res, NPM_RISK_STATUS[err.code] ?? 502, { error: err.code }); return }
+    throw err
+  } finally { res.off('close', onClose) }
+}
+
 // GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
@@ -2593,7 +2789,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
-    || ((path === NPM_RISK_PATH || path === NPM_PRETTY_PATH) && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
+    || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
+    || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
@@ -2616,19 +2813,12 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // shows: asked for once, and only where an answer isn't kept (npm-insights.ts).
   let token: Promise<string | null> | undefined
   const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
-  const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
   const privileged = canReadPrivateNpm(reader, name)
   // The latest version, read once a request: the package's figures and
   // advisories go by the repository it names.
   let latest: Promise<NpmVersionDocument | null> | undefined
   const latestDoc = () => latest ??= readNpmVersion(name, 'latest', privileged, controller.signal)
-  const advisoryOptions: NpmAdvisoryOptions = {
-    githubToken,
-    repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
-    cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
-    lastListing: repo => lastListing(deps.config.upstreamCacheDir, deps.db, repo, deps.config.debug),
-    debug: deps.config.debug,
-  }
+  const advisoryOptions = npmAdvisoryOptions(deps, githubToken, latestDoc)
   // The figures of the repository the latest version names, noted as its
   // repository for npmKnown; null where it names none, or they can't be had.
   const githubFigures = (doc: NpmVersionDocument) => {
@@ -2688,10 +2878,10 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // download it where a team lists its scope, its own packages, as a new
     // dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
-      const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
-      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped,
+      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
         ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
@@ -3151,9 +3341,59 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (path === TEAM_SET_MEMBER_PATH) { await handleSetTeamMember(req, res, deps, cookie); return }
       await handleRemoveTeamMember(req, res, deps, cookie); return
     }
+    if (path === '/api/admin/teams/set-dependency-review') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetTeamDependencyReview(req, res, deps, cookie); return
+    }
     if (path === TEAM_SET_NPM_SCOPES_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
+    }
+    if (path === '/api/npm/reviews/latest') {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const integrity = url.searchParams.get('integrity'), name = url.searchParams.get('package'), version = url.searchParams.get('version')
+      if (!isNpmPackageName(name) || !isNpmPackageSpec(version) || !integrity || integrity.length > 1024) {
+        sendJson(res, 400, { error: 'bad-review-context' }); return
+      }
+      const review = await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity })
+      const visible = await readableNpmReviews(res, deps, cookie, s.user.id, review ? [review] : [])
+      if (visible) sendJson(res, 200, { review: visible[0] ?? null })
+      return
+    }
+    if (path === '/api/npm/reviews/discard') {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      const s = await checkMutation(req, res, deps, cookie)
+      if (!s) return
+      let body: Record<string, unknown>
+      try {
+        const raw = await readJsonBody(req, 4096)
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('bad-body')
+        body = raw as Record<string, unknown>
+      } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+      const id = body['reviewId'], revision = body['revision']
+      if (typeof id !== 'string' || !id || id.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1) {
+        sendJson(res, 400, { error: 'bad-review' }); return
+      }
+      await deps.db.discardDependencyReview(s.session.id, id, revision as number)
+      sendJson(res, 200, { ok: true }); return
+    }
+    if (path === '/api/npm/reviews/mine') {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const id = url.searchParams.get('beforeId'), time = url.searchParams.get('beforeTime')
+      if ((time !== null || id !== null) && (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100)) {
+        sendJson(res, 400, { error: 'bad-review-cursor' }); return
+      }
+      const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
+      if (reviews) sendJson(res, 200, { ...page, reviews })
+      return
+    }
+    if (path === '/api/npm/reviews') {
+      await handleNpmReviews(req, res, deps, cookie, url.searchParams); return
     }
     if (NPM_PATHS.has(path)) {
       await handleNpm(req, res, deps, cookie, path, url.searchParams); return

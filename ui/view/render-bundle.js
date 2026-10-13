@@ -38,11 +38,12 @@ import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './prett
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
-import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS } from '../../common/managed/routes.js'
-import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmCompareBadges, npmCompareFiles, npmContents, npmDependencyTags, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
+import { npmComparisonSource } from './npm-compare-source.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2029,6 +2030,8 @@ function renderBundleSlide(entry) {
         ${bundleTab('code', 'Code', tab)}
         ${npm ? nothing : bundleTab('search', 'Search', tab)}
         ${canCompare ? bundleTab('compare', 'Compare', tab) : nothing}
+        ${npm && state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true)
+          ? bundleTab('review', 'Review', tab) : nothing}
         ${bundleTab('overview', 'Overview', tab)}
       </div>
     </header></bundle-slide-header>
@@ -2042,8 +2045,10 @@ function renderBundleSlide(entry) {
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details, entry)],
+              ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+                .source=${npmComparisonSource(entry)}></npm-review>`],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-                .source=${npm ? { ...npmCompareSource(entry), files: npmCompareFiles, badges: npmCompareBadges, dependencyTags: npmDependencyTags } : null}></bundle-compare>`],
+                .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

@@ -25,9 +25,9 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion,
     { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`],
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
-  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { npmFileFlagTags, npmFileReadabilityOf, npmObfuscationFound, npmReadabilityFlags } = await import('../ui/view/file-readability.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityLabels } = await import('../risk/files/readability.js')
 const { npmTextEncoding } = await import('../risk/files/characters.js')
@@ -48,6 +48,20 @@ test('a file\'s readability is read once a version and path, and again for anoth
   assert.equal(npmFileReadabilityOf({}, 'index.js', code) === read, false, 'by version')
   assert.equal(npmFileReadabilityOf(details, 'index.js', null).category, 'binary', 'another text read anew')
 })
+
+test('review restrictions update when the same advisory and Socket data as the chips arrives', async () => {
+  const entry = { npm: { name: 'review-policy', version: '2.0.0' } }
+  const report = Promise.withResolvers()
+  answers.advisories['review-policy'] = { versions: ['2.0.0'], advisories: [{ id: 'test', severity: 'critical', affected: [0] }] }
+  answers.socket['review-policy@2.0.0'] = report.promise
+  assert.equal(npmReviewLimit(entry), 'accept')
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmReviewLimit(entry), 'request-changes')
+  report.resolve({ scores: null, alerts: [{ type: 'malware' }] })
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(npmReviewLimit(entry), 'reject')
+})
+
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -442,7 +456,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['flagged@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
   answers.socket['flagged@2.0.0'] = { scores: scores({ supplyChain: .85, quality: .9, license: .7 }), alerts: [] }
   const side = (name, version, extra = {}) => ({ npm: { name, version, ...extra } })
-  const badges = async (...sides) => { sides.forEach(held); npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(...sides)) }
+  const badges = async (...sides) => { sides.filter(entry => entry.npm).forEach(held); npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(...sides)) }
 
   const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
   assert.match(flagged, /<button type="button" class=npm-extension npm-compare-advisories sev-moderate[^]*>2 → 1</u)
@@ -637,6 +651,15 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['@acme/secret@1.1.0'] = { scores: scores({ quality: .1 }), alerts: [] }
   assert.doesNotMatch(await badges(side('@acme/secret', '1.0.0', { private: true }), side('@acme/secret', '1.1.0', { private: true })), /Quality/u)
   assert.ok(!socketAsked.some(asked => asked.startsWith('@acme/')), 'Socket is never asked about a private package')
+
+  const empty = { integrity: '(empty)' }
+  const fromEmpty = await badges(empty, side('flagged', '2.0.0'))
+  assert.match(fromEmpty, /data-tooltip=Advisories affecting Empty package: 0, 2\.0\.0: 1/u)
+  assert.match(fromEmpty, />License<[^]*>– → 70</u)
+  assert.match(fromEmpty, />top 100,000</u)
+  assert.ok(!socketAsked.some(asked => asked.endsWith('@Empty package')), 'an empty review baseline never fetches a Socket report')
+  npmCompareBadges(empty, side('flagged', '2.0.0')).values[0][0].values.find(value => typeof value === 'function')()
+  assert.deepEqual(comparedAdvisories.at(-1).groups.map(({ status, rows }) => [status, rows.length]), [['new', 1]])
 })
 
 test('a dependency Compare lists new is tagged as the server\'s risk tells of its package: its tier, its last whole month\'s downloads in its tooltip, and how old it was where new', () => {
@@ -682,6 +705,10 @@ test('Compare flags in red the files the open version adds or changes that call 
     'lib/util.js': `${code}\n` })
   const other = version('1.1.0', { 'package.json': '{"name":"files"}\n', 'index.js': `${code}\n${code}\nconst payload = '${'y'.repeat(2001)}'\n${code}\n`, 'lib/vendor.js': obfuscated(30, 0x3000),
     'lib/big-moved.js': big, 'lib/helpers.js': `${code}\n${obfuscated(25)}\n`, 'dist/payload.js': payload })
+  const empty = { kind: 'sourcemap', integrity: '(empty)', json: { sources: [], sourcesContent: [] } }
+  const blank = await badges(empty, other)
+  assert.match(blank, /npm-compare-large/u, 'blank-base reviews flag large new code too')
+  assert.match(blank, /npm-compare-obfuscated/u, 'blank-base reviews flag obfuscated code too')
   const files = compared(base, other)
   assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
     [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')
@@ -909,12 +936,15 @@ test('malware told of a version is its first chip, in solid red, Socket\'s score
   const side = (name, version) => ({ npm: { name, version, manifest: {} } })
   const settled = async render => { render(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(render()) }
   const overview = entry => { held(entry); return settled(() => npmOverviewBadges(entry)) }
-  const compare = (...sides) => { sides.forEach(held); return settled(() => npmCompareBadges(...sides)) }
+  const compare = (...sides) => { sides.filter(entry => entry.npm).forEach(held); return settled(() => npmCompareBadges(...sides)) }
   const first = /^<ul [^>]*><li><span class="npm-extension npm-malware" data-tooltip=Taken down by npm\nGHSA-c2m4-w5hm-vqjw: taken is malware>Malware<\/span><\/li>/u
   for (const [where, shown] of [['Overview', await overview(side('taken', '2.0.0'))], ['Compare', await compare(side('taken', '1.0.0'), side('taken', '2.0.0'))]]) {
     assert.match(shown, first, `${where}: first, each of what tells of it a line`)
     assert.doesNotMatch(shown, /npm-socket-score/u, `${where}: none of Socket's scores beside it, supply chain, quality or any`)
   }
+  assert.equal(npmReviewLimit(side('taken', '2.0.0')), 'reject', 'the malware chip also forbids approval in Review')
+  assert.equal(npmReviewLimit(side('taken', '1.0.0')), 'accept', 'a finding for another version does not restrict the reviewed one')
+  assert.match(await compare({ integrity: '(empty)' }, side('taken', '2.0.0')), first, 'blank-base reviews use the shared malware chip too')
   for (const shown of [await overview(side('scored', '2.0.0')), await compare(side('scored', '1.0.0'), side('scored', '2.0.0'))]) {
     assert.doesNotMatch(shown, /npm-malware/u)
     assert.match(shown, />Supply chain<[^]*>Quality</u, 'Socket\'s scores as before, where no malware is told of')

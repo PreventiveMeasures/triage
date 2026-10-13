@@ -176,6 +176,15 @@ test('team probes preserve explicit visibility grants without accepting truthy n
   }
 })
 
+test('team probes preserve dependency review only when explicitly enabled', async t => {
+  const team = { id: 'team', name: 'Team' }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [team] })))
+  for (const enabled of [true, false, undefined, 'true', 1]) {
+    team.dependencyReview = enabled
+    assert.equal((await probeTeams())[0].dependencyReview === true, enabled === true)
+  }
+})
+
 test('catalog probes expose the server revision without deriving it from normalized client fields', async t => {
   const revisions = [], teams = [{ id: 'team', name: 'Team', reports: [], bundles: [] }]
   let response = Response.json({ teams, revision: 'server-revision' })

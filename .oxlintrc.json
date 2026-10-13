@@ -141,7 +141,9 @@
     },
     {
       "files": [
-        "ui/**/*.js"
+        "ui/**/*.js",
+        "common/bundle-compare-diff.js",
+        "common/bundle-compare-inputs.js"
       ],
       "rules": {
         "max-depth": "off",

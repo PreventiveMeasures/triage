@@ -11,6 +11,7 @@
 @import './styles/code-tokens.css';
 @import './styles/bundle-treemap.css';
 @import './styles/bundle-compare.css';
+@import './styles/npm-review.css';
 @import './styles/toolbar.css';
 @import './styles/findings.css';
 @import './styles/detail-action.css';
