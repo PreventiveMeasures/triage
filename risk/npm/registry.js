@@ -7,9 +7,10 @@
 // - `risk/npm/versions`, `<name>@<version>`: what a version's document says,
 //   which npm never changes once published: its manifest (manifest.js, its
 //   deprecation aside), when it was published, and its dist.
-// - `risk/npm/packages`, `<name>`: the versions npm says are deprecated, as
-//   `at` a time, asked again after an hour, as npm deprecates a version any
-//   time.
+// - `risk/npm/packages`, `<name>`: the versions npm says are deprecated, those
+//   it removed (each one's when), and whether it took the package down, as
+//   `at` a time, asked again after an hour, as npm deprecates and removes a
+//   version any time.
 // - `risk/npm/old-versions`, `<name>@<version>`: the version it is compared
 //   with where risk picks it (old-version.js npmOldVersion), or none, as `at`
 //   a time, picked again after an hour, as npm publishes and deprecates
@@ -124,7 +125,8 @@ const firstPublished = doc => Object.entries(doc?.time ?? {}).filter(([key, at])
 // removed from npm, `removed`, its time alone, as npmPackageFacts reads none
 // of it. Its times' other keys (`created`, `modified`) are no versions, as
 // none of a version starts with a letter.
-const releasesOf = (doc, deprecated = {}) => [...new Set([...Object.keys(doc.versions ?? {}), ...Object.keys(doc.time ?? {}).filter(key => /^\d/u.test(key))])].map(version => {
+const versionsOf = doc => [...new Set([...Object.keys(doc.versions ?? {}), ...Object.keys(doc.time ?? {}).filter(key => /^\d/u.test(key))])]
+const releasesOf = (doc, deprecated = {}) => versionsOf(doc).map(version => {
   const json = doc.versions?.[version]
   const { publisher = null, knownAccounts } = json ? npmVersionManifest(json) : {}
   return { version, published: isTime(doc.time?.[version]) ? doc.time[version] : null, publisher, known: Boolean(knownAccounts),
@@ -138,8 +140,9 @@ const releasesOf = (doc, deprecated = {}) => [...new Set([...Object.keys(doc.ver
 // removed since they were published (`removed`, each one's when), none
 // picked to compare a removed one with, `deprecated`, by version, whether
 // npm's security team took the package down (`takenDown`, its latest version
-// npm's placeholder, malware.js npmPlaceholder), `oldVersion`, the one
-// compared with or null, and where its document was read and either the pick
+// npm's placeholder, malware.js npmPlaceholder), `removals`, how many
+// versions of it npm removed, `oldVersion`, the one compared with or null,
+// and where its document was read and either the pick
 // or another account publishing each wants them, `releases`, each version it
 // lists (releasesOf), so that no more of the document is held. Its document
 // is read once at most, and not at all where all of it is kept and fresh. A
@@ -157,7 +160,7 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
     const gone = at => Object.hasOwn(pkg.removed, at)
     if (fresh(pkg) && 'removed' in pkg && wanted.every((at, i) => facts[i] || gone(at))) {
       return { versions: new Map(wanted.flatMap((at, i) => gone(at) ? [] : [[at, facts[i]]])), removed: new Map(wanted.filter(gone).map(at => [at, pkg.removed[at]])),
-        deprecated: pkg.deprecated, takenDown: pkg.takenDown, oldVersion: given }
+        removals: Object.keys(pkg.removed).length, deprecated: pkg.deprecated, takenDown: pkg.takenDown, oldVersion: given }
     }
   }
   const doc = await packageDocument(name, context, true)
@@ -178,13 +181,13 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
   const takenDown = npmPlaceholder(doc.versions?.[doc['dist-tags']?.latest])
   const publishers = [version, old].map(at => read.get(at)?.manifest.publisher)
   if (publishers.every(Boolean) && publishers[0] !== publishers[1]) releases ??= releasesOf(doc, deprecated)
+  const gone = Object.fromEntries(Object.entries(doc.time ?? {}).filter(([at, when]) => at !== 'created' && at !== 'modified' && isTime(when) && !doc.versions?.[at]))
   if (cache) {
-    const gone = Object.fromEntries(Object.entries(doc.time ?? {}).filter(([at, when]) => at !== 'created' && at !== 'modified' && isTime(when) && !doc.versions?.[at]))
     await Promise.all([...read].map(([at, fact]) => cache.write('risk/npm/versions', `${name}@${at}`, fact)))
     await cache.write('risk/npm/packages', name, { at: now, deprecated, takenDown, removed: gone })
     if (oldVersion === true) await cache.write('risk/npm/old-versions', `${name}@${version}`, { at: now, oldVersion: old })
   }
-  return { versions: read, removed, deprecated, takenDown, oldVersion: old, ...releases ? { releases } : {} }
+  return { versions: read, removed, removals: Object.keys(gone).length, deprecated, takenDown, oldVersion: old, ...releases ? { releases } : {} }
 }
 
 // npm's advisories of `version` of a package, as `npm audit` asks them

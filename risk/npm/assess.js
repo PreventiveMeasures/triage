@@ -85,17 +85,21 @@ function lastingOf(other, base, files, standing) {
 // told by what npm's document of it says alone; and where another account
 // published it, each one's standing on the package (release.js
 // npmAccountStanding), by its versions as `facts` read them, or as its
-// document is read again where they were kept.
+// document is read again where they were kept. A standing changes as npm
+// removes a version, its publisher then unknown, and never else, so such a
+// pair is kept by how many npm has removed (`~<removals>`), read anew as it
+// removes another.
 async function lasting(name, version, oldVersion, facts, context) {
-  const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}`
+  const old = oldVersion === null ? null : facts.versions.get(oldVersion)
+  const publishers = [old, facts.versions.get(version)].map(fact => fact?.manifest.publisher)
+  const changed = publishers.every(Boolean) && publishers[0] !== publishers[1]
+  const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}${changed ? `~${facts.removals}` : ''}`
   const hit = context.cache ? await context.cache.read('risk/npm/assessments', key) : null
   if (hit) return hit
   const other = await npmVersionFiles(name, version, facts.versions.get(version), context)
   const files = filesRisk(other, `${name}@${version}`)
-  const old = oldVersion === null ? null : facts.versions.get(oldVersion)
   const base = old === null ? null : npmBaseFilesTell(other, old.manifest) ? await npmVersionFiles(name, oldVersion, old, context)
     : { npm: { name, version: oldVersion, manifest: old.manifest, published: old.published }, json: null }
-  const changed = old !== null && old.manifest.publisher && other.npm.manifest.publisher && old.manifest.publisher !== other.npm.manifest.publisher
   const standing = changed ? npmAccountStanding(facts.releases ?? await npmPackageReleases(name, context), other.npm.published) : null
   const kept = lastingOf(other, base, files, standing)
   if (context.cache) await context.cache.write('risk/npm/assessments', key, kept)

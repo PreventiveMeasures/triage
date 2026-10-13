@@ -277,6 +277,22 @@ test('a publisher changed told with each account\'s standing on the package: one
   assert.equal(asked.filter(url => url === `${REGISTRY}/shared`).length, 1, 'both versions kept: its document read for its versions alone')
 })
 
+test('a pair\'s publishers\' standings told anew as npm removes a version, its assessment kept by how many it removed', async t => {
+  const files = { 'package.json': '{}' }
+  const by = (number, publisher, days) => version('pulled', number, files, { dependencies: {}, scripts: {}, _npmUser: { name: publisher } }, ago(days))
+  const versions = [by('1.0.0', 'alice', 400), by('1.0.1', 'mallory', 100), by('1.1.0', 'alice', 50), by('1.2.0', 'mallory', 1)]
+  npm(t, [{ name: 'pulled', versions }])
+  const doc = documentOf({ name: 'pulled', versions })
+  const cache = store()
+  const publisher = async now => (await assessNpm('pulled', '1.2.0', { oldVersion: '1.1.0', now, downloads: false, cache, packument: () => Promise.resolve(structuredClone(doc)) }))
+    .findings.find(({ id }) => id === 'publisher')
+  const told = ({ nowStanding, severity }) => [nowStanding, severity]
+  assert.deepEqual(told(await publisher(NOW)), ['maintainer', 'moderate'], 'mallory on it three months')
+  delete doc.versions['1.0.1']
+  assert.deepEqual(told(await publisher(NOW)), ['maintainer', 'moderate'], 'kept within the hour, as what npm says of the package is')
+  assert.deepEqual(told(await publisher(NOW + 2 * 60 * 60_000)), ['new', 'high'], 'an hour on, its first since removed: new to it')
+})
+
 test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {
   const asked = npm(t, [{ name: 'own', versions: [version('own', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(400))] }],
     { own: { start: '2026-08-01', end: '2026-10-11', downloads: [] } })

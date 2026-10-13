@@ -55,7 +55,7 @@ What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` 
 | `risk/npm/advisories` | `<name>@<version>` | npm's advisories of it | asked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
-| `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
+| `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>][~<removals>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves, and a pair another account published as npm removes a version, as its publishers' standings may change |
 
 An assessment kept needs no tarball. Against `oldVersion`, its tarball is read only where its files could change what is found (`npm/compare.js` `npmBaseFilesTell`): the open version's files are read first, and a pair's file findings only ever flag what they hold that the old version's didn't, so where none of them runs code beyond itself, names a service under one of the hosts' tags or a host past `ALLOWED_HOSTS`, bears an obfuscator's fingerprint, has a line over 2,000 characters or is large code, nor could a `binding.gyp` change the old version's install scripts, the old version is told by npm's document of it alone: its publisher, provenance, install scripts and dependencies. What depends on the time (malware, a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
 
