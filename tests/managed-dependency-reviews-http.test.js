@@ -163,7 +163,7 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.equal((await h.send(url(context), { who: 'anonymous' })).status, 401)
   assert.equal((await h.send('/api/npm/reviews', { body, csrf: false })).status, 403)
   assert.equal((await h.send('/api/npm/reviews', { body, who: 'view' })).status, 403)
-  for (const patch of [{ status: 'approve' }, { status: ['accept'] }, { action: ['save'] }, { status: null, comment: '' }, { comment: 'x'.repeat(20001) }, { file: '../escape' }]) {
+  for (const patch of [{ status: 'approve' }, { status: ['accept'] }, { action: ['save'] }, { status: null, comment: '' }, { comment: 'x'.repeat(20001) }, { file: '../escape' }, { file: null, status: null }, { file: undefined, status: null }]) {
     assert.equal((await h.send('/api/npm/reviews', { body: { ...body, ...patch } })).status, 400)
   }
   for (const patch of [{ integrity: 'sha512-wrong' }, { baseIntegrity: 'sha512-wrong' }, { version: 'latest' }]) {

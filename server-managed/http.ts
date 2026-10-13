@@ -2734,18 +2734,18 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
         final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
     } else if (action === 'continue' || action === 'revoke') change = { action, reviewId: reviewId as string, revision: revision as number }
     else {
-      const file = body['file'] ?? null
+      const file = body['file']
       const comment = body['comment']
       const status = body['status'] ?? null
       const entryId = body['entryId'] ?? null
-      if ((file !== null && (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')))
+      if (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')
         || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
         || typeof comment !== 'string' || comment.length > 20000
-        || (status !== null && (file === null || typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && !comment.trim() && entryId === null)) {
+        || (status !== null && (typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && !comment.trim() && entryId === null)) {
         sendJson(res, 400, { error: 'bad-review' }); return
       }
       change = { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
-        entry: { file: file as string | null, comment, status: status as ReviewInput['status'] } }
+        entry: { file, comment, status: status as ReviewInput['status'] } }
     }
   }
   const controller = new AbortController()
@@ -2762,7 +2762,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       || (base && (base.version !== baseVersion || base.dist.integrity !== baseIntegrity))) {
       sendJson(res, 409, { error: 'review-content-changed' }); return
     }
-    if (change?.action === 'publish' || change?.action === 'save' && change.entry.file !== null) {
+    if (change?.action === 'publish' || change?.action === 'save') {
       const loads = [doc, ...base ? [base] : []].map(loadNpmFiles)
       try {
         const files = await Promise.all(loads.map(load => load.result))

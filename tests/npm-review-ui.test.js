@@ -42,7 +42,7 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { EMPTY_REVIEW_BASE, NpmReview, REVIEW_DISPLAY_LIMITS, reviewContext } = await import('../ui/view/npm-review.js')
-const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewPublished, reviewExtensions } = await import('../ui/view/npm-review-view.js')
+const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewEntry, reviewExtensions } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
@@ -96,7 +96,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
     const editor = text(renderReviewEditor(page, 'asset.bin', mode === 'diff'))
     assert.equal((editor.match(/\?disabled=true/gu) ?? []).length, 5, 'all verdict controls, including Not checked, are disabled')
     assert.match(editor, /Non-text file.*remains unchecked/u)
-    assert.match(editor, /aria-label=File note/u)
+    assert.match(editor, /aria-label="File note"/u)
     requests.length = 0
     for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) await page._setFileStatus('asset.bin', status)
     assert.equal(requests.length, 0)
@@ -332,12 +332,12 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.deepEqual(requests[0][1], { action: 'publish', reviewId: 'review', revision: 1, teamIds: ['two'], finalStatus: 'request-changes', finalComment: 'Check the second file too.' })
   assert.equal(page._canEdit, false)
-  assert.match(text(renderReviewPublished(page, published)), /Continue in a new review/u)
+  assert.match(text(renderReviewEntry(page, published)), /Continue in a new review/u)
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u, 'no editor for a published set')
-  assert.match(text(renderReviewPublished(page, published)), /Publish to more teams/u)
-  assert.match(text(renderReviewPublished(page, published)), /Revoke/u)
-  assert.doesNotMatch(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Publish to more teams/u)
-  assert.match(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Revoked/u)
+  assert.match(text(renderReviewEntry(page, published)), /Publish to more teams/u)
+  assert.match(text(renderReviewEntry(page, published)), /Revoke/u)
+  assert.doesNotMatch(text(renderReviewEntry(page, { ...published, revokedAt: 300 })), /Publish to more teams/u)
+  assert.match(text(renderReviewEntry(page, { ...published, revokedAt: 300 })), /Revoked/u)
 })
 
 test('a review without a base compares every package file against an empty package', async () => {
@@ -579,9 +579,14 @@ test('viewing a frozen set never loads or overwrites private unsaved buffers', (
   assert.equal(page._editorState(page._file).comment, 'A note', 'the frozen file shows its saved content')
   assert.equal(page._unsaved, true, 'changing comparison cannot discard a private edit while its frozen file is shown')
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u)
+  assert.match(text(renderReviewEntry(page, published)), /aria-current=true/u)
+  assert.match(text(renderReviewEntry(page, review)), /aria-current=false/u)
+  assert.doesNotMatch(text(renderReviewEntry(page, review)), />Revoke<|>Continue<|Publish to more teams/u, 'private reviews only expose Open')
   page._resume()
   assert.equal(page._editorState(page._file).comment, 'Private pending note')
   assert.equal(page._canEdit, true)
+  assert.match(text(renderReviewEntry(page, review)), /aria-current=true/u)
+  assert.match(text(renderReviewEntry(page, published)), /aria-current=false/u)
 })
 
 test('opening a specific published list row selects that snapshot even with an active review', async () => {
@@ -1021,6 +1026,6 @@ test('the shared tree keeps review decorations, progress and next-unchecked beha
   assert.equal(filtered.canSelect(), true)
   page._saveBlocked = true
   assert.equal(filtered.canSelect(), false)
-  page._saveBlocked = false; page._panel = 'notes'
-  assert.equal(filtered.canSelect(), false, 'scrolling behind a dialog must not replace its notes editor')
+  page._saveBlocked = false; page._panel = 'reviews'
+  assert.equal(filtered.canSelect(), false, 'scrolling behind a dialog must not change the selected file')
 })
