@@ -92,26 +92,25 @@ function npmMajorRelease(was, now) {
 
 // Whether the open version's file at `path` (`basePath` in the one compared
 // with) had its source map rebuilt with it: its last line names a map file of
-// the package (`//# sourceMappingURL=name.js.map`, by a path from the file's
-// own; not one inline, at a URL, from a site's root, or above the package's),
-// a source map (`.map`, its `mappings` told), new or changed, as a build writes
-// them together. An attack editing a built file leaves its map as it was.
+// the package (`//# sourceMappingURL=name.js.map`, resolved from the file's
+// own as a browser resolves it; not one inline, at a URL, from a site's root,
+// or above the package's), a source map (`.map`, its `mappings` told), new or
+// changed, as a build writes them together. An attack editing a built file
+// leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
+const PACKAGE = new URL('https://package.invalid/package/')
 function besideFile(file, name) {
-  const parts = file.split('/').slice(0, -1)
-  for (const part of name.split('/')) {
-    if (part === '..' && parts.length === 0) return null
-    if (part === '..') parts.pop()
-    else if (part !== '.' && part !== '') parts.push(part)
-  }
-  return parts.join('/')
+  try {
+    const url = new URL(name, new URL(file.split('/').map(encodeURIComponent).join('/'), PACKAGE))
+    return url.origin === PACKAGE.origin && url.pathname.startsWith(PACKAGE.pathname) ? decodeURIComponent(url.pathname.slice(PACKAGE.pathname.length)) : null
+  } catch { return null }
 }
 function rebuiltWithMap(base, other, path, basePath) {
   const text = bundleFilesAsMap(other).get(path)
   const name = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1))?.[1] : null
-  if (!name || name.startsWith('/') || /^[a-z][\w+.-]*:/iu.test(name)) return false
-  const map = bundleFilesAsMap(other).get(besideFile(path, name))
-  return SOURCE_MAP.test(name) && isSourceMap(map) && map !== bundleFilesAsMap(base).get(besideFile(basePath, name))
+  const named = name ? besideFile(path, name) : null
+  const map = named && SOURCE_MAP.test(named) ? bundleFilesAsMap(other).get(named) : null
+  return isSourceMap(map) && map !== bundleFilesAsMap(base).get(besideFile(basePath, name))
 }
 const isSourceMap = text => { try { return typeof JSON.parse(text)?.mappings === 'string' } catch { return false } }
 
