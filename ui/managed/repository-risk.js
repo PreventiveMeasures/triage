@@ -77,8 +77,9 @@ const assessable = source => source === 'registry' || source === 'mirror'
 // held to npm's integrity where npm deleted the version, as it deletes every
 // one it finds malware in: it is npm's unless found otherwise.
 export const malwareOf = row => row.risk?.error === 'integrity-mismatch' ? null : row.malware ?? null
-// A package row's risk, its malware first, as critical: the advisories', or
-// risk's own of a package npm took down, once.
+// A package row's most severe finding, its malware first, as critical: the
+// advisories', or risk's own of a package npm took down, once. What its rows
+// are ranked and flagged by, not its risk, which isn't told yet.
 const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
 export const findingsOf = row => {
   const found = row.risk?.findings ?? []
@@ -110,8 +111,8 @@ const formatCount = new Intl.NumberFormat()
 // in the tooltip.
 function usedInCell(lockfiles) {
   const used = [...lockfiles]
-  return used.length === 1 ? html`<span class="risk-clip" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
-    : html`<span class="risk-clip" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`
+  return used.length === 1 ? html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
+    : html`<span class="risk-clip risk-used-in" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`
 }
 
 // The lines of a scan of `params` (`team` or `repo`, or neither),
@@ -335,8 +336,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       ${this._scopeBar()}
       <p class="risk-progress" role="status">${this._progress()}</p>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      ${this._repos.size > 0 ? this._lockfiles() : nothing}
-      ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}
+      ${this._repos.size === 0 ? nothing : html`<div class="manage-list">${this._lockfiles()}
+        ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}</div>`}
     </div>`
   }
 
@@ -392,41 +393,38 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _lockfileStatus(lockfile) {
-    if (lockfile.error) {
-      return html`<span class="risk-error risk-wrap">${errorText(lockfile.error)}${lockfile.detail ? `: ${lockfile.detail}` : ''}</span>`
-    }
+    if (lockfile.error) return html`<span class="risk-error" data-tooltip=${lockfile.detail ?? nothing}>${errorText(lockfile.error)}</span>`
     return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
 
+  // A line a repository: its name, and its lockfiles beside it, each with its
+  // format and how many packages it locks, or why there are none.
   _lockfiles() {
-    const rows = [...this._repos.values()].flatMap(repo => {
-      const status = this._repoStatus(repo)
-      return status ? [html`<tr><td>${repo.fullName}</td><td colspan="3">${status}</td></tr>`]
-        : [...repo.lockfiles.values()].map(lockfile => html`<tr>
-          <td>${repo.fullName}</td><td class="mono">${lockfile.path}</td><td>${lockfile.format}</td><td>${this._lockfileStatus(lockfile)}</td>
-        </tr>`)
-    })
     return html`<section class="risk-section" aria-label="Lockfiles">
       <h2>Lockfiles</h2>
-      <div class="link-table"><table>
-        <thead><tr><th>Repository</th><th>Lockfile</th><th>Format</th><th>Packages</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
+      <ul class="risk-repos">${[...this._repos.values()].map(repo => html`<li>
+        <span class="risk-repo-name" data-tooltip-truncated data-tooltip=${repo.fullName}>${repo.fullName}</span>
+        ${this._repoStatus(repo) ?? html`<ul class="risk-lockfiles">${[...repo.lockfiles.values()].map(lockfile => html`<li>
+          <span class="mono">${lockfile.path}</span><span class="risk-lockfile-meta">${lockfile.format} · ${this._lockfileStatus(lockfile)}</span>
+        </li>`)}</ul>`}
+      </li>`)}</ul>
     </section>`
+  }
+
+  // The tabs and the controls of the results, kept in view as they scroll.
+  _resultsHead(controls) {
+    return html`<div class="risk-results-head">${this._tabs()}<div class="collection-toolbar">${controls}</div></div>`
   }
 
   _packageTable() {
     const rows = this._rows()
     return html`<section class="risk-section" aria-label="Packages">
-      ${this._tabs()}
-      <div class="collection-toolbar">
-        <select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
+      ${this._resultsHead(html`<select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
           ${Object.entries(FILTERS).map(([value, [label]]) => html`<option value=${value}>${label}</option>`)}
         </select>
-        ${this._search(rows.length, this._packages.size, 'packages')}
-      </div>
+        ${this._search(rows.length, this._packages.size, 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th>Version</th><th>Risk</th><th>Findings</th><th>Source</th><th>Used in</th></tr></thead>
+        <thead><tr><th>Package</th><th>Version</th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
         <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
@@ -435,25 +433,28 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _packageRow(row) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
-    const findings = findingsOf(row)
     return html`<tr>
       <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}</td>
       <td class="mono">${row.version ?? '—'}</td>
-      <td>${this._risk(row)}</td>
-      <td>${findings.length > 0 ? html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
-        data-tooltip=${finding.id === 'malware' ? malwareSaid(row).join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
+      <td>${this._findings(row)}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
       <td>${usedInCell(row.usedIn)}</td>
     </tr>`
   }
 
-  _risk(row) {
+  // What risk finds of a package, each by its severity; or, where it finds
+  // nothing, whether it is still to be told, couldn't be, or wasn't asked.
+  // A finding's severity isn't the package's risk, which isn't told yet.
+  _findings(row) {
+    const findings = findingsOf(row)
+    if (findings.length > 0) {
+      return html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
+        data-tooltip=${finding.id === 'malware' ? malwareSaid(row).join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>`
+    }
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
-    const malware = malwareOf(row)
-    if (!malware && !row.risk) return this._pending('Waiting…', 'Not assessed')
-    if (!malware && row.risk.error) return html`<span class="risk-error" data-tooltip=${row.risk.detail ?? nothing}>${errorText(row.risk.error)}</span>`
-    const severity = severityOf(row)
-    return severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : html`<span class="risk-none">None found</span>`
+    if (!row.risk) return this._pending('Waiting…', 'Not assessed')
+    if (row.risk.error) return html`<span class="risk-error" data-tooltip=${row.risk.detail ?? nothing}>${errorText(row.risk.error)}</span>`
+    return html`<span class="risk-none">None found</span>`
   }
 
   _advisoryTable() {
@@ -461,8 +462,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const failed = [...this._repos.values()].flatMap(repo => [...repo.lockfiles?.values() ?? []]
       .filter(lockfile => lockfile.advisoriesError).map(lockfile => `${repo.fullName}/${lockfile.path}`))
     return html`<section class="risk-section" aria-label="Advisories">
-      ${this._tabs()}
-      <div class="collection-toolbar">${this._search(rows.length, this._advisories.size, 'advisories')}</div>
+      ${this._resultsHead(this._search(rows.length, this._advisories.size, 'advisories'))}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
       ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : 'npm has no advisories of these packages.'}</p>` : html`<div class="link-table"><table>
         <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
