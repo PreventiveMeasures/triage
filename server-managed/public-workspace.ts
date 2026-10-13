@@ -14,8 +14,8 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
-import { PrettyError, prettyRequest } from './pretty-print.ts'
-import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
+import { PrettyError, prettyRequest, prettyText } from './pretty-print.ts'
+import { renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {

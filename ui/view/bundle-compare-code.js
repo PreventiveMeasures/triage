@@ -190,6 +190,10 @@ export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings
 // has no grammar for it or it is too large to color.
 const highlightCache = new Map()
 const highlightPending = new Set()
+// Each line's code as _code draws it, by its side's lines (a line model's `a`
+// or `b`) and line, while its markup, marked words and end stay the same: a
+// diff drawn again marks no line again, as a long one takes a while to.
+const drawnCode = new WeakMap()
 
 function countLines(text) {
   let count = 0
@@ -630,7 +634,7 @@ export class BundleCompareCode extends LitElement {
   // them.
   _searchResults(order) {
     const drawn = rowlessSettings()
-    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${this._prettyAllowed !== false}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
@@ -692,11 +696,10 @@ export class BundleCompareCode extends LitElement {
   }
 
   // Whether a file's diff here is of its pretty-printed copies (_pretty), the
-  // toggle on and the view printing it (the one list prints only a few):
-  // not where a copy kept of either side failed, when the diff is of the
-  // file as published.
+  // toggle on: not where a copy kept of either side failed, when the diff is
+  // of the file as published.
   _prettyShown(path, entry, contents) {
-    if (!state.bundleSourcePretty || this._prettyAllowed === false || !this._printable(path, entry, contents)) return false
+    if (!state.bundleSourcePretty || !this._printable(path, entry, contents)) return false
     const { basePath = path } = entry
     return ![[this.base, basePath, contents.before], [this.other, path, contents.after]]
       .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
@@ -911,11 +914,10 @@ export class BundleCompareCode extends LitElement {
   // A file's two sides, pretty-printed where the toggle has them so, and its
   // line model where it has one to draw: none for a file that is not text,
   // nor for one too large to diff unasked.
-  // `prettyAllowed` false where a view would pretty-print more than it can at once.
-  _fileState(path, entry, prettyAllowed = true) {
+  _fileState(path, entry) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
-    const pretty = textual ? this._pretty(path, entry, contents, prettyAllowed) : null
+    const pretty = textual ? this._pretty(path, entry, contents) : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
     // Renamed names are hidden by the server, in the copies it pretty-printed
     // (rename-diff.js): offered while those come, hidden once they did.
@@ -1012,11 +1014,10 @@ export class BundleCompareCode extends LitElement {
 
   // Both sides pretty-printed (pretty-source.js), as the Code tab shows a
   // minified file, so minified versions diff line by line: null unless each
-  // side with text can be, `limited` where not `allowed`, else the toggle's
-  // state and, once both copies came, their texts and hashes.
-  _pretty(path, entry, contents, allowed = true) {
+  // side with text can be, else the toggle's state and, once both copies
+  // came, their texts and hashes.
+  _pretty(path, entry, contents) {
     if (!this._printable(path, entry, contents)) return null
-    if (!allowed) return { status: 'limited' }
     const { basePath = path } = entry, { before, after } = contents
     const sides = [[this.base, basePath, before], [this.other, path, after]]
     const copies = sides.map(([details, file, text]) => text === '' ? { status: 'ready', text } : prettyCopy(details, details, file, text, () => this.requestUpdate()))
@@ -1260,8 +1261,8 @@ export class BundleCompareCode extends LitElement {
   // no new one stands for named apart (r_old). Lines always wrap.
   _toggles(diffable, pretty = null, renames = false, reading = false, whitespace = null) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
-          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
-          data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
+          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
+          data-tooltip=${prettyTooltip(pretty)}
           @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
@@ -1566,9 +1567,15 @@ export class BundleCompareCode extends LitElement {
   }
 
   _codeCell(lit, side, line, ranges) {
-    const text = lit.model[side][line]
+    const lines = lit.model[side], markup = lit[side]?.[line], text = lines[line]
     const noEol = this._noEol(lit.model, side, line)
-    return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${this._code(text, lit[side]?.[line], ranges, !noEol)}${noEol ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
+    let drawn = drawnCode.get(lines)
+    if (!drawn) drawnCode.set(lines, drawn = new Map())
+    let code = drawn.get(line)
+    if (!code || code.markup !== markup || code.ranges !== ranges || code.noEol !== noEol) {
+      drawn.set(line, code = { markup, ranges, noEol, drawn: this._code(text, markup, ranges, !noEol) })
+    }
+    return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${code.drawn}${noEol ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
   }
 
   _splitRow(row, lit) {

@@ -12,9 +12,7 @@
 // source holds a file of that hash. Access is the caller's to check.
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
-import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
-import { brotliDecompress } from 'node:zlib'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { prettyExtension } from '../common/pretty-print.js'
@@ -52,15 +50,6 @@ export function renameDiffRequest(params: URLSearchParams): RenameDiffRequest | 
   }
   const base = side(params.get('path') ?? '', params.get('hash') ?? ''), other = side(params.get('otherPath') ?? '', params.get('otherHash') ?? '')
   return base && other ? { base, other, ignoreWhitespace: params.get('ignoreWhitespace') === 'true' } : null
-}
-
-const decompress = promisify(brotliDecompress)
-
-// A pretty-printed copy's text, from its Brotli-encoded bytes.
-export async function prettyText(copy: OpenedBlob): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of copy.stream) chunks.push(chunk as Buffer)
-  return (await decompress(Buffer.concat(chunks))).toString()
 }
 
 let activeDiffs = 0

@@ -18,7 +18,7 @@ const pretty = new Map(), renameDiffs = []
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
-  fetchPrettyNpmFile() {},
+  fetchPrettyNpmFiles() {},
   async fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
@@ -279,21 +279,43 @@ test('names are hidden renamed in JavaScript alone: in CSS a short selector chan
   assert.doesNotMatch(diff, /Hide renamed names/u, 'nor is it offered')
 })
 
-test('the Diff view pretty-prints no more minified files together than it keeps copies of', async t => {
-  t.after(() => { state.bundleSourcePretty = false })
-  await import('../ui/view/bundle-compare-all.js')
+test('a diff drawn again marks none of its lines again, as a long one takes a while to', t => {
+  const element = view('dist/app.css', [{ 'dist/app.css': '#foo{color:red}\n' }, { 'dist/app.css': '#bar{color:red}\n' }])
+  const code = t.mock.method(element, '_code')
+  const first = renderText(element.render())
+  const marked = code.mock.callCount()
+  assert.ok(marked > 0)
+  assert.equal(renderText(element.render()), first)
+  assert.equal(code.mock.callCount(), marked, 'each line kept as it was drawn')
+})
+
+test('the Diff view pretty-prints every minified file it shows, however many', async t => {
   const files = Array.from({ length: 5 }, (_, i) => `dist/f${i}.min.js`)
+  t.after(() => {
+    state.bundleSourcePretty = false
+    for (const path of files) for (const id of ['b1', 'b2']) pretty.delete(`${id}:${path}`)
+  })
+  await import('../ui/view/bundle-compare-all.js')
   const code = view(files[0], [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])),
     Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
   code.base.managedId = 'b1'
   code.other.managedId = 'b2'
+  for (const path of files) {
+    pretty.set(`b1:${path}`, 'var Y = 1;\nq(Y);\n')
+    pretty.set(`b2:${path}`, 'var X = 1;\nq(X);\n')
+  }
   const all = new (customElements.get('bundle-compare-all'))()
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   state.bundleSourcePretty = true
+  assert.match(renderText(all.render()), /is-loading/u, 'each asked for')
+  // Two at a time, each hashed as it comes, which can take any number of turns.
+  const deadline = Date.now() + 10_000
+  const coming = () => files.some(path => all._fileState(path, all._entries.get(path)).pretty.status === 'loading')
+  while (coming() && Date.now() < deadline) await new Promise(resolve => { setImmediate(resolve) })
   const markup = renderText(all.render())
-  assert.match(markup, /\?disabled=true\s+data-tooltip=Too many minified files to pretty-print together: open one in Code/u)
-  assert.doesNotMatch(markup, /is-loading/u, 'none asked for')
+  assert.doesNotMatch(markup, /is-loading|is-error|\?disabled=true/u)
+  for (const path of files) assert.equal(all._fileState(path, all._entries.get(path)).pretty.status, 'ready', `${path} diffed as its copies have it`)
 })
 
 test('the Diff view draws its files 40 at a time, more on asking or as one past them opens, counting them all', async () => {
@@ -340,7 +362,7 @@ test('the Diff view draws its files 40 at a time, more on asking or as one past 
   assert.deepEqual([scrolled.length, pane.scrollTop], [2, 0], 'its list from its top')
 })
 
-test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
+test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state, and how many failed', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   await import('../ui/view/bundle-compare-all.js')
   const files = ['dist/g0.min.js', 'dist/g1.min.js']
@@ -357,7 +379,7 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
-  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print: This file couldn't be read as code\./u)
+  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print 1 of 2 files: This file couldn't be read as code\./u)
 })
 
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {

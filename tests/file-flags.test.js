@@ -16,7 +16,7 @@ mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} 
 const socket = {}
 const managed = ['getPreviewRole', 'clearPreviewRole', 'resetManagedAppState', 'setManagedAppSession', 'setManagedReportCatalog', 'readReportSources', 'clearReportSources',
   'fetchReportSources', 'loadManagedBundle', 'probeSession', 'probeTeams', 'fetchManagedBundleCatalog', 'fetchNpmPackage', 'fetchPrettyBundleFile',
-  'fetchPrettyNpmFile', 'fetchBundleRenameDiff', 'fetchNpmRenameDiff', 'openManagedShareDialog', 'openManagedIssueDialog', 'openFindingHistoryDialog', 'fetchReport', 'fetchReports',
+  'fetchPrettyNpmFiles', 'fetchBundleRenameDiff', 'fetchNpmRenameDiff', 'openManagedShareDialog', 'openManagedIssueDialog', 'openFindingHistoryDialog', 'fetchReport', 'fetchReports',
   'fetchTeamAnnotations', 'fetchReportTriage', 'fetchFixes', 'fetchReportComments', 'saveReportComment', 'deleteReportComment', 'pushReportTriage', 'login', 'logout', 'stopViewing',
   'fetchBundleMetadata', 'fetchBundleContents', 'fetchTeamReports', 'watchTeamFeed', 'fetchBundleAdvisories']
 mock.module('../ui/view/client-managed.js', { exports: {

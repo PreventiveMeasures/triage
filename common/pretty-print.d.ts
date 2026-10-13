@@ -2,3 +2,4 @@
 
 export const MAX_PRETTY_BYTES: number
 export function prettyExtension(path: string): string | null
+export function needsPrettyPrint(path: string, text: string, read?: () => { category: string }): boolean

@@ -96,7 +96,13 @@ async function setup(t) {
   return { dir, db, raw: stores.raw, stores, users, send, seed, team }
 }
 
-const npmPretty = (name, version, path, hash) => `/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`
+const npmPretty = (name, version) => `/api/npm/pretty?${new URLSearchParams({ name, version })}`
+// A response's lines, each a file's.
+const linesOf = res => res.text().split('\n').filter(Boolean).map(line => JSON.parse(line))
+// Minified enough to be pretty-printed (needsPrettyPrint), as `minified` alone
+// is not; and as long, but not code.
+const long = `var a=[${Array.from({ length: 400 }, (_, i) => i).join(',')}];function f(b){return a.map(c=>c*b)}export{f};\n`
+const broken = long.replace('function f(b)', 'function (')
 const bundlePretty = (id, path, hash) => `/api/bundles/${id}/pretty?${new URLSearchParams({ path, hash })}`
 const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?${new URLSearchParams({ other, ...params })}`
 const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
@@ -137,61 +143,56 @@ test('published minified code and styles pretty-print, checked by @preventive/co
   }
 })
 
-test('a public npm file is formatted once, kept unencrypted by its hash, and served from that copy', async t => {
+test('formats past those running wait their turn, and past those waiting are refused', async () => {
+  const results = await Promise.allSettled(Array.from({ length: 19 }, () => prettyBody(minified, 'js')))
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 18)
+  assert.deepEqual(results.filter(result => result.status === 'rejected').map(({ reason }) => [reason.status, reason.message]), [[429, 'pretty-busy']])
+})
+
+test('a public npm version\'s files that need it are pretty-printed in one request, each kept unencrypted by its hash', async t => {
   const h = await setup(t)
-  const pkg = packageOf('lib', '1.0.0', { 'dist/lib.min.js': minified, 'README.md': '# lib\n', 'dist/other.min.js': minified })
-  const calls = registry(t, [pkg])
-  const hash = fileHash(minified)
-  const first = await h.send(npmPretty('lib', '1.0.0', 'dist/lib.min.js', hash))
+  const pkg = packageOf('lib', '1.0.0', { 'dist/lib.min.js': long, 'README.md': '# lib\n', 'dist/other.min.js': long, 'src/index.js': 'export const a = 1\n', 'dist/bad.min.js': broken })
+  registry(t, [pkg])
+  const hash = fileHash(long), pretty = await formatted(long)
+  const first = await h.send(npmPretty('lib', '1.0.0'))
   assert.equal(first.status, 200)
   assert.equal(first.headers['content-encoding'], 'br')
-  assert.equal(first.headers['content-type'], 'text/plain; charset=utf-8')
+  assert.equal(first.headers['content-type'], 'application/x-ndjson')
   assert.equal(first.headers['cache-control'], 'private, no-store')
-  assert.equal(first.headers['x-source-hash'], hash, 'naming the file it was formatted from')
-  assert.equal(first.text(), await formatted(minified))
-  // Kept as the response's bytes, in the public namespace, as they are.
-  const kept = await readdir(join(h.dir, 'cache', 'npm', 'pretty-v2'))
-  assert.deepEqual(kept, [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
-  const again = await h.send(npmPretty('lib', '1.0.0', 'dist/lib.min.js', hash))
-  assert.deepEqual(again.bytes, first.bytes)
-  // The same text at another path is the same copy.
-  assert.deepEqual((await h.send(npmPretty('lib', '1.0.0', 'dist/other.min.js', hash))).bytes, first.bytes)
-  assert.equal(downloads(calls, pkg), 1, 'later reads need no tarball')
+  assert.deepEqual(linesOf(first), [
+    { path: 'dist/bad.min.js', source: fileHash(broken), error: 'unformattable', status: 422 },
+    { path: 'dist/lib.min.js', source: hash, text: pretty },
+    { path: 'dist/other.min.js', source: hash, text: pretty },
+  ], 'its minified files alone, in path order, each naming the file it was formatted from')
+  // Kept in the public namespace, the same text once.
+  assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm', 'pretty-v2')), [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
+  assert.deepEqual(linesOf(await h.send(npmPretty('lib', '1.0.0'))), linesOf(first), 'and read from there')
 })
 
 test('npm pretty-print refuses what it cannot answer', async t => {
   const h = await setup(t)
-  registry(t, [packageOf('lib', '1.0.0', { 'lib.min.js': minified, 'bad.js': 'function (' })])
-  const hash = fileHash(minified)
-  const cases = [
-    [npmPretty('lib', '1.0.0', 'lib.min.js', 'sha512-nope'), 400, 'bad-file'],
-    [`/api/npm/pretty?${new URLSearchParams({ name: 'lib', version: '1.0.0', path: 'lib.min.js' })}`, 400, 'bad-file'],
-    [npmPretty('lib', '1.0.0', 'missing.js', hash), 404, 'no-file'],
-    [npmPretty('lib', '1.0.0', 'lib.min.js', fileHash('something else')), 409, 'hash-mismatch'],
-    [npmPretty('lib', '1.0.0', 'bad.js', fileHash('function (')), 422, 'unformattable'],
-    [npmPretty('lib', '2.0.0', 'lib.min.js', hash), 404, 'package-not-found'],
-  ]
-  for (const [path, status, error] of cases) {
-    const res = await h.send(path)
-    assert.equal(res.status, status, path)
-    assert.equal(res.json().error, error, path)
-  }
-  assert.equal((await h.send(npmPretty('lib', '1.0.0', 'lib.min.js', hash), null)).status, 401)
-  assert.equal((await h.send(npmPretty('lib', '1.0.0', 'lib.min.js', hash), 'viewer', { method: 'POST' })).status, 405)
+  registry(t, [packageOf('lib', '1.0.0', { 'lib.min.js': long }), packageOf('plain', '1.0.0', { 'index.js': 'export const a = 1\n' })])
+  const missing = await h.send(npmPretty('lib', '2.0.0'))
+  assert.equal(missing.status, 404)
+  assert.equal(missing.json().error, 'package-not-found')
+  assert.equal((await h.send(npmPretty('lib', '1.0.0'), null)).status, 401)
+  assert.equal((await h.send(npmPretty('lib', '1.0.0'), 'viewer', { method: 'POST' })).status, 405)
+  const plain = await h.send(npmPretty('plain', '1.0.0'))
+  assert.equal(plain.status, 200)
+  assert.deepEqual(linesOf(plain), [], 'a version with nothing minified has no lines')
   await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' }, 'refusals keep nothing')
 })
 
 test('a private npm version is formatted for each reader who may read it and never kept', async t => {
   const h = await setup(t)
   withToken(t)
-  const pkg = { ...packageOf('@corp/lib', '1.0.0', { 'lib.min.js': minified }), private: true }
+  const pkg = { ...packageOf('@corp/lib', '1.0.0', { 'lib.min.js': long }), private: true }
   const calls = registry(t, [pkg])
-  const path = npmPretty('@corp/lib', '1.0.0', 'lib.min.js', fileHash(minified))
-  assert.equal((await h.send(path)).status, 404, 'a reader without private access gets nothing')
+  assert.equal((await h.send(npmPretty('@corp/lib', '1.0.0'))).status, 404, 'a reader without private access gets nothing')
   for (let i = 0; i < 2; i++) {
-    const res = await h.send(path, 'admin')
+    const res = await h.send(npmPretty('@corp/lib', '1.0.0'), 'admin')
     assert.equal(res.status, 200)
-    assert.equal(res.text(), await formatted(minified))
+    assert.deepEqual(linesOf(res), [{ path: 'lib.min.js', source: fileHash(long), text: await formatted(long) }])
   }
   assert.equal(downloads(calls, pkg), 2)
   await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
