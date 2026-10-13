@@ -10,6 +10,7 @@ import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
 import { setCacheDir } from '@preventive/upstream/npm.js'
 import { auditCache, auditedRepos, lastListing, upstreamCache } from '../server-managed/upstream-cache.ts'
 import { checkUpstreamCacheStore } from './_managed-upstream-cache.js'
+import { OSV, osvNone } from './_managed-npm.js'
 
 const signal = () => new AbortController().signal
 const listing = 'https://api.github.com/repos/org/dep/security-advisories?state=published&per_page=100'
@@ -100,10 +101,11 @@ test('only repository listings are kept, never npm version documents', async t =
   t.after(() => db.close())
   const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
   const calls = []
-  t.mock.method(globalThis, 'fetch', url => {
+  t.mock.method(globalThis, 'fetch', (url, init) => {
     calls.push(url)
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/dep/2.0.0')
       // Keepable as upstream's disk cache would keep it: its dist is the registry's.
@@ -141,10 +143,11 @@ test('with a cache directory, audits keep listings and npm version documents on 
   t.after(async () => { setCacheDir(false); db.close(); await rm(dir, { recursive: true, force: true }) })
   const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
   const calls = []
-  t.mock.method(globalThis, 'fetch', url => {
+  t.mock.method(globalThis, 'fetch', (url, init) => {
     calls.push(url)
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     if (hostname === 'registry.npmjs.org') {
       return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep',
         dist: { tarball: 'https://registry.npmjs.org/dep/-/dep-2.0.0.tgz', integrity } }))
@@ -160,7 +163,8 @@ test('with a cache directory, audits keep listings and npm version documents on 
   assert.equal(await db.getUpstreamCacheEntry('github/advisories/org/dep'), null)
   calls.length = 0
   assert.equal((await recheck()).status, 200)
-  assert.deepEqual(calls, ['https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'], 'neither npm nor GitHub is asked again')
+  assert.deepEqual(calls.toSorted(), ['https://api.osv.dev/v1/querybatch', 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'],
+    'neither npm\'s document nor GitHub is asked again, only the advisories, npm\'s and OSV\'s')
 })
 
 test('a listing as last kept, however old, is read where audits keep it, the database or upstream\'s disk cache, and answered as kept now', async t => {
@@ -200,9 +204,10 @@ test('an audit asks for the listings of the repositories it knows in one databas
   const integrity = `sha512-${createHash('sha512').update('found').digest('base64')}`
   const repos = ['org/a', 'org/b', 'org/c', 'org/found', 'org/dep']
   const github = []
-  t.mock.method(globalThis, 'fetch', url => {
+  t.mock.method(globalThis, 'fetch', (url, init) => {
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/found/1.0.0')
       return Promise.resolve(Response.json({ name: 'found', version: '1.0.0', repository: 'https://github.com/org/found',

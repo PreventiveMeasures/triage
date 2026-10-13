@@ -32,25 +32,26 @@ const documentOf = ({ name, versions, created, latest, removed = {} }) => ({ nam
 // npm's registry, its advisories and downloads API for `packages`, each
 // `{ name, versions: [{ doc, tgz, published }], created? }`, `downloads` by
 // name, and `advisories` by name, rows as npm's bulk endpoint answers them;
-// and OSV's records by name and version (`osv`), as one page or `{ pages }`,
-// each but the last naming the next, a status OSV answers with, or `{ body }`
-// it answers; each URL asked, in order.
+// and OSV's records by name and version (`osv`), as its batch query answers
+// them and then each record, or a status it answers every batch with; each
+// URL asked, in order.
 const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
-const OSV = 'https://api.osv.dev/v1/query'
+const OSV = 'https://api.osv.dev/v1/querybatch'
+const OSV_RECORD = 'https://api.osv.dev/v1/vulns/'
 function npm(t, packages, downloads = {}, advisories = {}, osv = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', (input, init) => Promise.resolve(answer(String(input), init)))
+  const records = new Map(Object.values(osv).filter(Array.isArray).flat().map(record => [record.id, record]))
   const answer = (url, init) => {
     asked.push(url)
     if (url === ADVISORIES) return Response.json(Object.fromEntries(Object.keys(JSON.parse(init.body)).filter(name => advisories[name]).map(name => [name, advisories[name]])))
     if (url === OSV) {
-      const { package: { name }, version: number, page_token: token = '0' } = JSON.parse(init.body)
-      if (typeof osv[`${name}@${number}`] === 'number') return Response.json({}, { status: osv[`${name}@${number}`] })
-      if (osv[`${name}@${number}`]?.body !== undefined) return Response.json(osv[`${name}@${number}`].body)
-      const pages = osv[`${name}@${number}`]?.pages ?? [osv[`${name}@${number}`] ?? []]
-      const page = Number(token)
-      return Response.json({ ...pages[page].length > 0 ? { vulns: pages[page] } : {}, ...page + 1 < pages.length ? { next_page_token: String(page + 1) } : {} })
+      const found = JSON.parse(init.body).queries.map(({ package: { name }, version: number }) => osv[`${name}@${number}`] ?? [])
+      const status = found.find(answered => typeof answered === 'number')
+      if (status) return Response.json({}, { status })
+      return Response.json({ results: found.map(answered => answered.length > 0 ? { vulns: answered.map(({ id }) => ({ id })) } : {}) })
     }
+    if (url.startsWith(OSV_RECORD) && records.has(url.slice(OSV_RECORD.length))) return Response.json(records.get(url.slice(OSV_RECORD.length)))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) {
       const name = decodeURIComponent(url.split('/').at(-1))
       return downloads[name] ? Response.json(downloads[name]) : Response.json({ error: `package ${name} not found` }, { status: 404 })
@@ -492,6 +493,7 @@ test('an advisory is of malware where GitHub files it as embedded malicious code
   assert.equal(npmMalwareAdvisory({ cwe: ['CWE-94', 'CWE-506'], title: 'Embedded Malicious Code in node-ipc' }), true)
   assert.equal(npmMalwareAdvisory({ cwe: [], title: 'Malware in chalk' }), true)
   assert.equal(npmMalwareAdvisory({ id: 'MAL-2025-41443', cwe: [], title: 'Malicious code in nx (npm)' }), true, 'OSV\'s of a malicious package')
+  assert.equal(npmMalwareAdvisory({ id: 'GHSA-kkkk-mmmm-nnnn', aliases: ['CVE-2025-1', 'MAL-2025-00005'], cwe: ['CWE-200'], title: 'Exposure of secrets' }), true, 'one OSV\'s of a malicious package names')
   assert.equal(npmMalwareAdvisory({ cwe: ['CWE-200'], title: 'Modified package published to npm, containing malware that exfiltrates private key material' }), true,
     '@solana/web3.js\'s GHSA-jcxm-7wvp-g6p5, its CWE not')
   assert.equal(npmMalwareAdvisory({ cwe: ['CWE-601'], title: 'Open redirect to a malicious URL' }), false, 'not every malicious thing is malware')
@@ -571,7 +573,7 @@ test('a version npm removes once a version was picked to compare it with is comp
   }
 })
 
-test('OSV\'s records of malware npm\'s advisories haven\'t tell of it too, as the malicious packages\' of nx\'s versions do; one npm\'s have told once', async t => {
+test('OSV\'s records of malware npm\'s advisories haven\'t tell of it too, as the malicious packages\' of nx\'s versions do; an advisory of npm\'s one names is of malware', async t => {
   const osvRecord = (id, summary, aliases = [], cwe = []) => ({ id, summary, aliases, database_specific: { cwe_ids: cwe } })
   const listed = version('listed', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
   npm(t, [{ name: 'listed', versions: [listed], removed: { '1.0.1': ago(20) } }], {}, {
@@ -582,30 +584,23 @@ test('OSV\'s records of malware npm\'s advisories haven\'t tell of it too, as th
     'listed@1.0.1': [osvRecord('MAL-2025-00002', 'Malicious code in listed (npm)', ['GHSA-gggg-hhhh-jjjj'])],
   })
   const malware = async number => (await assessNpm('listed', number, { now: NOW, downloads: false })).findings.find(({ id }) => id === 'malware')
-  assert.deepEqual((await malware('1.0.0')).advisories.map(({ id }) => id), ['GHSA-aaaa-bbbb-cccc', 'MAL-2025-00005'],
-    'OSV\'s of npm\'s malware told once, of one npm\'s tell as no malware told still; its vulnerability none')
-  assert.deepEqual((await malware('1.0.1')).advisories, [{ id: 'MAL-2025-00002', url: 'https://osv.dev/vulnerability/MAL-2025-00002', title: 'Malicious code in listed (npm)' }],
+  assert.deepEqual((await malware('1.0.0')).advisories.map(({ id }) => id), ['GHSA-aaaa-bbbb-cccc', 'GHSA-kkkk-mmmm-nnnn'],
+    'npm\'s each once, OSV\'s naming them among their aliases, one npm\'s tell as no malware of malware by OSV\'s; its vulnerability none')
+  assert.deepEqual((await malware('1.0.1')).advisories, [{ id: 'MAL-2025-00002', url: 'https://github.com/advisories/GHSA-gggg-hhhh-jjjj', title: 'Malicious code in listed (npm)' }],
     'a version npm removed, its malware OSV\'s alone')
 })
 
-test('OSV\'s records are read page by page, as it pages what it can\'t answer at once, and never asked of where `osv` is false', async t => {
-  const paged = ['1.0.0', '1.0.1', '1.0.2', '1.0.3', '1.0.4'].map(number => version('paged', number, { 'package.json': '{}' }, { dependencies: {} }, ago(30)))
-  const asked = npm(t, [{ name: 'paged', versions: paged }], {}, {}, {
-    'paged@1.0.0': { pages: [[], [{ id: 'MAL-2025-00003', summary: 'Malicious code in paged (npm)', aliases: [] }]] },
-    'paged@1.0.1': { pages: Array.from({ length: 11 }, () => []) },
-    'paged@1.0.2': 404,
-    'paged@1.0.3': { body: { vulns: { id: 'MAL-2025-00004' } } },
-    'paged@1.0.4': { body: { vulns: [], next_page_token: 1 } },
+test('OSV is asked only where `osv` is, and failing, fails the assessment as npm failing would', async t => {
+  const asked = npm(t, ['1.0.0', '1.0.1'].map(number => ({ name: `osv-${number}`, versions: [version(`osv-${number}`, number, { 'package.json': '{}' }, { dependencies: {} }, ago(30))] })), {}, {}, {
+    'osv-1.0.0@1.0.0': [{ id: 'MAL-2025-00003', summary: 'Malicious code in osv-1.0.0 (npm)', aliases: [] }],
+    'osv-1.0.1@1.0.1': 503,
   })
-  const assessed = (number, options = {}) => assessNpm('paged', number, { now: NOW, downloads: false, ...options })
-  assert.deepEqual((await assessed('1.0.0')).findings.find(({ id }) => id === 'malware')?.advisories?.map(({ id }) => id), ['MAL-2025-00003'],
-    'its malware on a page after one OSV answered with none')
-  await assert.rejects(assessed('1.0.1'), error => error instanceof NpmRiskError && error.code === 'upstream-invalid', 'past OSV_PAGES')
-  await assert.rejects(assessed('1.0.2'), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable', 'its 404 no answer, unlike npm\'s')
-  for (const number of ['1.0.3', '1.0.4']) await assert.rejects(assessed(number), error => error instanceof NpmRiskError && error.code === 'upstream-invalid', `${number}: a page not as OSV answers one`)
+  const assessed = (name, options = {}) => assessNpm(name, name.slice(4), { now: NOW, downloads: false, ...options })
+  assert.deepEqual((await assessed('osv-1.0.0')).findings.find(({ id }) => id === 'malware')?.advisories?.map(({ id }) => id), ['MAL-2025-00003'])
+  await assert.rejects(assessed('osv-1.0.1'), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable')
   asked.length = 0
-  assert.ok(!ids(await assessed('1.0.0', { osv: false })).includes('malware'), 'OSV not asked, its malware not told')
-  assert.ok(!asked.includes(OSV), 'nor its name sent')
+  assert.ok(!ids(await assessed('osv-1.0.0', { osv: false })).includes('malware'), 'OSV not asked, its malware not told')
+  assert.ok(!asked.some(url => url.startsWith('https://api.osv.dev/')), 'nor its name sent')
 })
 
 test('npm having no such package or version is said so', async t => {
@@ -703,6 +698,7 @@ test('an assessment given up on as its signal aborts, upstream\'s download still
   const fetching = new Promise(resolve => {
     t.mock.method(globalThis, 'fetch', input => {
       if (String(input) === ADVISORIES) return Promise.resolve(Response.json({}))
+      if (String(input) === OSV) return Promise.resolve(Response.json({ results: [{}] }))
       if (String(input) !== slow.doc.dist.tarball) return Promise.resolve(Response.json(documentOf({ name: 'slow', versions: [slow] })))
       resolve()
       return new Promise(answer => { arrive = () => answer(new Response(slow.tgz)) })

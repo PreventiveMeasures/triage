@@ -18,7 +18,7 @@ import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-ris
 import { NpmRiskError } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
-import { ADVISORIES, OSV, REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
+import { ADVISORIES, OSV, REGISTRY, osvNone, packageOf, registry, tar, withToken } from './_managed-npm.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -191,9 +191,10 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
 
 test('a team\'s own package isn\'t flagged as few download it, as it isn\'t as just published', async t => {
   const pkg = packageOf('quiet-own', '1.0.0', { 'package.json': '{}' })
-  t.mock.method(globalThis, 'fetch', input => {
+  t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = String(input)
     if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'quiet-own', downloads: [] }))
     return Promise.resolve(Response.json({ name: 'quiet-own', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
@@ -210,10 +211,11 @@ test('a new dependency on a package of a scope a team lists is told no tier nor 
   const after = packageOf('own-app', '1.1.0', { 'package.json': '{}', 'index.js': 'require("@own/helper")\nrequire("stranger")\n' },
     { dependencies: { '@own/helper': '^1.0.0', stranger: '^1.0.0' } })
   const asked = []
-  t.mock.method(globalThis, 'fetch', input => {
+  t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = String(input)
     asked.push(url)
     if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     for (const pkg of [before, after]) if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
     if (url.endsWith('/stranger')) return Promise.resolve(Response.json({ name: 'stranger', versions: {}, time: { created: '2025-01-01T00:00:00.000Z' } }))
@@ -236,8 +238,9 @@ test('a risk assessment whose reader is gone stops waiting on its tarball, which
   const pkg = packageOf('slow-risk', '1.0.0', { 'package.json': '{}' })
   let answer = () => {}
   const arrived = new Promise(resolve => {
-    t.mock.method(globalThis, 'fetch', input => {
+    t.mock.method(globalThis, 'fetch', (input, init) => {
       if (String(input) === ADVISORIES) return Promise.resolve(Response.json({}))
+      if (String(input) === OSV) return Promise.resolve(osvNone(init))
       if (String(input) !== pkg.doc.dist.tarball) return Promise.resolve(Response.json({ name: 'slow-risk', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
       resolve()
       return new Promise(resolveFetch => { answer = () => resolveFetch(new Response(pkg.tgz)) })
@@ -261,12 +264,13 @@ test('a version npm removed is assessed as a scan\'s others are, within the spar
   const placeholder = packageOf('spare-gone', '0.0.1-security', { 'package.json': '{}' },
     { description: 'security holding package', _npmUser: { name: 'npm', email: 'npm@npmjs.com' } })
   const answers = []
-  t.mock.method(globalThis, 'fetch', input => {
+  t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = String(input)
     const pkg = pkgs.find(({ doc }) => url === doc.dist.tarball)
     if (pkg) return new Promise(resolve => { answers.push(() => resolve(new Response(pkg.tgz))) })
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
-    if (url === ADVISORIES || url === OSV) return Promise.resolve(Response.json({}))
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     const gone = { name: 'spare-gone', 'dist-tags': { latest: '0.0.1-security' }, versions: { '0.0.1-security': placeholder.doc },
       time: { '0.0.1-security': '2025-02-01T00:00:00.000Z', '1.0.0': '2025-01-01T00:00:00.000Z' } }
     if (url === `${REGISTRY}/spare-gone`) return Promise.resolve(Response.json(gone))
@@ -288,8 +292,11 @@ test('a version npm removed is told of by OSV\'s malware where anyone can read i
   const removed = { time: { '1.0.1': '2025-02-01T00:00:00.000Z' } }
   const calls = registry(t, [{ ...packageOf('gone-open', '1.0.0', { 'package.json': '{}' }), ...removed }, { ...packageOf('@acme/gone', '1.0.0', { 'package.json': '{}' }), ...removed, private: true }])
   const fetch = globalThis.fetch
-  t.mock.method(globalThis, 'fetch', (url, init) => String(url) === OSV && JSON.parse(init.body).package.name === 'gone-open'
-    ? Promise.resolve(Response.json({ vulns: [{ id: 'MAL-2025-41443', summary: 'Malicious code in gone-open (npm)' }] })) : fetch(url, init))
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (String(url) === OSV && JSON.parse(init.body).queries.every(({ package: { name } }) => name === 'gone-open')) return Promise.resolve(Response.json({ results: [{ vulns: [{ id: 'MAL-2025-41443' }] }] }))
+    if (String(url) === 'https://api.osv.dev/v1/vulns/MAL-2025-41443') return Promise.resolve(Response.json({ id: 'MAL-2025-41443', summary: 'Malicious code in gone-open (npm)', aliases: [] }))
+    return fetch(url, init)
+  })
   const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
   const options = { db, teamScoped: false, privileged: true, signal: new AbortController().signal }
   assert.deepEqual((await npmRiskRemoved('gone-open', '1.0.1', options)).findings, [{ id: 'malware', severity: 'critical',

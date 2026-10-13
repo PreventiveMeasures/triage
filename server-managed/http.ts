@@ -1411,8 +1411,9 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal }),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
-    // alone: no repository's. Each lockfile's audit is bounded on its own, for
-    // one npm doesn't answer to fail alone and the scan to carry on.
+    // and, for packages anyone may read, OSV: no repository's. Each lockfile's
+    // audit is bounded on its own, for one npm doesn't answer to fail alone and
+    // the scan to carry on.
     async advisories(packages, scanning) {
       const signal = AbortSignal.any([scanning, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)])
       const audited = await fetchBundleAdvisories(packages.map(pkg => ({ ecosystem: 'npm' as const, ...pkg })), signal,

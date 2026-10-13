@@ -904,7 +904,8 @@ Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour), and told in an `advisories` line,
 each advisory with whether it is of malware, as risk tells it
-(`npmMalwareAdvisory`): GitHub's CWE-506, embedded malicious code, or a title
+(`npmMalwareAdvisory`): OSV's of a malicious package (`MAL-…`), or one such a
+record names, GitHub's CWE-506, embedded malicious code, or a title
 naming malware. The page lists them on a tab of
 their own, and a package an advisory of malware names is critical in its risk,
 from npm's registry or a mirror, but where its integrity is found to differ
@@ -912,10 +913,12 @@ from npm's: npm deletes a version it finds malware in, so a mirror's copy of
 one can't be held to npm's integrity, and is told as npm's. Other advisories
 are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's
 registry hasn't every one of GitHub's malware advisories (those of nx's
-malicious versions, for one): the viewer's assessments add OSV's records of
-malware (risk's `npmVersionAdvisories`), a public package's alone, a private
-one's name never sent to OSV, as it never is to Socket; a scan asks a
-lockfile's of npm alone, but for a version npm removed. A version npm has
+malicious versions, for one), nor any of the malicious packages' records OSV
+holds: the viewer's assessments, and a scan's lockfiles, add OSV's
+(upstream's `osv`, risk's `npmVersionAdvisories`), a public package's alone,
+a private one's name never sent to OSV, as it never is to Socket
+(bundle-advisories.ts: a scoped package is asked of OSV only where npm
+answers it anonymously, `isPublicNpmPackage`). A version npm has
 no document of is asked of risk as one npm removed (`npmRiskRemoved`): its
 package taken down by npm is risk's `malware`, critical, whatever version is
 locked, as is an advisory of malware naming it, npm's or, where anyone can
@@ -1113,7 +1116,10 @@ again after the diff; a public link answers for two of its own bundles.
 
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
-Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
+and OSV for the packages anyone may read (upstream's `osv`), for the malicious
+packages' records the registry hasn't: a scoped package where npm answers it
+anonymously (a HEAD, `isPublicNpmPackage`), so that a private one's name never
+leaves for OSV. Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
 repository advisories. Modules without an
 ecosystem retain the legacy npm lookup when installed under `node_modules`;
 the root module is excluded. As in `stasis audit`, a dependency must have a recorded
@@ -1751,7 +1757,9 @@ and none are asked without. Only a public repository's are answered, kept an
 hour for that repository and commit. `GET /api/npm/advisories?name=` returns `{ name, versions,
 advisories, repository, keptAt? }`, asked as bundle advisories with repository
 advisories are: what `npm audit` asks npm's registry, for every published
-version at once (`source: 'registry'`), and what the package's GitHub
+version at once (`source: 'registry'`), what OSV has besides for a package
+anyone may read (`source: 'osv'`, the malicious packages' records among
+them), and what the package's GitHub
 repository publishes that npm does not report yet (`source: 'repository'`):
 the repository its latest version names, asked for only where GitHub says it
 is public, asked afresh rather than from its figures' kept answer, since the list is kept for every reader and
