@@ -456,18 +456,26 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
   return true
 }
 
+type RiskFixtureLine = { type: string; id?: number; repo?: number; name?: string; packages?: ({ name: string } & Record<string, unknown>)[] } & Record<string, unknown>
+
 // A scan of the connected repositories' npm lockfiles (repository-risk.ts),
-// its lines a little apart as the server's come, and stopped with its reader.
+// or a team's (`team`) or one's (`repo`), its lines a little apart as the
+// server's come, and stopped with its reader.
 function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolean {
   if (url.pathname !== '/api/admin/repositories/risk' || method !== 'GET') return false
   const selected = repositories.filter(repo => repo.selected)
+  const repoId = url.searchParams.get('repo'), teamId = url.searchParams.get('team')
+  if (repoId !== null && teamId !== null) { sendJson(res, 400, { error: 'bad-scope' }); return true }
+  const team = teamId === null ? null : adminTeams().find(item => item.id === teamId) ?? null
+  const scanned = new Set(selected.filter(repo => repoId === null ? !team || team.repos.some(link => link.repoId === repo.id) : String(repo.id) === repoId).map(repo => repo.id))
+  if ((teamId !== null && !team) || (repoId !== null && scanned.size === 0)) { sendJson(res, 404, { error: 'no-repository' }); return true }
   const [first, second, ...rest] = selected
   const commit = 'f'.repeat(40)
   const chalk = { name: 'chalk', version: '5.3.0', integrity: 'sha512-fixture' }
   const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
     severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
-  const lines = [
-    { type: 'repos', repos: selected.map(repo => ({ id: repo.id, fullName: repo.fullName })) },
+  const lines: RiskFixtureLine[] = [
+    { type: 'repos', repos: selected.filter(repo => scanned.has(repo.id)).map(repo => ({ id: repo.id, fullName: repo.fullName })) },
     { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
     { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
       { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
@@ -476,19 +484,22 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
     { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
-    risk('lodash', '4.17.21', []),
     { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [
       { name: 'lodash', version: '4.17.21', source: 'registry' }, { ...chalk, source: 'mirror', from: 'https://npm.example.com/api/npm/remote/chalk/-/chalk-5.3.0.tgz' },
     ] },
+    risk('lodash', '4.17.21', []),
     risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
     ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
     { type: 'risk', ...chalk, error: 'integrity-mismatch' },
     { type: 'done' },
   ]
+  // Those of the repositories scanned, and of the packages their lockfiles lock.
+  const names = new Set(lines.flatMap(line => line.type === 'lockfile' && scanned.has(line.repo!) ? (line.packages ?? []).map(pkg => pkg.name) : []))
+  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : line.type === 'lockfile' ? scanned.has(line.repo!) : line.type !== 'risk' || names.has(line.name!))
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
   let at = 0
   const timer = setInterval(() => {
-    if (at < lines.length) res.write(`${JSON.stringify(lines[at++])}\n`)
+    if (at < told.length) res.write(`${JSON.stringify(told[at++])}\n`)
     else { clearInterval(timer); res.end() }
   }, 400)
   res.on('close', () => { clearInterval(timer) })
