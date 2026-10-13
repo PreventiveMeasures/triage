@@ -641,9 +641,11 @@ const _bundleHighlightPending = new Set()
 const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
-// Pretty-print toggle for a source viewer's bar, beside its wrap toggle, on
-// a minified file the server can format (pretty-source.js): busy while its
-// copy is asked for, and saying why where it failed.
+// Pretty-print toggle for a source viewer's bar, on a minified file the
+// server can format (pretty-source.js): busy while its copy is asked for, and
+// saying why where it failed. Last in the bar, after the wrap toggle, as
+// pressing it can hide that toggle and changes the lines, size and findings
+// shown before them, so it stays where it was pressed.
 function renderPrettyToggle(copy) {
   const status = copy?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
@@ -889,13 +891,14 @@ function bundleViewerFindings(details, path, content) {
 }
 
 // Title bar shared by the source-viewer modal and the Search tab's
-// docked sidebar — path + the shared bundle-source-close action.
+// docked sidebar — path + the shared bundle-source-close action. The
+// pretty-print toggle comes after the wrap toggle, as in the Code tab's bar.
 function renderBundleSourceBar(path, history = null, prettyToggle = nothing) {
   return html`<header class="bundle-source-bar">
       <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
-      ${prettyToggle}
       ${renderSourceWrapToggle()}
+      ${prettyToggle}
       <button
         type="button"
         class="bundle-source-close"
@@ -1597,8 +1600,6 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${toggle}
-      ${renderSourceWrapToggle()}
       ${typeof content === 'string'
         ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
         : nothing}
@@ -1623,6 +1624,8 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}
+      ${renderSourceWrapToggle()}
+      ${toggle}
     </header>
     <div class="bundle-code-main-body">
       ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
