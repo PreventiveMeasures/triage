@@ -244,7 +244,14 @@ reach for `credentials` (a path to `.npmrc`, `.ssh` or `.aws`, or
 `.npmrc`'s `$GITHUB_TOKEN` and `${NPM_TOKEN}` do, not where its absence is
 told, `!process.env.GITHUB_TOKEN` (but for what is read of it,
 `!process.env.GITHUB_TOKEN.trim()`), it is deleted or only set
-(`process.env.NPM_TOKEN = token`), or text names it); read out
+(`process.env.NPM_TOKEN = token`), or text names it; `gh auth token`, as a
+string or a program's arguments apart, `spawnSync('gh', ['auth', 'token'])`;
+the cloud's instance metadata endpoint, `169.254.169.254` or
+`metadata.google.internal`, not Azure's `/metadata/instance`, a machine's
+region; the GitHub Actions runner's process, `Runner.Worker`; another
+process's memory, `/proc/<pid>/mem` by a pid, a glob (`/proc/*/mem`) or a
+substitution (`/proc/${pid}/mem`), not `/proc/self/mem`; or `trufflehog`, in
+any case); read out
 the `whole env`, as
 `JSON.stringify(process.env)` or `Object.entries(process.env)` do, not where
 it is handed to a program, its names listed, or its entries picked among as
@@ -264,12 +271,14 @@ to a shell, `powershell -…`, rundll32, osascript, mshta, `certutil
 LaunchDaemons, systemd's user units, `.claude/settings.json`,
 `.vscode/tasks.json`, a directory and its file named apart as `path.join`
 takes them). A shell script (`.sh`, `.bat`, `.ps1` …, or a shell's hashbang)
-is read whole for the last two. Each label is marked as an install script
+is read whole for the last two, and for the `credentials` a command reaches
+for (`gh auth token`, `Runner.Worker`, `/proc/<pid>/mem`, `trufflehog`).
+Each label is marked as an install script
 is, `whole env`, `publish` and `persistence` in red, worse; its tooltip a
 list, as Compare's chips' are, of
-what it found (each way a string runs as code, a credential file or a
-token, …) with the lines it is on, and where the version compared with
-didn't hold one (all of an added file's), a line under them naming it new
+what it found (each way a string runs as code, a credential file, a
+token, `gh auth token`, …) with the lines it is on, and where the version
+compared with didn't hold one (all of an added file's), a line under them naming it new
 in this version. A
 quick read, not a parse: its strings, regular expressions and comments set
 aside, its strings read for the paths, names and commands they hold, a

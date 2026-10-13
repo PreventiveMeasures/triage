@@ -17,7 +17,7 @@ import { npmAddedDependency } from './new-dependency.js'
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-const RISK_VERSION = 13
+const RISK_VERSION = 14
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or

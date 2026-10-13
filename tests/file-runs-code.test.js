@@ -104,6 +104,43 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     'in a template\'s text, and in a string in its substitution, on its own line')
 })
 
+test('credentials: gh auth token, the cloud\'s metadata endpoint, the Actions runner\'s process, another process\'s memory, trufflehog', () => {
+  assert.deepEqual(found('a.js', 'execSync(\'gh auth token\')\nconst r = spawnSync(\'gh\', [\'auth\', \'token\'], { encoding: \'utf8\' })\n'
+    + 'execFileSync(\'/usr/local/bin/gh\', [\'auth\', \'token\', \'--hostname\', host])\nconst t = execSync(`gh auth token`).toString()\nexec(\'GH_TOKEN=$(gh.exe auth token) x\')\n'),
+  { 'gh-token': [1, 2, 3, 4, 5] }, 'gh auth token, its arguments apart too, as s1ngularity ran it')
+  assert.equal(found('a.js', 'execSync(\'gh auth status\')\nspawnSync(\'gh\', [\'auth\', \'login\'])\nconst help = \'gh auth\'\nconst c = gh.auth.token\nconst d = \'sigh auth token\'\n// gh auth token\n'), null,
+    'gh\'s other commands, a property, another name, a comment')
+  assert.deepEqual(found('a.js', 'fetch(\'http://169.254.169.254/latest/meta-data/iam/security-credentials/\')\nconst host = "metadata.google.internal"\n'
+    + 'get(`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`)\nconst url = `http://169.254.169.254${PATH}`\n'
+    + 'fetch(\'http://169.254.169.254/metadata/identity/oauth2/token?resource=x\')\nconst mapped = \'::ffff:169.254.169.254\'\n'), { 'cloud-metadata': [1, 2, 3, 4, 5, 6] },
+  'the cloud\'s instance metadata endpoint, AWS\'s, GCP\'s and Azure\'s')
+  assert.equal(found('a.js', 'const a = \'169.254.169.2540\'\nconst b = \'10.169.254.169.254\'\nconst c = \'169.254.169.25\'\nconst d = \'169.254.169.254.1\'\n'
+    + 'const e = \'metadata.google.internals\'\nconst IMDS = "http://169.254.169.254/metadata/instance/compute"\n// fetch(\'http://169.254.169.254/latest/meta-data/\')\n'), null,
+    'not an address it starts or ends, nor Azure\'s instance metadata, a machine\'s region as msal asks it, nor in a comment')
+  assert.deepEqual(found('a.js', 'if (cmdline.includes(\'Runner.Worker\')) return pid\nexec(\'pgrep -f Runner.Worker\')\nconst exe = \'Runner.Worker.exe\'\n'
+    + 'const ns = \'GitHub.Runner.Worker\'\nopenSync(`/proc/${pid}/mem`, \'r\')\nconst all = \'/proc/*/mem\'\nconst one = "/proc/1234/mem"\nconst py = "mem_path = f\'/proc/{pid}/mem\'"\nformat(\'/proc/%d/mem\', pid)\n'),
+  { 'runner-worker': [1, 2, 3, 4], 'process-memory': [5, 6, 7, 8, 9] }, 'the Actions runner\'s process, and another process\'s memory, as tj-actions/changed-files\'s memdump read it')
+  assert.equal(found('a.js', 'const a = \'app.runner.worker\'\nconst b = \'Runner.Workers\'\nnew Runner.Worker(options)\nconst c = \'MyRunner.Worker\'\n'
+    + 'readFileSync(\'/proc/self/status\')\nreadFileSync(\'/proc/self/mem\')\nreadFileSync(`/proc/${pid}/maps`)\nconst d = \'/proc/1234/memory\'\nconst e = \'/proc/\' + pid + \'/mem\'\n'), null,
+    'not another name, the runner named in code, a process\'s own memory, what else /proc tells of one, nor a path put together')
+  assert.deepEqual(found('a.js', 'spawn(\'trufflehog\', [\'filesystem\', \'/\', \'--json\'])\nconst u = \'https://github.com/trufflesecurity/trufflehog/releases/download/v3.88.0/x.tar.gz\'\nlog(\'Running TruffleHog\')\n'),
+    { trufflehog: [1, 2, 3] }, 'trufflehog, as Shai-Hulud downloaded and ran it, in any case')
+  assert.equal(found('a.js', 'const a = \'trufflehogs\'\nconst b = \'TRUFFLEHOG_VERSION\'\nconst c = \'mytrufflehog\'\nconst trufflehog = 1\n// run trufflehog\n'), null,
+    'not in another name, a name in code or a comment')
+  assert.equal(found('README.md', 'Scan with `trufflehog filesystem .`; `gh auth token`, http://169.254.169.254, Runner.Worker, /proc/*/mem.\n'), null, 'prose is no script')
+  assert.deepEqual([...npmRunsCode('a.js', 'log(\'TruffleHog\')\nconst m = \'/proc/*/mem\'\nconst w = \'Runner.Worker\'\nconst h = \'169.254.169.254\'\nexecSync(\'gh auth token\')\nprocess.env.NPM_TOKEN\nreadFileSync(\'.npmrc\')\n')].map(([kind]) => kind),
+    ['credential-files', 'tokens', 'gh-token', 'cloud-metadata', 'runner-worker', 'process-memory', 'trufflehog'], 'each a kind of its own, in RUNS_CODE\'s order')
+  assert.deepEqual(npmRunsCodeFlags(npmRunsCode('a.js', 'execSync(\'gh auth token\')\nconst w = \'Runner.Worker\'\nconst m = \'/proc/*/mem\'\n')), [{ name: 'credentials', severity: 'high' }],
+    'under the credentials tag')
+  assert.deepEqual(found('setup.sh', '#!/bin/bash\nexport GITHUB_TOKEN=$(gh auth token)\npid=$(pgrep -f Runner.Worker)\nsudo dd if=/proc/$pid/mem bs=1 skip=$start\n'
+    + 'cat /proc/$(pgrep -f Runner.Worker)/mem | strings\nfor f in /proc/[0-9]*/mem; do :; done\n./trufflehog filesystem / --json > found.json\n'),
+  { 'gh-token': [2], 'runner-worker': [3, 5], 'process-memory': [4, 5, 6], trufflehog: [7] }, 'a shell script\'s commands, read whole')
+  assert.deepEqual(found('setup.bat', 'for /f %%t in (\'gh auth token\') do set T=%%t\r\ntrufflehog.exe filesystem C:\\ > found.json\r\n'), { 'gh-token': [1], trufflehog: [2] }, 'a batch file\'s')
+  assert.deepEqual(found('setup.sh', 'curl -s http://169.254.169.254/latest/meta-data/placement/region\necho "$NPM_TOKEN" > ~/.npmrc\n'), { shell: [1] },
+    'not the cloud\'s metadata endpoint, a shell command already, as credential files and tokens are none of a shell script\'s')
+  assert.equal(found('setup.sh', '# gh auth token, trufflehog, Runner.Worker, /proc/*/mem\necho ok # then gh auth token\n'), null, 'nor its comments')
+})
+
 test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry\'s URL', () => {
   assert.deepEqual(found('a.js', 'execSync(\'npm publish --access public\')\nspawn(\'npm\', [\'publish\'])\nconst c = `pnpm publish ${dir}`\n'
     + 'fetch(\'https://registry.npmjs.org/-/whoami\', { headers })\nconst { publish } = require(\'libnpmpublish\')\n'), { publish: [1, 2, 3, 4, 5] })
@@ -380,8 +417,17 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`"${'sh |'.repeat(3e5)}"\n`, null],
     [`"${' '.repeat(1e6)}|sh"\n`, { shell: [1] }],
     [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
+    [`"gh${' '.repeat(1e6)}auth"\n`, null],
+    [`"${'gh '.repeat(3e5)}auth token"\n`, { 'gh-token': [1] }],
+    [`'gh', ${"'auth', ".repeat(1e5)}'token'\n`, null],
+    [`"/proc/${'1'.repeat(1e6)}/mem"\n`, null],
+    [`"${'/proc/1'.repeat(2e5)}/mem"\n`, { 'process-memory': [1] }],
+    [`"${'/proc/$('.repeat(1.5e5)}"\n`, null],
+    [`'${'/proc/${'.repeat(1.5e5)}'\n`, null],
+    [`\`${'/proc/${x}/me'.repeat(1e5)}\`\n`, null],
   ]) assert.deepEqual(found('a.js', text), runs)
-  for (const text of [`curl ${'"x" '.repeat(2e5)}\n`, `curl ${'"curl '.repeat(2e5)}\n`, `curl ${"'".repeat(1e6)}\n`, `curl ${`"${'curl '.repeat(1e3)}" `.repeat(200)}\n`]) {
+  for (const text of [`curl ${'"x" '.repeat(2e5)}\n`, `curl ${'"curl '.repeat(2e5)}\n`, `curl ${"'".repeat(1e6)}\n`, `curl ${`"${'curl '.repeat(1e3)}" `.repeat(200)}\n`,
+    `gh${' '.repeat(1e6)}auth\n`, `${'gh auth '.repeat(2e5)}\n`, `${'/proc/$('.repeat(1.5e5)}\n`, `/proc/${'['.repeat(1e6)}\n`]) {
     assert.equal(found('setup.sh', text), null)
   }
   // A minute, when each hit copied those before it; its first lines alone
