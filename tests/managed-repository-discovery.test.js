@@ -262,6 +262,11 @@ test('GitHub not reached is told with what failed and after how long, and an ans
   const timedOut = () => Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
   await assert.rejects(githubJson('https://api.github.com/repos/org/repo', 'token', timedOut), error => error.message === 'github-unreachable'
     && /^TimeoutError: The operation was aborted due to timeout, after \d+\.\ds$/u.test(error.detail))
+  // An answer cut short is GitHub not reached too; one that isn't JSON is malformed.
+  const cut = () => Promise.resolve(new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('terminated')) } })))
+  await assert.rejects(githubJson('https://api.github.com/repos/org/repo', 'token', cut), error => error.message === 'github-unreachable'
+    && /^TypeError: terminated, after \d+\.\ds$/u.test(error.detail))
+  await assert.rejects(githubJson('https://api.github.com/repos/org/repo', 'token', () => Promise.resolve(new Response('{'))), error => error.message === 'github-malformed' && error.detail === null)
   fetch.mock.mockImplementation(() => Promise.resolve(Response.json({ message: 'GitHub\'s own text' }, { status: 500 })))
   await assert.rejects(listUserRepos('user-token'), error => error.message === 'github-status-500' && error.detail === null)
 })

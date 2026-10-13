@@ -85,7 +85,12 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
   } catch (error) { throw githubUnreachable(error, started) }
   if (res.status === 401) discardInstallationToken(token, fetchImpl)
   if (!res.ok) await throwGithubResponseError(res)
-  try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }
+  // The answer's body is read within the same timeout: one not read whole is
+  // GitHub not reached, as one not answered is; only one that isn't JSON is
+  // malformed.
+  try { return await res.json() } catch (error) {
+    throw error instanceof SyntaxError ? new GithubApiError(502, 'github-malformed') : githubUnreachable(error, started)
+  }
 }
 
 // Validate one repo object into a ConnectedRepo (or null to skip), tagging it
