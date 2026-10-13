@@ -185,16 +185,9 @@ export class NpmReview extends LitElement {
     this._seek = { path, line: line - 1, query }
     this._selectFile(path)
   }
-  _open(file = null) {
-    if (this._blocked) return
-    this._resetEditor(file)
-    if (file === null) this._panel = 'notes'
-    else { this._path = file; this._panel = null }
-  }
-  _openPanel(panel) { if (panel === 'notes') this._open(); else this._panel = panel }
+  _openPanel(panel) { this._panel = panel }
   _closePanel() {
     if (this._blocked) return
-    if (this._panel === 'notes') { this._resetEditor(this._path) }
     this.querySelector('dialog')?.close(); this._panel = null
   }
   _showPublished(review) {
@@ -309,7 +302,7 @@ export class NpmReview extends LitElement {
       return review
     }
     return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: editor.revision,
-      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null || this._nonTextFiles.includes(file) ? null : editor.status || null })
+      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: this._nonTextFiles.includes(file) ? null : editor.status || null })
   }
   async _saveAll() {
     const key = this._key

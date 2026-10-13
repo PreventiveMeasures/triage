@@ -7,7 +7,7 @@ export interface ReviewContext {
   ecosystem: 'npm'; package: string; version: string; integrity: string
   basePackage: string | null; baseVersion: string | null; baseIntegrity: string | null
 }
-export interface ReviewInput { file: string | null; comment: string; status: ReviewVerdict | null }
+export interface ReviewInput { file: string; comment: string; status: ReviewVerdict | null }
 export interface ReviewEntry extends ReviewInput { id: string; time: number }
 export interface ReviewTeam { id: string; name: string }
 export interface DependencyReview extends ReviewContext, ReviewSummary {
@@ -53,7 +53,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS managed_dependency_review_unpublished_idx
 CREATE INDEX IF NOT EXISTS managed_dependency_review_author_idx ON managed_dependency_review(user_id, time, id);
 CREATE TABLE IF NOT EXISTS managed_dependency_file_review (
   id TEXT PRIMARY KEY, review_id TEXT NOT NULL REFERENCES managed_dependency_review(id) ON DELETE CASCADE,
-  file TEXT, comment TEXT NOT NULL,
+  file TEXT NOT NULL, comment TEXT NOT NULL,
   status TEXT CHECK (status IN ('accept', 'accept-with-nits', 'request-changes', 'reject')), time INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS managed_dependency_file_review_idx ON managed_dependency_file_review(review_id);
@@ -73,7 +73,7 @@ const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') 
 // Fold legacy multi-note files into one text field without changing a frozen
 // snapshot's stored rows. Continuing or saving uses one row per file.
 function fileEntries(entries: ReviewEntry[]): ReviewEntry[] {
-  const files = new Map<string | null, ReviewEntry>(), verdicts = Object.keys(REVIEW_VERDICTS)
+  const files = new Map<string, ReviewEntry>(), verdicts = Object.keys(REVIEW_VERDICTS)
   for (const entry of entries) {
     const current = files.get(entry.file)
     if (!current) { files.set(entry.file, { ...entry }); continue }
@@ -125,7 +125,7 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
   const entries = await db.prepare('SELECT file, status FROM managed_dependency_file_review WHERE review_id = ?').all(current.id) as ReviewInput[]
   if (current.publishedAt === null) {
     if (!summarizeReview(entries, change.files, change.nonTextFiles).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
-    if (!change.final || !allowedReviewVerdicts(entries.filter(entry => !change.nonTextFiles.includes(entry.file!))).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
+    if (!change.final || !allowedReviewVerdicts(entries.filter(entry => !change.nonTextFiles.includes(entry.file))).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
     if (needsPackageJsonReview(entries, change.files, change.nonTextFiles)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
     await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, revision = revision + 1 WHERE id = ?`)
       .run(now, JSON.stringify({ paths: [...new Set(change.files)].toSorted(), nonTextFiles: [...new Set(change.nonTextFiles)].toSorted() }), change.final.status, change.final.comment, current.id)
@@ -147,7 +147,7 @@ async function listOwn(db: ManagedSql, user: string, before: { time: number; id:
 
 async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, requestedId: string | null, now: number) {
   const existing = await db.prepare(`SELECT id FROM managed_dependency_file_review
-    WHERE review_id = ? AND COALESCE(file, '') = ? ORDER BY time, id`).all(reviewId, entry.file ?? '') as { id: string }[]
+    WHERE review_id = ? AND file = ? ORDER BY time, id`).all(reviewId, entry.file) as { id: string }[]
   if (requestedId && !existing.some(row => row.id === requestedId)) return conflict()
   if (existing.length > 0) {
     const entryId = existing[0]!.id
@@ -155,7 +155,7 @@ async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, re
       .run(entry.comment, entry.status, now, entryId)
     if (existing.length > 1) {
       await db.prepare(`DELETE FROM managed_dependency_file_review
-        WHERE review_id = ? AND COALESCE(file, '') = ? AND id <> ?`).run(reviewId, entry.file ?? '', entryId)
+        WHERE review_id = ? AND file = ? AND id <> ?`).run(reviewId, entry.file, entryId)
     }
   } else {
     await db.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, comment, status, time) VALUES (?, ?, ?, ?, ?, ?)')
