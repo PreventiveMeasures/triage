@@ -21,8 +21,8 @@ importers:
         specifier: ^1.0.2
         version: 1.0.2
       '@preventive/lockfile':
-        specifier: 1.0.0-alpha.7
-        version: 1.0.0-alpha.7
+        specifier: 1.0.0
+        version: 1.0.0
       '@preventive/publishers':
         specifier: ^1.1.0
         version: 1.1.0
@@ -58,8 +58,8 @@ importers:
         specifier: ^2.4.0
         version: 2.4.0
       '@preventive/terminal':
-        specifier: 2.0.0-beta.2
-        version: 2.0.0-beta.2
+        specifier: 2.0.0-beta.3
+        version: 2.0.0-beta.3
       '@rray/frontend':
         specifier: ^1.0.0
         version: 1.0.0
@@ -916,6 +916,10 @@ packages:
     resolution: {integrity: sha512-nZuUrASfcH9YdfTRsrZgI1i5vPYu6x609jLC6ilvtl9qeT1TCdw+emnNAGNKlXh2c4WPd9GyuLkuBjzo5yAr6w==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.2.tgz}
     engines: {node: '>=24.14.0'}
 
+  '@preventive/lockfile@1.0.0':
+    resolution: {integrity: sha512-ckZyUGawSyrVLWbNwmdlBZdNh8DGNJuaNpNJLxZ/AvPq4Y1Jhvc5El9h4cdBn+iL73tHB8Tq3w3pgd18J7nkpA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0.tgz}
+    engines: {node: '>=24.14.0'}
+
   '@preventive/lockfile@1.0.0-alpha.7':
     resolution: {integrity: sha512-Dfr/iHIUfsMQqbC9sJ10LaHdKL+Buf7D1ZAqZXcFpgU2N13uDsgA77qmjlmD7o7IWTi9suOC6LclAZyFNLPzRA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.7.tgz}
     engines: {node: '>=24.14.0'}
@@ -937,8 +941,8 @@ packages:
       oxc-parser:
         optional: true
 
-  '@preventive/terminal@2.0.0-beta.2':
-    resolution: {integrity: sha512-8PkPux4GaGS602z5qwJ/G+XidG+pZohz6ZDAYOQi+xzRwEGQx2ODYtLnknDgcKzIyuaTYYvoTLKdoAGdtRyT5A==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.2.tgz}
+  '@preventive/terminal@2.0.0-beta.3':
+    resolution: {integrity: sha512-HAtOwHcuqowlLTN9F4PTRm91tQJ4DRgPLk57mcSMY7yqCHY+mzYyMk2ne/xTEZTiIff+GZ79Z6O/bbpqbmdbIQ==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.3.tgz}
 
   '@preventive/upstream@1.0.0-alpha.12':
     resolution: {integrity: sha512-0g2f5PzIxI7czs67G9hM2uvJ7M7uzhVWuHprtxHzr1RmTCR910px1InZPVutH/IaQ0MKNY9znBmxS4BrUFoq8A==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.12.tgz}
@@ -2194,6 +2198,12 @@ snapshots:
 
   '@preventive/diff@1.0.2': {}
 
+  '@preventive/lockfile@1.0.0':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+    transitivePeerDependencies:
+      - '@noble/hashes'
+
   '@preventive/lockfile@1.0.0-alpha.7':
     dependencies:
       '@exodus/bytes': 1.16.0
@@ -2208,7 +2218,7 @@ snapshots:
     optionalDependencies:
       oxc-parser: 0.152.0
 
-  '@preventive/terminal@2.0.0-beta.2':
+  '@preventive/terminal@2.0.0-beta.3':
     dependencies:
       '@exodus/bytes': 1.16.0
       '@preventive/archive': 1.0.0-beta.4
