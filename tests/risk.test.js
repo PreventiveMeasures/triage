@@ -9,6 +9,7 @@ import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
+import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
@@ -112,6 +113,30 @@ test('a package few download is flagged as unpopular, but where its popularity i
   asked.length = 0
   assert.ok(!ids(await assessNpm('own', '1.0.0', { now: NOW, popularity: false })).includes('popularity'))
   assert.ok(!asked.some(url => url.startsWith('https://api.npmjs.org/downloads/')), 'nor its downloads asked')
+})
+
+test('a host where packages keep their code and docs, named anew, calls for no look; a host under it, or a repository it serves files from, does', () => {
+  const side = files => ({ kind: 'sourcemap', npm: { manifest: {} }, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = side({ 'index.js': 'module.exports = 1\n' })
+  const other = side({ 'index.js': 'module.exports = 1\n', 'lib/links.js': 'warn("https://github.com/lit/lit/issues")\nwarn("https://lit.dev/msg/dev-mode")\nget("https://api.github.com/repos")\n'
+    + 'get("https://github.com/someone/payloads/raw/main/x.js")\nget("https://github.com/someone/tool/releases/download/v1/tool.tgz")\n'
+    + 'get("https://github.com/someone/latest/releases/latest/download/x.js")\nexec("git clone https://github.com/someone/cloned.git")\n'
+    + 'get("https://github.com/someone/blobbed/blob/main/x.js?raw=true")\nget("https://github.com/someone/unheard/route/x")\n'
+    + 'get("https://github.com:443/someone/ported/raw/main/x.js")\nget("https://github.com./someone/dotted/raw/x.js")\nget("https://github.com/x/../someone/climbed/raw/x.js")\n'
+    + 'see("https://github.com/lit/lit/issues/1434")\nsee("https://github.com/google/safe-html-types/blob/master/doc/safehtml-types.md")\n'
+    + 'see("See https://github.com/webcomponents/polyfills/tree/master/packages/shadycss#usage.")\nsee("https://github.com/ExodusOSS/bytes/blob/main/README.md")\n'
+    + 'get("https://github.com/someone/patched/pull/1.patch")\nget("https://github.com/someone/diffed/commit/abc123.diff")\nsee("https://github.com/lit/lit/blob/main/fix.patch")\n'
+    + 'get("https://github.com/someone/encoded/blob/main/x.js?raw=%31")\nget("https://github.com/someone/escaped/pull/1%2Epatch")\n'
+    + 'const flagged = /https:\\/\\/github\\.com\\/someone\\/flagged\\/pull\\/1\\.patch/i\n'
+    + 'get("https://github.com/someone/built/actions/runs/1/artifacts/2")\nget("https://github.com/SomeOne/Patched/pull/2.patch")\n'
+    + 'exec("git clone https://github.com/someone/suffixless")\nget("https://en.wikipedia.org/w/index.php?title=User:someone/x.js&action=raw")\n'
+    + 'see("https://github.com/lit/lit/blob/main/README.md#use")\nsee("https://github.com/lit/lit/releases/tag/v2.0.0")\nsee("https://github.com/sponsors/someone")\n' })
+  const hosts = npmCompareFindings(base, other, { added: [], changed: [] }).find(({ id }) => id === 'new-hosts')?.hosts.map(({ host }) => host)
+  assert.deepEqual(hosts, ['api.github.com', 'github.com/someone/payloads', 'github.com/someone/tool', 'github.com/someone/latest', 'github.com/someone/cloned',
+    'github.com/someone/blobbed', 'github.com/someone/unheard', 'github.com/someone/ported', 'github.com/someone/dotted', 'github.com/someone/climbed',
+    'github.com/someone/patched', 'github.com/someone/diffed', 'github.com/someone/encoded', 'github.com/someone/escaped', 'github.com/someone/flagged', 'github.com/someone/built', 'github.com/someone/suffixless',
+    'en.wikipedia.org'],
+    'github.com\'s pages and lit.dev allowed; api.github.com, a host under one, named, and every repository github.com serves what it holds from, by any path but a page')
 })
 
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {

@@ -58,17 +58,29 @@ function npmFileFindings(base, other, files) {
   ].filter(finding => finding.files.length > 0)
 }
 
+// Hosts whose naming anew calls for no look: where packages keep their code
+// and docs, as their links and error messages name them, the most a version
+// names anew of popular packages a year apart (lit.dev, Lit's), and none
+// whose content anyone may publish (a wiki's raw pages) but github.com's
+// pages, as hosts.js githubNamed names them: a repository's own URL, its
+// files and releases are named by it. Each as it is written, not a host
+// under it, so one an attack sends to or fetches from there
+// (`api.github.com`, `raw.githubusercontent.com`) is still named; and no link
+// shortener (`git.io`, `git.new`), which can lead anywhere.
+const ALLOWED_HOSTS = new Set(['github.com', 'lit.dev', 'developer.mozilla.org', 'json-schema.org', 'nodejs.org', 'babeljs.io', 'tseslint.com',
+  'devblogs.microsoft.com', 'semver.org'])
+
 // The hosts the open version's code names in its URLs that the one compared
-// with's named in none of its, each `{ host, path, line, places }`: the file
-// it is first named in and its line, and `places` every file that names it,
-// `{ path, line }` each, the line it is first named on there. A file
-// unchanged names what it named, so the files the open version adds or
-// changes hold all it names anew.
+// with's named in none of its, ALLOWED_HOSTS aside, each `{ host, path, line,
+// places }`: the file it is first named in and its line, and `places` every
+// file that names it, `{ path, line }` each, the line it is first named on
+// there. A file unchanged names what it named, so the files the open version
+// adds or changes hold all it names anew.
 function npmNewHosts(base, other, files) {
   const found = new Map(), known = npmVersionHosts(base)
   for (const { path } of [...files.onlyOther, ...files.changed]) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {
-      if (known.has(host)) continue
+      if (known.has(host) || ALLOWED_HOSTS.has(host)) continue
       const place = { path, line }
       if (found.has(host)) found.get(host).places.push(place)
       else found.set(host, { host, ...place, places: [place] })

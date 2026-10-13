@@ -58,7 +58,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - `non-registry-deps`, `unused-deps`
   - `runs-code`, `large-code`, `now-unreadable`, `obfuscated`, `kept-runs-code`
   - `exfiltration`, `remote`, `ip-lookup`: the services a file names anew under each of the hosts' tags, a level higher than the tag's own (`files/hosts.js`), so red, red and orange
-  - `new-hosts`
+  - `new-hosts`, but for nine where packages keep their code and docs (`npm/compare.js` `ALLOWED_HOSTS`: `github.com`, `lit.dev`, MDN, …), each as written: `api.github.com` is still named, as is a repository `github.com` serves files or releases from (`github.com/owner/repo`)
   - `too-new`
   - `popularity`
 

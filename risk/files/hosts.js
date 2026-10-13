@@ -37,6 +37,49 @@ const LOCAL = /^(?:localhost|.+\.(?:localhost|local|test|invalid|example|interna
 // (`"https:\/\/api.example.com"`, as JSON can be written), read unescaped.
 const ESCAPED = /\\([/.])/gu
 
+// The pages github.com shows of a repository that a person reads, past its
+// owner and name, as links and error messages name them: not its Actions,
+// whose runs' artifacts and logs are downloads of what its workflows made.
+const GITHUB_PAGES = new Set(['issues', 'pull', 'pulls', 'blob', 'tree', 'wiki', 'discussions', 'commit', 'commits', 'compare', 'blame',
+  'security', 'projects', 'labels', 'milestone', 'milestones', 'releases', 'tags', 'graphs', 'network', 'stargazers'])
+// The paths past github.com that name no repository but a page of GitHub's
+// own (`github.com/sponsors/someone`, `github.com/orgs/someone/people`).
+const GITHUB_OWN = new Set(['sponsors', 'orgs', 'apps', 'marketplace', 'features', 'topics', 'collections', 'settings', 'login', 'search', 'explore', 'about'])
+// How a github.com URL (`url`, as written from its scheme on, the punctuation
+// a sentence ends it with aside) is named among a file's hosts, read as fetch
+// reads it (WHATWG URL: a port, a trailing dot, backslashes as slashes, `..`
+// resolved): `github.com` for its home or a person's, a page of GitHub's own
+// (GITHUB_OWN), a page of a repository a person reads (GITHUB_PAGES), a
+// release's page (`releases/tag/v1`, `releases/latest`) but not its assets'
+// (`releases/latest/download/…`), a file's page but not the file raw
+// (`blob/…?raw=true`, any `raw` asked), and a page but not its content in another format, as
+// GitHub serves one by a suffix to its path past a file's (`pull/1.patch`,
+// `commit/….diff`, `commits/main.atom`). Any other (a repository's own URL,
+// which git clones, `raw/…`, `archive/…`, `tarball`, `repo.git`, a path GitHub
+// may add, one read otherwise) leads to whatever a repository holds: named by
+// it (`github.com/owner/repo`, in lower case, as GitHub's names are any), so
+// that it is never taken for one of github.com's links to code and docs
+// (compare.js ALLOWED_HOSTS).
+const FILE_PATHS = new Set(['blob', 'tree', 'blame', 'wiki'])
+const FORMAT = /\.(?:patch|diff|atom)$/iu
+const GIT = /\.git$/iu
+const decoded = part => { try { return decodeURIComponent(part) } catch { return part } }
+function githubNamed(url) {
+  let parsed = null
+  try { parsed = new URL(url.replace(/^(\w+)\?:/u, '$1:').replace(/[)\]}>.,;:!]+$/u, '')) } catch {}
+  if (!parsed) return 'github.com/'
+  // Its path and query decoded, as GitHub routes them (`pull/1%2Epatch`,
+  // `?raw=%31`).
+  const segments = parsed.pathname.split('/').slice(1).map(decoded)
+  if (segments.length > 1 && segments.at(-1) === '') segments.pop()
+  const [owner, repo = '', section, ...rest] = segments
+  const repositoryPage = owner !== '' && repo !== '' && !GIT.test(repo) && GITHUB_PAGES.has(section)
+    && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && parsed.searchParams.has('raw'))
+    && !(!FILE_PATHS.has(section) && FORMAT.test(segments.at(-1)))
+  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || GITHUB_OWN.has(owner) || repositoryPage)
+  return page ? 'github.com' : `github.com/${owner}/${repo.replace(GIT, '')}`.toLowerCase()
+}
+
 // The hosts a script's strings name, each with the line it is first named on,
 // in the order named, NPM_MAX_HOSTS at most; null for none, or for a file
 // that is no script.
@@ -46,12 +89,15 @@ export function npmHosts(path, text) {
   for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
     if (hosts.size >= NPM_MAX_HOSTS) break
     // Read unescaped, its offsets as near: on the same line but in a template
-    // across lines.
-    const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
+    // across lines; a regular expression without its closing slash and flags,
+    // as a string's quote ends its URL (`/https:\/\/github.com\/a\/b\/pull\/1.patch/i`).
+    const body = token?.startsWith('/') ? token.replace(/\/[a-z]*$/u, '') : token
+    const string = body?.includes('\\') ? body.replaceAll(ESCAPED, '$1') : body
     if (!string?.includes('://')) continue
     for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
-      if (!hosts.has(host) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(host, line(index + at))
+      const named = host === 'github.com' ? githubNamed(/^[^\s'"\u0060]*/u.exec(string.slice(at))[0]) : host
+      if (!hosts.has(named) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(named, line(index + at))
       if (hosts.size >= NPM_MAX_HOSTS) break
     }
   }
