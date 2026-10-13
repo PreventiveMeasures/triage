@@ -7,7 +7,7 @@ import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { highestSeverity, isMalware, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
@@ -108,13 +108,14 @@ test('a package’s risk is its most severe finding', () => {
 // lockfilesError }` where its lockfiles can't be listed and `revoked: true`
 // where access to it is gone once they are read, and `paths` where a team's
 // directories in it are; `assess` answering a version's document, npm's
-// integrity of each package its own name's sri; and npm's `advisories` by
-// package name, each row's `versions` those it covers, or none where
-// `advisoriesFail`. Each lockfile's blob is its repository's id and its
+// integrity of each package its own name's sri, but those npm has no
+// document of (`gone`, by name and version, each risk's assessment of one
+// npm removed, or null for none); and npm's `advisories` by package name,
+// each row's `versions` those it covers, or none where `advisoriesFail`. Each lockfile's blob is its repository's id and its
 // path. The packages a team lists the scope of are `scoped`; what was asked
 // of GitHub and npm is noted, each advisories request's packages in
 // `audited`.
-function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false } = {}) {
+function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false, gone = {} } = {}) {
   const audited = [], listed = [], opened = [], read = [], scoped = new Set(), versions = []
   return {
     opened, listed, read, versions, scoped, audited,
@@ -136,9 +137,14 @@ function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false } = {
     teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
       versions.push(`${name}@${version}`)
+      if (`${name}@${version}` in gone) return Promise.reject(new NpmPackageError(404, 'package-not-found'))
       return Promise.resolve({ name, version, dist: { integrity: sri(name) } })
     },
     assess,
+    removed(name, version) {
+      const told = gone[`${name}@${version}`]
+      return told ? Promise.resolve(told) : Promise.reject(new NpmRiskError('version-not-found', `npm has no ${name}@${version}`))
+    },
     advisories(packages) {
       audited.push(packages)
       if (advisoriesFail) return Promise.reject(new NpmPackageError(502, 'upstream-unavailable'))
@@ -309,12 +315,13 @@ test('a scan again reads what one before it kept: lockfiles by commit and blob, 
   assert.deepEqual(source.versions, ['left-pad@1.3.0'])
 })
 
-test('an advisory is of malware where GitHub files it as embedded malicious code, or its title says so', () => {
-  assert.equal(isMalware({ cwe: ['CWE-506'], title: 'Critical severity vulnerability that affects event-stream and flatmap-stream' }), true)
-  assert.equal(isMalware({ cwe: ['CWE-94', 'CWE-506'], title: 'Embedded Malicious Code in node-ipc' }), true)
-  assert.equal(isMalware({ cwe: [], title: 'Malware in chalk' }), true)
-  assert.equal(isMalware({ cwe: ['CWE-601'], title: 'Open redirect to a malicious URL' }), false, 'not every malicious thing is malware')
-  assert.equal(isMalware({ cwe: ['CWE-1321'], title: 'Prototype Pollution in lodash' }), false)
+test('a version npm has no document of is told as risk tells one it removed: malware where its package was taken down, else not on npm', async () => {
+  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] }
+  const source = sourceOf(onePnpmRepo, assert.fail, { gone: { 'left-pad@1.3.0': takenDown, 'is-number@7.0.0': null } })
+  assert.deepEqual(risksOf(await Array.fromAsync(scan(source))), [
+    { type: 'risk', name: 'is-number', version: '7.0.0', error: 'package-not-found' },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: '2018-04-09T01:10:45.796Z', severity: 'critical', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+  ])
 })
 
 test('a lockfile’s packages of npm’s registry or a mirror are asked of npm’s advisories at once, malware’s flagged', async () => {

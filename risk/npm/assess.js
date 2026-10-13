@@ -7,7 +7,8 @@ import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
 import { npmDownloadMonths, npmSettledDownloads, npmTierLevel } from './downloads.js'
-import { NpmRiskError, npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionFiles } from './registry.js'
+import { NpmRiskError, npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
+import { npmMalwareFinding } from './malware.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
 
@@ -140,11 +141,14 @@ async function addedDependencies(added, published, context, owned) {
 }
 
 // What calls for a look at `version` of package `name`, as JSON holds it:
-// against `oldVersion` where given, true for the one of its versions most
-// likely free of what an attack injects, as risk picks it by npm's document
-// (old-version.js npmOldVersion; none where none is below it), the one it
-// picked said as `oldVersion` (compare.js npmCompareFindings's order), else
-// what it holds (held.js npmHeldFindings), a deprecation first, and last
+// malware first (malware.js npmMalwareFinding: its package taken down by
+// npm, and npm's advisories of malware naming it where `advisories`, true
+// unless given false, has them asked); against `oldVersion` where given,
+// true for the one of its versions most likely free of what an attack
+// injects, as risk picks it by npm's document (old-version.js npmOldVersion;
+// none where none is below it), the one it picked said as `oldVersion`
+// (compare.js npmCompareFindings's order), else what it holds (held.js
+// npmHeldFindings), a deprecation first, and last
 // one younger than `minimumReleaseAge` (two weeks unless given; 0 for none, as
 // a caller's own scopes take), and the package's tier past the top 20,000
 // (`popularity`, held.js npmVersionFindings, unless `popularity` is given
@@ -156,32 +160,41 @@ async function addedDependencies(added, published, context, owned) {
 // take (none unless given). `cache` keeps what is read (registry.js),
 // `packument` asks for a package's whole document and `tarball` for a
 // version's tarball in risk's stead (registry.js), `now` is when it is asked, `signal` gives up on what is
-// still asked of npm. Throws an NpmRiskError (registry.js), its `code` saying
-// why, where npm has no such package or version, answers past risk's bounds,
-// or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, owned = () => false } = {}) {
+// still asked of npm. A version npm removed, as it removes every one it finds
+// malware in, is told of by its malware alone (`removed`), nothing of it left
+// to read. Throws an NpmRiskError (registry.js), its `code` saying why, where
+// npm has no such package or version (nor malware explaining one removed),
+// answers past risk's bounds, or can't be asked.
+export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, advisories = true, owned = () => false } = {}) {
   const context = { cache, packument, tarball, now, signal }
   const facts = await npmPackageFacts(name, version, oldVersion, context)
   const old = facts.oldVersion
+  if (old !== null && !facts.versions.has(old)) throw new NpmRiskError('version-not-found', `npm has no ${name}@${old}`)
+  const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, context) : [] })
+  if (!facts.versions.has(version)) {
+    if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
+    return { name, version, oldVersion: old, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
+  }
   const { published } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context)
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
-  return { name, version, oldVersion: old, published, ...npmAssessmentOf(kept, own, added) }
+  return { name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own, added) }
 }
 
 // An assessment of what of it holds whatever the time (`kept`,
 // npmLastingRisk's) and what is told fresh: the open version's own findings
-// (`own`, held.js npmVersionFindings), its deprecation first and the rest
-// last, its tier as JSON holds it (tierOf), and its dependencies `added`, as
-// addedDependencies tells them. The managed server's (assessNpm), and a
-// test's of versions it holds.
+// (`own`, held.js npmVersionFindings, and its malware), its malware and
+// deprecation first and the rest last, its tier as JSON holds it (tierOf),
+// and its dependencies `added`, as addedDependencies tells them. The managed
+// server's (assessNpm), and a test's of versions it holds.
+const FIRST = new Set(['malware', 'deprecated'])
 export function npmAssessmentOf(kept, own, added = kept.dependencies.added) {
   return {
-    findings: [...own.filter(({ id }) => id === 'deprecated'), ...kept.findings,
-      ...own.filter(({ id }) => id !== 'deprecated').map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
+    findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings,
+      ...own.filter(({ id }) => !FIRST.has(id)).map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
     files: kept.files,
     dependencies: { added, changed: kept.dependencies.changed },
   }

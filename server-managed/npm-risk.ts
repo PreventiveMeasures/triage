@@ -9,8 +9,8 @@
 // - `risk/npm/versions`, what a version's document says, which npm never
 //   changes once published: a public package's in the database's upstream
 //   cache table, shared by every instance; a private one's in memory.
-// - `risk/npm/packages`, `risk/npm/public` and `risk/npm/downloads`, kept an
-//   hour or a day by risk itself: in memory.
+// - `risk/npm/packages`, `risk/npm/public`, `risk/npm/advisories` and
+//   `risk/npm/downloads`, kept an hour or a day by risk itself: in memory.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
 //   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
 //   an assessment kept needs none.
@@ -121,7 +121,8 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // of it is shared only where neither version is private. A `spare` one, no
 // reader waiting on it, is made only within MAX_SPARE_ASSESSMENTS, and tells
 // its dependencies without asking npm of their packages (assessNpm
-// `dependencies`).
+// `dependencies`), nor its advisories, which a scan asks of a lockfile's
+// packages at once (repository-risk.ts).
 export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
   { teamScoped, ownScope = () => Promise.resolve(false), privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean;
     ownScope?: (scope: string) => Promise<boolean>; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
@@ -136,8 +137,23 @@ export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument |
   }
   try {
     return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: !teamScoped,
-      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, owned,
+      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, owned,
       packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
       tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
   } finally { assessing-- }
+}
+
+// A version npm has no document of, as risk tells one npm removed, as it
+// removes every one it finds malware in (assessNpm): its package taken down
+// by npm, as a scan's (`spare`), its advisories asked of a lockfile's
+// packages at once (repository-risk.ts). Its package's document read with
+// npm's token where the reader may have it (`privileged`), and kept as a
+// private package's is; no tarball read, nothing of the version being left.
+// An NpmRiskError where nothing tells of it.
+export function npmRiskRemoved(name: string, version: string,
+  { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
+  return assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false, advisories: false,
+    cache: npmRiskCache(stores, false), signal,
+    packument: (read, { authorized }) => readNpmPackument(read, privileged && authorized, signal),
+    tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
 }

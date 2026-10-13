@@ -16,13 +16,14 @@
 // caller's; packages are assessed meanwhile, as many at a time as npm-risk.ts
 // makes spare assessments. A lockfile's packages of npm's registry or a
 // mirror are asked of npm's advisories all at once, as `npm audit` asks, each
-// advisory told with whether it is of malware (isMalware), which alone is a
-// supply chain's risk; the rest are vulnerabilities, told beside.
+// advisory told with whether it is of malware (risk's npmMalwareAdvisory),
+// which alone is a supply chain's risk; the rest are vulnerabilities, told
+// beside.
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Advisory } from '@preventive/upstream/advisories.js'
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
 import { isExactVersion } from '@preventive/upstream/semver.js'
-import { NpmRiskError, SEVERITIES, type Severity } from '../risk/index.js'
+import { NpmRiskError, SEVERITIES, type Severity, npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import { GithubApiError } from './github-errors.ts'
 import { NpmPackageError, type NpmVersionDocument } from './npm-packages.ts'
@@ -69,7 +70,7 @@ export interface OpenedRepository {
   recheck(): Promise<void>
 }
 
-type Assessment = { published: string | null; findings: { id: string; severity: Severity }[] }
+type Assessment = { published: string | null; findings: { id: string; severity: Severity; takenDown?: unknown }[] }
 
 export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   repos(): Promise<R[]>
@@ -79,14 +80,13 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // npm's document of a version; an NpmPackageError where npm has none.
   version(name: string, version: string, signal: AbortSignal): Promise<NpmVersionDocument>
   assess(doc: NpmVersionDocument, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
+  // A version npm has no document of, as risk tells one npm removed: its
+  // malware alone, its package taken down by npm; an NpmRiskError where
+  // nothing tells of it (npm-risk.ts npmRiskRemoved).
+  removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
   // npm's registry's advisories of these packages' versions, asked at once.
   advisories(packages: { name: string; versions: string[] }[], signal: AbortSignal): Promise<Advisory[]>
 }
-
-// Whether an advisory is of malware rather than a vulnerability: GitHub's
-// malware advisories are CWE-506's, embedded malicious code, whatever their
-// title; and one's title may say it.
-export const isMalware = ({ cwe, title }: { cwe: readonly string[]; title?: string | undefined }) => cwe.includes('CWE-506') || /\bmalware\b/iu.test(title ?? '')
 
 type AdvisoryRow = Advisory & { malware: boolean }
 
@@ -101,7 +101,7 @@ export type RepositoryRiskLine =
   | ({ type: 'repo'; id: number } & ({ commit: string; lockfiles: { path: string; format: LockfileFormat }[] } | RiskFailure))
   | ({ type: 'lockfile'; repo: number; path: string; format: LockfileFormat } & ({ packages: LockedPackage[] } | RiskFailure))
   | ({ type: 'risk'; name: string; version: string; integrity?: string }
-    & ({ published: string | null; severity: Severity | null; findings: { id: string; severity: Severity }[] } | RiskFailure))
+    & ({ published: string | null; severity: Severity | null; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | { type: 'done' }
 
@@ -211,22 +211,41 @@ interface Scan {
 }
 
 // A package's risk line, its version's document kept and the assessment asked
-// again after a wait while the server is busy; null once the scan stops.
+// again after a wait while the server is busy; null once the scan stops. A
+// version npm has no document of is told as risk tells one npm removed
+// (removedOf), its malware keeping whether its package was taken down.
 async function assess({ source, signal }: Scan, pkg: AssessedPackage, teamScoped: boolean): Promise<RiskLine | null> {
   const at = { type: 'risk', ...pkg } as const
-  let doc: NpmVersionDocument | undefined
+  let doc: NpmVersionDocument | NpmPackageError | undefined
   for (let attempt = 0; ; attempt++) {
     try {
-      doc ??= await source.version(pkg.name, pkg.version, signal)
-      if (pkg.integrity !== undefined && !pkg.integrity.split(/\s+/u).includes(doc.dist.integrity)) return { ...at, error: 'integrity-mismatch' }
-      const { published, findings } = await source.assess(doc, teamScoped, signal)
-      const told = findings.map(({ id, severity }) => ({ id, severity }))
+      const read = doc ??= await documentOf(source, pkg, signal)
+      if (!(read instanceof NpmPackageError) && pkg.integrity !== undefined && !pkg.integrity.split(/\s+/u).includes(read.dist.integrity)) return { ...at, error: 'integrity-mismatch' }
+      const { published, findings } = read instanceof NpmPackageError ? await removedOf(source, pkg, teamScoped, signal, read) : await source.assess(read, teamScoped, signal)
+      const told = findings.map(({ id, severity, takenDown }) => ({ id, severity, ...takenDown === true ? { takenDown: true as const } : {} }))
       return { ...at, published, severity: highestSeverity(told), findings: told }
     } catch (error) {
       if (signal.aborted) return null
       if (!isBusy(error) || attempt >= BUSY_RETRIES) return { ...at, ...failureOf(error) }
       try { await delay(BUSY_WAIT_MS * Math.min(attempt + 1, 5), undefined, { signal }) } catch { return null }
     }
+  }
+}
+
+// npm's document of a version, or its answer that it has none (a 404).
+async function documentOf(source: Scan['source'], pkg: AssessedPackage, signal: AbortSignal): Promise<NpmVersionDocument | NpmPackageError> {
+  try { return await source.version(pkg.name, pkg.version, signal) } catch (error) {
+    if (error instanceof NpmPackageError && error.status === 404) return error
+    throw error
+  }
+}
+
+// A version npm has no document of, as risk tells one npm removed, as it
+// removes every one it finds malware in (`removed`): `gone`, npm's answer of
+// none, thrown where nothing tells of it.
+async function removedOf(source: Scan['source'], pkg: AssessedPackage, teamScoped: boolean, signal: AbortSignal, gone: NpmPackageError): Promise<Assessment> {
+  try { return await source.removed(pkg.name, pkg.version, teamScoped, signal) } catch (error) {
+    throw error instanceof NpmRiskError && (error.code === 'version-not-found' || error.code === 'package-not-found') ? gone : error
   }
 }
 
@@ -318,7 +337,7 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
   if (asked.size === 0) return null
   try {
     const rows = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
-      .map(advisory => ({ ...advisory, malware: isMalware(advisory) }))
+      .map(advisory => ({ ...advisory, malware: npmMalwareAdvisory(advisory) }))
     scan.caches.advisories.set(key, { at: Date.now(), rows })
     return { ...at, advisories: rows }
   } catch (error) {

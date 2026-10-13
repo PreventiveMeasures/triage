@@ -16,7 +16,7 @@ import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts
 import { npmRisk, npmRiskCache } from '../server-managed/npm-risk.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
-import { REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
+import { ADVISORIES, REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -187,6 +187,7 @@ test('a team\'s own package isn\'t flagged as few download it, as it isn\'t as j
   const pkg = packageOf('quiet-own', '1.0.0', { 'package.json': '{}' })
   t.mock.method(globalThis, 'fetch', input => {
     const url = String(input)
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
     if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'quiet-own', downloads: [] }))
     return Promise.resolve(Response.json({ name: 'quiet-own', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
@@ -206,6 +207,7 @@ test('a new dependency on a package of a scope a team lists is told no tier nor 
   t.mock.method(globalThis, 'fetch', input => {
     const url = String(input)
     asked.push(url)
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
     for (const pkg of [before, after]) if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
     if (url.endsWith('/stranger')) return Promise.resolve(Response.json({ name: 'stranger', versions: {}, time: { created: '2025-01-01T00:00:00.000Z' } }))
@@ -229,6 +231,7 @@ test('a risk assessment whose reader is gone stops waiting on its tarball, which
   let answer = () => {}
   const arrived = new Promise(resolve => {
     t.mock.method(globalThis, 'fetch', input => {
+      if (String(input) === ADVISORIES) return Promise.resolve(Response.json({}))
       if (String(input) !== pkg.doc.dist.tarball) return Promise.resolve(Response.json({ name: 'slow-risk', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
       resolve()
       return new Promise(resolveFetch => { answer = () => resolveFetch(new Response(pkg.tgz)) })

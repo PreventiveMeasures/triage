@@ -520,8 +520,8 @@ export const npmCompareFiles = {
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
 // (`other`), each side's details: what the server's risk finds of the pair
-// (npm-risk.js npmRisk; risk/npm/compare.js npmCompareFindings: an open
-// version npm says is deprecated, a publisher
+// (npm-risk.js npmRisk; risk/npm/compare.js npmCompareFindings: malware the
+// open version is told of, an open version npm says is deprecated, a publisher
 // that changed, provenance lost, install scripts added or changed,
 // dependencies it takes from elsewhere than npm's registry anew and new ones
 // nothing of it imports, the files it adds or changes that call for one, the
@@ -536,9 +536,10 @@ export function npmCompareBadges(base, other) {
   const sides = [base.npm, other.npm]
   const affecting = advisoriesAffecting(sides)
   const found = new Map((npmRisk(other.npm, base.npm.version)?.findings ?? []).map(finding => [finding.id, finding]))
-  const chips = [deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),
+  const chips = [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),
     installScriptsBadge(sides, found.get('install-scripts')), ...dependencyBadges(sides, found), ...fileBadges(found), hostsBadge(found.get('new-hosts')),
-    recentBadge(found.get('too-new')), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting), popularityBadge(other.npm.name, found.get('popularity'))].filter(chip => chip !== nothing)
+    recentBadge(found.get('too-new')), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting, found.get('malware')), popularityBadge(other.npm.name, found.get('popularity'))]
+    .filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
@@ -546,8 +547,8 @@ export function npmCompareBadges(base, other) {
 // `details`), in the Overview, as Compare's chips say of two
 // (npmCompareBadges), but for those only a change from one to the other
 // tells (a publisher, provenance, files and hosts new): what the server's
-// risk finds of it (npm-risk.js npmRisk; risk/npm/held.js: its deprecation,
-// its install scripts, what any of its
+// risk finds of it (npm-risk.js npmRisk; risk/npm/held.js: malware it is
+// told of, its deprecation, its install scripts, what any of its
 // files runs beyond itself, an exfiltration host one names and an
 // obfuscator's fingerprint in one, and its age under the minimum release
 // age; not its tier by downloads, which its downloads' card over them
@@ -558,8 +559,9 @@ export function npmOverviewBadges(entry) {
   const { npm } = entry
   const affecting = advisoriesAffecting([npm])
   const found = new Map((npmRisk(npm)?.findings ?? []).map(finding => [finding.id, finding]))
-  const chips = [deprecatedBadge(found.get('deprecated')), heldInstallScriptsBadge(npm, found.get('held-install-scripts')), ...npmDependencyChecks(npm).map(chip => html`<li>${chip}</li>`),
-    ...heldFileBadges(found), recentBadge(found.get('too-new')), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting)].filter(chip => chip !== nothing)
+  const chips = [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), heldInstallScriptsBadge(npm, found.get('held-install-scripts')),
+    ...npmDependencyChecks(npm).map(chip => html`<li>${chip}</li>`), ...heldFileBadges(found), recentBadge(found.get('too-new')), advisoriesBadge([npm], affecting),
+    ...socketBadges([npm], affecting, found.get('malware'))].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">${chips}</ul>`
 }
 
@@ -626,6 +628,16 @@ const fromTo = (was, now) => was === now ? `${now ?? '–'}` : `${was ?? '–'} 
 
 // The most severe of `advisories`, undefined for none.
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
+
+// The open version, where the server's risk tells of malware in it
+// (risk/npm/malware.js): its package taken down by npm, whatever version is
+// asked, and the advisories of malware naming it, each a line of its
+// tooltip; first, in solid red, in place of Socket's scores (socketBadges).
+function malwareBadge(finding) {
+  if (!finding) return nothing
+  const said = [...finding.takenDown ? ['Taken down by npm'] : [], ...(finding.advisories ?? []).map(({ id, title }) => title ? `${id}: ${title}` : id)]
+  return html`<li><span class="npm-extension npm-malware" data-tooltip=${said.join('\n')}>Malware</span></li>`
+}
 
 // The open version, where npm says it is deprecated: its message in the
 // tooltip, as the Overview lists it (npmDeprecation).
@@ -863,11 +875,12 @@ function vulnerabilityBeyond(score, ours, bar) {
 // and link the open one's; none for a private package. Vulnerability only
 // where it tells of worse than the advisories found affecting it
 // (vulnerabilityBeyond), once they arrive, as the Advisories badge has the
-// rest.
-function socketBadges(sides, affecting) {
+// rest. None where the open version is told of `malware` (malwareBadge),
+// which says more of it than any score.
+function socketBadges(sides, affecting, malware = null) {
   const to = sides.at(-1)
   const reports = sides.map(npm => npmSocketReport({ npm })?.scores ?? null)
-  if (!reports.at(-1)) return []
+  if (!reports.at(-1) || malware) return []
   return SOCKET_SCORES.flatMap(([key, label, bar, good]) => {
     const scores = reports.map(side => side ? Math.round(side[key] * 100) : null)
     const after = scores.at(-1), before = sides.length > 1 ? scores[0] : after

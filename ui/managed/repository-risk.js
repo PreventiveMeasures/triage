@@ -67,9 +67,17 @@ const assessable = source => source === 'registry' || source === 'mirror'
 // held to npm's integrity where npm deleted the version, as it deletes every
 // one it finds malware in: it is npm's unless found otherwise.
 export const malwareOf = row => row.risk?.error === 'integrity-mismatch' ? null : row.malware ?? null
-// A package row's risk, its malware first, as critical.
+// A package row's risk, its malware first, as critical: the advisories', or
+// risk's own of a package npm took down, once.
 const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
-const findingsOf = row => [...malwareOf(row) ? [{ id: 'malware', severity: 'critical' }] : [], ...row.risk?.findings ?? []]
+export const findingsOf = row => {
+  const found = row.risk?.findings ?? []
+  return malwareOf(row) ? [{ id: 'malware', severity: 'critical' }, ...found.filter(({ id }) => id !== 'malware')] : found
+}
+// What its Malware finding says, a line each: the advisories of malware
+// naming it, and its package taken down by npm, as risk finds it.
+export const malwareSaid = row => [...malwareOf(row) ?? [],
+  ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
@@ -423,7 +431,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._risk(row)}</td>
       <td>${findings.length > 0 ? html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
-        data-tooltip=${finding.id === 'malware' ? [...malwareOf(row)].join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
+        data-tooltip=${finding.id === 'malware' ? malwareSaid(row).join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
       <td>${usedInCell(row.usedIn)}</td>
     </tr>`

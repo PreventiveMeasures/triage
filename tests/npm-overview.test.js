@@ -17,13 +17,14 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
-const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {} }
+const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, malware: {} }
 // Each version Socket was asked about.
 const socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion,
-    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
+    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`],
+      ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
@@ -875,6 +876,26 @@ test('the Overview\'s provenance: what built the version, from which commit, the
   answers.provenance['builderless@1.0.0'] = { ...answers.provenance['built@1.0.0'], builder: null }
   assert.equal(await (async () => { npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm); await new Promise(resolve => { setImmediate(resolve) })
     return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
+})
+
+test('malware told of a version is its first chip, in solid red, Socket\'s scores saying no more of it, in the Overview and Compare', async () => {
+  const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
+  answers.malware['taken@2.0.0'] = { id: 'malware', severity: 'critical', takenDown: true,
+    advisories: [{ id: 'GHSA-c2m4-w5hm-vqjw', url: 'https://github.com/advisories/GHSA-c2m4-w5hm-vqjw', title: 'taken is malware' }] }
+  for (const name of ['taken', 'scored']) for (const version of ['1.0.0', '2.0.0']) answers.socket[`${name}@${version}`] = { scores: scores({ supplyChain: .07, quality: .36 }), alerts: [] }
+  const side = (name, version) => ({ npm: { name, version, manifest: {} } })
+  const settled = async render => { render(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(render()) }
+  const overview = entry => { held(entry); return settled(() => npmOverviewBadges(entry)) }
+  const compare = (...sides) => { sides.forEach(held); return settled(() => npmCompareBadges(...sides)) }
+  const first = /^<ul [^>]*><li><span class="npm-extension npm-malware" data-tooltip=Taken down by npm\nGHSA-c2m4-w5hm-vqjw: taken is malware>Malware<\/span><\/li>/u
+  for (const [where, shown] of [['Overview', await overview(side('taken', '2.0.0'))], ['Compare', await compare(side('taken', '1.0.0'), side('taken', '2.0.0'))]]) {
+    assert.match(shown, first, `${where}: first, each of what tells of it a line`)
+    assert.doesNotMatch(shown, /npm-socket-score/u, `${where}: none of Socket's scores beside it, supply chain, quality or any`)
+  }
+  for (const shown of [await overview(side('scored', '2.0.0')), await compare(side('scored', '1.0.0'), side('scored', '2.0.0'))]) {
+    assert.doesNotMatch(shown, /npm-malware/u)
+    assert.match(shown, />Supply chain<[^]*>Quality</u, 'Socket\'s scores as before, where no malware is told of')
+  }
 })
 
 test('the Overview flags what calls for a look at the version on its own, as Compare\'s chips do, but for what only a change tells', async () => {

@@ -37,8 +37,8 @@ export interface AssessNpmOptions {
   popularity?: boolean
   // Where what is read is kept, by type (risk/npm/registry.js and assess.js
   // name each): `npm/tarballs`, `risk/npm/versions`, `risk/npm/packages`,
-  // `risk/npm/old-versions`, `risk/npm/public`, `risk/npm/downloads` and
-  // `risk/npm/assessments`.
+  // `risk/npm/old-versions`, `risk/npm/public`, `risk/npm/downloads`,
+  // `risk/npm/advisories` and `risk/npm/assessments`.
   cache?: CacheStore | false
   // Asks for a package's whole document in risk's stead, as the managed
   // server does within its bounds: null where npm has none for this asker.
@@ -58,6 +58,10 @@ export interface AssessNpmOptions {
   // Whether its new dependencies' tiers and ages are asked for, a request or
   // two of npm each, where `downloads` is. True unless given.
   dependencies?: boolean
+  // Whether npm's advisories of the version are asked for, an advisory of
+  // malware naming it a `malware` finding, as its package taken down by npm
+  // is. True unless given.
+  advisories?: boolean
   // Whether a package is the caller's own, as its own scopes take: a new
   // dependency on one is told no tier nor age, nor is npm asked of it. None
   // unless given.
@@ -112,11 +116,18 @@ export interface NpmAssessment {
   // The version compared with, as given or as risk picked it; null for none.
   oldVersion: string | null
   published: string | null
+  // A version npm removed, as it removes every one it finds malware in, told
+  // of by its `malware` finding alone, with no files nor dependencies.
+  removed?: true
   findings: Finding[]
   files: Record<string, FileRisk>
   dependencies: { added: DependencyRisk[]; changed: DependencyRisk[] }
 }
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
+
+// Whether an advisory is of malware rather than a vulnerability: CWE-506,
+// embedded malicious code, whatever its title, or a title naming malware.
+export function npmMalwareAdvisory(advisory: { cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown
