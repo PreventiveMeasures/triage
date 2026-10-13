@@ -3684,6 +3684,32 @@ a.npm-socket-score {
   &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
+/* The version's risk score (npm-overview.js scoreBadge), first among its
+   chips: its ring in its level's color, its chip red or orange as the
+   findings it sums are (`is-critical`, `is-warn`), yellow as a fair Socket
+   score is where moderate, and plain where low. */
+.npm-risk-score {
+  align-items: center; gap: .25rem;
+  padding: .05rem .35rem .05rem .25rem;
+  font-weight: 600;
+
+  &.is-critical { --meter: var(--critical); }
+  &.is-warn { --meter: var(--high); }
+  &.is-moderate {
+    --meter: var(--medium);
+    background: color-mix(in srgb, var(--yellow) 14%, var(--bg)); border-color: color-mix(in srgb, var(--yellow) 70%, var(--border));
+
+    & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
+  }
+  &.is-low { --meter: var(--green); }
+}
+/* Each finding in the score's tooltip, its severity in its color. */
+.npm-risk-finding { color: var(--text); }
+.npm-risk-severity {
+  &.sev-critical { color: color-mix(in srgb, var(--critical) 70%, var(--text)); }
+  &.sev-high { color: color-mix(in srgb, var(--high) 70%, var(--text)); }
+  &.sev-moderate { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
+}
 /* A score shown only under its bar, as Compare's and the Overview's badges
    show them (npm-overview.js socketBadges): fair tinted too, in yellow as
    poor is in red, since being there flags it. The row of all five keeps fair
@@ -3750,7 +3776,7 @@ a.npm-compare-publisher {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
 /* Malware the open version is told of (npm-overview.js malwareBadge): solid
-   red, first among the chips, as no other is. */
+   red, first among the chips after the risk score, as no other is. */
 .npm-extension.npm-malware { color: #fff; background: var(--critical); border-color: var(--critical); font-weight: 600; }
 /* The hosts a version's files name (npm-overview.js hostBadges), in their
    level's color: red as the files above (`is-critical`), orange as a

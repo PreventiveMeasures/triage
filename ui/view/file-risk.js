@@ -37,6 +37,7 @@ export const npmRiskOf = answer => ({
   findings: answer.findings.map(findingOf),
   files: new Map(Object.entries(answer.files).map(([path, file]) => [path, fileOf(file)])),
   dependencies: answer.dependencies,
+  score: answer.score ?? null,
 })
 
 // An npm version's files' readings, by path, as its risk tells them (`details`

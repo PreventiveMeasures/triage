@@ -102,6 +102,22 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - the hosts its code calls
 - `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), and against `oldVersion` each it holds, flagged against none (`held`), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
 
+- `score` (`npm/score.js`): the version's risk as one number, out of 100, for a reviewer to tell at a glance which versions to read first. Its findings stay what to read; the score only weighs them:
+  - `malware` is 100, however old the version.
+  - Else each finding raises it by its severity, combined as independent chances are (`1 − Π(1 − weight)`), so each adds less the more there are and none takes it past 100: `critical` 0.5, `high` 0.2, `moderate` 0.08, `low` 0.03, a `notice` none. One red finding alone is 50; two red, or a red one and two orange, 75 or more. `too-new` counts for nothing, as the version's age is told below.
+  - Then its exposure lowers that, by up to 90%: how long the version has been out, from two weeks (none before, as an attack on the most downloaded package is new) to two years on a log scale, times how widely its package is downloaded now, by its tier: fully in the top 200, 95% to the top 1,000, 85% to 5,000, 65% to 20,000, 35% to 100,000, 10% past that, and 25% where its downloads aren't known (a caller's own package, `popularity: false`). A version out for years among millions would have been found and pulled were it an attack: progress@2.0.3, whose publisher a known account gave way to one new to it in 2018 (a red `publisher` finding), scores 7.
+  - `{ score, level, raised, lowered? }`: `level` named as the findings' severities are, `critical` from 75, `high` from 50, `moderate` from 25, else `low`; `raised`, the findings it counts, `{ id, severity }` each; and where its exposure lowered it, `lowered`, `{ days, tier, by }`: the days the version has been out, its package's tier (null past the last or where unknown), and the share taken off.
+
+  On the earlier evaluation's pairs, each as a reviewer would have seen it the hour it came out (no exposure, no deprecation made since, its package's tier then), the score tells the dataset's compromised versions from popular packages' latest releases, each against the version before it:
+
+  | Score | Compromised (1,240 of 1,259; 19 too large to assess) | Popular (989 of 990) |
+  | --- | --- | --- |
+  | 75 or more, critical | 87.4% | 0% |
+  | 50 or more | 98.8% | 0.8% |
+  | 25 or more | 99.4% | 2.2% |
+
+  A compromised version outscores a popular one 99.9% of the time. The 15 it leaves under 50 call for a look by one or two orange findings alone: xrpl's new hosts, eslint-config-prettier's install script, a dependency from elsewhere than npm's registry that nothing imports. Today, the 350 popular releases out over two years score 34 at most, all but one low.
+
 Severities, the most first: `critical` (red), `high` (orange), `moderate` (yellow), `low`, `notice`.
 
 ## Inside
@@ -121,6 +137,7 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `files.js`: each file read once a version.
   - `diff.js`: renames, as Compare pairs them.
   - `malware.js`: what tells of malware, npm's takedown and its advisories.
+  - `score.js`: the risk score, from the findings and the version's exposure.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
 
 Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`), but `held.js` `npmVersionFindings`, which takes what npm says of it now: its deprecation, when it was published, and its package's downloads.

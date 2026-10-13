@@ -1470,7 +1470,11 @@ control. A version shows in the bundle view with four tabs:
   month (the last twelve complete ones), with the switch between the two at its top
   right and under it the hovered period's downloads; and under it the
   version's pages on npmjs.com and, for a public package, Socket, beside the
-  tarball download; under those, what calls for a look at the version on
+  tarball download; under those, its risk score first, out of 100, as risk
+  tells it (`score`, risk/npm/score.js): a ring filled to it, red from 75,
+  orange from 50, yellow from 25, else plain, its tooltip the findings that
+  raised it, each with its severity, and how much the version's time out
+  among its package's downloads lowered that; then what calls for a look at the version on
   its own, as Compare's chips do but for those only a change from one
   version to another tells (a publisher, provenance lost, files and hosts
   new): its deprecation, its install scripts (named, their commands in the
@@ -1594,7 +1598,8 @@ control. A version shows in the bundle view with four tabs:
   most don't move as its versions arrive, then wide enough for any it lists,
   each whole with its tags (up to 24 characters of them).
   At the end of its picker row, once the two are compared, chips flag what
-  calls for a look: an open version npm says is deprecated, its message in
+  calls for a look: first the open version's risk score against the one
+  compared with, as the Overview shows it; an open version npm says is deprecated, its message in
   the tooltip (npm's placeholder, `Package no longer supported. Contact
   Support at https://www.npmjs.com/support for more info.`, to its first
   sentence, as the Overview lists it); a publisher that changed, where npm names the account
@@ -1811,8 +1816,9 @@ look at a version, as risk tells it (risk/README.md, `assessNpm`), against
 `otherVersion` where given, as Compare asks, else against the version of the
 package most likely free of what an attack injects, as risk picks it
 (`oldVersion: true`), as the Overview asks: `{ name, version, oldVersion,
-published, findings, files, dependencies }`, `oldVersion` the one compared
-with, or null for none. What the version holds is told either way, what
+published, findings, files, dependencies, score }`, `oldVersion` the one compared
+with, or null for none, and `score` its risk out of 100, what raised it and what
+lowered it (risk/README.md). What the version holds is told either way, what
 changed folded into it, never lowering it. Risk is told on this server
 alone, and the npm viewer shows it as told, computing none of it: the
 Overview and Compare alike, and each side's files'. The version risk picks

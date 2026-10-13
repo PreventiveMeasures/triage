@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
-import { nothing } from 'lit'
 import { templateText as rendered, templates } from './_lit.js'
 import { holdVersion, riskAnswer } from './_npm-risk.js'
 
@@ -546,7 +545,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(await badges(side('chained', '1.1.0'), side('chained', '1.2.0')), /npm-socket-score is-fair[^]*>Supply chain<[^]*>85 → 84</u)
 
   // A click lists them: what the open one brings, still has, and fixes.
-  const clicked = npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0')).values[0][0].values
+  const clicked = npmCompareBadges(side('flagged', '1.0.0'), side('flagged', '2.0.0')).values[0].find(chip => chip?.values?.some(value => typeof value === 'function')).values
   clicked.find(value => typeof value === 'function')()
   const [dialog] = comparedAdvisories
   assert.equal(dialog.heading, 'Advisories · flagged 1.0.0 → 2.0.0')
@@ -618,7 +617,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   // placeholder to its first sentence.
   const deprecated = message => ({ manifest: { deprecated: message } })
   const gone = await badges(side('gone', '1.0.0'), side('gone', '1.1.0', deprecated('Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.')))
-  assert.match(gone, /^<ul [^>]*><li><span class="npm-extension npm-compare-deprecated" data-tooltip=Package no longer supported\.>Deprecated<\/span><\/li>/u, 'first')
+  assert.match(gone, /^<ul [^>]*><li><span class=npm-extension npm-risk-score [^]*?<\/li><li><span class="npm-extension npm-compare-deprecated" data-tooltip=Package no longer supported\.>Deprecated<\/span><\/li>/u, 'first after the score')
   assert.match(await badges(side('moved', '1.0.0'), side('moved', '1.1.0', deprecated('Use @scope/moved instead'))), /data-tooltip=Use @scope\/moved instead>Deprecated</u)
   assert.doesNotMatch(await badges(side('undeprecated', '1.0.0', deprecated('Broken build')), side('undeprecated', '1.1.0')), /npm-compare-deprecated/u,
     'not for the one compared with alone')
@@ -699,7 +698,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(fromEmpty, />License<[^]*>– → 70</u)
   assert.match(fromEmpty, />top 100,000</u)
   assert.ok(!socketAsked.some(asked => asked.endsWith('@Empty package')), 'an empty review baseline never fetches a Socket report')
-  npmCompareBadges(empty, side('flagged', '2.0.0')).values[0][0].values.find(value => typeof value === 'function')()
+  npmCompareBadges(empty, side('flagged', '2.0.0')).values[0].find(chip => chip?.values?.some(value => typeof value === 'function')).values.find(value => typeof value === 'function')()
   assert.deepEqual(comparedAdvisories.at(-1).groups.map(({ status, rows }) => [status, rows.length]), [['new', 1]])
 })
 
@@ -1016,7 +1015,7 @@ test('the Overview\'s provenance: what built the version, from which commit, the
     return npmProvenanceNamesBuilder(entry('builderless', { provenance: true }).npm) })(), false, 'nor where it names no builder')
 })
 
-test('malware told of a version is its first chip, in solid red, Socket\'s scores saying no more of it, in the Overview and Compare', async () => {
+test('malware told of a version is its first chip after its score, all of it, in solid red, Socket\'s scores saying no more of it, in the Overview and Compare', async () => {
   const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
   answers.malware['taken@2.0.0'] = { id: 'malware', severity: 'critical', takenDown: true,
     advisories: [{ id: 'GHSA-c2m4-w5hm-vqjw', url: 'https://github.com/advisories/GHSA-c2m4-w5hm-vqjw', title: 'taken is malware' }] }
@@ -1025,7 +1024,7 @@ test('malware told of a version is its first chip, in solid red, Socket\'s score
   const settled = async render => { render(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(render()) }
   const overview = entry => { held(entry); return settled(() => npmOverviewBadges(entry)) }
   const compare = (...sides) => { sides.filter(entry => entry.npm).forEach(held); return settled(() => npmCompareBadges(...sides)) }
-  const first = /^<ul [^>]*><li><span class="npm-extension npm-malware" data-tooltip=Taken down by npm\nGHSA-c2m4-w5hm-vqjw: taken is malware>Malware<\/span><\/li>/u
+  const first = /^<ul [^>]*><li><span class=npm-extension npm-risk-score is-critical data-tooltip=Risk 100 of 100\nMalware, critical [^]*?<span>Risk<\/span><span class="npm-extension-count">100<\/span><\/span><\/li><li><span class="npm-extension npm-malware" data-tooltip=Taken down by npm\nGHSA-c2m4-w5hm-vqjw: taken is malware>Malware<\/span><\/li>/u
   for (const [where, shown] of [['Overview', await overview(side('taken', '2.0.0'))], ['Compare', await compare(side('taken', '1.0.0'), side('taken', '2.0.0'))]]) {
     assert.match(shown, first, `${where}: first, each of what tells of it a line`)
     assert.doesNotMatch(shown, /npm-socket-score/u, `${where}: none of Socket's scores beside it, supply chain, quality or any`)
@@ -1055,7 +1054,7 @@ test('the Overview flags what the version holds with Compare\'s chips, none only
   npmOverviewBadges(entry); await new Promise(resolve => { setImmediate(resolve) })
   const shown = rendered(npmOverviewBadges(entry))
   const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
-  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry deps', 'Unused deps', 'eval, child_process', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
+  assert.deepEqual(chips, ['Risk', 'Deprecated', 'Install script', 'Non-registry deps', 'Unused deps', 'eval, child_process', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
     'in Compare\'s order, what it runs by its kinds alone; not its tier, unpopular as it is, which its downloads\' card shows')
   assert.match(shown, />\s*<span class="sr-only">Runs code<\/span><span class="npm-extension-count">eval, child_process<\/span><\/span><\/li>/u,
     'its name read out, and heading its tooltip')
@@ -1082,7 +1081,33 @@ test('the Overview flags what the version holds with Compare\'s chips, none only
   const plain = { ...details, integrity: 'clean@1.0.0', json: { version: 3, sources: ['index.js'], sourcesContent: ['module.exports = 1\n'] }, npm: clean.npm }
   held(plain)
   npmOverviewBadges(clean); await new Promise(resolve => { setImmediate(resolve) })
-  assert.equal(npmOverviewBadges(clean), nothing, 'none for a version that calls for no look')
+  const calm = rendered(npmOverviewBadges(clean))
+  assert.match(calm, /^<ul [^>]*><li><span class=npm-extension npm-risk-score is-low data-tooltip=Risk 0 of 100\nNothing found that calls for a look [^]*<span class="npm-extension-count">0<\/span><\/span><\/li><\/ul>$/u,
+    'its score alone for a version that calls for no look')
+})
+
+test('the risk score is the first chip in the Overview and Compare: its ring and number tinted by its level, its tooltip what raised it and what lowered that', async () => {
+  const settled = async render => { render(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(render()) }
+  const files = { 'index.js': "require('child_process').exec(x)\n", 'lib/send.js': 'post("https://webhook.site/x")\n' }
+  const version = (name, ver, published, manifest = {}) => ({ integrity: `${name}@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name, version: ver, published, manifest } })
+  // Out a week: none lowered, a red finding and an orange one.
+  const fresh = version('scored-fresh', '1.0.0', new Date(Date.now() - 7 * 86_400_000).toISOString())
+  held(fresh)
+  const shown = await settled(() => npmOverviewBadges({ npm: fresh.npm }))
+  assert.match(shown, /^<ul [^>]*><li><span class=npm-extension npm-risk-score is-warn data-tooltip=Risk 60 of 100\nRuns code, high\nExfiltration, critical \.tooltipContent=/u,
+    'first, orange, its findings in its tooltip, not its being too new, which its age tells')
+  assert.match(shown, /npm-risk-severity sev-critical>critical</u, 'each with its severity, in its color')
+  assert.doesNotMatch(shown, /Lowered by/u, 'none lowered a week out')
+  // Out six years among the top 200: what its findings call for mostly taken off.
+  answers.stats['scored-aged'] = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 30e6) } }
+  const aged = version('scored-aged', '1.0.0', '2020-01-01T00:00:00.000Z')
+  held(aged)
+  const old = await settled(() => npmOverviewBadges({ npm: aged.npm }))
+  assert.match(old, /<li><span class=npm-extension npm-risk-score is-low data-tooltip=Risk \d of 100\n[^]*?Lowered by 90%: out 6 years, its package npm's top 200 by downloads/u, 'low, and why')
+  held(version('scored-aged', '0.9.0', '2019-06-01T00:00:00.000Z'))
+  assert.match(await settled(() => npmCompareBadges({ npm: { name: 'scored-aged', version: '0.9.0', manifest: {} } }, { npm: aged.npm })), /^<ul [^>]*><li><span class=npm-extension npm-risk-score is-low /u,
+    'Compare\'s too, against the version compared with')
 })
 
 test('the Overview flags against the version risk picks what Compare would: what it holds, raised and marked where it changed, and what only a change tells', async () => {
