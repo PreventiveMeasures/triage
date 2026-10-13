@@ -5,6 +5,7 @@
 // their own, those of malware a package's risk too. Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
+import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
@@ -449,7 +450,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${versions.join(', ')}</td>
       <td>${row.malware ? html`<span class="risk-chip risk-critical">Malware</span>`
         : severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : nothing}</td>
-      <td class="mono">${row.url ? html`<a href=${row.url} target="_blank" rel="noopener noreferrer">${row.id}</a>` : row.id}</td>
+      <td class="mono">${isHttpUrl(row.url) ? html`<a href=${row.url} target="_blank" rel="noopener noreferrer">${row.id}</a>` : row.id}</td>
       <td><span class="risk-clip" data-tooltip-truncated data-tooltip=${row.title ?? nothing}>${row.title ?? ''}</span></td>
       <td class="mono">${row.range ?? ''}</td>
       <td>${usedInCell(row.usedIn)}</td>
