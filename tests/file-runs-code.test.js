@@ -134,7 +134,8 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nlog(\'registry.npmjs.org is down\')\nlog(\'(registry.npmjs.org), *registry.npmjs.org*\')\n'
     + 'log(\'"registry.npmjs.org" my-registry.npmjs.org a.registry.npmjs.org\')\nconst cr = \'\\registry.npmjs.org\'\n'
     + 'log(\'[registry.npmjs.org] is npm, {registry.npmjs.org},registry.npmjs.org;registry.npmjs.org <registry.npmjs.org>\')\n'
-    + 'log(\'note:registry.npmjs.org is down\')\nmail(\'user@registry.npmjs.org\')\nopen(\'docs/registry.npmjs.org.md\')\n'), null,
+    + 'log(\'note:registry.npmjs.org is down\')\nmail(\'user@registry.npmjs.org\')\nopen(\'docs/registry.npmjs.org.md\')\n'
+    + 'go(\'https://example.com?next=a@registry.npmjs.org\')\ngo(\'https://example.com#a@registry.npmjs.org\')\n'), null,
     'not prose, starting with it or naming it, nor another host, nor a carriage return')
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
     + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')
