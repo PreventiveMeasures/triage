@@ -3684,6 +3684,15 @@ a.npm-socket-score {
   &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
+/* A score shown only under its bar, as Compare's and the Overview's badges
+   show them (npm-overview.js socketBadges): fair tinted too, in yellow as
+   poor is in red, since being there flags it. The row of all five keeps fair
+   to its ring, where widely used packages' quality and maintenance often are. */
+:is(.npm-compare-badges, .npm-overview-badges) a.npm-socket-score.is-fair {
+  background: color-mix(in srgb, var(--yellow) 14%, var(--bg)); border-color: color-mix(in srgb, var(--yellow) 70%, var(--border));
+
+  & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
+}
 /* What calls for a look at Compare's two versions, at the end of its picker
    row (npm-overview.js npmCompareBadges): the advisories affecting them,
    tinted by the worst still affecting the open one, green where none does;

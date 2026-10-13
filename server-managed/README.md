@@ -1481,7 +1481,8 @@ control. A version shows in the bundle view with four tabs:
   (Exfiltration in red, Remote in orange, IP lookup in yellow, the services
   named), and an obfuscator's fingerprint, each listing its files and their
   lines in its tooltip, its age under two weeks, the advisories affecting
-  it, tinted by the worst, Socket's scores under their bars, and its tier by
+  it, tinted by the worst, Socket's scores under their bars (yellow from 50,
+  red under it), and its tier by
   downloads where it is orange or red, tinted as its tag beside its downloads
   is. Over the facts, where npm's security team took the
   package down (npm's "security holding package" placeholder, told by its
