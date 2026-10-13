@@ -728,8 +728,9 @@ const TIP_FILES = 8
 // runs beyond itself, the kinds alone named, as its files' tags are, red
 // where a file runs one anew; the services under a hosts' tag (hostBadges);
 // a large code file it adds; a file become unreadable, its longest line
-// before and now (unreadableBadge); and an obfuscator's fingerprint, red
-// where it is new to a file. Each lists its
+// before and now (unreadableBadge); an obfuscator's fingerprint, red
+// where it is new to a file; and a code file it adds or changes that isn't
+// text, which no one can read here. Each lists its
 // files in its tooltip, what each holds, what is new to it so said.
 function fileBadges(sides, found) {
   const rows = id => found.get(id)?.files ?? []
@@ -742,6 +743,7 @@ function fileBadges(sides, found) {
     unreadableBadge(found.get('now-unreadable')),
     listBadge(tinted('held-obfuscated', 'npm-files-obfuscated'), 'Obfuscated', rows('held-obfuscated'),
       row => `${npmObfuscationFound(row.found)}${row.added ? `, new since ${sides[0].version}` : ''}`),
+    fileBadge('npm-compare-binary', 'Binary code', rows('binary-code'), row => `${formatBytes(row.bytes)}, not UTF-8 or holding a NUL`),
   ]
 }
 

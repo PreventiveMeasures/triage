@@ -11,7 +11,7 @@ import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.j
 import { npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
-import { npmBecameUnreadable, npmLargeCode, npmUnreadable } from '../files/readability.js'
+import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
 import { SEVERITIES } from '../files/stamps.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
@@ -27,9 +27,11 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
 // code file of 256 KiB or more it adds (npmLargeCode, `large-code`); a file
 // it changes that had no line over 200 characters and now has one over 2,000
-// (npmBecameUnreadable, `now-unreadable`); and a file it adds or changes with
+// (npmBecameUnreadable, `now-unreadable`); a file it adds or changes with
 // an obfuscator's fingerprint where the one compared with had none
-// (`obfuscated`). Then in orange what any of its files runs beyond itself that
+// (`obfuscated`); and a code file it adds or changes that isn't text, where
+// the one compared with's was text, or no code, or none (npmBinaryCode,
+// `binary-code`). Then in orange what any of its files runs beyond itself that
 // `runs-code` doesn't name, kept from the version compared with
 // (`kept-runs-code`). A renamed file by its old path; one renamed alone,
 // unchanged, holds what it held. A file become unreadable calls for less
@@ -61,6 +63,8 @@ function npmFileFindings(base, other, files, major) {
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
       .map(row => ({ path: row.path, obfuscation: after(row).readability.obfuscation })) },
+    { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability) && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability))
+      .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
     { id: 'kept-runs-code', severity: 'high', files: kept },
   ].filter(finding => finding.files.length > 0)
 }
@@ -159,7 +163,8 @@ function npmNewHosts(base, other, files) {
 // files hold that the one compared with's didn't, so where none of them runs
 // code beyond itself, names a service under one of the hosts' tags or a host
 // past ALLOWED_HOSTS, bears an obfuscator's fingerprint, has a line no one
-// writes (npmUnreadable) or is large code, nothing is found of them whatever
+// writes (npmUnreadable), is large code or is code that isn't text
+// (npmBinaryCode), nothing is found of them whatever
 // the one compared with holds. Nor do the one compared with's install scripts
 // differ by a binding.gyp among its files, but where its manifest names
 // neither `preinstall` nor `install`, and the open version has some.
@@ -170,6 +175,7 @@ export function npmBaseFilesTell(other, manifest) {
   return [...bundleFilesAsMap(other).keys()].some(path => {
     const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
     return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability) || npmLargeCode(path, sizes.get(path))
+      || npmBinaryCode(path, readability)
       || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
   })
 }

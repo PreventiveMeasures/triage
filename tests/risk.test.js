@@ -722,13 +722,32 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
     { onlyOther: [{ path: 'add.js' }], changed: [{ path: 'edit.js', modified: true }, { path: 'new.js', renamedFrom: 'old.js', modified: false }] })
 })
 
-test('a file that isn\'t text compared by its digest: one added large is large code, one kept unchanged', async t => {
+test('a file that isn\'t text compared by its digest: one added large is large code and binary code, one kept unchanged', async t => {
   const packed = Buffer.alloc(256 * 1024, 0xff), tool = Buffer.from([0, 1, 2])
   const before = version('bin-like', '1.0.0', { 'package.json': '{}', 'bin/tool': tool }, { dependencies: {}, scripts: {} }, ago(30))
   const after = version('bin-like', '1.0.1', { 'package.json': '{}', 'bin/tool': tool, 'dist/packed.js': packed }, { dependencies: {}, scripts: {} }, ago(20))
   npm(t, [{ name: 'bin-like', versions: [before, after] }])
   const assessment = await assessNpm('bin-like', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
-  assert.deepEqual(assessment.findings, [{ id: 'large-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] }], 'not UTF-8, yet added; bin/tool unchanged')
+  assert.deepEqual(assessment.findings, [{ id: 'large-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] },
+    { id: 'binary-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] }], 'not UTF-8, yet added; bin/tool unchanged')
+})
+
+test('a code file that isn\'t text, added or changed from text, is binary code: UTF-16 by its byte order mark, a declaration file too', async t => {
+  const utf16le = text => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])
+  const utf16be = text => utf16le(text).swap16()
+  const legacy = Buffer.from('// \u00A9 Latin-1\nmodule.exports = 1\n', 'latin1')
+  const files = { 'package.json': '{}', 'index.d.ts': 'export declare const x: number\n', 'index.js': 'module.exports = 1\n', 'legacy.js': legacy,
+    'dist/old.js': utf16le('module.exports = 3\n'), 'bin/tool': Buffer.from([0, 1]) }
+  const before = version('wide', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))
+  const changed = { 'index.d.ts': utf16le('export declare const x: string\n'), 'index.js': utf16be('module.exports = 2\n'), 'lib/added.mjs': utf16le('export default 1\n') }
+  const after = version('wide', '1.0.1', { 'package.json': '{}', ...changed, 'legacy.js': Buffer.concat([legacy, Buffer.from('// edited\n')]), 'dist/moved.js': files['dist/old.js'],
+    'bin/tool': Buffer.from([0, 2]) }, { dependencies: {}, scripts: {} }, ago(40))
+  const asked = npm(t, [{ name: 'wide', versions: [before, after] }])
+  const { findings } = await assessNpm('wide', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings, [{ id: 'binary-code', severity: 'critical', files: ['lib/added.mjs', 'index.d.ts', 'index.js'].map(path => ({ path, bytes: changed[path].length })) }],
+    'added, or text before; not one binary before (legacy.js), one renamed as it was (dist/moved.js), nor a file that is no code (bin/tool)')
+  assert.ok(asked.includes(before.doc.dist.tarball), '1.0.0\'s files read, for whether each was text')
+  assert.deepEqual(ids(await assessNpm('wide', '1.0.1', { now: NOW, downloads: false })), [], 'a version alone held to nothing of it')
 })
 
 test('what a file holds read to a bound: the first 100 places of each kind, 1,000 hosts', () => {

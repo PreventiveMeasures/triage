@@ -1599,12 +1599,14 @@ control. A version shows in the bundle view with four tabs:
   256 KiB or more the open version adds (not one renamed), a file it changes
   that had no line over 200 characters and now has one over 2,000 (prose,
   source maps and an inline map's line aside, as its Long lines or Minified
-  tag says of it), and a file
+  tag says of it), a file
   it adds or changes with an obfuscator's fingerprint where the version
   compared with had none (`Large new code`, `Now unreadable`, `Obfuscated`),
-  each counting them where there are several, its tooltip alone listing
-  them, each with its size, its longest line before and now, or what its
-  fingerprint holds; in orange, as the files' tags are, what any file of the
+  and a JavaScript or TypeScript file it adds or changes that isn't text (not
+  UTF-8, or holding a NUL) where the version compared with's wasn't one
+  (`Binary code`), each counting them where there are several, its tooltip
+  alone listing them, each with its size, its longest line before and now,
+  or what its fingerprint holds; in orange, as the files' tags are, what any file of the
   open version runs beyond itself that the red chip doesn't name, kept from
   the one compared with (the kinds alone), its tooltip listing
   each file with its kinds and their lines; in orange, the whole chip, as one

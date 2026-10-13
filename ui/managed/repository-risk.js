@@ -38,6 +38,7 @@ const FINDING_LABELS = {
   'held-unused-deps': 'Unused deps',
   'large-code': 'Large new code',
   'now-unreadable': 'Now unreadable',
+  'binary-code': 'Binary code',
   'new-hosts': 'New hosts',
 }
 
