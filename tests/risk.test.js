@@ -219,6 +219,11 @@ test('a file become unreadable calls for less where its source map was rebuilt w
       side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'lib/a.js.map': map('B'), 'lib/cdn.example/a.js.map': map('B') }))
     assert.equal(rooted['now-unreadable'].severity, 'critical', `${name}: a map from a site's root or another host is none beside it`)
   }
+  for (const [path, name] of [['a.js', '../a.js.map'], ['lib/a.js', '../../a.js.map']]) {
+    const above = found(side('1.0.0', { [path]: short, 'a.js.map': map('A') }),
+      side('1.0.1', { [path]: `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'a.js.map': map('B') }))
+    assert.equal(above['now-unreadable'].severity, 'critical', `${path} naming ${name}: a map above the package is none of its own`)
+  }
   const manifest = found(side('1.0.0', { 'a.js': short, 'package.json': '{"version":"1.0.0"}' }),
     side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=package.json\n`, 'package.json': '{"version":"1.0.1"}' }))
   assert.equal(manifest['now-unreadable'].severity, 'critical', 'a file it names that is no source map, changed as it may be')
