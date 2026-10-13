@@ -43,23 +43,33 @@ function quotedEnd(text, at) {
   return text.length
 }
 
-// Whether a `/` here starts a regex rather than dividing: Prism's own rule
+// Whether a `/` here may start a regex rather than divide: Prism's own rule
 // for its regex token (not after a name, a number, a literal or a closing
 // bracket), and after a keyword that ends a statement's start or an operand.
+// Not after a postfix `++` or `--` either, which ends an operand too: there
+// is no incrementing a regex.
 const DIVIDES_AFTER = /[$\w\u00A0-\uFFFF.'"`)\]]/u
 const KEYWORD_BEFORE = /(?:^|[^$\w\u00A0-\uFFFF.])(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/u
 
 function regexMayStart(text, at) {
   let i = at - 1
   while (i >= 0 && /\s/u.test(text[i])) i--
-  if (i < 0 || !DIVIDES_AFTER.test(text[i])) return true
+  if (i < 0) return true
+  if ((text[i] === '+' || text[i] === '-') && text[i - 1] === text[i]) return false
+  if (!DIVIDES_AFTER.test(text[i])) return true
   return KEYWORD_BEFORE.test(text.slice(Math.max(0, i - 10), i + 1))
 }
 
-// Where the last regex literal that never closed gave up, in the text being
-// scanned: a `/` before that divides. Without it a long line of `(/[` would
-// rescan to the line's end from every slash. A regex that does start later
-// on such a line goes unread as one, on a line already misread.
+// What may follow a regex literal, its flags aside: Prism's lookahead for its
+// regex token, a line's or the text's end, a comment, or punctuation that
+// closes an operand (`.test`, `,`, `)`). What looks like one followed by
+// anything else is a division with a slash further on: `${i++ / 2}/${n}`.
+const REGEX_FOLLOWED = /[a-z]*[^\S\r\n]*(?:$|[\r\n,.;:})\]]|\/[/*])/uy
+
+// Where the scan of the last slash that looked like a regex and wasn't one
+// stopped, in the text being scanned: a `/` before that divides. Without it a
+// long line of `(/[` would rescan to the line's end from every slash. A regex
+// that does start in between goes unread as one, on a line already misread.
 let regexFailedAt = -1
 
 // Past the comment or regex literal a `/` starts, or past the `/` alone when
@@ -83,7 +93,11 @@ function slashEnd(text, at) {
     if (c === '\\') i++
     else if (inClass) inClass = c !== ']'
     else if (c === '[') inClass = true
-    else if (c === '/') return i + 1
+    else if (c === '/') {
+      REGEX_FOLLOWED.lastIndex = i + 1
+      if (REGEX_FOLLOWED.test(text)) return i + 1
+      break
+    }
   }
   regexFailedAt = i
   return at + 1

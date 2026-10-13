@@ -100,6 +100,14 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(typesAt(code, 'let'), ['keyword'])
   })
 
+  it('reads a slash as division where a regex from it would run on into a template', () => {
+    // After a regex or a postfix `++` / `--` a slash divides, and a regex
+    // ending at the `/` past the `}` would swallow the brace.
+    const code = 'a = `${/b/ / 2}/${c}` + `${d++ / 2}/${e}` + `${f-- / 2}/${g}`; let h = 1'
+    assert.deepEqual(templates(code), ['`${/b/ / 2}/${c}`', '`${d++ / 2}/${e}`', '`${f-- / 2}/${g}`'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
+  })
+
   it('opens no template at a backtick in a string, a comment or a regex', () => {
     const code = 's.replace(/`/g, "\\\\`") // `\nconst t = \'`\' /* ` */\nlet n = `${1}`'
     assert.deepEqual(templates(code), ['`${1}`'])
