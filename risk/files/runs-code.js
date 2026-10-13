@@ -173,18 +173,19 @@ const URL_STRIPPED = /[\t\n\r]/gu
 // argument's `;`, `|` and `&` no command's end (`-d "a=1&b=2"`), its line
 // continued too (`curl -fsSL \⏎ https://…`, `curl\⏎`, cmd's `^`,
 // PowerShell's backtick), not the next line's, the next command's (`curl
-// --version; echo https://…`) nor the next curl's, a download piped to a shell (`… |
-// sh`, `payload|sudo -E -- bash`, `| ksh`, `| /bin/sh`, `cat hash | sh`,
-// not a list of shells, `bash|zsh|sh`, a regular expression's alternatives,
-// `(x|ss|sh)$`, nor `|| sh`), PowerShell given options (`powershell -nop
-// -enc …`), rundll32, osascript and mshta, certutil fetching (`certutil
-// -urlcache -f http://…`) and bitsadmin's `/transfer`, and bash's network
-// redirection (`/dev/tcp/host/port`), and PowerShell running what it
-// fetches (`iex (iwr https://…).Content`, `irm https://… | iex`, long
-// options before the pipe too, `iwr … -Headers @{…} | iex`, `IEX
-// (New-Object Net.WebClient).DownloadString(…)`), its line continued too,
-// not the next pipeline's, `iex $x && iwr …`); in any case, as Windows' are
-// written, and by its path (`/usr/bin/curl`).
+// --version; echo https://…`) nor the next curl's, a download piped to a
+// shell (`… | sh`, `payload|sudo -E -- bash`, `| ksh`, `| /bin/sh`, `cat
+// hash | sh`, not a list of shells, `bash|zsh|sh`, a regular expression's
+// alternatives, `(x|ss|sh)$`, nor `|| sh`, nor an escaped pipe, grep's
+// `'bash\|zsh'`), PowerShell given options (`powershell -nop -enc …`),
+// rundll32, osascript and mshta, certutil fetching (`certutil -urlcache -f
+// http://…`) and bitsadmin's `/transfer`, and bash's network redirection
+// (`/dev/tcp/host/port`), and PowerShell running what it fetches (`iex (iwr
+// https://…).Content`, `irm https://… | iex`, long options before the pipe
+// too, `iwr … -Headers @{…} | iex`, `IEX (New-Object
+// Net.WebClient).DownloadString(…)`), its line continued too, not the next
+// pipeline's, `iex $x && iwr …`); in any case, as Windows' are written, and
+// by its path (`/usr/bin/curl`).
 const CONTINUED = String.raw`[\\^\u0060]\r?\n`
 const ON_ITS_LINE = String.raw`(?:[^\n;|&]|${CONTINUED})`
 // A command's text up to its end, its arguments' quotes kept, a quote left
@@ -194,7 +195,7 @@ const APART = String.raw`(?:[^\S\n]|${CONTINUED})`
 // A command's options, a few, and their values (`-E`, `-u root`, `--now`),
 // on its line or one continued.
 const OPTIONS = String.raw`(?:${APART}+--?\w[\w-]*(?:=\S*|${APART}+(?!-)\S+)?){0,6}?`
-const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ARGUMENTS}){0,2000}?["']?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
+const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ARGUMENTS}){0,2000}?["']?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|\\]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
   + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])${ON_ITS_LINE}{0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`

