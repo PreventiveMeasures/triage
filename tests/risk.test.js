@@ -214,7 +214,7 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }),
     side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': map('B') }))
   assert.equal(inline['now-unreadable'].severity, 'critical', 'a map inline is no map rebuilt beside it')
-  for (const name of ['/a.js.map', '//cdn.example/a.js.map']) {
+  for (const name of ['/a.js.map', '//cdn.example/a.js.map', '\\\\cdn.example/a.js.map', '/package/lib/a.js.map', 'https://package.invalid/package/lib/a.js.map', 'https://one.invalid/one/lib/a.js.map', '//two.invalid/two/lib/a.js.map', '/one/lib/a.js.map']) {
     const rooted = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'lib/cdn.example/a.js.map': map('A') }),
       side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'lib/a.js.map': map('B'), 'lib/cdn.example/a.js.map': map('B') }))
     assert.equal(rooted['now-unreadable'].severity, 'critical', `${name}: a map from a site's root or another host is none beside it`)

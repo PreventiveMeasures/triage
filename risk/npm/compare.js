@@ -98,12 +98,16 @@ function npmMajorRelease(was, now) {
 // changed, as a build writes them together. An attack editing a built file
 // leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
-const PACKAGE = new URL('https://package.invalid/package/')
+// A name resolves as a browser resolves it, under two package roots told
+// apart by origin and path: only one relative to the file, and within the
+// package, lands at the same path of each.
+const PACKAGE_ROOTS = ['https://one.invalid/one/', 'https://two.invalid/two/'].map(root => new URL(root))
 function besideFile(file, name) {
-  try {
-    const url = new URL(name, new URL(file.split('/').map(encodeURIComponent).join('/'), PACKAGE))
-    return url.origin === PACKAGE.origin && url.pathname.startsWith(PACKAGE.pathname) ? decodeURIComponent(url.pathname.slice(PACKAGE.pathname.length)) : null
-  } catch { return null }
+  const [one, two] = PACKAGE_ROOTS.map(root => {
+    const url = URL.parse(name, new URL(file.split('/').map(encodeURIComponent).join('/'), root))
+    return url?.origin === root.origin && url.pathname.startsWith(root.pathname) ? url.pathname.slice(root.pathname.length) : null
+  })
+  try { return one !== null && one === two ? decodeURIComponent(one) : null } catch { return null }
 }
 function rebuiltWithMap(base, other, path, basePath) {
   const text = bundleFilesAsMap(other).get(path)
