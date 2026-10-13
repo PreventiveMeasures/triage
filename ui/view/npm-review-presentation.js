@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { REVIEW_VERDICTS, parseReviewNotes } from '../../common/dependency-reviews.js'
 
 export const verdictLabels = { ...REVIEW_VERDICTS, 'accept-with-nits': 'Accept with nits' }
-export const reviewState = review => review.revokedAt === null ? review.publishedAt === null ? 'Private to you' : 'Published' : 'Revoked'
+export const reviewState = review => review.revokedAt === null ? review.publishedAt === null ? 'Draft' : 'Published' : 'Revoked'
 const symbols = { accept: '✓', 'accept-with-nits': '·', 'request-changes': '!', reject: '×' }
 export const verdictIcon = status => html`<span class=${`npm-review-verdict-icon ${status ?? 'unchecked'}`} aria-hidden="true">${symbols[status] ?? ''}</span>`
 export const verdictLabel = status => html`<span class="npm-review-verdict">${verdictIcon(status)}${verdictLabels[status] ?? 'Not reviewed'}</span>`
