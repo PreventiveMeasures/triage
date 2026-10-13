@@ -66,6 +66,16 @@ test('repository listings are shared across audits, viewers and details through 
   assert.equal(calls.length, 3)
 })
 
+test('a failed audit is logged, but for one its client gave up on: one past its deadline is', async t => {
+  const warn = t.mock.method(console, 'warn', () => {})
+  const cancelled = new AbortController()
+  cancelled.abort()
+  assert.equal((await fetchBundleAdvisories(packages, cancelled.signal)).status, 502)
+  assert.equal(warn.mock.callCount(), 0, 'the reader gone')
+  assert.equal((await fetchBundleAdvisories(packages, AbortSignal.abort(new DOMException('advisories took too long', 'TimeoutError')))).status, 502)
+  assert.deepEqual(warn.mock.calls.map(call => call.arguments), [['managed: advisories failed:', 'advisories took too long']], 'the server\'s deadline passed')
+})
+
 test('gone repositories and failed listings are not cached', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())

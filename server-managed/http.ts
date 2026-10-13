@@ -1555,7 +1555,8 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
-  const timer = setTimeout(() => controller.abort(), ADVISORIES_TIMEOUT_MS)
+  // Its deadline aborts as AbortSignal.timeout does, for a failure it leaves to be told from the reader's leaving.
+  const timer = setTimeout(() => controller.abort(new DOMException('advisories took too long', 'TimeoutError')), ADVISORIES_TIMEOUT_MS)
   try {
     if (res.destroyed) return
     const needsGithub = inventory.packages.some(pkg => repoAdvisories || pkg.ecosystem === 'github' || pkg.ecosystem === 'soldeer')

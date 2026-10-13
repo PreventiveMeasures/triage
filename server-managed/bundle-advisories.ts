@@ -108,8 +108,11 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
     return { status: 200, body: result.flat().toSorted((a, b) => order(a.ecosystem, b.ecosystem) || order(a.name, b.name)) }
   } catch (error) {
     // Answered as upstream's failure alone: logged, its message, or with
-    // `debug` the whole error, but for a request given up on.
-    if (!signal.aborted) console.warn('managed: advisories failed:', debug || !(error instanceof Error) ? error : error.message)
+    // `debug` the whole error, but for a request its client gave up on. One
+    // past its deadline (aborted with a TimeoutError, as AbortSignal.timeout
+    // and the bundle route's timer abort) is the server giving up: logged.
+    const cancelled = signal.aborted && (signal.reason as { name?: unknown } | undefined)?.name !== 'TimeoutError'
+    if (!cancelled) console.warn('managed: advisories failed:', debug || !(error instanceof Error) ? error : error.message)
     return { status: 502, body: { error: 'upstream-unavailable' } }
   } finally {
     if (onAbort) signal.removeEventListener('abort', onAbort)
