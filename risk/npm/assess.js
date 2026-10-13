@@ -9,6 +9,7 @@ import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.j
 import { npmDownloadMonths, npmSettledDownloads, npmTierLevel } from './downloads.js'
 import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
 import { npmMalwareFinding } from './malware.js'
+import { npmKnownScope } from './manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
 
@@ -189,7 +190,7 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   }
   const { published, manifest } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context)
-  const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts),
+  const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added

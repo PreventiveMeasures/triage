@@ -313,6 +313,35 @@ test('a package few download is a level less unpopular where an account known to
   assert.deepEqual([(await popularity('middling', '1.0.0')).severity, (await popularity('middling', '1.1.0')).severity], ['high', 'moderate'], 'orange, and yellow where known')
 })
 
+test('a package few download is a level less unpopular, failing a known account, in a scope of one of npm\'s most downloaded packages, as a CI publishing names no account', async t => {
+  const ci = { dependencies: {}, _npmUser: { name: 'GitHub Actions', email: 'npm-oidc-no-reply@github.com', trustedPublisher: { id: 'github', oidcConfigId: 'oidc:1' } } }
+  const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
+  const quiet = { start: '2026-08-01', end: '2026-10-11', downloads: [] }
+  npm(t, [
+    { name: '@babel/quiet-helper', versions: [version('@babel/quiet-helper', '1.0.0', { 'package.json': '{}' }, ci, ago(400)), version('@babel/quiet-helper', '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300))] },
+    { name: '@nobody-knows/quiet', versions: [version('@nobody-knows/quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
+    { name: 'babel-quiet', versions: [version('babel-quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
+  ], { '@babel/quiet-helper': quiet, '@nobody-knows/quiet': quiet, 'babel-quiet': quiet })
+  const popularity = async (name, number) => (await assessNpm(name, number, { now: NOW })).findings.find(({ id }) => id === 'popularity')
+  assert.deepEqual(await popularity('@babel/quiet-helper', '1.0.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true, scope: '@babel' },
+    'a CI\'s in @babel: orange, the scope named')
+  assert.deepEqual(await popularity('@babel/quiet-helper', '1.1.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true },
+    'a known account\'s, as before: the account told first')
+  assert.equal((await popularity('@nobody-knows/quiet', '1.0.0')).severity, 'critical', 'a scope of none of them: red')
+  assert.equal((await popularity('babel-quiet', '1.0.0')).severity, 'critical', 'no scope: red')
+})
+
+test('a known scope eases no more than popularity: a version too new is, and a publisher change tells as it would outside it', async t => {
+  const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
+  const handed = name => ({ name, versions: [version(name, '1.0.0', { 'package.json': '{}' }, by('alice-unknown'), ago(400)), version(name, '1.1.0', { 'package.json': '{}' }, by('mallory-unknown'), ago(0.5))] })
+  npm(t, [handed('@babel/handed'), handed('handed')])
+  const assessed = name => assessNpm(name, '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  const [scoped, plain] = [await assessed('@babel/handed'), await assessed('handed')]
+  assert.ok(ids(scoped).includes('too-new'), 'too new in @babel, as it would be anywhere')
+  assert.equal(plain.findings.find(({ id }) => id === 'publisher')?.severity, 'high', 'an unknown account taking it from another: orange')
+  assert.deepEqual(scoped.findings.find(({ id }) => id === 'publisher'), plain.findings.find(({ id }) => id === 'publisher'), 'its publisher change as outside a known scope')
+})
+
 test('a host where packages keep their code and docs, named anew, calls for no look; a host under it, or a repository it serves files from, does', () => {
   const side = files => ({ kind: 'sourcemap', npm: { manifest: {} }, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = side({ 'index.js': 'module.exports = 1\n' })

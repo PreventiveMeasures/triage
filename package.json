@@ -333,7 +333,7 @@
     "@preventive/compare": "^1.0.2",
     "@preventive/diff": "^1.0.2",
     "@preventive/lockfile": "1.0.0-alpha.7",
-    "@preventive/publishers": "^1.0.0",
+    "@preventive/publishers": "^1.1.0",
     "@preventive/report": "1.0.0-alpha.9",
     "@preventive/sourcemap": "1.0.0-alpha.1",
     "@preventive/upstream": "1.0.1",

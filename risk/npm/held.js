@@ -17,14 +17,17 @@ import { npmVersionFileRisk } from './files.js'
 // `tier` its rank (Infinity past the last), a level lower where an account
 // known to publish one of npm's most downloaded packages published the
 // version (`known`, manifest.js `knownAccounts`), as few download a new
-// package such an account starts.
-export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads, known = false }) {
+// package such an account starts; or else, as many are published by a CI
+// that names no account, where the package is in one of those packages'
+// scopes (`scope`, manifest.js npmKnownScope), whose owner alone publishes
+// in it.
+export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads, known = false, scope = null }) {
   const tier = downloads ? npmDownloadTier(downloads) : null
   const popularity = npmTierLevel(tier) === 'is-unpopular' ? ['critical', 'high'] : ['high', 'moderate']
   return [
     ...deprecated ? [{ id: 'deprecated', severity: 'critical', message: deprecated }] : [],
     ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
-    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: popularity[known ? 1 : 0], tier, ...known ? { known } : {} }] : [],
+    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: popularity[known || scope ? 1 : 0], tier, ...known ? { known } : scope ? { known: true, scope } : {} }] : [],
   ]
 }
 

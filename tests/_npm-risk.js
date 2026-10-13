@@ -6,6 +6,7 @@
 // answer comes.
 import { npmAssessmentOf, npmLastingRisk } from '../risk/npm/assess.js'
 import { npmVersionFindings } from '../risk/npm/held.js'
+import { npmKnownScope } from '../risk/npm/manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from '../risk/npm/release.js'
 import { npmRiskOf } from '../ui/view/file-risk.js'
 
@@ -51,6 +52,6 @@ export function riskAnswer(name, version, otherVersion = null, { downloads = nul
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
   const kept = otherVersion === null ? npmLastingRisk(other) : npmLastingRisk(other, versionOf(name, otherVersion), standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
-    known: Boolean(other.npm.manifest.knownAccounts) })
+    known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name) })
   return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
 }
