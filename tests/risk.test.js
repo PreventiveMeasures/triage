@@ -125,12 +125,13 @@ test('a host where packages keep their code and docs, named anew, calls for no l
     + 'get("https://github.com:443/someone/ported/raw/main/x.js")\nget("https://github.com./someone/dotted/raw/x.js")\nget("https://github.com/x/../someone/climbed/raw/x.js")\n'
     + 'see("https://github.com/lit/lit/issues/1434")\nsee("https://github.com/google/safe-html-types/blob/master/doc/safehtml-types.md")\n'
     + 'see("See https://github.com/webcomponents/polyfills/tree/master/packages/shadycss#usage.")\nsee("https://github.com/ExodusOSS/bytes/blob/main/README.md")\n'
+    + 'get("https://github.com/someone/patched/pull/1.patch")\nget("https://github.com/someone/diffed/commit/abc123.diff")\nsee("https://github.com/lit/lit/blob/main/fix.patch")\n'
     + 'exec("git clone https://github.com/someone/suffixless")\nget("https://en.wikipedia.org/w/index.php?title=User:someone/x.js&action=raw")\n'
     + 'see("https://github.com/lit/lit/blob/main/README.md#use")\nsee("https://github.com/lit/lit/releases/tag/v2.0.0")\nsee("https://github.com/sponsors/someone")\n' })
   const hosts = npmCompareFindings(base, other, { added: [], changed: [] }).find(({ id }) => id === 'new-hosts')?.hosts.map(({ host }) => host)
   assert.deepEqual(hosts, ['api.github.com', 'github.com/someone/payloads', 'github.com/someone/tool', 'github.com/someone/latest', 'github.com/someone/cloned',
     'github.com/someone/blobbed', 'github.com/someone/unheard', 'github.com/someone/ported', 'github.com/someone/dotted', 'github.com/someone/climbed',
-    'github.com/someone/suffixless', 'en.wikipedia.org'],
+    'github.com/someone/patched', 'github.com/someone/diffed', 'github.com/someone/suffixless', 'en.wikipedia.org'],
     'github.com\'s pages and lit.dev allowed; api.github.com, a host under one, named, and every repository github.com serves what it holds from, by any path but a page')
 })
 

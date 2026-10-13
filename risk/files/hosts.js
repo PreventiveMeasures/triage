@@ -50,13 +50,17 @@ const GITHUB_OWN = new Set(['sponsors', 'orgs', 'apps', 'marketplace', 'features
 // resolved): `github.com` for its home or a person's, a page of GitHub's own
 // (GITHUB_OWN), a page of a repository a person reads (GITHUB_PAGES), a
 // release's page (`releases/tag/v1`, `releases/latest`) but not its assets'
-// (`releases/latest/download/…`), and a file's page but not the file raw
-// (`blob/…?raw=true`). Any other (a repository's own URL, which git clones,
-// `raw/…`, `archive/…`, `tarball`, `repo.git`, a path GitHub may add, one
-// read otherwise) leads to whatever a repository holds: named by it
-// (`github.com/owner/repo`), so that it is never taken for one of
+// (`releases/latest/download/…`), a file's page but not the file raw
+// (`blob/…?raw=true`), and a page but not its content in another format, as
+// GitHub serves one by a suffix to its path past a file's (`pull/1.patch`,
+// `commit/….diff`, `commits/main.atom`). Any other (a repository's own URL,
+// which git clones, `raw/…`, `archive/…`, `tarball`, `repo.git`, a path GitHub
+// may add, one read otherwise) leads to whatever a repository holds: named by
+// it (`github.com/owner/repo`), so that it is never taken for one of
 // github.com's links to code and docs (compare.js ALLOWED_HOSTS).
 const RAW = /[?&]raw=(?:true|1)(?:&|$)/u
+const FILE_PATHS = new Set(['blob', 'tree', 'blame', 'wiki'])
+const FORMAT = /\.(?:patch|diff|atom)$/u
 const decoded = part => { try { return decodeURIComponent(part) } catch { return part } }
 function githubNamed(url) {
   let parsed = null
@@ -65,8 +69,10 @@ function githubNamed(url) {
   const segments = parsed.pathname.split('/').slice(1)
   if (segments.length > 1 && segments.at(-1) === '') segments.pop()
   const [owner, repo = '', section, ...rest] = segments
-  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || GITHUB_OWN.has(owner) || (owner !== '' && repo !== ''
-    && !repo.endsWith('.git') && GITHUB_PAGES.has(section) && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))))
+  const repositoryPage = owner !== '' && repo !== '' && !repo.endsWith('.git') && GITHUB_PAGES.has(section)
+    && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))
+    && !(!FILE_PATHS.has(section) && FORMAT.test(segments.at(-1)))
+  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || GITHUB_OWN.has(owner) || repositoryPage)
   return page ? 'github.com' : `github.com/${decoded(owner)}/${decoded(repo.replace(/\.git$/u, ''))}`
 }
 
