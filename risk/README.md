@@ -87,7 +87,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - `exfiltration`, `remote`, `ip-lookup`: the services a file names anew under each of the hosts' tags, a level higher than the tag's own (`files/hosts.js`), so red, red and orange
   - `new-hosts`, but for nine where packages keep their code and docs (`npm/compare.js` `ALLOWED_HOSTS`: `github.com`, `lit.dev`, MDN, …), each as written: `api.github.com` is still named, as is a repository `github.com` serves files or releases from (`github.com/owner/repo`)
   - `too-new`
-  - `popularity`: red where unpopular, else orange; a level lower where an account known to publish one of npm's most downloaded packages published the version (`known`), as few download a new package such an account starts
+  - `popularity`: red where unpopular, else orange; a level lower where an account known to publish one of npm's most downloaded packages published the version (`known`), as few download a new package such an account starts, or else, as many are published by a CI that names no account, where the package is in one of those packages' scopes (`@preventive/publishers/npm-scopes.js`, `known` with its `scope`), whose owner alone publishes in it
 
   Without one, what the version holds, as the npm Overview flags a version on its own (`npm/held.js`): `held-install-scripts`, `held-runs-code`, `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`, its dependencies' `non-registry-deps` and `unused-deps`, and `deprecated`, `too-new` and `popularity` as above.
 - `files`: each file's stamps (`{ name, severity }`, as a list of files tags and orders it), and what was read of it:

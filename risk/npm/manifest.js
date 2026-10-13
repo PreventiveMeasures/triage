@@ -3,14 +3,26 @@
 // that published it, or the CI that did by npm's trusted publishing, which of
 // its accounts are known to publish (@preventive/publishers), whether npm
 // keeps a provenance statement for it, the scripts npm runs installing it,
-// its dependencies, and its deprecation.
+// its dependencies, and its deprecation; and whether a package's scope is one
+// of npm's most downloaded packages'.
 import publishers from '@preventive/publishers/npm.js'
+import scopes from '@preventive/publishers/npm-scopes.js'
 import { INSTALL_SCRIPTS } from './install-scripts.js'
 
 const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
 // The npm accounts known to publish: those with standing on one of npm's
 // most downloaded packages.
 const KNOWN_PUBLISHERS = new Set(publishers.map(name => name.toLowerCase()))
+// The scopes of npm's most downloaded packages, which only their owners, an
+// npm organization or account, publish in.
+const KNOWN_SCOPES = new Set(scopes)
+
+// A package's scope where it is one of those (`@babel` of `@babel/core`), else
+// null.
+export function npmKnownScope(name) {
+  const scope = name.startsWith('@') ? name.slice(0, name.indexOf('/')) : null
+  return scope && KNOWN_SCOPES.has(scope) ? scope : null
+}
 const plainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const stringRecord = value => plainObject(value) ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) : undefined
 

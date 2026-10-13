@@ -24,8 +24,8 @@ importers:
         specifier: 1.0.0-alpha.7
         version: 1.0.0-alpha.7
       '@preventive/publishers':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.1.0
+        version: 1.1.0
       '@preventive/report':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
@@ -920,8 +920,8 @@ packages:
     resolution: {integrity: sha512-Dfr/iHIUfsMQqbC9sJ10LaHdKL+Buf7D1ZAqZXcFpgU2N13uDsgA77qmjlmD7o7IWTi9suOC6LclAZyFNLPzRA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.7.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/publishers@1.0.0':
-    resolution: {integrity: sha512-+w8bQOW8F4pYIZrwYPWMOH7en3IHPdPEMAs16C0bZVcV0VnNttdI8WcTqfXIkx+D1A0B8vqMOkZVARAhWwFeyQ==, tarball: https://registry.npmjs.org/@preventive/publishers/-/publishers-1.0.0.tgz}
+  '@preventive/publishers@1.1.0':
+    resolution: {integrity: sha512-mzP8olrXOYDFasVNhelDRuhImOUZ6h353e8/LjUmfiaDTKg+qauQ6bcewJ8ir3irpfDICKvChb8WhhgiuPp8Pw==, tarball: https://registry.npmjs.org/@preventive/publishers/-/publishers-1.1.0.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/report@1.0.0-alpha.9':
@@ -2200,7 +2200,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/publishers@1.0.0': {}
+  '@preventive/publishers@1.1.0': {}
 
   '@preventive/report@1.0.0-alpha.9': {}
 
