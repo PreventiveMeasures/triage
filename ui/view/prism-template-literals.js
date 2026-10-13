@@ -58,16 +58,21 @@ function quotedEnd(text, at) {
 // for its regex token (not after a name, a number, a literal or a closing
 // bracket), and after a keyword that ends a statement's start or an operand.
 // Not after a postfix `++` or `--` either, which ends an operand too: there
-// is no incrementing a regex. Nor at the `</` of a JSX closing tag (`</p>`,
-// `</Foo.Bar>`, `</>`): a regex may follow a `<` (`i</x/.exec(s).index`),
-// but hardly one that opens with a tag's name and its `>`.
+// is no incrementing a regex. Nor, in JSX and TSX, at the `</` of a closing
+// tag (`</p>`, `</Foo.Bar>`, `</>`), though a regex may follow a `<` there
+// too: one that opens with what reads as a tag's name and `>` is left to
+// misread. JavaScript and TypeScript have no tags, so in them `</` is a
+// comparison with a regex (`i</x/.exec(s).index`), whatever follows.
 const DIVIDES_AFTER = /[$\w\u00A0-\uFFFF.'"`)\]]/u
 const KEYWORD_BEFORE = /(?:^|[^$\w\u00A0-\uFFFF.])(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/u
 const JSX_CLOSE_REST = /\s*(?:[A-Za-z_$][\w$.:-]*\s*)?>/uy
 
+// Whether the grammar being scanned is JSX or TSX: set by each scan.
+let jsx = false
+
 function regexMayStart(text, at) {
   JSX_CLOSE_REST.lastIndex = at + 1
-  if (text[at - 1] === '<' && JSX_CLOSE_REST.test(text)) return false
+  if (jsx && text[at - 1] === '<' && JSX_CLOSE_REST.test(text)) return false
   let i = at - 1
   while (i >= 0 && /\s/u.test(text[i])) i--
   if (i < 0) return true
@@ -174,8 +179,9 @@ function nextInterpolation(text, from) {
 
 // Texts the scan left something open in, and how many times. Past a few,
 // Prism's pattern takes every match in the text, so one that fails over and
-// over isn't rescanned to its end each time. Kept for one highlight: cleared
-// once the synchronous run of it returns.
+// over isn't rescanned to its end each time. Kept for one tokenizing: Prism's
+// hooks clear it before and after each, so one highlight's count never
+// carries into the next, of the same text or another.
 const unclosed = new Map()
 const UNCLOSED_MAX = 4
 
@@ -184,19 +190,19 @@ const UNCLOSED_MAX = 4
 // from the backtick the scan found, past those in strings and comments; a
 // `${…}`'s from where Prism asked, for its lookbehind group to read the
 // escapes before the `$`, a group cut off here as Prism would.
-function scanner(find, stock, lookbehind) {
+function scanner(find, stock, lookbehind, inJsx) {
   return {
     global: true,
     lastIndex: 0,
     exec(text) {
       regexFailedAt = -1
+      jsx = inJsx
       stock.lastIndex = this.lastIndex
       if (unclosed.size === 0 || (unclosed.get(text) ?? 0) < UNCLOSED_MAX) {
         const found = find(text, this.lastIndex)
         if (!found) return null
         const [start, end] = found
         if (end !== -1) return Object.assign([text.slice(start, end)], { index: start })
-        if (unclosed.size === 0) queueMicrotask(() => unclosed.clear())
         unclosed.set(text, (unclosed.get(text) ?? 0) + 1)
         if (!lookbehind) stock.lastIndex = start
       }
@@ -218,23 +224,28 @@ function globalCopy(pattern) {
 // `extend` clones it into TypeScript, JSX and TSX, and into the grammars that
 // embed one: markup's `<script>`, TypeScript's types), so this walks them all
 // and rewires each copy it finds, once: a copy can sit in two grammars (JSX
-// shares its own with the JavaScript clone its `${…}` reads code by).
-export function scanTemplateLiterals(languages) {
+// shares its own with the JavaScript clone its `${…}` reads code by). The
+// copies JSX and TSX lead to read `</` as a closing tag; JavaScript's own and
+// TypeScript's, met first, from their own names or markup's `<script>`, don't.
+export function scanTemplateLiterals({ languages, hooks }) {
   const seen = new Set()
-  const visit = (grammar) => {
+  const visit = (grammar, inJsx) => {
     if (!grammar || typeof grammar !== 'object' || grammar instanceof RegExp || seen.has(grammar)) return
     seen.add(grammar)
     for (const [key, rule] of Object.entries(grammar)) {
       if (key === 'template-string' && rule?.pattern instanceof RegExp && rule.inside?.interpolation) {
         const { interpolation } = rule.inside
-        rule.pattern = scanner(nextTemplate, globalCopy(rule.pattern), false)
-        interpolation.pattern = scanner(nextInterpolation, globalCopy(interpolation.pattern), Boolean(interpolation.lookbehind))
+        rule.pattern = scanner(nextTemplate, globalCopy(rule.pattern), false, inJsx)
+        interpolation.pattern = scanner(nextInterpolation, globalCopy(interpolation.pattern), Boolean(interpolation.lookbehind), inJsx)
         // The scanner cuts the lookbehind group from a match of Prism's own
         // pattern itself; its own matches have none to cut.
         delete interpolation.lookbehind
       }
-      visit(rule)
+      visit(rule, inJsx)
     }
   }
-  for (const grammar of Object.values(languages)) visit(grammar)
+  for (const [name, grammar] of Object.entries(languages)) visit(grammar, name === 'jsx' || name === 'tsx')
+  const forget = () => unclosed.clear()
+  hooks.add('before-tokenize', forget)
+  hooks.add('after-tokenize', forget)
 }
