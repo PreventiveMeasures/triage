@@ -12,6 +12,8 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
   setNpmDocumentCache } from '../server-managed/npm-packages.ts'
+import { npmVersionFields } from '../server-managed/npm-manifest.ts'
+import { npmVersionStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -629,6 +631,45 @@ test('off Vercel, a public package\'s whole document is kept on disk and asked f
   await readNpmPackument('kept-doc', false, signal)
   await readNpmPackument('kept-doc', false, signal)
   assert.deepEqual(asked.slice(-2), [[null, 200], [null, 200]], 'on Vercel none kept, none asked conditionally')
+})
+
+// A version's document as npm answers it: what readNpmVersion and the viewer
+// read of it, and what neither does.
+const fullVersion = packageOf('kept-version', '1.2.3', { 'index.js': '' }, {
+  author: { name: 'Ada', email: 'ada@example.com' }, maintainers: [{ name: 'publisher-1', email: 'p@example.com' }], keywords: ['k'], bin: 'cli.js',
+  homepage: 'https://github.com/org/repo/tree/main/packages/pkg#readme', bugs: { url: 'https://github.com/org/repo/issues' }, engines: { node: '>=20' },
+  peerDependencies: { peer: '^2.0.0' }, optionalDependencies: { opt: '^3.0.0' }, hasInstallScript: true, types: 'index.d.ts', module: 'index.mjs', type: 'module',
+  readme: 'x'.repeat(10_000), _id: 'kept-version@1.2.3', _nodeVersion: '22.0.0', devDependencies: { big: '^1.0.0' },
+}).doc
+fullVersion.dist = { ...fullVersion.dist, shasum: 'f'.repeat(40), signatures: [{ keyid: 'k', sig: 's' }], attestations: { url: 'https://registry.npmjs.org/-/npm/v1/attestations/x', provenance: { predicateType: 'p' } } }
+
+test('a version\'s document is kept of only the fields read of it, read alike', () => {
+  const kept = npmVersionFields(fullVersion)
+  assert.deepEqual(npmManifest(kept), npmManifest(fullVersion))
+  for (const key of ['readme', '_id', '_nodeVersion', 'devDependencies']) assert.equal(key in kept, false, key)
+  assert.deepEqual(kept.scripts, { postinstall: 'node setup.js' }, 'only the scripts npm runs installing it')
+  assert.deepEqual(kept.dist, { tarball: fullVersion.dist.tarball, integrity: fullVersion.dist.integrity, unpackedSize: 100, fileCount: 2, attestations: { provenance: {} } })
+  assert.ok(JSON.stringify(kept).length < JSON.stringify(fullVersion).length / 5)
+})
+
+test('with a store, a public version\'s document is kept and read from it, never asked of npm again; a private one, and a dist-tag, asked each time', async t => {
+  withToken(t)
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  const secret = packageOf('@team/secret', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [{ doc: fullVersion }, { ...secret, private: true }])
+  const signal = new AbortController().signal
+  const fresh = await readNpmVersion('kept-version', '1.2.3', false, signal, store)
+  assert.deepEqual(await readNpmVersion('kept-version', '1.2.3', false, signal), fresh, 'as read without a store')
+  const asked = calls.length
+  assert.deepEqual(await readNpmVersion('kept-version', '1.2.3', false, signal, store), fresh)
+  assert.equal(calls.length, asked, 'read from the store')
+  assert.equal((await store.read('kept-version', '1.2.3')).readme, undefined)
+  await readNpmVersion('kept-version', 'latest', false, signal, store)
+  assert.equal(calls.length, asked + 1, 'a dist-tag asked of npm')
+  assert.equal((await readNpmVersion('@team/secret', '1.0.0', true, signal, store)).private, true)
+  assert.equal(await store.read('@team/secret', '1.0.0'), null, 'one only the token reads not kept')
 })
 
 test('a private package\'s whole document, read with the server\'s token, is never kept', async t => {

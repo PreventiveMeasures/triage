@@ -27,6 +27,8 @@ import { NpmRiskError, SEVERITIES, type Severity, npmMalwareAdvisory } from '../
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import { GithubApiError } from './github-errors.ts'
 import { NpmPackageError, type NpmVersionDocument } from './npm-packages.ts'
+import { type Lru, lru } from './lru.ts'
+import type { KeptStore } from './npm-kept.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
 import { type LockedPackage, lockedPackages } from './locked-packages.ts'
 
@@ -86,6 +88,9 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
   // npm's registry's advisories of these packages' versions, asked at once.
   advisories(packages: { name: string; versions: string[] }[], signal: AbortSignal): Promise<Advisory[]>
+  // Where risk lines are kept beyond this instance, as RiskCaches keeps them
+  // in it (npm-kept.ts riskLineStore, the database's).
+  risks?: KeptStore<RiskLine>
 }
 
 type AdvisoryRow = Advisory & { malware: boolean }
@@ -114,37 +119,6 @@ function failureOf(error: unknown): RiskFailure {
 }
 
 const isBusy = (error: unknown) => (error instanceof NpmPackageError && error.status === 429) || (error instanceof NpmRiskError && error.code === 'upstream-busy')
-
-// Values by key, the least recently used going first once their weights
-// (`weight`, 1 each unless given) are past `limit`.
-interface Lru<V> { get(key: string): V | undefined; set(key: string, value: V): void }
-function lru<V>(limit: number, weight: (value: V) => number = () => 1): Lru<V> {
-  const kept = new Map<string, V>()
-  let total = 0
-  const forget = (key: string) => {
-    const value = kept.get(key)
-    if (value === undefined) return
-    kept.delete(key)
-    total -= weight(value)
-  }
-  return {
-    get(key) {
-      const value = kept.get(key)
-      if (value !== undefined) { kept.delete(key); kept.set(key, value) }
-      return value
-    },
-    set(key, value) {
-      forget(key)
-      if (weight(value) > limit) return
-      kept.set(key, value)
-      total += weight(value)
-      for (const first of kept.keys()) {
-        if (total <= limit) break
-        forget(first)
-      }
-    },
-  }
-}
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 type LockfileRead = { packages: LockedPackage[] } | RiskFailure
@@ -221,7 +195,7 @@ async function assess({ source, signal }: Scan, pkg: AssessedPackage, teamScoped
     try {
       const read = doc ??= await documentOf(source, pkg, signal)
       if (!(read instanceof NpmPackageError) && pkg.integrity !== undefined && !pkg.integrity.split(/\s+/u).includes(read.dist.integrity)) return { ...at, error: 'integrity-mismatch' }
-      const { published, findings } = read instanceof NpmPackageError ? await removedOf(source, pkg, teamScoped, signal, read) : await source.assess(read, teamScoped, signal)
+      const { published, findings } = read instanceof NpmPackageError ? await removedOf(source, pkg, teamScoped, signal, read) : await assessedOf(source, pkg, teamScoped, signal, read)
       const told = findings.map(({ id, severity, takenDown }) => ({ id, severity, ...takenDown === true ? { takenDown: true as const } : {} }))
       return { ...at, published, severity: highestSeverity(told), findings: told }
     } catch (error) {
@@ -240,6 +214,15 @@ async function documentOf(source: Scan['source'], pkg: AssessedPackage, signal: 
   }
 }
 
+// A version's assessment; where risk finds npm no longer has it, as a document
+// read from where versions' are kept doesn't tell, as one npm removed.
+async function assessedOf(source: Scan['source'], pkg: AssessedPackage, teamScoped: boolean, signal: AbortSignal, doc: NpmVersionDocument): Promise<Assessment> {
+  try { return await source.assess(doc, teamScoped, signal) } catch (error) {
+    if (!(error instanceof NpmRiskError && error.code === 'version-not-found')) throw error
+    return removedOf(source, pkg, teamScoped, signal, new NpmPackageError(404, 'package-not-found'))
+  }
+}
+
 // A version npm has no document of, as risk tells one npm removed, as it
 // removes every one it finds malware in (`removed`): `gone`, npm's answer of
 // none, thrown where nothing tells of it.
@@ -249,17 +232,29 @@ async function removedOf(source: Scan['source'], pkg: AssessedPackage, teamScope
   }
 }
 
-// A package's risk line as kept (RiskCaches), else assessed and kept where it
-// tells what risk found, or that a mirror's copy isn't npm's.
+// A package's risk line as kept (RiskCaches, else the source's `risks`), else
+// assessed and kept, in both, where it tells what risk found, or that a
+// mirror's copy isn't npm's.
 async function assessed(scan: Scan, pkg: AssessedPackage): Promise<RiskLine | null> {
   let teamScoped
   try { teamScoped = await scan.source.teamScoped(pkg.name) } catch (error) { return { type: 'risk', ...pkg, ...failureOf(error) } }
   const key = `${pkg.name}@${pkg.version}\0${pkg.integrity ?? ''}\0${teamScoped}`
-  const kept = scan.caches.risks.get(key)
+  const kept = scan.caches.risks.get(key) ?? await keptLine(scan, key)
   if (kept && Date.now() - kept.at < RISK_KEPT_MS) return kept.line
   const line = await assess(scan, pkg, teamScoped)
-  if (line && (!('error' in line) || line.error === 'integrity-mismatch')) scan.caches.risks.set(key, { at: Date.now(), line })
+  if (line && (!('error' in line) || line.error === 'integrity-mismatch')) {
+    const at = Date.now()
+    scan.caches.risks.set(key, { at, line })
+    await scan.source.risks?.write(key, line, at)
+  }
   return line
+}
+
+async function keptLine({ source, caches }: Scan, key: string) {
+  const hit = await source.risks?.read(key)
+  if (!hit) return null
+  caches.risks.set(key, { at: hit.at, line: hit.value })
+  return { at: hit.at, line: hit.value }
 }
 
 async function assessor(scan: Scan) {

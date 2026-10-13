@@ -81,6 +81,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
+import { npmVersionStore, riskLineStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -1386,6 +1387,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
   const scopes = new Map<string, Promise<boolean>>()
+  const versions = npmVersionStore(deps.db, deps.config.debug)
   const lines = repositoryRiskLines({
     repos: () => Promise.resolve(repos),
     async open(repo) {
@@ -1405,11 +1407,14 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
       if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
       return scopes.get(scope)!
     },
-    version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
+    // Public versions' documents kept in the database for good (npm-kept.ts):
+    // whether npm still has one, its whole document tells risk.
+    version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
     assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
     removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal }),
+    risks: riskLineStore(deps.db, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // alone: no repository's. Each lockfile's audit is bounded on its own, for
     // one npm doesn't answer to fail alone and the scan to carry on.
