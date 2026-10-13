@@ -119,7 +119,8 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     '\'https:\\\\\\\\registry.npmjs.org/pkg\'', '\'https:\\\\/registry.npmjs.org\'', '\'https:\\x5c\\x5cregistry.npmjs.org/pkg\'',
     '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'',
     '\'https://\\\nregistry.npmjs.org/pkg\'', '"https://\\\r\nregistry.npmjs.org"', '\'https://\\\u2028registry.npmjs.org\'',
-    '\'https:\\057\\057registry.npmjs.org/pkg\'', '\'https://t\\100registry.npmjs.org\'', '\'https\\072//registry.npmjs.org\'']) {
+    '\'https:\\057\\057registry.npmjs.org/pkg\'', '\'https://t\\100registry.npmjs.org\'', '\'https\\072//registry.npmjs.org\'',
+    '\'https://user:p@ss@registry.npmjs.org/pkg\'']) {
     assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [url.split(/\r\n|[\n\r]/u).length] },
       `a token before its host, its separators escaped or its line continued: ${url}`)
   }
