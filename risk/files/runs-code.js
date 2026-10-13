@@ -169,9 +169,10 @@ const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\?
 const URL_STRIPPED = /[\t\n\r]/gu
 // A shell command fetching or handing off code: curl or wget given a URL
 // (`curl -fsSL https://…`, `ftp://`, `https:\/\/` as a string may escape
-// it), its line continued too (`curl -fsSL \⏎ https://…`, `curl\⏎`, cmd's
-// `^`, PowerShell's backtick), not the next line's nor the next command's
-// (`curl --version; echo https://…`), a download piped to a shell (`… |
+// it), long options before it too (`-H "Authorization: …"`), its line
+// continued too (`curl -fsSL \⏎ https://…`, `curl\⏎`, cmd's `^`,
+// PowerShell's backtick), not the next line's, the next command's (`curl
+// --version; echo https://…`) nor the next curl's, a download piped to a shell (`… |
 // sh`, `payload|sudo -E -- bash`, `| ksh`, `| /bin/sh`, `cat hash | sh`,
 // not a list of shells, `bash|zsh|sh`, a regular expression's alternatives,
 // `(x|ss|sh)$`, nor `|| sh`), PowerShell given options (`powershell -nop
@@ -187,7 +188,7 @@ const APART = String.raw`(?:[^\S\n]|${CONTINUED})`
 // A command's options, a few, and their values (`-E`, `-u root`, `--now`),
 // on its line or one continued.
 const OPTIONS = String.raw`(?:${APART}+--?\w[\w-]*(?:=\S*|${APART}+(?!-)\S+)?){0,6}?`
-const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}${ON_ITS_LINE}{0,200}?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
+const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ON_ITS_LINE}){0,2000}?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
   + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])[^\n;]{0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
@@ -199,14 +200,15 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}${ON_ITS_LINE
 // `Microsoft.PowerShell_profile.ps1`), macOS's LaunchAgents and
 // LaunchDaemons, systemd's user units (`~/.config/systemd/user`, `systemctl
 // --user enable`, other options before it, `--now`, or `--user` after it in
-// its command, `systemctl enable --user`), and the settings an AI agent or
+// its command, `systemctl enable --user`; not `start`, which runs a unit
+// once), and the settings an AI agent or
 // an editor runs commands from on its own (`.claude/settings.json`,
 // `.vscode/tasks.json`); in any case, as Windows' and macOS's paths are, a
 // path's separator a slash or a backslash, escaped in a string as code
 // writes it (`"\\.claude\\settings.json"`, `\/`).
 const SEPARATOR = String.raw`(?:\\?\/|\\{1,2})`
 const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])`
-  + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+(?:enable|start)(?![\w-])|systemctl${OPTIONS}${APART}+(?:enable|start)(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
+  + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],

