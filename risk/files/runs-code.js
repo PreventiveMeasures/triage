@@ -106,7 +106,7 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // text names it (`requires a token in GITHUB_TOKEN`); a command publishing (`npm publish`, `pnpm
 // publish …`, options before it as npm takes them, `npm --tag next publish`)
 // or the registry's who-am-I, a publisher's first step with a token. And the
-// registry, where a PUT request is one publishing (REGISTRY_NAMED).
+// registry, where a PUT request is one publishing (REGISTRY_URL).
 // Told first of a string by what any of them says.
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 // Before a token's name as a key, its absence told or the token dropped, as
@@ -118,26 +118,30 @@ const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 const KEY_SET = new RegExp(String.raw`^\s{0,4}\]${SET}`, 'u')
 const KEY_ENDS = new RegExp(String.raw`^\s{0,4}\]${ABSENT_ENDS}`, 'mu')
 const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
-// The registry's host, named as a URL's is, however it is spelled: after
-// anything but what comes before a word in prose (a blank, a word's own
-// characters, a tag's `<` or `>`, a quote, a bracket, `*`, `,`, `;`, a
-// subdomain's `-` or `.`), so after a URL's slash, its userinfo's `@`, its
-// scheme's `:` or a backslash URLs take for a slash
-// (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`,
-// `https://${token}@registry.npmjs.org/`, `https:\\\\registry.npmjs.org`);
-// after one escaped, its last a digit (`\x2f`, `\u002f`, `\x40`, `\x3a`); or
-// starting a string, its whole or before its path or port (npm-profile's
+// A string's text as JavaScript reads it, its escapes decoded (`\x2f`,
+// `\u002f`, `\u{2f}`, `\/`, `\\`), a control's (`\n`, `\r`) a blank: what a
+// URL in it spells, however its separators are escaped.
+const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|(.))/giu
+const CONTROLS = new Set(['n', 'r', 't', 'b', 'f', 'v', '0'])
+const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, char) => {
+  if (char !== undefined) return CONTROLS.has(char) ? ' ' : char
+  const code = Number.parseInt(hex ?? unit ?? point, 16)
+  return code <= 0x10_FFFF ? String.fromCodePoint(code) : escape
+})
+// The registry's host in a string, as JavaScript reads it (unescaped), named
+// as a URL's is: after a URL's slash, a backslash URLs take for one, its
+// userinfo's `@` or its scheme's `:` (`https://registry.npmjs.org/`,
+// `.npmrc`'s `//registry.npmjs.org/`, `https://${token}@registry.npmjs.org/`,
+// `https:\\\\registry.npmjs.org`, `https:\x2f\x2fregistry.npmjs.org`), or
+// starting the string, its whole or before its path or port (npm-profile's
 // `'registry.npmjs.org'`, a URL joined, `'https://' + 'registry.npmjs.org/'`).
-// Not in prose, as a dialog tells where it asks (`registry.npmjs.org</span>`,
-// `asks registry.npmjs.org`, `[registry.npmjs.org]`, `'registry.npmjs.org is down'`).
-const REGISTRY_HOST = String.raw`registry\.(?:npmjs\.org|yarnpkg\.com)`
-const REGISTRY_NAMED = new RegExp(String.raw`(?<![\s<>"'\u0060\p{L}\p{N}_$([{*,;.\-\\])${REGISTRY_HOST}|(?<=\\\\|\\(?:x|u00)(?:2f|40|5c|3a))${REGISTRY_HOST}`
-  + String.raw`|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:])`, 'giu')
+// Not in prose, after anything else (`registry.npmjs.org</span>`, `asks
+// registry.npmjs.org`, `[registry.npmjs.org]`, `'registry.npmjs.org is down'`).
+const REGISTRY_URL = /(?<=[/\\@:])registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)(?=\1$|[/:])/iu
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
-  ['registry', REGISTRY_NAMED],
 ]
 // A module a kind loads: vm, child_process, and libnpmpublish, npm's own
 // publishing.
@@ -237,6 +241,7 @@ function read(code, base, at) {
     }
     const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
     for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
+    if (text.includes('registry.') && REGISTRY_URL.test(unescaped(text))) at('registry', base + index)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
     if (program && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
       if (PUBLISH.test(string)) at('publish', base + index)
