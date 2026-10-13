@@ -5,8 +5,7 @@
 // change @preventive/compare's compareTrees stamps
 // `typeOnly` -- each side there a file named as a declaration file and
 // proven to hold types alone, so that it runs nothing (proveTypeOnly) --
-// or that adds a declaration file stripping leaves a bare `export {}` alone
-// (type-only-worker.js), and nothing else. Proven in a worker, off the event loop, a comparison at a
+// and nothing else. Proven in a worker, off the event loop, a comparison at a
 // time per process, for at most a minute; told a line each, `{ path, hash,
 // otherPath, otherHash }`, a side not there null, which the viewer checks
 // name the files it shows. Access is the caller's to check.
