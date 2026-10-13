@@ -89,8 +89,10 @@ export function npmHosts(path, text) {
   for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
     if (hosts.size >= NPM_MAX_HOSTS) break
     // Read unescaped, its offsets as near: on the same line but in a template
-    // across lines.
-    const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
+    // across lines; a regular expression without its closing slash and flags,
+    // as a string's quote ends its URL (`/https:\/\/github.com\/a\/b\/pull\/1.patch/i`).
+    const body = token?.startsWith('/') ? token.replace(/\/[a-z]*$/u, '') : token
+    const string = body?.includes('\\') ? body.replaceAll(ESCAPED, '$1') : body
     if (!string?.includes('://')) continue
     for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
