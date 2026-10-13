@@ -131,6 +131,15 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(typesAt(code, 'let'), ['keyword'])
     const jsx = 'const e = <p>{`a`}</p>; const g = <div><br/>{`b ${c}`}<i>x</i></div>; let s = `d`'
     assert.deepEqual(templates(jsx, 'jsx'), ['`a`', '`b ${c}`', '`d`'])
+    const fragment = 'const e = <><A.B>{`a`}</A.B>{`b`}</ >{`c`}</>; let s = `d`'
+    assert.deepEqual(templates(fragment, 'jsx'), ['`a`', '`b`', '`c`', '`d`'])
+    // Minified code compares with a regex's result, and no tag follows; the
+    // braces are deeper than Prism's own pattern reads, so only the scan can
+    // end the `${…}` at its last `}`.
+    const minified = 'a = `${i</`/.exec(s).index+f({b:{c:{d}}})}`; let h = 1'
+    assert.deepEqual(templates(minified), ['`${i</`/.exec(s).index+f({b:{c:{d}}})}`'])
+    assert.deepEqual(typesAt(minified, '}`'), ['template-string', 'interpolation', 'interpolation-punctuation'])
+    assert.deepEqual(typesAt(minified, 'let'), ['keyword'])
   })
 
   it('ends a line comment at every line terminator', () => {

@@ -58,13 +58,16 @@ function quotedEnd(text, at) {
 // for its regex token (not after a name, a number, a literal or a closing
 // bracket), and after a keyword that ends a statement's start or an operand.
 // Not after a postfix `++` or `--` either, which ends an operand too: there
-// is no incrementing a regex. Nor right after a `<`, a JSX tag's `</`: a
-// regex there would be compared, and nothing compares one.
+// is no incrementing a regex. Nor at the `</` of a JSX closing tag (`</p>`,
+// `</Foo.Bar>`, `</>`): a regex may follow a `<` (`i</x/.exec(s).index`),
+// but hardly one that opens with a tag's name and its `>`.
 const DIVIDES_AFTER = /[$\w\u00A0-\uFFFF.'"`)\]]/u
 const KEYWORD_BEFORE = /(?:^|[^$\w\u00A0-\uFFFF.])(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/u
+const JSX_CLOSE_REST = /\s*(?:[A-Za-z_$][\w$.:-]*\s*)?>/uy
 
 function regexMayStart(text, at) {
-  if (text[at - 1] === '<') return false
+  JSX_CLOSE_REST.lastIndex = at + 1
+  if (text[at - 1] === '<' && JSX_CLOSE_REST.test(text)) return false
   let i = at - 1
   while (i >= 0 && /\s/u.test(text[i])) i--
   if (i < 0) return true
