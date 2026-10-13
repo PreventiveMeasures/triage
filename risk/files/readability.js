@@ -137,7 +137,8 @@ export function npmReadabilityLabels(readability) {
 // minified code, as minified code is; any other as its category is.
 export const npmLabelMark = (readability, label) => label === 'long' && readability.category !== 'long' ? 'notice' : READABILITY.get(label).mark
 
-// Each category: its name, its tag in a list of files or a file's head, and how it is marked,
+// Each category: its name, its tag in a list of files or a file's head (and,
+// `short`, in a file tree, where that is too long), and how it is marked,
 // `warn` for what to look into, `notice` for what can be hard to review by
 // reading it either way.
 export const READABILITY = new Map([
@@ -145,7 +146,7 @@ export const READABILITY = new Map([
   ['controls', { name: 'Control chars', tag: 'Controls', mark: 'warn' }],
   ['invisible', { name: 'Invisible chars', tag: 'Invisible', mark: 'warn' }],
   ['long', { name: 'Long lines', tag: 'Long lines', mark: 'warn' }],
-  ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
+  ['minified', { name: 'Minified', tag: 'Minified', short: 'Min', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
   ['inline-map', { name: 'Inline source maps', tag: 'Inline map', mark: 'notice' }],
   ['utf8', { name: 'UTF-8', tag: 'UTF-8', mark: null }],

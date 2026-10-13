@@ -238,6 +238,12 @@ export const isLargeDiff = (before, after) => before.length + after.length > LAR
 // record the same (see _renderFile).
 const readsAsSource = entry => entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
 
+// Whether a Lit value draws anything: not `nothing`, null, false or '', nor
+// an array or a template holding only those.
+const draws = value => Array.isArray(value) ? value.some(draws)
+  : value?.strings ? value.strings.some(text => text.trim() !== '') || value.values.some(draws)
+  : value != null && value !== nothing && value !== false && value !== ''
+
 // Every directory holding a file of the bundle, so a directory of the tree
 // can tell whether it is new (none on the base side) or gone.
 const dirSets = new WeakMap()
@@ -1238,9 +1244,12 @@ export class BundleCompareCode extends LitElement {
   }
 
   // All comparison file chips, shared by Compare and Review in headers and trees.
-  // The tree uses the same signals, with shorter labels where needed.
+  // The tree uses the same signals, with shorter labels where needed, and tags
+  // a file Large only where it has no other tag, as Large says least of one.
   _fileTags(path, entry, compact = false) {
-    return html`${compact ? nothing : this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._newHostTags(path, entry)}${this._flagTags(path, entry)}${compact ? this._treeTag(path, entry) : this._readability(path, entry)}${this._installTags(path, entry, compact)}${fileMetaTags(entry.meta, compact)}`
+    if (!compact) return html`${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._newHostTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}`
+    const tags = [this._alertTags(path, entry), this._runsTags(path, entry), this._newHostTags(path, entry), this._flagTags(path, entry, false), this._treeTag(path, entry), this._installTags(path, entry, true), fileMetaTags(entry.meta, true)]
+    return draws(tags) ? tags : this._flagTags(path, entry)
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one
@@ -1336,22 +1345,22 @@ export class BundleCompareCode extends LitElement {
 
   // What a file is beyond how it reads, as the npm Files list tags it
   // (file-readability.js npmFileFlagTags), in its head and the tree: as it is
-  // now, or was, for one removed.
-  _flagTags(path, entry) {
-    return entry.kind === 'removed' ? npmFileFlagTags(this.base, entry.basePath ?? path, entry.baseBytes) : npmFileFlagTags(this.other, path, entry.otherBytes)
+  // now, or was, for one removed. `large` false leaves Large out.
+  _flagTags(path, entry, large = true) {
+    return entry.kind === 'removed' ? npmFileFlagTags(this.base, entry.basePath ?? path, entry.baseBytes, large) : npmFileFlagTags(this.other, path, entry.otherBytes, large)
   }
 
   // The tree tags a file as its head does where it can be hard to review by
   // reading it as it reads now (as it read, for one removed), more briefly:
   // its controls and unexpected long lines, those it warns of, and its tag,
   // ASCII and UTF-8 going untagged there, as does Map, which a source map's
-  // name says already.
+  // name says already; Minified as Min.
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
     if (!shown) return nothing
     const tagged = shown.category !== 'map' && READABILITY.get(npmTaggedCategory(shown)).mark
-    return html`${npmReadabilityFlags(shown, ['warn'])}${tagged ? npmEncodingTag(shown) : nothing}`
+    return html`${npmReadabilityFlags(shown, ['warn'])}${tagged ? npmEncodingTag(shown, true) : nothing}`
   }
 
   // A file's lines added and removed, and its sizes.
