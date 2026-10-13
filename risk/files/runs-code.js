@@ -109,8 +109,10 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // registry, where a PUT request is one publishing: its host after a URL's
 // slash or its userinfo's `@` (`https://registry.npmjs.org/`, `.npmrc`'s
 // `//registry.npmjs.org/`, `https://${token}@registry.npmjs.org/`), either
-// escaped too (`\/`, `\x2f`, `\u002f`, `\u{2f}`, `\x40`), or as a string's whole
-// (npm-profile's `'registry.npmjs.org'`); not in prose, as a dialog tells
+// escaped too (`\/`, `\x2f`, `\u002f`, `\u{2f}`, `\x40`), or starting a
+// string, its whole or before its path or port (npm-profile's
+// `'registry.npmjs.org'`, a URL joined, `'https://' + 'registry.npmjs.org/'`);
+// not in prose, as a dialog tells
 // where it asks (`registry.npmjs.org</span>`, `asks registry.npmjs.org`).
 // Told first of a string by what any of them says.
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
@@ -127,7 +129,7 @@ const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
-  ['registry', /(?<=[/@]|\\(?:x(?:2[fF]|40)|u00(?:2[fF]|40)|u\{0{0,4}(?:2[fF]|40)\}))registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)\1$/gu],
+  ['registry', /(?<=[/@]|\\(?:x(?:2[fF]|40)|u00(?:2[fF]|40)|u\{0{0,4}(?:2[fF]|40)\}))registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)(?=\1$|[/:])/gu],
 ]
 // A module a kind loads: vm, child_process, and libnpmpublish, npm's own
 // publishing.

@@ -119,6 +119,9 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [1] }, `a token before its host, or its slashes escaped: ${url}`)
   }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
+  assert.deepEqual(found('a.js', 'const registry = \'https://\' + \'registry.npmjs.org/\'; fetch(registry + name, { method: \'PUT\' })\nconst port = \'registry.npmjs.org:443\'\n'),
+    { publish: [1] }, 'its host starting a string before its path or port, as a URL joined')
+  assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nlog(\'registry.npmjs.org is down\')\n'), null, 'not prose starting with it')
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
     + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')
 })
