@@ -17,6 +17,7 @@ const assessment = await assessNpm('axios', '1.14.1', {
   oldVersion: '1.14.0', // compared with; without one, everything of the version is new
   minimumReleaseAge: 14 * 24 * 60 * 60_000, // the default, two weeks; 0 for none, as a caller's own scopes take
   popularity: true, // the default; false for none, as a caller's own scopes take
+  owned: name => name.startsWith('@mine/'), // the caller's own packages, a new dependency on one told no tier nor age; none by default
   cache, // as @preventive/upstream's CacheStore: read(type, key) and write(type, key, value)
 })
 ```

@@ -198,6 +198,32 @@ test('a team\'s own package isn\'t flagged as few download it, as it isn\'t as j
   assert.equal(await unpopular(true), false)
 })
 
+test('a new dependency on a package of a scope a team lists is told no tier nor age, as the team\'s own package isn\'t', async t => {
+  const before = packageOf('own-app', '1.0.0', { 'package.json': '{}', 'index.js': '' }, { dependencies: {} })
+  const after = packageOf('own-app', '1.1.0', { 'package.json': '{}', 'index.js': 'require("@own/helper")\nrequire("stranger")\n' },
+    { dependencies: { '@own/helper': '^1.0.0', stranger: '^1.0.0' } })
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = String(input)
+    asked.push(url)
+    for (const pkg of [before, after]) if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
+    if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
+    if (url.endsWith('/stranger')) return Promise.resolve(Response.json({ name: 'stranger', versions: {}, time: { created: '2025-01-01T00:00:00.000Z' } }))
+    return Promise.resolve(Response.json({ name: 'own-app', versions: { '1.0.0': before.doc, '1.1.0': after.doc },
+      time: { '1.0.0': '2025-01-01T00:00:00.000Z', '1.1.0': '2025-02-01T00:00:00.000Z' } }))
+  })
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const docOf = pkg => ({ ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+  const scopes = []
+  const ownScope = scope => { scopes.push(scope); return Promise.resolve(scope === '@own') }
+  const { added } = (await npmRisk(docOf(after), docOf(before), { db, teamScoped: false, ownScope, privileged: false, signal: new AbortController().signal })).dependencies
+  const byName = Object.fromEntries(added.map(row => [row.name, row]))
+  assert.equal(byName.stranger.level, 'is-unpopular', 'anyone else\'s is told its tier')
+  assert.equal(byName['@own/helper'].level, undefined)
+  assert.deepEqual(scopes, ['@own'], 'a scope asked of the teams once, an unscoped package none')
+  assert.ok(!asked.some(url => url.includes('@own')), 'nor npm asked of its package')
+})
+
 test('a risk assessment whose reader is gone stops waiting on its tarball, which loads on for others', async t => {
   const pkg = packageOf('slow-risk', '1.0.0', { 'package.json': '{}' })
   let answer = () => {}

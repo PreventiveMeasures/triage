@@ -91,17 +91,20 @@ async function lasting(name, version, oldVersion, facts, context) {
 const MAX_TOLD_DEPENDENCIES = 100
 
 // Each dependency `added` that npm installs from its registry, up to
-// MAX_TOLD_DEPENDENCIES of them, with what risk tells of its package
+// MAX_TOLD_DEPENDENCIES of them, but for the caller's own packages (`owned`,
+// as its own scopes take, few downloading them, as new as its releases),
+// with what risk tells of its package
 // (new-dependency.js npmAddedDependency): its tier, its last whole month's
 // downloads by what its tier goes by where it has one (`month`, `{ total,
 // from }`), `uncounted` where npm counts none of them, and `created` and `gap`
 // where it is new since the version compared with (`published`, when that
-// and the open version were); four asked at a time, none more once one
-// fails.
-async function addedDependencies(added, published, context) {
+// and the open version were); four asked at a time, whether each is the
+// caller's own among them, none more once one fails or MAX_TOLD_DEPENDENCIES
+// not the caller's own were taken, however many a version adds.
+async function addedDependencies(added, published, context, owned) {
   const told = [...added]
-  const asked = told.flatMap((row, at) => row.opens ? [at] : []).slice(0, MAX_TOLD_DEPENDENCIES)
-  let next = 0
+  const asked = told.flatMap((row, at) => row.opens ? [at] : [])
+  let next = 0, taken = 0
   const tell = async row => {
     const downloads = await npmDownloads(row.opens, context)
     let facts = npmAddedDependency({ downloads, published }, context.now)
@@ -115,9 +118,14 @@ async function addedDependencies(added, published, context) {
       ...facts.created ? { created: facts.created, gap: facts.gap } : {} }
   }
   await Promise.all(Array.from({ length: 4 }, async () => {
-    while (next < asked.length) {
+    while (next < asked.length && taken < MAX_TOLD_DEPENDENCIES) {
       const at = asked[next++]
-      try { told[at] = await tell(told[at]) } catch (error) { next = asked.length; throw error }
+      try {
+        if (await owned(told[at].opens)) continue
+        if (taken >= MAX_TOLD_DEPENDENCIES) break
+        taken++
+        told[at] = await tell(told[at])
+      } catch (error) { next = asked.length; throw error }
     }
   }))
   return told
@@ -133,13 +141,14 @@ async function addedDependencies(added, published, context) {
 // `dependencies`, those added and changed against it, each with its flags,
 // an added one with its package's tier and age where `downloads` (true unless
 // given false) has them asked, and `dependencies` (true unless given false)
-// too. `cache` keeps what is read (registry.js),
+// too, but where `owned` says its package is the caller's own, as its own scopes
+// take (none unless given). `cache` keeps what is read (registry.js),
 // `packument` asks for a package's whole document and `tarball` for a
 // version's tarball in risk's stead (registry.js), `now` is when it is asked, `signal` gives up on what is
 // still asked of npm. Throws an NpmRiskError (registry.js), its `code` saying
 // why, where npm has no such package or version, answers past risk's bounds,
 // or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true } = {}) {
+export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, owned = () => false } = {}) {
   const context = { cache, packument, tarball, now, signal }
   const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
   const { published } = facts.versions.get(version)
@@ -147,7 +156,7 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = oldVersion === null ? null : facts.versions.get(oldVersion).published
-  const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context) : kept.dependencies.added
+  const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
   return { name, version, oldVersion, published, ...npmAssessmentOf(kept, own, added) }
 }
 
