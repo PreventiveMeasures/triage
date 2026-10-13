@@ -14,14 +14,22 @@ const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
 // most downloaded packages.
 const KNOWN_PUBLISHERS = new Set(publishers.map(name => name.toLowerCase()))
 // The scopes of npm's most downloaded packages, which only their owners, an
-// npm organization or account, publish in.
+// npm organization or account, publish in; and those accounts' own, by
+// scope: npm's accounts and organizations share one namespace, so `@name` is
+// the account `name`'s.
 const KNOWN_SCOPES = new Set(scopes)
+const PUBLISHER_SCOPES = new Map(publishers.map(name => [`@${name.toLowerCase()}`, name]))
 
-// A package's scope where it is one of those (`@babel` of `@babel/core`), else
-// null.
+// A package's scope where it is known: one of npm's most downloaded
+// packages' (`{ scope }`, `@babel` of `@babel/core`), or else a known
+// publisher's own (`{ scope, account }`, `@sindresorhus` of
+// `@sindresorhus/is`); else null.
 export function npmKnownScope(name) {
   const scope = name.startsWith('@') ? name.slice(0, name.indexOf('/')) : null
-  return scope && KNOWN_SCOPES.has(scope) ? scope : null
+  if (!scope) return null
+  if (KNOWN_SCOPES.has(scope)) return { scope }
+  const account = PUBLISHER_SCOPES.get(scope)
+  return account ? { scope, account } : null
 }
 const plainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const stringRecord = value => plainObject(value) ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) : undefined

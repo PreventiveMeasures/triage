@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
 import publishers from '@preventive/publishers/npm.js'
+import knownScopes from '@preventive/publishers/npm-scopes.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk, npmMalwareAdvisory } from '../risk/index.js'
 import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
@@ -314,31 +315,36 @@ test('a package few download is flagged as unpopular, but where its popularity i
   assert.ok(!asked.some(url => url.startsWith('https://api.npmjs.org/downloads/')), 'nor its downloads asked')
 })
 
-test('a package few download is a level less unpopular where an account known to publish one of npm\'s most downloaded packages published the version', async t => {
+test('a package few download is yellow at most where an account known to publish one of npm\'s most downloaded packages published the version', async t => {
   const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
   const daily = perDay => ({ start: '2026-08-01', end: '2026-10-11', downloads: Array.from({ length: 72 }, (_, i) => ({ day: new Date(Date.parse('2026-08-01') + i * DAY).toISOString().slice(0, 10), downloads: perDay })) })
   npm(t, ['quiet', 'middling'].map(name => ({ name, versions: [version(name, '1.0.0', { 'package.json': '{}' }, by('stranger-account'), ago(400)),
     version(name, '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300))] })), { quiet: daily(0), middling: daily(500) })
   const popularity = async (name, number) => (await assessNpm(name, number, { now: NOW })).findings.find(({ id }) => id === 'popularity')
   assert.deepEqual(await popularity('quiet', '1.0.0'), { id: 'popularity', severity: 'critical', tier: null, level: 'is-unpopular' }, 'an unknown account\'s: red')
-  assert.deepEqual(await popularity('quiet', '1.1.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true }, 'a known one\'s: orange')
+  assert.deepEqual(await popularity('quiet', '1.1.0'), { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true }, 'a known one\'s: yellow')
   assert.deepEqual([(await popularity('middling', '1.0.0')).severity, (await popularity('middling', '1.1.0')).severity], ['high', 'moderate'], 'orange, and yellow where known')
 })
 
-test('a package few download is a level less unpopular, failing a known account, in a scope of one of npm\'s most downloaded packages, as a CI publishing names no account', async t => {
+test('a package few download is yellow at most, failing a known account, in a known scope, one of npm\'s most downloaded packages\' or a known account\'s own, as a CI publishing names no account', async t => {
   const ci = { dependencies: {}, _npmUser: { name: 'GitHub Actions', email: 'npm-oidc-no-reply@github.com', trustedPublisher: { id: 'github', oidcConfigId: 'oidc:1' } } }
   const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
+  // A known account whose own scope is none of the most downloaded packages'.
+  const owner = publishers.find(name => !knownScopes.includes(`@${name.toLowerCase()}`))
   const quiet = { start: '2026-08-01', end: '2026-10-11', downloads: [] }
   npm(t, [
     { name: '@babel/quiet-helper', versions: [version('@babel/quiet-helper', '1.0.0', { 'package.json': '{}' }, ci, ago(400)), version('@babel/quiet-helper', '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300))] },
     { name: '@nobody-knows/quiet', versions: [version('@nobody-knows/quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
     { name: 'babel-quiet', versions: [version('babel-quiet', '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
-  ], { '@babel/quiet-helper': quiet, '@nobody-knows/quiet': quiet, 'babel-quiet': quiet })
+    { name: `@${owner.toLowerCase()}/quiet`, versions: [version(`@${owner.toLowerCase()}/quiet`, '1.0.0', { 'package.json': '{}' }, ci, ago(400))] },
+  ], { '@babel/quiet-helper': quiet, '@nobody-knows/quiet': quiet, 'babel-quiet': quiet, [`@${owner.toLowerCase()}/quiet`]: quiet })
   const popularity = async (name, number) => (await assessNpm(name, number, { now: NOW })).findings.find(({ id }) => id === 'popularity')
-  assert.deepEqual(await popularity('@babel/quiet-helper', '1.0.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true, scope: '@babel' },
-    'a CI\'s in @babel: orange, the scope named')
-  assert.deepEqual(await popularity('@babel/quiet-helper', '1.1.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true },
+  assert.deepEqual(await popularity('@babel/quiet-helper', '1.0.0'), { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true, scope: '@babel' },
+    'a CI\'s in @babel: yellow, the scope named')
+  assert.deepEqual(await popularity('@babel/quiet-helper', '1.1.0'), { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true },
     'a known account\'s, as before: the account told first')
+  assert.deepEqual(await popularity(`@${owner.toLowerCase()}/quiet`, '1.0.0'),
+    { id: 'popularity', severity: 'moderate', tier: null, level: 'is-unpopular', known: true, scope: `@${owner.toLowerCase()}`, account: owner }, 'a CI\'s in a known account\'s own scope: yellow, the account named')
   assert.equal((await popularity('@nobody-knows/quiet', '1.0.0')).severity, 'critical', 'a scope of none of them: red')
   assert.equal((await popularity('babel-quiet', '1.0.0')).severity, 'critical', 'no scope: red')
 })

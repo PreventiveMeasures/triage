@@ -14,20 +14,21 @@ import { npmVersionFileRisk } from './files.js'
 // than `minimumReleaseAge` at `now`, published at `published` (release.js
 // npmTooNew, `too-new`, orange); and its package past the top 20,000 by
 // `downloads` (downloads.js, `popularity`, red where unpopular, else orange),
-// `tier` its rank (Infinity past the last), a level lower where an account
-// known to publish one of npm's most downloaded packages published the
-// version (`known`, manifest.js `knownAccounts`), as few download a new
-// package such an account starts; or else, as many are published by a CI
-// that names no account, where the package is in one of those packages'
-// scopes (`scope`, manifest.js npmKnownScope), whose owner alone publishes
+// `tier` its rank (Infinity past the last); yellow at most, whatever its
+// tier, where an account known to publish one of npm's most downloaded
+// packages published the version (`known`, manifest.js `knownAccounts`), as
+// few download a new package such an account starts; or else, as many are
+// published by a CI that names no account, where the package is in a known
+// scope (`scope`, manifest.js npmKnownScope: one of those packages', or one
+// of those accounts' own, its `account` named), whose owner alone publishes
 // in it.
 export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads, known = false, scope = null }) {
   const tier = downloads ? npmDownloadTier(downloads) : null
-  const popularity = npmTierLevel(tier) === 'is-unpopular' ? ['critical', 'high'] : ['high', 'moderate']
+  const severity = known || scope ? 'moderate' : npmTierLevel(tier) === 'is-unpopular' ? 'critical' : 'high'
   return [
     ...deprecated ? [{ id: 'deprecated', severity: 'critical', message: deprecated }] : [],
     ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
-    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: popularity[known || scope ? 1 : 0], tier, ...known ? { known } : scope ? { known: true, scope } : {} }] : [],
+    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity, tier, ...known ? { known } : scope ? { known: true, ...scope } : {} }] : [],
   ]
 }
 

@@ -908,13 +908,16 @@ const POPULARITY_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: '
 // level }`, its rank, Infinity past the last, and its tint), its `last`
 // complete month's downloads in its tooltip where known, over the month's
 // name (npm-downloads-chart.js npmLastMonth); a `chip` as the chips beside
-// it are, in its finding's severity's tint, red, orange or yellow, a level
-// lower where a known account published the version (`known`), or else where
-// the package is in a known scope (`scope`), as its tooltip says.
-function tierTag({ tier, level, severity, known, scope }, last = null, chip = false) {
+// it are, in its finding's severity's tint, red, orange or yellow, yellow
+// at most where a known account published the version (`known`), or else
+// where the package is in a known scope (`scope`, a known account's own
+// where it names the `account`), as its tooltip says.
+function tierTag({ tier, level, severity, known, scope, account }, last = null, chip = false) {
   const total = last?.total.toLocaleString('en')
   const kind = chip ? `npm-extension npm-popularity ${POPULARITY_TINTS[severity] ?? 'is-warn'}` : `npm-downloads-tier ${level}`
-  const note = !chip || !known ? null : scope ? `In ${scope}, the scope of one of npm's most downloaded packages, which only its owner publishes in`
+  const note = !chip || !known ? null
+    : account ? `In ${scope}, the scope of ~${account}, an account that publishes one of npm's most downloaded packages`
+    : scope ? `In ${scope}, the scope of one of npm's most downloaded packages, which only its owner publishes in`
     : 'Published by an account that publishes one of npm\'s most downloaded packages'
   const tooltip = [last && `${total} downloads/month, ${last.month}`, note].filter(Boolean).join(' · ')
   return html`<span class=${kind} data-tooltip=${tooltip || nothing}
