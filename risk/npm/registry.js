@@ -34,12 +34,13 @@
 import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
 import { npmVersionManifest } from './manifest.js'
-import { npmPlaceholder } from './malware.js'
+import { npmMalwareAdvisory, npmPlaceholder } from './malware.js'
 import { npmOldVersion } from './old-version.js'
 import { npmTarballVersion } from './tarball.js'
 import { DAY_MS } from './downloads.js'
 
 const REGISTRY = 'https://registry.npmjs.org'
+const OSV_QUERY = 'https://api.osv.dev/v1/query'
 const DOWNLOADS = 'https://api.npmjs.org/downloads/range'
 const PACKAGE_MS = 60 * 60_000
 // How long a version's advisories are kept, as the managed server keeps a
@@ -74,9 +75,10 @@ async function kept({ cache }, type, key, ask, fresh = () => true) {
   return value
 }
 
-// An answer's body as JSON, read no further than `limit` bytes.
-async function jsonOf(res, limit, what) {
-  const tooLarge = () => new NpmRiskError('upstream-too-large', `npm's answer for ${what} is over ${limit} bytes`)
+// An answer's body as JSON, read no further than `limit` bytes, `from` npm
+// or OSV.
+async function jsonOf(res, limit, what, from = 'npm') {
+  const tooLarge = () => new NpmRiskError('upstream-too-large', `${from}'s answer for ${what} is over ${limit} bytes`)
   if (Number(res.headers.get('content-length')) > limit) { await res.body?.cancel(); throw tooLarge() }
   const chunks = []
   let size = 0
@@ -85,23 +87,26 @@ async function jsonOf(res, limit, what) {
     if (size > limit) throw tooLarge()
     chunks.push(chunk)
   }
-  try { return JSON.parse(await new Blob(chunks).text()) } catch { throw new NpmRiskError('upstream-invalid', `npm's answer for ${what} isn't JSON`) }
+  try { return JSON.parse(await new Blob(chunks).text()) } catch { throw new NpmRiskError('upstream-invalid', `${from}'s answer for ${what} isn't JSON`) }
 }
 
-// What npm answers `url` as JSON (jsonOf), null where it answers 404; given up
-// on after REQUEST_MS, or once the caller's `signal` aborts, its abort
-// rethrown as it is. `upstream-busy` where npm asks to be asked later (429),
-// as its downloads API does past a burst of requests;
-// `upstream-unavailable` where it can't be asked or answers otherwise.
-async function askNpm(url, headers, limit, what, { signal }) {
+// What npm answers `url` as JSON (jsonOf), null where it answers 404, or
+// `from` another (OSV), `body` posted as JSON where given; given up on after
+// REQUEST_MS, or once the caller's `signal` aborts, its abort rethrown as it
+// is. `upstream-busy` where it asks to be asked later (429), as npm's
+// downloads API does past a burst of requests; `upstream-unavailable` where
+// it can't be asked or answers otherwise.
+async function askNpm(url, headers, limit, what, { signal }, { body, from = 'npm' } = {}) {
   try {
-    const res = await fetch(url, { headers: { accept: 'application/json', ...headers }, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(REQUEST_MS), ...signal ? [signal] : []]) })
+    const posted = body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }
+    const res = await fetch(url, { ...posted, headers: { accept: 'application/json', ...body === undefined ? {} : { 'content-type': 'application/json' }, ...headers },
+      redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(REQUEST_MS), ...signal ? [signal] : []]) })
     if (res.status === 404) { await res.body?.cancel(); return null }
-    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError(res.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm answered ${res.status} for ${what}`) }
-    return await jsonOf(res, limit, what)
+    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError(res.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `${from} answered ${res.status} for ${what}`) }
+    return await jsonOf(res, limit, what, from)
   } catch (error) {
     if (error instanceof NpmRiskError || signal?.aborted) throw error
-    throw new NpmRiskError('upstream-unavailable', `npm couldn't be asked for ${what}: ${error.message}`)
+    throw new NpmRiskError('upstream-unavailable', `${from} couldn't be asked for ${what}: ${error.message}`)
   }
 }
 
@@ -191,17 +196,25 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
 }
 
 // npm's advisories of `version` of a package, as `npm audit` asks them
-// (upstream's `advisories`), each `{ id, url?, title?, cwe }`: kept
-// ADVISORIES_MS, and given up on once `signal` aborts.
+// (upstream's `advisories`), each `{ id, url?, title?, cwe }`, and OSV's
+// records of malware naming it that npm's don't, by id or alias (osvRecords,
+// malware.js npmMalwareAdvisory), as the malicious packages' of nx's
+// versions are (MAL-2025-41443, of GHSA-cxm3-wv7p-598c, which npm's
+// registry hasn't): kept ADVISORIES_MS, and given up on once `signal`
+// aborts.
 export async function npmVersionAdvisories(name, version, context) {
   const what = `${name}@${version}`
   const { rows } = await kept(context, 'risk/npm/advisories', what, async () => {
     context.signal?.throwIfAborted()
-    const asked = await untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false }), context.signal).catch(error => {
+    const [registry, osv] = await Promise.all([untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false }), context.signal).catch(error => {
       throw context.signal?.aborted ? error : new NpmRiskError(error?.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm's advisories of ${what} couldn't be had: ${error.message}`)
-    })
-    return { at: context.now, rows: asked.map(({ id, url, title, cwe }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe })) }
-  }, hit => context.now - hit.at < ADVISORIES_MS)
+    }), osvRecords(name, version, context)])
+    const told = registry.map(({ id, url, title, cwe }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe }))
+    const named = new Set(told.map(({ id }) => id))
+    const malware = osv.filter(record => npmMalwareAdvisory(record) && ![record.id, ...record.aliases].some(id => named.has(id)))
+      .map(({ id, url, title, cwe }) => ({ id, url, ...title ? { title } : {}, cwe }))
+    return { at: context.now, osv: true, rows: [...told, ...malware] }
+  }, hit => context.now - hit.at < ADVISORIES_MS && hit.osv === true)
   return rows
 }
 
@@ -211,6 +224,19 @@ export async function npmPackageReleases(name, context) {
   const doc = await packageDocument(name, context, true)
   if (!doc) throw new NpmRiskError('package-not-found', `npm has no package ${name}`)
   return releasesOf(doc)
+}
+
+// OSV's records of `version` of a package (osv.dev's npm ecosystem), each
+// `{ id, url, title?, cwe, aliases }`: GitHub's advisories and the malicious
+// packages' (MAL-…, OpenSSF's) among them, read to OSV_BYTES.
+const OSV_BYTES = 8 * 1024 * 1024
+const strings = value => Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
+async function osvRecords(name, version, context) {
+  const json = await askNpm(OSV_QUERY, {}, OSV_BYTES, `OSV's records of ${name}@${version}`, context,
+    { body: { package: { ecosystem: 'npm', name }, version }, from: 'OSV' })
+  return (Array.isArray(json?.vulns) ? json.vulns : []).filter(record => typeof record?.id === 'string' && record.id.length <= 64)
+    .map(record => ({ id: record.id, url: `https://osv.dev/vulnerability/${encodeURIComponent(record.id)}`, ...typeof record.summary === 'string' ? { title: record.summary } : {},
+      cwe: strings(record.database_specific?.cwe_ids), aliases: strings(record.aliases) }))
 }
 
 // `promise`, given up on once `signal` aborts, its reason thrown: what it

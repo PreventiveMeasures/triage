@@ -126,8 +126,9 @@ export interface NpmAssessment {
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
 
-// Whether an advisory is of malware rather than a vulnerability: CWE-506,
-// embedded malicious code, whatever its title, or a title naming malware.
-export function npmMalwareAdvisory(advisory: { cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
+// Whether an advisory is of malware rather than a vulnerability: OSV's of a
+// malicious package (`MAL-…`), CWE-506, embedded malicious code, whatever its
+// title, or a title naming malware.
+export function npmMalwareAdvisory(advisory: { id?: string | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown
