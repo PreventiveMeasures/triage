@@ -107,7 +107,9 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
     const result = await Promise.race([Promise.all(asked.map(({ part, osv }) => part.length === 0 ? Promise.resolve([]) : advisories(part, { ...options, osv }))), deadline])
     return { status: 200, body: result.flat().toSorted((a, b) => order(a.ecosystem, b.ecosystem) || order(a.name, b.name)) }
   } catch (error) {
-    if (debug) console.warn('managed: advisories failed:', error)
+    // Answered as upstream's failure alone: logged, its message, or with
+    // `debug` the whole error, but for a request given up on.
+    if (!signal.aborted) console.warn('managed: advisories failed:', debug || !(error instanceof Error) ? error : error.message)
     return { status: 502, body: { error: 'upstream-unavailable' } }
   } finally {
     if (onAbort) signal.removeEventListener('abort', onAbort)
