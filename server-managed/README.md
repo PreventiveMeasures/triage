@@ -301,11 +301,11 @@ Deno, Bun or a shell (`#!/usr/bin/env node`, `#!/bin/sh`, …), matched whole
 with nothing parsed out of it. A format of another language, or one not
 known, reads as not listed. Any other file may hold
 its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
-Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
-Nor are they hidden in a file where that would hide blanks of more than one
-kind changing between the same two characters, such as spaces turned to tabs
-or a run of tabs and spaces made longer. Such a file says why in a note
-while whitespace changes are to be hidden. The toggle is offered only where
+Makefile's tabs, TSV's fields, a language not listed), and shows all of it,
+the toggle not offered for it. Nor are they hidden in a file where that would
+hide blanks of more than one kind changing between the same two characters,
+such as spaces turned to tabs or a run of tabs and spaces made longer. Such a
+file says why in a note while whitespace changes are to be hidden. The toggle is offered only where
 hiding whitespace changes hides one, in the diff shown or in diff -b's: in
 the file shown, or in any file the Diff view lists.
 

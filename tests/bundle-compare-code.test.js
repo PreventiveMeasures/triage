@@ -1290,7 +1290,7 @@ test('hidden whitespace changes are how much whitespace a line has alone: blanks
   assert.match(indent, /aria-pressed=true\s+aria-label=Hide whitespace changes data-tooltip=Hide whitespace changes @click/u, 'the toggle saying so in three words')
 })
 
-test('whitespace changes all show in a file whose whitespace may mean something, hiding them not offered there, saying why', async t => {
+test('whitespace changes all show in a file whose whitespace may mean something, hiding them not offered there', async t => {
   const files = [{ 'tools/gen.py': 'if a:\n    b()\n', 'tools/same.py': 'a = 1\n' }, { 'tools/gen.py': 'if a:\n        b()\n', 'tools/same.py': 'a = 2\n' }]
   const off = renderText(view('tools/gen.py', files).render())
   assert.match(off, /class=diff-row del[^]*class=diff-row add/u)
@@ -1301,12 +1301,11 @@ test('whitespace changes all show in a file whose whitespace may mean something,
   const on = renderText(element.render())
   assert.match(on, /class=diff-row del[^]*class=diff-row add/u, 'its re-indented line shows while whitespace changes are hidden')
   assert.doesNotMatch(on, /Only whitespace changed/u)
-  assert.doesNotMatch(on, /aria-label=Hide whitespace changes/u, 'not offered')
-  assert.match(on, /<p class="bundle-compare-code-note">Whitespace changes are shown: whitespace is significant in this file\.<\/p>/u, 'a note saying why')
+  assert.doesNotMatch(on, /aria-label=Hide whitespace changes|Whitespace changes are shown/u, 'not offered, nor said: plain to see')
   assert.doesNotMatch(renderText(view('tools/same.py', files).render()), /aria-label=Hide whitespace changes/u, 'nor told where hiding would hide none')
   const script = [{ 'bin/gen': '#!/usr/bin/env python3\nif a:\n    b()\n' }, { 'bin/gen': '#!/usr/bin/env python3\nif a:\n        b()\n' }]
   const gen = renderText(view('bin/gen', script).render())
-  assert.match(gen, /whitespace is significant in this file/u, 'an extensionless script alike, unless its #! line names Node or a shell')
+  assert.doesNotMatch(gen, /aria-label=Hide whitespace changes/u, 'an extensionless script alike, unless its #! line names Node or a shell')
   assert.match(gen, /class=diff-row del[^]*class=diff-row add/u)
   const node = [{ 'bin/run': '#!/usr/bin/env node\nif (a) {\n  b()\n}\n' }, { 'bin/run': '#!/usr/bin/env node\nif (a) {\n    b()\n}\n' }]
   assert.match(renderText(view('bin/run', node).render()), /Only whitespace changed in this file\./u, 'one whose #! line names Node hides them')
@@ -1317,7 +1316,7 @@ test('whitespace changes all show in a file whose whitespace may mean something,
   all.models = combinedDiffRows(code.base, code.other, code.files).models
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
-  assert.match(sections['tools/gen.py'], /whitespace is significant in this file/u, 'the Diff view says so for it')
+  assert.doesNotMatch(sections['tools/gen.py'], /Whitespace changes are shown|aria-label=Hide whitespace changes/u, 'nor in the Diff view')
   assert.match(sections['tools/gen.py'], /class=bundle-compare-diff-table/u)
 })
 
@@ -1338,8 +1337,7 @@ test('in a stasis bundle, whether whitespace may be hidden is told by the format
   assert.match(formatted('CMakeLists.txt'), /Only whitespace changed in this file\./u, 'CMake, which a .txt name alone would not say')
   const data = formatted('src/data.js')
   assert.match(data, /class=diff-row del[^]*class=diff-row add/u, 'a .js name carried as a resource shows its whitespace changes')
-  assert.match(data, /whitespace is significant in this file/u)
-  assert.doesNotMatch(data, /aria-label=Hide whitespace changes/u)
+  assert.doesNotMatch(data, /aria-label=Hide whitespace changes/u, 'not offered for it')
   assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
 })
 

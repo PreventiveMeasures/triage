@@ -114,11 +114,10 @@ const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}
 // blanks added to a run of them or at its end, reads as unchanged; blanks put
 // between other characters or taken from between them still show. The toggle
 // says it in a few words, and a note why a file whose changes it would hide
-// shows them all (_fileState).
+// shows them all as their blanks mix kinds (_fileState).
 const HIDE_WHITESPACE = 'Hide whitespace changes'
 const WHITESPACE_KEPT = {
   mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
-  unlisted: 'Whitespace changes are shown: whitespace is significant in this file.',
 }
 // The format a stasis bundle records for one of its files, its own spelling
 // of the file's language; undefined for another kind of bundle, or a file it
@@ -992,12 +991,12 @@ export class BundleCompareCode extends LitElement {
     }
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
-    // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it
-    // would hide none, or none it may, it is not offered.
-    const off = model && (unlisted || !prefs.ignoreWhitespace) ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
-    const whitespace = model === null ? null
+    // may not as blanks of more than one kind change (`mixed`), said while they
+    // are to be hidden. Where it would hide none, or none it may (a file whose
+    // whitespace may mean something, plain to see), it is not offered.
+    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
+    const whitespace = model === null || unlisted ? null
       : mixed ? 'mixed'
-      : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
     // A hit sought here waits while its diff isn't drawn yet: its printed
