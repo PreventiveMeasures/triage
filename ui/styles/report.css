@@ -3737,6 +3737,14 @@ a.npm-compare-publisher {
   &:hover { border-color: var(--sev); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
+/* A chip that opens what it names in Compare's Code, as a new host named in
+   one place alone (npm-overview.js hostsBadge): a button, as its tint has it. */
+.npm-extension.is-open {
+  font-family: inherit;
+
+  &:hover { border-color: color-mix(in srgb, var(--text) 45%, var(--high)); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
 /* Their tooltips, as styled content in the shared one (tooltip.js
    `tooltipContent`): a head, a row for each version, its number and the
    advisories' severities or the score's ring, and a note under them. */
@@ -3752,6 +3760,8 @@ a.npm-compare-publisher {
    said of it, whole. */
 .compare-tip-rows.is-files { grid-template-columns: minmax(0, max-content) max-content; }
 .compare-tip-path { overflow-wrap: anywhere; }
+/* One said in several lines (a new host's every file) reads from the top. */
+.compare-tip-path:has(+ .compare-tip-said > .compare-tip-lines), .compare-tip-said:has(> .compare-tip-lines) { align-self: start; }
 /* A version's install scripts, or dependencies' specs, one a line, those
    added or changed bold. */
 .compare-tip-lines {

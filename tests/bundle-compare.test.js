@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { templateText as renderText } from './_lit.js'
+import { templateText as renderText, templates } from './_lit.js'
 
 mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
@@ -51,6 +51,24 @@ test('the summary row offers Overview and Code, Overview first, and a file row o
   view._openFile('app.js')
   assert.equal(view._mode, 'code')
   assert.equal(view._codePath, 'app.js')
+})
+
+test('a source\'s chip opening a line opens Code at the open version\'s file there, each time anew', () => {
+  const view = compare()
+  view._status = 'ready'
+  view._openLine({ path: 'b.js', line: 3, query: 'x.dev' })
+  assert.equal(view._mode, 'code')
+  assert.equal(view._codePath, 'b.js')
+  const first = view._codeSeek
+  assert.deepEqual(first, { path: 'b.js', line: 2, query: 'x.dev' }, 'its line from 0, as Code counts them')
+  view._openLine({ path: 'b.js', line: 3, query: 'x.dev' })
+  assert.notEqual(view._codeSeek, first, 'asked again, sought again')
+  assert.match(renderText(view.render()), /<bundle-compare-(?:all|code)[^>]*\.seek=\[object Object\]/u, 'handed to Code')
+  // As the chip asks it, its event bubbling to the row it sits in.
+  const row = templates(view.render()).find(template => template.strings.some(part => part.includes('@compare-open-line=')))
+  row.values[row.strings.findIndex(part => part.includes('@compare-open-line='))]({ detail: { path: 'a.js', line: 1, query: 'y.dev' } })
+  assert.deepEqual(view._codeSeek, { path: 'a.js', line: 0, query: 'y.dev' })
+  assert.equal(view._codePath, 'a.js')
 })
 
 test('Code lists every file\'s diff while that list is under 25,000 rows, and a file at a time beside the tree past it', t => {

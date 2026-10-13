@@ -159,6 +159,9 @@ class BundleCompare extends LitElement {
     // scrolls to (null: its first changed file).
     _mode: { state: true },
     _codePath: { state: true },
+    // A line Code is to open at, `{ path, line, query }` (line from 0, the
+    // open version's; see _openLine), once.
+    _codeSeek: { state: true },
   }
 
   // Light DOM so report.css applies + file-row clicks bubble to the
@@ -180,6 +183,7 @@ class BundleCompare extends LitElement {
     this._openSections = new Set()
     this._mode = 'overview'
     this._codePath = null
+    this._codeSeek = null
     // Diff memo — recomputed only when the (base, other) integrity
     // pair changes, so unrelated re-renders don't re-walk every file.
     this._diff = null
@@ -455,6 +459,15 @@ class BundleCompare extends LitElement {
     this._codePath = path
     this._mode = 'code'
     this._notify()
+  }
+
+  // Review them at a line of the open version's file (`line` from 1, as a
+  // source's badges name it, `query` what it holds there): Code opens the
+  // file there as at a search hit (bundle-compare-code.js `seek`), a new
+  // object each time, so the same line asked for again is sought again.
+  _openLine({ path, line, query }) {
+    this._codeSeek = { path, line: line - 1, query }
+    this._openFile(path)
   }
 
   // A file's row; a source's `files` (see `source`) give it its type's icon,
@@ -812,7 +825,8 @@ class BundleCompare extends LitElement {
     const fit = ({ name, detail }) => name.length + Math.min(detail?.length ?? 0, TAGS_FIT) * .87 + 1
     const chars = this.source
       ? (this.source.choices ?? []).reduce((most, choice) => Math.max(most, fit(choice)), Math.max(`Choose a ${noun}…`.length, fit(this.source.widest))) : null
-    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}>
+    return html`<div class=${this.source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${chars ? `--compare-select-chars: ${Math.ceil(chars)}` : nothing}
+      @compare-open-line=${event => this._openLine(event.detail)}>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare</span>
         <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}
@@ -930,13 +944,13 @@ class BundleCompare extends LitElement {
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
           .dependencyTags=${this.source?.dependencyTags ?? null}
-          .models=${this._combinedFor().models} .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
+          .models=${this._combinedFor().models} .path=${this._codePath} .seek=${this._codeSeek} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-all>`
         : mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .baseAlerts=${this.source?.files?.alerts(this._otherDetails) ?? null} .otherAlerts=${this.source?.files?.alerts(this.details) ?? null} .alertTags=${this.source?.files?.alertTags ?? null}
           .dependencies=${this.source?.dependencies?.(this._otherDetails, this.details) ?? null} .openDependency=${this.source?.openDependency ?? null}
           .dependencyTags=${this.source?.dependencyTags ?? null}
-          .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
+          .path=${this._codePath} .seek=${this._codeSeek} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`

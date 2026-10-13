@@ -89,6 +89,8 @@ const SEEK_MARGIN = EXPAND_STEP / 2
 // Characters of a minified line a hit's match is looked for in at a time,
 // in a pretty-printed copy's text as published (_soughtLine).
 const SEEK_CHUNK = 65_536
+// The lines asked for from without (`seek`) already sought, by any Code drawn.
+const seeksTaken = new WeakSet()
 // Why a file's hits aren't as its diff shows them (_searchResults): a changed
 // file's unsigned, the lines it removed not searched, its diff too large to
 // show unasked or of its pretty-printed copies, whose lines and changes
@@ -303,6 +305,9 @@ export class BundleCompareCode extends LitElement {
     baseName: {},
     otherName: {},
     path: {},
+    // A line to open at, `{ path, line, query }` (line from 0, the open
+    // version's; bundle-compare.js _openLine): sought as a search hit is, once.
+    seek: { attribute: false },
     _query: { state: true },
     _kinds: { state: true },
     // 'files' (the query filters the tree) or 'code' (it searches code).
@@ -382,6 +387,19 @@ export class BundleCompareCode extends LitElement {
       this._blocks.clear()
       this._rowless.clear()
       this._sought = this._soughtRow = null
+      this._soughtSettling = false
+    }
+    // Sought as a hit picked in the rail is (_seek), at its query's first
+    // match on the line, but by the file Compare opens (`path`); and once,
+    // not again where Code is drawn anew with it.
+    if (changed.has('seek') && this.seek && !seeksTaken.has(this.seek)) {
+      seeksTaken.add(this.seek)
+      const { path, line, query } = this.seek
+      const entry = this._entries?.get(path)
+      const after = entry ? fileContents(this.base, this.other, path, entry).after : null
+      const at = typeof after === 'string' ? textLines(after)[line]?.toLowerCase().indexOf(query.toLowerCase()) ?? -1 : -1
+      this._sought = { path, side: 'b', line, at: Math.max(at, 0), query }
+      this._soughtRow = null
       this._soughtSettling = false
     }
   }

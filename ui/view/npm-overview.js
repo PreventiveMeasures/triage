@@ -672,10 +672,19 @@ function fileBadges(found) {
 // The hosts the open version's code names in its URLs that the one compared
 // with's named in none of its (risk/npm/compare.js npmNewHosts), as a chip in
 // orange, as install scripts are: the host, or how many; each in its tooltip
-// with the file it is first named in, and its line.
+// with every file that names it (TIP_FILES at most) and the line it is first
+// named on there. One host named in one place alone, the chip opens it there,
+// at its line, in Compare's Code (`compare-open-line`).
 function hostsBadge(finding) {
-  const rows = (finding?.hosts ?? []).map(({ host, path, line }) => ({ path: host, at: `${path}, line ${line}` }))
-  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at, rows.length === 1 ? rows[0].path : null)
+  const hosts = finding?.hosts ?? []
+  const rows = hosts.map(({ host, places }) => {
+    const shown = places.slice(0, TIP_FILES).map(({ path, line }) => `${path}, line ${line}`)
+    return { path: host, at: places.length > shown.length ? [...shown, `and ${(places.length - shown.length).toLocaleString('en')} more files`] : shown }
+  })
+  const [only] = hosts
+  const place = hosts.length === 1 && only.places.length === 1 ? { path: only.path, line: only.line, query: only.host } : null
+  return listBadge('is-warn npm-compare-hosts', rows.length === 1 ? 'New host' : 'New hosts', rows, row => row.at, rows.length === 1 ? rows[0].path : null,
+    place && (event => event.currentTarget.dispatchEvent(new CustomEvent('compare-open-line', { detail: place, bubbles: true, composed: true }))))
 }
 
 // A chip on `rows`, files the open version adds or changes, in red.
@@ -685,19 +694,28 @@ function fileBadge(kind, ...rest) {
 
 // A chip on `rows`, each with a `path`, counting them where there are
 // several, or saying `value` of them all, the rows in its tooltip alone, each
-// with what `said` of it, and nothing more.
-function listBadge(classes, label, rows, said, value = null) {
+// with what `said` of it (a line, or a list of them), and nothing more; a
+// button, where it is to `open` what it says.
+function listBadge(classes, label, rows, said, value = null, open = null) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
-  return html`<li><span class=${`npm-extension ${classes}`}
-    data-tooltip=${`${label}: ${[...shown.map(row => `${row.path} (${said(row)})`), ...more ? [more] : []].join(', ')}`}
-    .tooltipContent=${html`<div class="compare-tip">
+  const lines = row => [said(row)].flat()
+  const tooltip = `${label}: ${[...shown.map(row => `${row.path} (${lines(row).join('; ')})`), ...more ? [more] : []].join(', ')}`
+  const content = html`<div class="compare-tip">
       <div class="compare-tip-head">${label}</div>
-      <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${said(row)}</span>`)}</div>
+      <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${lines(row).length > 1
+        ? html`<span class="compare-tip-lines">${lines(row).map(line => html`<span>${line}</span>`)}</span>` : said(row)}</span>`)}</div>
       ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-    </div>`}>
-    <span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}</span></li>`
+    </div>`
+  const inner = html`<span>${label}</span>${value !== null || rows.length > 1 ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}`
+  return open
+    ? html`<li><button type="button" class=${`npm-extension is-open ${classes}`}
+      data-tooltip=${tooltip}
+      .tooltipContent=${content} @click=${open}>${inner}</button></li>`
+    : html`<li><span class=${`npm-extension ${classes}`}
+      data-tooltip=${tooltip}
+      .tooltipContent=${content}>${inner}</span></li>`
 }
 
 // As `Non-registry deps`, the dependencies the open version takes from
