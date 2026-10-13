@@ -103,8 +103,9 @@ test('a package’s risk is its most severe finding', () => {
 
 // A scan's source of repositories and assessments, as the server's is, from
 // what a test holds: `repos` by id, each `{ fullName, lockfiles, files }`,
-// or `{ fullName, error }` where it can't be opened and `{ fullName,
-// lockfilesError }` where its lockfiles can't be listed; `assess` answering
+// or `{ fullName, error }` where it can't be opened, `{ fullName,
+// lockfilesError }` where its lockfiles can't be listed and `revoked: true`
+// where access to it is gone once they are read; `assess` answering
 // a version's document, and npm's integrity of each package by name
 // (`integrities`, its own name's sri unless given).
 function sourceOf(repos, assess, integrities = {}) {
@@ -118,7 +119,8 @@ function sourceOf(repos, assess, integrities = {}) {
       const repo = repos[repoId]
       if (repo.error) throw new GithubApiError(404, repo.error)
       return { commit: 'a'.repeat(40), file: path => Promise.resolve(repo.files[path]),
-        lockfiles: () => repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError)) : Promise.resolve(repo.lockfiles) }
+        lockfiles: () => repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError)) : Promise.resolve(repo.lockfiles),
+        recheck: () => repo.revoked ? Promise.reject(new GithubApiError(404, 'no-repository')) : Promise.resolve() }
     },
     version(name, version) {
       versions.push(`${name}@${version}`)
@@ -196,6 +198,14 @@ test('a repository whose lockfiles can’t be listed is told so, and the rest ar
   const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal))
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(({ id, error }) => [id, error]), [[1, 'github-rate-limited'], [2, undefined]])
   assert.deepEqual(lines.at(-1), { type: 'done' })
+})
+
+test('a repository whose access is gone once it is read tells nothing of it', async () => {
+  const source = sourceOf({ 1: { ...onePnpmRepo[1], revoked: true } }, assert.fail)
+  assert.deepEqual(await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal)), [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] }, { type: 'repo', id: 1, error: 'no-repository' }, { type: 'done' },
+  ])
+  assert.deepEqual(source.versions, [])
 })
 
 test('an assessment refused as busy is asked again, its version read once', async () => {

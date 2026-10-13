@@ -121,11 +121,13 @@ export function lockedPackages(format: LockfileFormat, text: string): LockedPack
 export interface RepositoryRiskRepo { repoId: number; fullName: string }
 
 // A repository opened at its default branch's head (`commit`): its lockfiles,
-// as findRepoLockfiles lists them, and a file's text.
+// as findRepoLockfiles lists them, and a file's text; `recheck` checks access
+// to it again, throwing where it is gone.
 export interface OpenedRepository {
   commit: string
   lockfiles(): Promise<Pick<RepoLockfile, 'path' | 'format'>[]>
   file(path: string): Promise<string>
+  recheck(): Promise<void>
 }
 
 export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
@@ -222,21 +224,22 @@ async function assessor(scan: Scan) {
   }
 }
 
-// A lockfile's line, its packages or why they couldn't be had, its packages
-// of npm's registry or a mirror not yet seen this scan given to the
-// assessors.
-async function readLockfile(scan: Scan, repo: number, opened: OpenedRepository, { path, format }: { path: string; format: LockfileFormat }) {
+type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
+
+// A lockfile's line, its packages or why they couldn't be had.
+async function readLockfile(repo: number, opened: OpenedRepository, { path, format }: { path: string; format: LockfileFormat }): Promise<LockfileLine> {
   const at = { type: 'lockfile', repo, path, format } as const
-  if (!READ_FORMATS.has(format)) { scan.lines.add({ ...at, error: 'unsupported-format' }); return }
+  if (!READ_FORMATS.has(format)) return { ...at, error: 'unsupported-format' }
   let text
-  try { text = await opened.file(path) } catch (error) { scan.lines.add({ ...at, ...failureOf(error) }); return }
-  if (scan.signal.aborted) return
-  let packages
-  try { packages = lockedPackages(format, text) } catch (error) {
-    scan.lines.add({ ...at, error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} })
-    return
+  try { text = await opened.file(path) } catch (error) { return { ...at, ...failureOf(error) } }
+  try { return { ...at, packages: lockedPackages(format, text) } } catch (error) {
+    return { ...at, error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
   }
-  scan.lines.add({ ...at, packages })
+}
+
+// A lockfile's packages of npm's registry or a mirror not yet seen this scan,
+// given to the assessors.
+function assessLater(scan: Scan, packages: LockedPackage[]) {
   for (const { name, version, source, integrity } of packages) {
     const key = `${name}@${version}\0${integrity ?? ''}`
     if ((source !== 'registry' && source !== 'mirror') || version === null || scan.seen.has(key) || !isNpmPackageName(name) || !isNpmPackageSpec(version)) continue
@@ -259,27 +262,43 @@ async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
   }
 }
 
-// Each repository's line, its lockfiles or why they couldn't be listed, and
-// then its lockfiles', a repository at a time.
+// A repository's line, its lockfiles or why they couldn't be listed, and
+// then its lockfiles': told once they are all read and access to the
+// repository is checked again, as GitHub may have withdrawn it meanwhile.
+async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
+  const listed = await listLockfiles(scan, repo)
+  if (!listed) return
+  const lockfiles: LockfileLine[] = []
+  for (const lockfile of listed.lockfiles) {
+    if (scan.signal.aborted) return
+    lockfiles.push(await readLockfile(repo.repoId, listed.opened, lockfile))
+  }
+  try { await listed.opened.recheck() } catch (error) {
+    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error) })
+    return
+  }
+  if (scan.signal.aborted) return
+  scan.lines.add({ type: 'repo', id: repo.repoId, commit: listed.opened.commit, lockfiles: listed.lockfiles.map(({ path, format }) => ({ path, format })) })
+  for (const line of lockfiles) {
+    scan.lines.add(line)
+    if ('packages' in line) assessLater(scan, line.packages)
+  }
+}
+
+// Each repository, a repository at a time.
 async function readRepositories(scan: Scan) {
   const repos = await scan.source.repos()
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
   for (const repo of repos) {
     if (scan.signal.aborted) return
-    const listed = await listLockfiles(scan, repo)
-    if (!listed) continue
-    scan.lines.add({ type: 'repo', id: repo.repoId, commit: listed.opened.commit, lockfiles: listed.lockfiles.map(({ path, format }) => ({ path, format })) })
-    for (const lockfile of listed.lockfiles) {
-      if (scan.signal.aborted) return
-      await readLockfile(scan, repo.repoId, listed.opened, lockfile)
-    }
+    await readRepository(scan, repo)
   }
 }
 
 // The scan's lines, in the order they are found: the repositories first,
-// then each repository's lockfiles once listed, each lockfile's packages
-// once read, and each package's risk once assessed, while the repositories
-// are still being read; `done` last. Ends at once, the work under way given
+// then each repository's lockfiles and their packages once read and access
+// is checked again, and each package's risk once assessed, while the
+// repositories are still being read; `done` last. Ends at once, the work under way given
 // up on, where `signal` aborts or the lines are no longer read. A failure of
 // a repository, a lockfile or a package is told in its line; one of the scan
 // itself is thrown, the lines before it told.

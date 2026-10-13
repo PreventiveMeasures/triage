@@ -1350,7 +1350,8 @@ const REPO_RISK_IDLE_MS = 5 * 60_000
 // packages, as its lockfiles lock them at its default branch's head, each
 // assessed by risk (repository-risk.ts), a line as each is found. A
 // repository is read with the admin's own GitHub access, as browsing it is
-// (repository-browser.ts); packages as the npm viewer's admins read them, in
+// (repository-browser.ts), and that access checked again once it is read,
+// before any of it is told; packages as the npm viewer's admins read them, in
 // spare assessments (npm-risk.ts), trusted however new where a team lists
 // their scope. The reader leaving, losing their admin role or the server
 // shutting down stops it.
@@ -1372,6 +1373,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         commit,
         lockfiles: async () => (await upstreamGithub(() => client.findRepoLockfiles({ repo: repo.fullName, sha: commit }))).lockfiles,
         file: path => upstreamGithub(() => client.getRepoFile({ repo: repo.fullName, path, ref: commit })),
+        recheck: async () => { await reader.recheckAccess() },
       }
     },
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
