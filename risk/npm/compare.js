@@ -196,7 +196,8 @@ export function npmDependencyFindings({ added, changed }, base) {
 // Everything that calls for a look at the open version (`other`) against the
 // one compared with (`base`), whatever the time, in the order a reviewer reads
 // them: a publisher that changed (release.js npmPublisherChange,
-// `publisher`), a level lower in a major release (npmMajorRelease, `major`),
+// `publisher`, each account's standing on the package told where `standing`
+// is given), a level lower in a major release (npmMajorRelease, `major`),
 // as a package changing hands with a rewrite does; provenance lost (`provenance-lost`); install scripts added or
 // changed (`install-scripts`); its `dependencies` added and changed, as
 // flagged (npmDependencyFindings); its files, by how they differ (diff.js
@@ -204,9 +205,9 @@ export function npmDependencyFindings({ added, changed }, base) {
 // (npmNewHosts, `new-hosts`). A `base` without its files (`json` null),
 // where npmBaseFilesTell says they would change nothing, is found nothing of
 // by them.
-export function npmCompareFindings(base, other, dependencies) {
+export function npmCompareFindings(base, other, dependencies, standing = null) {
   const major = npmMajorRelease(base.npm.version, other.npm.version)
-  const publisher = npmPublisherChange(base.npm.manifest, other.npm.manifest)
+  const publisher = npmPublisherChange(base.npm.manifest, other.npm.manifest, standing)
   const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json?.sources })))
   const files = base.json ? npmFilesDiff(base, other) : null
   const hosts = files ? npmNewHosts(base, other, files) : []

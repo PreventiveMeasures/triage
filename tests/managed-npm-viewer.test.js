@@ -408,7 +408,7 @@ test('an author\'s and a publisher\'s npm accounts are green where they publish 
   const manifest = { author: 'Sindre Sorhus', authorAccount: 'sindresorhus', publisher: 'someone-new', knownAccounts: ['sindresorhus'] }
   const facts = text(npmOverviewMeta(npmPackageEntry({ ...data, manifest })))
   assert.match(facts, /<dt>Author<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-known href=https:\/\/www\.npmjs\.com\/~sindresorhus\s+data-tooltip=Publishes one of npm's most downloaded packages[^>]*><span>Sindre Sorhus</u)
-  assert.match(facts, /<dt>Publisher<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-unknown [^>]*data-tooltip=Publishes none of npm's most downloaded packages[^>]*><span>~someone-new</u)
+  assert.match(facts, /<dt>Publisher<\/dt><dd class="bundle-origin-row"><a class=bundle-origin-link npm-account is-unknown [^>]*data-tooltip=Unknown publisher[^>]*><span>~someone-new</u)
 })
 
 test('a CI npm trusts to publish is named in grey where no provenance names it', () => {

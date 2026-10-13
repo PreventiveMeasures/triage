@@ -8,6 +8,7 @@
 // deprecation, and those since removed from npm, whose times it keeps; no
 // tarball is read for it.
 import { DAY_MS } from './downloads.js'
+import { npmAccountStanding } from './release.js'
 
 // How long a version is on npm before it is taken as looked at: a month, as
 // an attack's versions are mostly found and pulled within days.
@@ -19,10 +20,6 @@ const CLOSE_MS = 7 * DAY_MS
 // with it: a day, as an attack's versions come within hours of each other,
 // and npm removes those it finds.
 const REMOVED_MS = DAY_MS
-// How long before the open version an account has published the package to
-// be one of its maintainers, trusted as a known account is: three months, as
-// an account given a package to take it publishes its attack within weeks.
-const TENURE_MS = 90 * DAY_MS
 
 // A version as npm publishes one, `{ core, pre }`: its MAJOR.MINOR.PATCH, each
 // to 16 digits and a safe integer as semver takes them, and its prerelease's
@@ -56,32 +53,35 @@ function compared(a, b) {
 // Of a package's versions (`releases`, `{ version, published, publisher,
 // known, deprecated, removed }` each, `removed` one since removed from npm,
 // its time alone kept), the one `version` is compared with at `now`, or null
-// where none is below it. An account is trusted where it is known
-// (manifest.js `knownAccounts`: one that published one of npm's most
-// downloaded packages, as @preventive/publishers lists them), or where it
-// published the package three months or more before the open version, as
-// one of its maintainers (TENURE_MS). Of those below it, a release where it
-// is one, the highest that is preferred, each preference kept only where some
-// version holds it, in turn:
+// where none is below it. Each account by its standing on the package when
+// the open version was published (release.js npmAccountStanding), the most
+// first: known, one that publishes one of npm's most downloaded packages;
+// one of its maintainers, on it three months or more, or first to publish
+// it; and new to it. Of those below it, a release where it is one, the
+// highest that is preferred, each preference kept only where some version
+// holds it, in turn:
 //
-// - Where an account not trusted published it, one another published, as an
+// - Where an account new to it published it, one another published, as an
 //   attack may have published more than one.
 // - One published before it, not after, as one published since (a
 //   backport) is no version it came from.
-// - Where it isn't trusted and the highest of those a trusted account
-//   published, as when a package is taken from its maintainers, one a
-//   trusted account published.
+// - Where the highest of those an account of a higher standing than its own
+//   published, as when a package is taken from its maintainers, one an
+//   account of that standing or higher published.
 // - One published a day or more apart from any version since removed from
 //   npm, as not one of the attack npm removed those of.
 // - One published a week or more apart from it, as not one of an attack's,
-//   and on npm a month or more, as looked at; but for one a trusted account
-//   other than its own published, trusted however new, as an account taken
-//   leaves another's versions alone. Its own account's are held to both, as
-//   it may be the one taken.
+//   and on npm a month or more, as looked at; but for one a known account
+//   other than its own published, trusted however new, and one a maintainer
+//   other than its own published, held to the week alone, as an account taken
+//   leaves another's versions alone, and a maintainer few know of is taken
+//   with its peers as often. Its own account's are held to both, as it may be
+//   the one taken.
 // - One npm doesn't say is deprecated, as one a maintainer took back.
 //
 // The highest is in its branch (`1.x.y`, `0.2.y`, `0.0.y`) where one is
 // there, else in the closest branch below.
+const RANKS = { new: 0, maintainer: 1, known: 2 }
 export function npmOldVersion(version, releases, now) {
   const open = releases.find(row => row.version === version && !row.removed)
   const at = open && parsed(version)
@@ -91,21 +91,18 @@ export function npmOldVersion(version, releases, now) {
   const opened = time(open)
   const versions = releases.flatMap(row => { const of = parsed(row.version); return of ? [{ ...row, of }] : [] })
   const removed = versions.filter(row => row.removed).map(time).filter(Number.isFinite)
-  // When each account first published the package.
-  const since = new Map()
-  for (const row of versions) {
-    const first = since.get(row.publisher)
-    if (row.publisher && !Number.isNaN(time(row)) && !(first <= time(row))) since.set(row.publisher, time(row))
-  }
-  const trusted = row => Boolean(row?.publisher) && (row.known || opened - since.get(row.publisher) >= TENURE_MS)
-  const taken = Boolean(open.publisher) && !trusted(open)
+  const standing = npmAccountStanding(releases, open.published)
+  const rank = row => row?.publisher ? RANKS[standing(row.publisher, row.known)] : RANKS.new
+  const own = rank(open)
   let rows = prefer(versions.filter(row => !row.removed && compared(row.of, at) < 0).toSorted((a, b) => compared(b.of, a.of)),
     row => row.of.pre.length === 0 || at.pre.length > 0)
-  if (taken) rows = prefer(rows, row => row.publisher !== open.publisher)
+  if (open.publisher && own === RANKS.new) rows = prefer(rows, row => row.publisher !== open.publisher)
   rows = prefer(rows, row => time(row) < opened)
-  if (taken && trusted(rows[0])) rows = rows.filter(trusted)
+  const top = rank(rows[0])
+  if (open.publisher && top > own) rows = rows.filter(row => rank(row) >= top)
   rows = prefer(rows, row => removed.every(gone => Math.abs(time(row) - gone) >= REMOVED_MS))
-  const vouched = row => trusted(row) && row.publisher !== open.publisher
-  rows = prefer(prefer(rows, row => vouched(row) || Math.abs(time(row) - opened) >= CLOSE_MS), row => vouched(row) || now - time(row) >= SETTLED_MS)
+  const vouched = row => row.publisher === open.publisher ? RANKS.new : rank(row)
+  rows = prefer(prefer(rows, row => vouched(row) === RANKS.known || Math.abs(time(row) - opened) >= CLOSE_MS),
+    row => vouched(row) >= RANKS.maintainer || now - time(row) >= SETTLED_MS)
   return prefer(rows, row => !row.deprecated)[0]?.version ?? null
 }

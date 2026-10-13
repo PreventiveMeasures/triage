@@ -12,6 +12,7 @@ import { npmFilesDiff } from '../risk/npm/diff.js'
 import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmOldVersion } from '../risk/npm/old-version.js'
+import { npmAccountStanding } from '../risk/npm/release.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
@@ -105,7 +106,7 @@ test('against the version before: what it adds and changes, its publisher and pr
   npm(t, [{ name: 'axios-like', versions: [before, after] }, { name: 'crypto-like', versions: [dependency] }])
   const assessment = await assessNpm('axios-like', '1.0.1', { oldVersion: '1.0.0', now: NOW })
   assert.deepEqual(ids(assessment), ['publisher', 'provenance-lost', 'unused-deps'])
-  assert.deepEqual(assessment.findings[0], { id: 'publisher', was: known, now: 'someone-new', wasKnown: true, nowKnown: false, severity: 'critical' })
+  assert.deepEqual(assessment.findings[0], { id: 'publisher', was: known, now: 'someone-new', wasKnown: true, nowKnown: false, wasStanding: 'known', nowStanding: 'new', severity: 'critical' })
   assert.deepEqual(assessment.findings[2].dependencies, [{ name: 'crypto-like', kind: null, range: '^4.2.1' }])
   const [added] = assessment.dependencies.added
   assert.equal(added.name, 'crypto-like')
@@ -168,7 +169,7 @@ test('the version risk picks to compare with, by who published it: a known accou
   assert.equal(pick('1.5.1', [at('1.4.0', 90, known, { known: true }), at('1.4.9', 60, 'bob'), at('1.5.0', 5, known, { known: true, deprecated: true }), at('1.5.1', 1, 'someone-new')]),
     '1.4.0', 'a known account\'s still where theirs is deprecated, as whoever took it can deprecate one')
   const handed = [at('1.0.0', 300, 'alice'), at('1.1.0', 100, 'alice'), at('1.2.0', 60, 'mallory'), at('1.2.1', 20, 'alice'), at('1.3.0', 1, 'mallory')]
-  assert.equal(pick('1.3.0', handed), '1.2.1', 'its maintainer\'s, on it three months, trusted however new; none of the account on it two months')
+  assert.equal(pick('1.3.0', handed), '1.2.1', 'its maintainer\'s, on it three months, not held to a month; none of the account on it two months')
   assert.equal(pick('1.0.2', [at('1.0.0', 90, 'solo'), at('1.0.1', 60, 'solo'), at('1.0.2', 1, 'solo')]), '1.0.1', 'one account\'s all: its own')
   assert.equal(pick('2.0.1', [at('1.0.0', 90, known, { known: true }), at('2.0.0', 60, 'someone'), at('2.0.1', 1, known, { known: true })]), '2.0.0',
     'a known account publishing it: whoever published the one before')
@@ -211,6 +212,21 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   assert.equal(await pickedOf(), '1.0.0', 'none published within a day of one npm since removed, its time kept')
 })
 
+test('an account\'s standing on a package: known, one of its maintainers, on it three months or first to publish it, or new to it', () => {
+  const row = (publisher, days) => ({ publisher, published: days === null ? null : ago(days) })
+  const releases = [row('creator', 400), row('alice', 200), row('bob', 60), row(null, 30), row('carol', 10), row('carol', null), { publisher: null, published: ago(5), removed: true }]
+  const standing = npmAccountStanding(releases, ago(1))
+  assert.deepEqual(['creator', 'alice', 'bob', 'carol', 'dave'].map(account => standing(account, false)), ['maintainer', 'maintainer', 'new', 'new', 'new'])
+  assert.equal(standing('bob', true), 'known', 'known whatever its time on it')
+  assert.equal(npmAccountStanding([row('solo', 20), row('solo', 5)], ago(1))('solo', false), 'maintainer', 'the sole maintainer of a package three weeks old')
+  const young = npmAccountStanding([row('alice', 20), row('mallory', 1)], ago(1))
+  assert.deepEqual([young('alice', false), young('mallory', false)], ['maintainer', 'new'], 'one taking it from them new to it')
+  assert.equal(npmAccountStanding(releases, ago(170))('alice', false), 'new', 'as the version published then finds it')
+  assert.equal(npmAccountStanding([row('alice', 400), row('alice', null), row('bob', 1)], ago(1))('alice', false), 'maintainer', 'a version npm lists no time of none of its time')
+  assert.equal(npmAccountStanding([row('bob', 300), row('alice', 200), row('alice', null)], ago(1))('alice', false), 'maintainer')
+  assert.equal(npmAccountStanding([row('bob', 300), row('alice', 60), row('alice', null), row('alice', 1)], ago(1))('alice', false), 'new')
+})
+
 test('the version risk picks to compare with, by what npm\'s document keeps: none published with one since removed, and a package\'s own maintainers trusted', () => {
   const at = (number, days, publisher = 'maintainer', extra = {}) => ({ version: number, published: ago(days), publisher, known: false, deprecated: false, removed: false, ...extra })
   const gone = (number, days) => at(number, days, null, { removed: true })
@@ -224,14 +240,33 @@ test('the version risk picks to compare with, by what npm\'s document keeps: non
   const known = publishers[0]
   assert.equal(pick('1.14.2', [at('1.13.0', 60, known, { known: true }), at('1.14.0', 5, known, { known: true }), gone('1.14.1', 4.95), at('1.14.2', 1, 'someone-new')]), '1.13.0',
     'a known account\'s too, where one since removed came with it')
-  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), at('1.3.0', 5, 'alice'), at('1.3.1', 1, 'mallory')]), '1.3.0',
-    'taken from a maintainer on it three months: theirs, trusted however new')
-  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), { ...at('1.0.1', 0, 'alice'), published: null }, at('1.3.0', 5, 'alice'), at('1.3.1', 1, 'mallory')]), '1.3.0',
-    'one of theirs npm lists no time of not taken as their first')
+  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), at('1.3.0', 10, 'alice'), at('1.3.1', 1, 'mallory')]), '1.3.0',
+    'taken from a maintainer on it three months: theirs, not held to a month')
+  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), at('1.3.0', 3, 'alice'), at('1.3.1', 1, 'mallory')]), '1.0.0',
+    'but held to the week, as a maintainer few know of is taken with its peers')
+  assert.equal(pick('1.3.0', [at('1.0.0', 300, known, { known: true }), at('1.1.0', 200, 'bob'), at('1.2.0', 3, known, { known: true }), gone('1.2.1', 2.9),
+    at('1.3.0', 1, 'bob')]), '1.0.0', 'one of its maintainers publishing after a known account: a known account\'s still')
   assert.equal(pick('1.3.0', [at('1.0.0', 200, 'bob'), at('1.1.0', 100, 'mallory'), at('1.2.0', 40, 'mallory'), at('1.3.0', 1, 'mallory')]), '1.2.0',
     'its own account on it three months: its own, held to time as any')
   assert.equal(pick('1.3.0', [at('1.0.0', 200, 'bob'), at('1.1.0', 80, 'mallory'), at('1.2.0', 40, 'mallory'), at('1.3.0', 1, 'mallory')]), '1.0.0',
     'on it under three months: another\'s')
+})
+
+test('a publisher changed told with each account\'s standing on the package: one of its maintainers moderate, one new to it high', async t => {
+  const files = { 'package.json': '{}' }
+  const by = (number, publisher, days) => version('shared', number, files, { dependencies: {}, scripts: {}, _npmUser: { name: publisher } }, ago(days))
+  const asked = npm(t, [{ name: 'shared', versions: [by('1.0.0', 'alice', 400), by('1.1.0', 'alice', 200), by('1.2.0', 'bob', 100), by('1.3.0', 'bob', 1), by('1.3.1', 'mallory', 0.5)] }])
+  const publisher = async (number, old, options = {}) => (await assessNpm('shared', number, { oldVersion: old, now: NOW, downloads: false, ...options })).findings.find(({ id }) => id === 'publisher')
+  assert.deepEqual(await publisher('1.3.0', '1.1.0'), { id: 'publisher', was: 'alice', now: 'bob', wasKnown: false, nowKnown: false, wasStanding: 'maintainer', nowStanding: 'maintainer', severity: 'moderate' },
+    'alice first to publish it, bob on it three months')
+  assert.equal(asked.filter(url => url === `${REGISTRY}/shared`).length, 1, 'its document read once')
+  assert.deepEqual(await publisher('1.3.1', '1.3.0'), { id: 'publisher', was: 'bob', now: 'mallory', wasKnown: false, nowKnown: false, wasStanding: 'maintainer', nowStanding: 'new', severity: 'high' })
+  const cache = store()
+  await assessNpm('shared', '1.3.0', { now: NOW, downloads: false, cache })
+  await assessNpm('shared', '1.1.0', { now: NOW, downloads: false, cache })
+  asked.length = 0
+  assert.equal((await publisher('1.3.0', '1.1.0', { cache })).nowStanding, 'maintainer')
+  assert.equal(asked.filter(url => url === `${REGISTRY}/shared`).length, 1, 'both versions kept: its document read for its versions alone')
 })
 
 test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {
