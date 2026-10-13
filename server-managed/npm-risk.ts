@@ -118,7 +118,9 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // scope) is told no tier nor age, as an own package. Its
 // documents are read with npm's token where the reader may have it
 // (`privileged`, as readNpmVersion), its dependencies' without; what is kept
-// of it is shared only where neither version is private. A `spare` one, no
+// of it is shared only where neither version is private, and OSV is asked of
+// its advisories only where it isn't, a private package's name never sent to
+// OSV, as it never is to Socket (http.ts). A `spare` one, no
 // reader waiting on it, is made only within MAX_SPARE_ASSESSMENTS, and tells
 // its dependencies without asking npm of their packages (assessNpm
 // `dependencies`), nor its advisories, which a scan asks of a lockfile's
@@ -134,7 +136,7 @@ export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
     return scopes.get(scope)!
   }
   return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
-    popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, owned,
+    popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, osv: !doc.private, owned,
     packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
     tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) }))
 }
@@ -150,16 +152,21 @@ async function bounded(spare: boolean, assess: () => Promise<NpmAssessment>): Pr
 
 // A version npm has no document of, as risk tells one npm removed, as it
 // removes every one it finds malware in (assessNpm): its package taken down
-// by npm, as a scan's (`spare`), its advisories asked of a lockfile's
-// packages at once (repository-risk.ts). Its package's document read with
-// npm's token where the reader may have it (`privileged`), and kept as a
-// private package's is; no tarball read, nothing of the version being left.
-// Spare, within MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError
-// where nothing tells of it.
+// by npm, as a scan's (`spare`), and its advisories of malware, npm's and,
+// where anyone can read its package, OSV's, which alone has some of those
+// npm removed (nx's), a private package's name never sent to OSV. Its
+// package's document read anonymously, else with npm's token where the
+// reader may have it (`privileged`), and kept as a private package's is; no
+// tarball read, nothing of the version being left. Spare, within
+// MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError where
+// nothing tells of it.
 export function npmRiskRemoved(name: string, version: string,
   { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
-  return bounded(true, () => assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
-    advisories: false, cache: npmRiskCache(stores, false), signal,
-    packument: (read, { authorized }) => readNpmPackument(read, privileged && authorized, signal),
-    tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) }))
+  return bounded(true, async () => {
+    const open = await readNpmPackument(name, false, signal)
+    return assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
+      osv: open !== null, cache: npmRiskCache(stores, false), signal,
+      packument: (read, { authorized }) => read === name && open ? Promise.resolve(open) : readNpmPackument(read, privileged && authorized, signal),
+      tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
+  })
 }

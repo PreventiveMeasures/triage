@@ -15,9 +15,10 @@ import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPri
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
+import { NpmRiskError } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
-import { ADVISORIES, REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
+import { ADVISORIES, OSV, REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -261,6 +262,7 @@ test('a version npm removed is assessed as a scan\'s others are, within the spar
     const pkg = pkgs.find(({ doc }) => url === doc.dist.tarball)
     if (pkg) return new Promise(resolve => { answers.push(() => resolve(new Response(pkg.tgz))) })
     if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
+    if (url === ADVISORIES || url === OSV) return Promise.resolve(Response.json({}))
     const gone = { name: 'spare-gone', 'dist-tags': { latest: '0.0.1-security' }, versions: { '0.0.1-security': placeholder.doc },
       time: { '0.0.1-security': '2025-02-01T00:00:00.000Z', '1.0.0': '2025-01-01T00:00:00.000Z' } }
     if (url === `${REGISTRY}/spare-gone`) return Promise.resolve(Response.json(gone))
@@ -275,6 +277,21 @@ test('a version npm removed is assessed as a scan\'s others are, within the spar
   for (const answer of answers) answer()
   await Promise.all(busy)
   assert.deepEqual((await npmRiskRemoved('spare-gone', '1.0.0', options)).findings, [{ id: 'malware', severity: 'critical', takenDown: true }], 'once they are done')
+})
+
+test('a version npm removed is told of by OSV\'s malware where anyone can read its package, as nx\'s are, a private one\'s name never sent it', async t => {
+  withToken(t)
+  const removed = { time: { '1.0.1': '2025-02-01T00:00:00.000Z' } }
+  const calls = registry(t, [{ ...packageOf('gone-open', '1.0.0', { 'package.json': '{}' }), ...removed }, { ...packageOf('@acme/gone', '1.0.0', { 'package.json': '{}' }), ...removed, private: true }])
+  const fetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, init) => String(url) === OSV && JSON.parse(init.body).package.name === 'gone-open'
+    ? Promise.resolve(Response.json({ vulns: [{ id: 'MAL-2025-41443', summary: 'Malicious code in gone-open (npm)' }] })) : fetch(url, init))
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const options = { db, teamScoped: false, privileged: true, signal: new AbortController().signal }
+  assert.deepEqual((await npmRiskRemoved('gone-open', '1.0.1', options)).findings, [{ id: 'malware', severity: 'critical',
+    advisories: [{ id: 'MAL-2025-41443', url: 'https://osv.dev/vulnerability/MAL-2025-41443', title: 'Malicious code in gone-open (npm)' }] }])
+  await assert.rejects(npmRiskRemoved('@acme/gone', '1.0.1', options), error => error instanceof NpmRiskError && error.code === 'version-not-found', 'a private one\'s told of by npm alone')
+  assert.ok(!calls.some(({ url }) => url === OSV), 'its name never left for OSV')
 })
 
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
@@ -1017,6 +1034,14 @@ test('Socket is never asked about a private package, whoever reads it', async t 
   assert.deepEqual((await h.send('/api/npm/socket?name=%40acme%2Fsecret&version=1.0.0', 'view')).json(), { error: 'package-not-found' })
   assert.deepEqual((await h.send('/api/npm/socket?name=%40acme%2Fsecret&version=1.0.0', 'admin')).json(), { name: '@acme/secret', version: '1.0.0', socket: null })
   assert.deepEqual(asked, [], 'its name never leaves for Socket')
+})
+
+test('OSV is never asked about a private package\'s risk, whoever reads it, as a public one\'s is', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const calls = registry(t, [{ ...packageOf('@acme/secret', '1.0.0', { 'package.json': '{}' }), private: true }, packageOf('@pub/open', '1.0.0', { 'package.json': '{}' })])
+  for (const name of ['@acme/secret', '@pub/open']) assert.equal((await h.send(`/api/npm/risk?${new URLSearchParams({ name, version: '1.0.0' })}`, 'admin')).status, 200, name)
+  assert.deepEqual(calls.filter(({ url }) => url === OSV).length, 1, 'its name never leaves for OSV, the public one\'s does')
 })
 
 test('a repository advisory\'s range with no upper bound ends below the version GitHub names as patched', async t => {

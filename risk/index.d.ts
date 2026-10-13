@@ -62,6 +62,10 @@ export interface AssessNpmOptions {
   // malware naming it a `malware` finding, as its package taken down by npm
   // is. True unless given.
   advisories?: boolean
+  // Whether OSV's records of malware in the version are asked for too, where
+  // `advisories` are: false for a private package, whose name OSV is never
+  // to be sent. True unless given.
+  osv?: boolean
   // Whether a package is the caller's own, as its own scopes take: a new
   // dependency on one is told no tier nor age, nor is npm asked of it. None
   // unless given.
@@ -126,8 +130,9 @@ export interface NpmAssessment {
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
 
-// Whether an advisory is of malware rather than a vulnerability: CWE-506,
-// embedded malicious code, whatever its title, or a title naming malware.
-export function npmMalwareAdvisory(advisory: { cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
+// Whether an advisory is of malware rather than a vulnerability: OSV's of a
+// malicious package (`MAL-…`), CWE-506, embedded malicious code, whatever its
+// title, or a title naming malware.
+export function npmMalwareAdvisory(advisory: { id?: string | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown

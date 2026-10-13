@@ -911,11 +911,15 @@ from npm's: npm deletes a version it finds malware in, so a mirror's copy of
 one can't be held to npm's integrity, and is told as npm's. Other advisories
 are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's
 registry hasn't every one of GitHub's malware advisories (those of nx's
-malicious versions, for one), which OSV's records would add. A version npm has
+malicious versions, for one): the viewer's assessments add OSV's records of
+malware (risk's `npmVersionAdvisories`), a public package's alone, a private
+one's name never sent to OSV, as it never is to Socket; a scan asks a
+lockfile's of npm alone, but for a version npm removed. A version npm has
 no document of is asked of risk as one npm removed (`npmRiskRemoved`): its
 package taken down by npm is risk's `malware`, critical, whatever version is
-locked, and the page says so in its tooltip; one nothing tells of is told as
-not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
+locked, as is an advisory of malware naming it, npm's or, where anyone can
+read its package, OSV's (nx's malicious versions have OSV's alone), and the
+page says so in its tooltip; one nothing tells of is told as not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
 the server, leaving the rest to readers, and without asking npm of each
 dependency's package, nor of the version's advisories, which a lockfile's are
 asked at once. One refused as busy (`npm-busy`), or that npm asked to ask later

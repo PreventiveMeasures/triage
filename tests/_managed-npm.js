@@ -38,12 +38,14 @@ export function packageOf(name, version, files, extra = {}) {
   return { doc, tgz }
 }
 
-// npm's advisories, as `npm audit` asks them, of whatever is asked.
+// npm's advisories, as `npm audit` asks them, of whatever is asked; and
+// OSV's records of a version.
 export const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
+export const OSV = 'https://api.osv.dev/v1/query'
 
 // The registry: public packages answer anyone; private ones only the token.
 // A package's `time` adds to, or replaces, what its whole document lists.
-// Its advisories have none.
+// Its advisories have none, nor OSV records.
 export function registry(t, packages) {
   const calls = []
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
@@ -51,7 +53,7 @@ export function registry(t, packages) {
     const headers = new Headers(init.headers)
     const auth = headers.get('authorization')
     calls.push({ url, auth })
-    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === ADVISORIES || url === OSV) return Promise.resolve(Response.json({}))
     for (const { doc, tgz, private: secret, versions, time: times = {} } of packages) {
       if (secret && auth !== `Bearer ${process.env['NPM_TOKEN']}`) continue
       if (url === `${REGISTRY}/${doc.name}/${encodeURIComponent(doc.version)}` || url === `${REGISTRY}/${doc.name}/latest`) return Promise.resolve(Response.json(doc))

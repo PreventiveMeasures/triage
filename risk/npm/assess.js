@@ -155,7 +155,8 @@ async function addedDependencies(added, published, context, owned) {
 // What calls for a look at `version` of package `name`, as JSON holds it:
 // malware first (malware.js npmMalwareFinding: its package taken down by
 // npm, and npm's advisories of malware naming it where `advisories`, true
-// unless given false, has them asked); against `oldVersion` where given,
+// unless given false, has them asked, OSV's too where `osv` is, true unless
+// given false, as a private package's name is never sent it); against `oldVersion` where given,
 // true for the one of its versions most likely free of what an attack
 // injects, as risk picks it by npm's document (old-version.js npmOldVersion;
 // none where none is below it), the one it picked said as `oldVersion`
@@ -177,12 +178,12 @@ async function addedDependencies(added, published, context, owned) {
 // to read. Throws an NpmRiskError (registry.js), its `code` saying why, where
 // npm has no such package or version (nor malware explaining one removed),
 // answers past risk's bounds, or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, advisories = true, owned = () => false } = {}) {
+export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, advisories = true, osv = true, owned = () => false } = {}) {
   const context = { cache, packument, tarball, now, signal }
   const facts = await npmPackageFacts(name, version, oldVersion, context)
   const old = facts.oldVersion
   if (old !== null && !facts.versions.has(old)) throw new NpmRiskError('version-not-found', `npm has no ${name}@${old}`)
-  const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, context) : [] })
+  const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, osv, context) : [] })
   if (!facts.versions.has(version)) {
     if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
     return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
