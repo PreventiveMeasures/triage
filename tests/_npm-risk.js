@@ -43,6 +43,7 @@ function versionOf(name, version) {
 export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
   const kept = npmLastingRisk(other, otherVersion === null ? null : versionOf(name, otherVersion))
-  const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads })
+  const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
+    known: Boolean(other.npm.manifest.knownAccounts) })
   return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
 }

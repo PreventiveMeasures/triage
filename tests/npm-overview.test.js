@@ -457,6 +457,11 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.versions['@team/quiet'] = { versions: [], teamScoped: true }
   answers.stats['@team/quiet'] = answers.stats.flagged
   assert.doesNotMatch(await badges(side('@team/quiet', '1.0.0'), side('@team/quiet', '2.0.0')), /npm-popularity/u, 'not a team\'s own')
+  answers.stats.vouched = answers.stats.flagged
+  const vouched = await badges(side('vouched', '1.0.0'), side('vouched', '2.0.0', { manifest: { publisher: 'known', knownAccounts: ['known'] } }))
+  assert.match(vouched, /<span class=npm-extension npm-popularity is-moderate data-tooltip=15,000 downloads\/month, September 2026 · Published by an account that publishes one of npm's most downloaded packages\s/u,
+    'a level lower, yellow, where a known account published the open version, its tooltip saying so')
+  assert.match(vouched, /compare-tip-note">September 2026<\/div><div class="compare-tip-note">Published by an account that publishes one of npm's most downloaded packages</u)
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
   answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }

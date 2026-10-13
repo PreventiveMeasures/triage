@@ -14,13 +14,17 @@ import { npmVersionFileRisk } from './files.js'
 // than `minimumReleaseAge` at `now`, published at `published` (release.js
 // npmTooNew, `too-new`, orange); and its package past the top 20,000 by
 // `downloads` (downloads.js, `popularity`, red where unpopular, else orange),
-// `tier` its rank (Infinity past the last).
-export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads }) {
+// `tier` its rank (Infinity past the last), a level lower where an account
+// known to publish one of npm's most downloaded packages published the
+// version (`known`, manifest.js `knownAccounts`), as few download a new
+// package such an account starts.
+export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads, known = false }) {
   const tier = downloads ? npmDownloadTier(downloads) : null
+  const popularity = npmTierLevel(tier) === 'is-unpopular' ? ['critical', 'high'] : ['high', 'moderate']
   return [
     ...deprecated ? [{ id: 'deprecated', severity: 'critical', message: deprecated }] : [],
     ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
-    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: npmTierLevel(tier) === 'is-unpopular' ? 'critical' : 'high', tier }] : [],
+    ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: popularity[known ? 1 : 0], tier, ...known ? { known } : {} }] : [],
   ]
 }
 
