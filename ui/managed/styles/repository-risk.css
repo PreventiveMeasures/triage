@@ -64,3 +64,4 @@ td { vertical-align: top; }
 .risk-scope button[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
 .risk-scope button:focus-visible { outline-offset: -1px; }
 .risk-scope-bar select { min-width: 14rem; }
+.risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
