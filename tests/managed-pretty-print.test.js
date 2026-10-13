@@ -263,19 +263,20 @@ test('a public link reads its bundles\' files pretty-printed', async t => {
 
 const bundleChanges = (id, other) => `/api/bundles/${id}/pretty?${new URLSearchParams({ other })}`
 const npmChanges = (name, version, otherVersion) => `/api/npm/pretty?${new URLSearchParams({ name, version, otherVersion })}`
-// Two builds' files: one minified and changed, one plain and changed, one
-// changed into what can't be formatted; and, left out, one the same, one
-// renamed unchanged, one changed but not formattable.
+// Two builds' files: one minified and changed, its old text kept again at a
+// new path; one plain and changed; one changed into what can't be formatted;
+// and, left out, one the same, one renamed unchanged, one changed but not
+// formattable.
 const longer = long.replace('c*b', 'c*b*2')
 const comparedBuilds = [
   { 'dist/app.min.js': long, 'bad.js': 'export const c = 1\n', 'src/edit.js': 'export const b = 1\n', 'src/same.js': 'export const s = 1\n', 'src/old.js': 'export const o = 1\n', 'README.md': '# a\n' },
-  { 'dist/app.min.js': longer, 'bad.js': 'function (', 'src/edit.js': 'export const b = 2\n', 'src/same.js': 'export const s = 1\n', 'src/new.js': 'export const o = 1\n', 'README.md': '# b\n' },
+  { 'dist/app.min.js': longer, 'dist/backup.min.js': long, 'bad.js': 'function (', 'src/edit.js': 'export const b = 2\n', 'src/same.js': 'export const s = 1\n', 'src/new.js': 'export const o = 1\n', 'README.md': '# b\n' },
 ]
 // The lines for those files, by side and path, as the first request has them:
 // the minified first, then the rest in path order, the base's before the other's.
 async function comparedLines() {
   const line = async (side, path, text) => ({ side, path, source: fileHash(text), text: await formatted(text) })
-  return [await line('base', 'dist/app.min.js', long), await line('other', 'dist/app.min.js', longer),
+  return [await line('base', 'dist/app.min.js', long), await line('other', 'dist/app.min.js', longer), await line('other', 'dist/backup.min.js', long),
     await line('base', 'bad.js', 'export const c = 1\n'), { side: 'other', path: 'bad.js', source: fileHash('function ('), error: 'unformattable', status: 422 },
     await line('base', 'src/edit.js', 'export const b = 1\n'), await line('other', 'src/edit.js', 'export const b = 2\n')]
 }
@@ -292,10 +293,10 @@ test('the files that changed between two bundles are pretty-printed in one reque
   assert.equal(first.headers['content-encoding'], 'br')
   assert.equal(first.headers['cache-control'], 'private, no-store')
   const lines = await comparedLines()
-  assert.deepEqual(linesOf(first), lines, 'each side\'s changed files that can be formatted, each naming the file it was formatted from')
+  assert.deepEqual(linesOf(first), lines, 'each side\'s changed files that can be formatted, each naming the file it was formatted from: one whose old text the other keeps elsewhere too among them')
   // Kept in each bundle's cache, as one file's are, and read from there.
   assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', base, 'pretty-v3'))).length, 3)
-  assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', other, 'pretty-v3'))).length, 2)
+  assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', other, 'pretty-v3'))).length, 3)
   const reads = t.mock.method(h.stores.bundleStore, 'get')
   const one = await h.send(bundlePretty(other, 'src/edit.js', fileHash('export const b = 2\n')))
   assert.equal(one.text(), await formatted('export const b = 2\n'))

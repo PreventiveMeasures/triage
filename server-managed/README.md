@@ -1020,9 +1020,11 @@ file it asked about.
 
 `GET /api/bundles/:id/pretty?other=` pretty-prints, for Compare, the files that
 changed between the bundle and the `other` one, both sides': each side's
-formattable files whose text the other side has nowhere (a file renamed, or
-moved with its tree, unchanged, is not one), so both files of every pair
-Compare diffs, each formatted, checked and kept as one file's is. They are sent
+formattable files the other side has another text at the path of, or, where
+it has none there, none of their text at a path of its own (a file renamed,
+or moved with its tree, unchanged, has it there; a copy at a path both have
+is not one), so both files of every pair Compare diffs, each formatted,
+checked and kept as one file's is. They are sent
 as Brotli-encoded `application/x-ndjson`, a line a file, `{ side, path, source,
 text }` or `{ side, path, source, error, status }`, `side` `base` (the bundle
 asked about) or `other`, `source` its file's hash: those kept come first, at

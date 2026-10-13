@@ -55,12 +55,12 @@ type Side = 'base' | 'other'
 export type ComparedLine = PrettyLine & { side: Side }
 
 // A side of a comparison: its files that can be formatted, with their texts,
-// and every one of its files' hashes; the copy kept for one, or null; and one
-// made, kept where the side keeps copies.
+// and every one of its files' hashes, by path; the copy kept for one, or null;
+// and one made, kept where the side keeps copies.
 interface ComparedSide {
   side: Side
   files: Array<PrettyRequest & { text: string }>
-  hashes: Set<string>
+  hashes: Map<string, string>
   kept(request: PrettyRequest): Promise<OpenedBlob | null>
   made(request: PrettyRequest, text: string): Promise<OpenedBlob>
 }
@@ -140,15 +140,21 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
 }
 
 // The files that changed between two sides, pretty-printed: each side's
-// formattable files whose text the other has nowhere (one renamed, or moved
-// with its tree, unchanged, has its text there), so both of every pair the
-// viewer diffs, by the paths each side has them at. As they are iterated, in
-// path order, the base's first where both have one: those kept, at once; then
-// the rest, formatted one after another, the minified before the others
-// (needsPrettyPrint), as the viewer prints those unasked.
+// formattable files the other has another text at the path of, or, where it
+// has none there, none of their text at a path of its own (a file renamed, or
+// moved with its tree, unchanged, has it there; a copy at a path both have is
+// not one), so both of every pair the viewer diffs, by the paths each side
+// has them at. As they are iterated, in path order, the base's first where
+// both have one: those kept, at once; then the rest, formatted one after
+// another, the minified before the others (needsPrettyPrint), as the viewer
+// prints those unasked.
 function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
-  const changed = sides.flatMap((own, i) => own.files.filter(file => !sides[1 - i]!.hashes.has(file.hash)).map(file => ({ own, file })))
-    .toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
+  // Each side's texts at the paths the other hasn't: where a file moved has its own.
+  const moved = sides.map((own, i) => new Set([...own.hashes].filter(([path]) => !sides[1 - i]!.hashes.has(path)).map(([, hash]) => hash)))
+  const changed = sides.flatMap((own, i) => {
+    const other = sides[1 - i]!.hashes
+    return own.files.filter(({ path, hash }) => (other.has(path) ? other.get(path) !== hash : !moved[1 - i]!.has(hash))).map(file => ({ own, file }))
+  }).toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
   return (async function* () {
     const unkept: typeof changed = []
     for (const { own, file } of changed) {
@@ -194,13 +200,13 @@ async function kept(open: () => Promise<OpenedBlob>): Promise<OpenedBlob | null>
 }
 
 // A side's files that can be formatted, with their texts, and every one of
-// its files' hashes, from their paths and contents: texts, or bytes, read as
-// text where they are.
+// its files' hashes by path, from their paths and contents: texts, or bytes,
+// read as text where they are.
 async function sideFiles(entries: Iterable<[string, string | Uint8Array]>): Promise<Pick<ComparedSide, 'files' | 'hashes'>> {
-  const files: ComparedSide['files'] = [], hashes = new Set<string>()
+  const files: ComparedSide['files'] = [], hashes = new Map<string, string>()
   for (const [path, content] of entries) {
     const hash = await computeFileHash(content)
-    hashes.add(hash)
+    hashes.set(path, hash)
     const extension = prettyExtension(path)
     if (extension === null || (typeof content === 'string' ? Buffer.byteLength(content) : content.byteLength) > MAX_PRETTY_BYTES) continue
     const text = typeof content === 'string' ? content : npmFileText(content)
