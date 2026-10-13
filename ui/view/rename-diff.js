@@ -173,10 +173,13 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   // One that failed for a reason that may have passed, asked again once due.
   const again = asked?.status === 'error' && asked.until !== undefined && Date.now() >= asked.until
   let diff = asked && !again ? asked : { status: 'loading', tries: asked?.tries }
-  // Worked out from other copies than those drawn (printed again since, as a
-  // formatter changed): asked again, as a failure that may pass is.
-  if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) {
-    diff = due(key, { status: 'error', message: MISMATCH, retry: true }, asked.tries)
+  // Worked out from the copies drawn, it is taken, the failures before it
+  // forgotten, so one after starts its wait anew; from others (printed again
+  // since, as a formatter changed), asked again, as a failure that may pass
+  // is, its wait growing while the server answers so.
+  if (diff.status === 'ready') {
+    if (diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1]) diff.tries = 0
+    else diff = due(key, { status: 'error', message: MISMATCH, retry: true }, asked.tries)
   }
   diffs.delete(key)
   diffs.set(key, diff)

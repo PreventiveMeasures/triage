@@ -1884,6 +1884,7 @@ test('a minified file whose rename diff failed for a reason that may pass is ask
   for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
   assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
+  assert.equal(state_().changes.tries, 0, 'its failure forgotten once it is taken, a later one waiting anew')
 })
 
 test('a minified file whose rename diff was worked out from other copies than those drawn is asked again a while after, and marked then', async t => {
@@ -1903,9 +1904,17 @@ test('a minified file whose rename diff was worked out from other copies than th
   }
   assert.equal(changes().status, 'error', 'told as a mismatch')
   assert.doesNotMatch(renderText(element.render()), /diff-row del renamed/u, 'the plain diff drawn')
+  // Answered so again once due: it waits twice as long, not as a first failure.
+  Date.now = () => now() + 6_000
+  for (let i = 0; i < 200 && changes()?.tries !== 2; i++) {
+    renderText(element.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(changes().tries, 2, 'a second failure in a row')
+  assert.ok(changes().until - Date.now() > 5_000, 'waiting longer than after a first failure')
   misanswered.clear()
   const asked = renameDiffs.length
-  Date.now = () => now() + 6_000
+  Date.now = () => now() + 17_000
   for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
   assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
