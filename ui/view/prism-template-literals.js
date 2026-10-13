@@ -59,13 +59,13 @@ function quotedEnd(text, at) {
 // bracket), and after a keyword that ends a statement's start or an operand.
 // Not after a postfix `++` or `--` either, which ends an operand too: there
 // is no incrementing a regex. Nor, in JSX and TSX, at the `</` of a closing
-// tag (`</p>`, `</Foo.Bar>`, `</>`), though a regex may follow a `<` there
+// tag (`</p>`, `</Foo.Bar>`, `</组件>`, `</>`), though a regex may follow a `<` there
 // too: one that opens with what reads as a tag's name and `>` is left to
 // misread. JavaScript and TypeScript have no tags, so in them `</` is a
 // comparison with a regex (`i</x/.exec(s).index`), whatever follows.
 const DIVIDES_AFTER = /[$\w\u00A0-\uFFFF.'"`)\]]/u
 const KEYWORD_BEFORE = /(?:^|[^$\w\u00A0-\uFFFF.])(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield)$/u
-const JSX_CLOSE_REST = /\s*(?:[A-Za-z_$][\w$.:-]*\s*)?>/uy
+const JSX_CLOSE_REST = /\s*(?:[\p{ID_Start}$_][\p{ID_Continue}$.:-]*\s*)?>/uy
 
 // Whether the grammar being scanned is JSX or TSX: set by each scan.
 let jsx = false

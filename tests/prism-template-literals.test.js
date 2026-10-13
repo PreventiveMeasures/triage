@@ -142,6 +142,14 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(templates(jsx, 'jsx'), ['`a`', '`b ${c}`', '`d`'])
     const fragment = 'const e = <><A.B>{`a`}</A.B>{`b`}</ >{`c`}</>; let s = `d`'
     for (const lang of ['jsx', 'tsx']) assert.deepEqual(templates(fragment, lang), ['`a`', '`b`', '`c`', '`d`'], lang)
+    // A tag's name is any identifier. Read as a regex, its slash would run on
+    // to the one past the template, and Prism's own pattern, taking over,
+    // ends the template at the backtick of the one nested in it.
+    const unicode = 'const t = `${f({a:{b:{c:{d:<组件></组件>}}}}, `x`)}` /foo; let h = 1'
+    for (const lang of ['jsx', 'tsx']) {
+      assert.deepEqual(templates(unicode, lang), ['`${f({a:{b:{c:{d:<组件></组件>}}}}, `x`)}`'], lang)
+      assert.deepEqual(typesAt(unicode, '}`', lang), ['template-string', 'interpolation', 'interpolation-punctuation'], lang)
+    }
     // Minified code compares with a regex's result, and no tag follows; the
     // braces are deeper than Prism's own pattern reads, so only the scan can
     // end the `${…}` at its last `}`.
