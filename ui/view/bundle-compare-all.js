@@ -137,6 +137,12 @@ export class BundleCompareAll extends BundleCompareCode {
     return entry.modified !== false && entry.kind !== 'repointed'
   }
 
+  // A file's state as the tree counts it: as the list draws it, where this
+  // render found it.
+  _countingState(path, entry) {
+    return this._states?.get(path) ?? super._countingState(path, entry)
+  }
+
   _section(path) {
     return [...this.querySelectorAll('.bundle-compare-all-file')].find(section => section.dataset.path === path) ?? null
   }
@@ -214,10 +220,15 @@ export class BundleCompareAll extends BundleCompareCode {
     // The toggle, where printing changes any file's diff (prettyToggle), its
     // state for every such file as for one file's two sides (_printing): a
     // failure first, with how many of them failed, then one still coming.
-    const pretties = shown.map(({ file }) => prettyToggle(file)).filter(Boolean)
+    // Its tooltip lists the files it applies to (`affects`). The tree counts
+    // each file as the list draws it (_countingState).
+    this._states = new Map(shown.map(({ path, file }) => [path, file]))
+    const printed = shown.filter(({ file }) => prettyToggle(file))
+    const pretties = printed.map(({ file }) => prettyToggle(file))
     const failed = pretties.filter(copy => copy.status === 'error')
-    const pretty = failed.length > 0 ? { ...failed[0], failed: failed.length, of: pretties.length }
+    const toggle = failed.length > 0 ? { ...failed[0], failed: failed.length, of: pretties.length }
       : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
+    const pretty = toggle && { ...toggle, affects: printed.map(({ path }) => path) }
     // The diff's controls, while any file shows a change or hides one they can show.
     const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
     return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">

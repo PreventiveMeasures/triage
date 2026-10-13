@@ -1810,6 +1810,86 @@ test('the tree counts each file\'s lines added and removed before its letter, an
   assert.equal(counts['src/server.js'], null, 'its imports repointed alone')
 })
 
+// Paints until `done` holds for the markup, or gives up.
+async function paintUntil(element, done) {
+  for (let i = 0; i < 200 && !done(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  return renderText(element.render())
+}
+
+test('the tree counts each file as its diff draws it, pretty-printed: `≈` where printing sets every change aside, the counts as published told', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('src/number.js', [{ 'src/ended.js': unended, 'src/number.js': 'export const n = 1\n' }, { 'src/ended.js': ended, 'src/number.js': 'export const n = 2\n' }])
+  element.base.managedId = 'b61'
+  element.other.managedId = 'b62'
+  pretty.set('b61:src/ended.js', ended)
+  pretty.set('b62:src/ended.js', ended)
+  pretty.set('b61:src/number.js', 'export const n = 1;\n')
+  pretty.set('b62:src/number.js', 'export const n = 2;\n')
+  assert.match(rowCounts(renderText(element.render()))['src/ended.js'], /class=add>\+6<\/span> <span class=del>−6<\/span>/u, 'as published while off')
+  state.bundleSourcePretty = true
+  const counts = rowCounts(await paintUntil(element, markup => /≈/u.test(rowCounts(markup)['src/ended.js'] ?? '')))
+  assert.match(counts['src/ended.js'], /unchanged" aria-label=No line changes with Pretty-print data-tooltip=No line changes with Pretty-print As published: \+6 −6>≈/u,
+    'its copies the same, though the file is not drawn')
+  assert.match(counts['src/number.js'], /class=add>\+1<\/span> <span class=del>−1<\/span>/u, 'printing changes nothing here: as published, no tooltip')
+  assert.doesNotMatch(counts['src/number.js'], /data-tooltip=[^\s>]/u)
+})
+
+test('the tree counts a file with whitespace changes hidden where its diff hides them: `≈` for those alone, else what is left', t => {
+  t.after(() => { element._setWhitespace(false) })
+  const element = view('src/api.js', [{ 'src/spaced.js': 'a()\n  b()\n', 'src/mixed.js': 'a()\n  b()\n' }, { 'src/spaced.js': 'a()\n    b()\n', 'src/mixed.js': 'a()\n    b()\nc()\n' }])
+  element._setWhitespace(true)
+  const counts = rowCounts(renderText(element.render()))
+  assert.match(counts['src/spaced.js'], /aria-label=No line changes with Hide whitespace changes data-tooltip=No line changes with Hide whitespace changes As published: \+1 −1>≈/u)
+  assert.match(counts['src/mixed.js'], /data-tooltip=With Hide whitespace changes As published: \+2 −1> <span class=add>\+1<\/span> <span class=del>−0<\/span>/u, 'the line added alone')
+})
+
+test('the tree keeps `=` for a file renamed as it was, whatever the settings', t => {
+  t.after(() => { element._setWhitespace(false) })
+  const element = view(null, [{ 'src/same.js': 'x\n' }, { 'lib/same.js': 'x\n' }])
+  element._setWhitespace(true)
+  assert.match(rowCounts(renderText(element.render()))['lib/same.js'], /unchanged" aria-label="No line changes">=/u)
+})
+
+test('the tree counts a minified file with renamed names hidden, once the server\'s diff came, though the file is not drawn, and asks for it once', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('src/api.js', [{ 'dist/tree.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/tree.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
+  element.base.managedId = 'b63'
+  element.other.managedId = 'b64'
+  pretty.set('b63:dist/tree.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b64:dist/tree.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
+  state.bundleSourcePretty = true
+  const printed = rowCounts(await paintUntil(element, markup => /\+6/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
+  assert.match(printed['dist/tree.min.js'], /data-tooltip=With Pretty-print As published: \+1 −1> <span class=add>\+6<\/span> <span class=del>−5<\/span>/u, 'each copy line by line')
+  const asked = renameDiffs.length
+  element._setRenames(true)
+  const hidden = rowCounts(await paintUntil(element, markup => /\+1<\/span> <span class=del>−0/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
+  assert.match(hidden['dist/tree.min.js'], /data-tooltip=With Pretty-print, Hide renamed names As published: \+1 −1> <span class=add>\+1<\/span> <span class=del>−0<\/span>/u, 'what is new alone')
+  for (let i = 0; i < 3; i++) renderText(element.render())
+  assert.equal(renameDiffs.length, asked + 1, 'asked for once, kept as the tree paints')
+})
+
+test('the Diff view\'s pretty-print toggle lists the files it prints, counted past five', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  await import('../ui/view/bundle-compare-all.js')
+  const files = count => Array.from({ length: count }, (_, i) => `dist/p${i}.min.js`)
+  const tooltip = async (paths, ids) => {
+    const code = view(null, [Object.fromEntries(paths.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])), Object.fromEntries(paths.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
+    ;[code.base.managedId, code.other.managedId] = ids
+    for (const path of paths) {
+      pretty.set(`${ids[0]}:${path}`, 'var Y = 1;\nq(Y);\n')
+      pretty.set(`${ids[1]}:${path}`, 'var X = 1;\nq(X);\n')
+    }
+    const all = new (customElements.get('bundle-compare-all'))()
+    for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+    all.willUpdate(new Map([['base'], ['other'], ['files']]))
+    for (const path of paths) await untilPrinted(all, path)
+    return /aria-label="Pretty-print"\s+data-tooltip=([^>]*?)\s*@click/u.exec(renderText(all.render()))?.[1]
+  }
+  assert.equal(await tooltip(files(2), ['b65', 'b66']), 'Pretty-print\nAffects files:\ndist/p0.min.js\ndist/p1.min.js', 'up to five listed')
+  assert.equal(await tooltip(files(6), ['b67', 'b68']), 'Pretty-print\nAffects files: 6', 'more counted')
+})
+
 test('a long tree counts its lines a little at a time, so it paints at once and fills in', t => {
   const all = rowCounts(renderText(view().render()))
   const element = view()
