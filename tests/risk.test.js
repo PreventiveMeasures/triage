@@ -227,6 +227,11 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const encoded = found(side('1.0.0', { 'lib/a.js': short, 'a.js.map': map('A'), 'lib/%2e%2e/a.js.map': map('A') }),
     side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=%2e%2e/a.js.map\n`, 'a.js.map': map('A'), 'lib/%2e%2e/a.js.map': map('B') }))
   assert.equal(encoded['now-unreadable'].severity, 'critical', 'the map an encoded `..` names, as a browser resolves it, as it was')
+  const text = 'module.exports = function long() { return 42 }\n'.repeat(40)
+  const grown = `${text}${'x'.repeat(3000)}\n//# sourceMappingURL=a.js.map\n`
+  const renamed = (was, now) => found(side('1.0.0', { 'src/a.js': text, ...was }), side('1.0.1', { 'dist/a.js': grown, ...now }))['now-unreadable'].severity
+  assert.deepEqual([renamed({ 'dist/a.js.map': map('A') }, { 'dist/a.js.map': map('A') }), renamed({ 'src/a.js.map': map('A') }, { 'dist/a.js.map': map('A') }),
+    renamed({ 'src/a.js.map': map('A') }, { 'dist/a.js.map': map('B') })], ['critical', 'critical', 'high'], 'renamed: the map where it lands as it was, or moved with it as it was; rebuilt')
   const manifest = found(side('1.0.0', { 'a.js': short, 'package.json': '{"version":"1.0.0"}' }),
     side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=package.json\n`, 'package.json': '{"version":"1.0.1"}' }))
   assert.equal(manifest['now-unreadable'].severity, 'critical', 'a file it names that is no source map, changed as it may be')

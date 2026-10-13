@@ -95,7 +95,8 @@ function npmMajorRelease(was, now) {
 // the package (`//# sourceMappingURL=name.js.map`, resolved from the file's
 // own as a browser resolves it; not one inline, at a URL, from a site's root,
 // or above the package's), a source map (`.map`, its `mappings` told), new or
-// changed, as a build writes them together. An attack editing a built file
+// changed from the one at its path, or beside the file's own before it was
+// renamed, as a build writes them together. An attack editing a built file
 // leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
 // A name resolves as a browser resolves it, under two package roots told
@@ -114,7 +115,8 @@ function rebuiltWithMap(base, other, path, basePath) {
   const name = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1))?.[1] : null
   const named = name ? besideFile(path, name) : null
   const map = named && SOURCE_MAP.test(named) ? bundleFilesAsMap(other).get(named) : null
-  return isSourceMap(map) && map !== bundleFilesAsMap(base).get(besideFile(basePath, name))
+  const was = bundleFilesAsMap(base)
+  return isSourceMap(map) && map !== was.get(named) && map !== was.get(besideFile(basePath, name))
 }
 const isSourceMap = text => { try { return typeof JSON.parse(text)?.mappings === 'string' } catch { return false } }
 
