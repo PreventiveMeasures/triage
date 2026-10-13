@@ -1031,13 +1031,15 @@ export class BundleCompareCode extends LitElement {
   }
 
   // What diff -b would hide between the texts a file shows (whitespaceHidden),
-  // `key` naming them, kept as their models are.
+  // `key` naming them, kept as their models are: with the texts, and found
+  // again for others (_model).
   _whitespaceHidden(key, before, after) {
-    const hidden = this._spaced.get(key) ?? whitespaceHidden(before, after)
+    let kept = this._spaced.get(key)
+    if (!(kept?.before === before && kept.after === after)) kept = { before, after, hidden: whitespaceHidden(before, after) }
     this._spaced.delete(key)
-    this._spaced.set(key, hidden)
+    this._spaced.set(key, kept)
     if (this._spaced.size > this._modelCap) this._spaced.delete(this._spaced.keys().next().value)
-    return hidden
+    return kept.hidden
   }
 
   // Whether a file's names are a minifier's on both sides, each minified, and

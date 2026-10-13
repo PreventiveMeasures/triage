@@ -1965,6 +1965,9 @@ test('a file\'s line model is found again where its texts, or the blocks or mark
   assert.notEqual(marked, reprinted, 'found again with the marks given')
   assert.equal(element._model('k', 'a\nb\n', 'a\nd\n', { marks }), marked, 'kept for the same marks')
   assert.notEqual(element._model('k', 'a\nb\n', 'a\nd\n', { marks: [...marks] }), marked, 'found again for another diff\'s')
+  // What diff -b would hide, likewise: found for the texts asked about.
+  assert.equal(element._whitespaceHidden('k', 'a b\n', 'a b\n').hides, false)
+  assert.equal(element._whitespaceHidden('k', 'a b\n', 'a  b\n').hides, true, 'found again for other texts')
 })
 
 test('a side is colored as the text it shows: one printed again under the same name is colored anew, never drawn as the one before', async t => {
