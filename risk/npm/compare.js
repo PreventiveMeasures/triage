@@ -94,10 +94,10 @@ function npmMajorRelease(was, now) {
 // with) had its source map rebuilt with it: its last line names a map file of
 // the package (`//# sourceMappingURL=name.js.map`, resolved from the file's
 // own as a browser resolves it; not one inline, at a URL, from a site's root,
-// or above the package's), a source map (`.map`, its `mappings` told), new or
-// changed from the one at its path, or beside the file's own before it was
-// renamed, as a build writes them together. An attack editing a built file
-// leaves its map as it was.
+// or above the package's), a source map (`.map`, its `mappings`, or an
+// indexed map's `sections`, told), new or changed from the one at its path,
+// or beside the file's own before it was renamed, as a build writes them
+// together. An attack editing a built file leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
 // A name resolves as a browser resolves it, under two package roots told
 // apart by origin and path: only one relative to the file, and within the
@@ -118,7 +118,12 @@ function rebuiltWithMap(base, other, path, basePath) {
   const was = bundleFilesAsMap(base)
   return isSourceMap(map) && map !== was.get(named) && map !== was.get(besideFile(basePath, name))
 }
-const isSourceMap = text => { try { return typeof JSON.parse(text)?.mappings === 'string' } catch { return false } }
+const isSourceMap = text => {
+  try {
+    const json = JSON.parse(text)
+    return typeof json?.mappings === 'string' || Array.isArray(json?.sections)
+  } catch { return false }
+}
 
 // The files become unreadable as a finding says them: red, but orange in a
 // major release, or where each had its source map rebuilt with it.
