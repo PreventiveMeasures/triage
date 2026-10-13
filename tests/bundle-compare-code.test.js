@@ -1847,6 +1847,27 @@ test('a minified file whose rename diff was worked out from other copies than th
   assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
 })
 
+test('a view gone is not painted again as a rename diff it asked for comes, so asks for none again', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/gone.min.js', [{ 'dist/gone.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/gone.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b31'
+  element.other.managedId = 'b32'
+  pretty.set('b31:dist/gone.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
+  pretty.set('b32:dist/gone.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  let painted = 0
+  element.requestUpdate = () => { painted++ }
+  const changes = () => element._fileState('dist/gone.min.js', element._entries.get('dist/gone.min.js')).changes?.status
+  for (let i = 0; i < 200 && changes() !== 'ready'; i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(changes(), 'ready')
+  assert.equal(painted, 0, 'not painted again: it is in no page')
+  element._repaint()
+  Object.defineProperty(element, 'isConnected', { value: true, configurable: true })
+  element._repaint()
+  assert.equal(painted, 1, 'painted again where shown')
+})
+
 test('names a file reads leave its renamed names hidden, saying what a rename may change, and offer them marked', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=function(){};${'q(X);'.repeat(250)}f(X.name);\n` }])

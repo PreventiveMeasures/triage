@@ -573,6 +573,10 @@ export class BundleCompareCode extends LitElement {
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
   }
 
+  // Painted again as a diff it asked for comes, fails or is dropped, while it is
+  // shown: a view gone, painted, would ask for its diffs again (rename-diff.js).
+  _repaint = () => { if (this.isConnected) this.requestUpdate() }
+
   // The renamed names this view wants are those each paint asks for (rename-diff.js).
   disconnectedCallback() {
     super.disconnectedCallback()
@@ -960,7 +964,7 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const changes = renames && !large
-        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate(), pretty.hashes) : null
+        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes) : null
       const ready = changes?.status === 'ready'
       const hiding = ready && prefs.ignoreRenames
       const marked = ready && !hiding
