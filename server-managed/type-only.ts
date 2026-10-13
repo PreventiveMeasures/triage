@@ -4,8 +4,10 @@
 // paired as its viewer pairs them (rename-diff.ts comparedFiles), whose
 // change @preventive/compare's compareTrees stamps
 // `typeOnly` -- each side there a file named as a declaration file and
-// proven to hold types alone, so that it runs nothing (proveTypeOnly) --
-// and nothing else. Proven in a worker, off the event loop, a comparison at a
+// proven to hold types alone but for a runtime, the module loads and
+// `export {}` its stripping leaves, that the change leaves as it was, an
+// added one's empty or a single bare `export {}` (proveTypeOnly) -- and
+// nothing else. Proven in a worker, off the event loop, a comparison at a
 // time per process, for at most a minute; told a line each, `{ path, hash,
 // otherPath, otherHash }`, a side not there null, which the viewer checks
 // name the files it shows. Access is the caller's to check.
