@@ -6,7 +6,7 @@
 // answer comes.
 import { npmAssessmentOf, npmLastingRisk } from '../risk/npm/assess.js'
 import { npmVersionFindings } from '../risk/npm/held.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE } from '../risk/npm/release.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from '../risk/npm/release.js'
 import { npmRiskOf } from '../ui/view/file-risk.js'
 
 const held = new Map()
@@ -35,6 +35,13 @@ function versionOf(name, version) {
   return { kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, ...known, npm: { manifest: {}, ...known.npm } }
 }
 
+// Each account's standing on a package when a version of it was published
+// (`at`), as the server tells it of npm's document (release.js
+// npmAccountStanding), of the versions of it held, each published as it says
+// or as `times` say.
+const standingOf = (name, at, times) => npmAccountStanding([...held.values()].filter(({ npm }) => npm.name === name)
+  .map(({ npm }) => ({ publisher: npm.manifest?.publisher ?? null, published: npm.published ?? times[npm.version] ?? null })), at)
+
 // What the server answers of `name@version` against `otherVersion` (null for
 // none), as it is asked with its package's `downloads`, when each version was
 // published (`times`, where a version held says none), the open version's
@@ -42,7 +49,7 @@ function versionOf(name, version) {
 // `malware` finding npm's takedown and advisories make of it, where they do.
 export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
-  const kept = npmLastingRisk(other, otherVersion === null ? null : versionOf(name, otherVersion))
+  const kept = otherVersion === null ? npmLastingRisk(other) : npmLastingRisk(other, versionOf(name, otherVersion), standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
     known: Boolean(other.npm.manifest.knownAccounts) })
   return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))

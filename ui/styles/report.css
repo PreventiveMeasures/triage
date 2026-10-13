@@ -3713,12 +3713,13 @@ a.npm-compare-publisher {
    its tint (Socket's scores', the publisher's, the advisories', the install
    scripts'), reads in the text's own color. Each npm account a publisher's
    chip names, there and in its tooltip, green where it is known to publish,
-   else orange. */
+   yellow where it is one of the package's maintainers, else orange. */
 :is(.npm-compare-account.is-unknown, .npm-extension:is(.npm-compare-published, .npm-compare-registry, .npm-compare-unimported),
   :is(.npm-compare-install, .npm-dependency-check, .npm-compare-hosts, .npm-compare-kept-runs, .npm-held-file) .npm-extension-count) {
   color: color-mix(in srgb, var(--high) 60%, var(--text));
 }
 .npm-compare-account.is-known { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
+.npm-compare-account.is-maintainer { color: var(--yellow); }
 :is(.npm-extension.npm-compare-provenance, .npm-extension.npm-compare-deprecated,
   .npm-extension.npm-compare-file, .npm-compare-file .npm-extension-count) {
   color: color-mix(in srgb, var(--critical) 55%, var(--text));

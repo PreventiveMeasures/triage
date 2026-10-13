@@ -515,30 +515,44 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(fresh, /compare-tip-version">1\.1\.0<\/span><span class="compare-tip-said"><span class="compare-tip-none">none</u, 'none where it has none')
 
   // A publisher that changed, as when a package changes hands: each account
-  // green where it is known to publish, else orange; the chip grey to a known
-  // one, orange between unknown ones, red from a known one to one not; its
-  // note in two lines.
-  const published = (publisher, known = false) => ({ manifest: { publisher, ...known ? { knownAccounts: [publisher] } : {} } })
-  const account = (name, known) => `<span class=npm-compare-account ${known ? 'is-known' : 'is-unknown'}>~${name}</span>`
+  // by its standing on the package, green where it is known to publish,
+  // yellow where it is one of its maintainers, else orange; the chip grey to
+  // a known one or a maintainer, orange to another, red from a known one to
+  // one not; its note a line each: the change, the open version's account,
+  // the one before's.
+  const published = (publisher, known = false, at = undefined) => ({ manifest: { publisher, ...known ? { knownAccounts: [publisher] } : {} }, ...at ? { published: at } : {} })
+  const account = (name, tint) => `<span class=npm-compare-account ${tint}>~${name}</span>`
+  const NEW = 'an unknown publisher, new to the package'
+  const KNOWN = 'one that publishes one of npm\'s most downloaded packages'
   const handed = await badges(side('handed', '1.0.0', published('alice')), side('handed', '1.1.0', published('mallory')))
-  assert.ok(handed.includes(`<span>Publisher</span><span class="npm-extension-count">${account('alice', false)} → ${account('mallory', false)}</span></a></li>`), 'first, both unknown')
+  assert.ok(handed.includes(`<span>Publisher</span><span class="npm-extension-count">${account('alice', 'is-unknown')} → ${account('mallory', 'is-unknown')}</span></a></li>`),
+    'first, both unknown, neither published before the other as the versions held tell')
   assert.match(handed, /<li><a class=npm-extension npm-compare-publisher is-to-unknown href=https:\/\/www\.npmjs\.com\/~mallory /u, 'orange, linking to the new publisher')
-  assert.match(handed, /compare-tip-head">Published by<[^]*>1\.0\.0<[^]*npm-compare-account is-unknown>~alice<[^]*>1\.1\.0<[^]*npm-compare-account is-unknown>~mallory<[^]*neither publishes/u, 'its tooltip alike')
-  assert.match(handed, /compare-tip-note">A different npm account published the open version;<br>neither publishes one of npm's most downloaded packages</u, 'its note in two lines')
+  assert.match(handed, /compare-tip-head">Published by<[^]*>1\.0\.0<[^]*npm-compare-account is-unknown>~alice<[^]*>1\.1\.0<[^]*npm-compare-account is-unknown>~mallory/u, 'its tooltip alike')
+  assert.ok(handed.includes(`compare-tip-note">A different npm account published the open version,<br>${NEW},<br>after ${NEW}</`), 'its note a line each')
   const taken = await badges(side('taken', '1.0.0', published('alice', true)), side('taken', '1.1.0', published('mallory')))
   assert.match(taken, /npm-compare-publisher is-from-known /u, 'red from a known account to one not')
-  assert.ok(taken.includes(`${account('alice', true)} → ${account('mallory', false)}`))
-  assert.match(taken, /compare-tip-said"><span class=npm-compare-account is-known>~alice<[^]*after one that does/u)
-  assert.match(taken, /compare-tip-note">A different npm account published the open version,<br>one that publishes none of npm's most downloaded packages,<br>after one that does</u, 'what was before on a line of its own')
+  assert.ok(taken.includes(`${account('alice', 'is-known')} → ${account('mallory', 'is-unknown')}`))
+  assert.ok(taken.includes(`compare-tip-note">A different npm account published the open version,<br>${NEW},<br>after ${KNOWN}</`), 'what was before on a line of its own')
   const joined = await badges(side('joined', '1.0.0', published('alice')), side('joined', '1.1.0', published('bob', true)))
   assert.match(joined, /npm-compare-publisher is-to-known /u, 'grey to a known one')
-  assert.match(joined, /compare-tip-note">A different npm account published the open version,<br>one that publishes one of npm's most downloaded packages</u)
-  assert.ok(joined.includes(`${account('alice', false)} → ${account('bob', true)}`))
+  assert.ok(joined.includes(`compare-tip-note">A different npm account published the open version,<br>${KNOWN},<br>after ${NEW}</`))
+  assert.ok(joined.includes(`${account('alice', 'is-unknown')} → ${account('bob', 'is-known')}`))
+  // Its maintainers, by when the versions held were published: one first to
+  // publish it, or on it three months, yellow; one taking it from them orange.
+  const kept = await badges(side('kept', '1.0.0', published('alice', false, '2026-01-01T00:00:00.000Z')), side('kept', '1.1.0', published('mallory', false, '2026-09-01T00:00:00.000Z')))
+  assert.ok(kept.includes(`${account('alice', 'is-maintainer')} → ${account('mallory', 'is-unknown')}`), 'yellow, the first to publish it; orange, new to it')
+  assert.match(kept, /npm-compare-publisher is-to-unknown /u)
+  assert.ok(kept.includes(`compare-tip-note">A different npm account published the open version,<br>${NEW},<br>after one of the package's maintainers</`))
+  held(side('shared', '1.1.0', published('bob', false, '2026-02-01T00:00:00.000Z')))
+  const shared = await badges(side('shared', '1.0.0', published('alice', false, '2026-01-01T00:00:00.000Z')), side('shared', '1.2.0', published('bob', false, '2026-09-01T00:00:00.000Z')))
+  assert.ok(shared.includes(`${account('alice', 'is-maintainer')} → ${account('bob', 'is-maintainer')}`), 'bob on it seven months')
+  assert.match(shared, /npm-compare-publisher is-to-known /u, 'grey between its maintainers')
   // In a major release, a level lower, as a package changing hands with a
   // rewrite does: orange from a known account, saying so.
   const rewritten = await badges(side('rewritten', '1.4.1', published('alice', true)), side('rewritten', '2.0.0', published('mallory')))
   assert.match(rewritten, /npm-compare-publisher is-to-unknown /u, 'orange in a major release')
-  assert.match(rewritten, /compare-tip-note">A different npm account published the open version,<br>[^<]*<br>after one that does<br>in a major release</u)
+  assert.ok(rewritten.includes(`,<br>after ${KNOWN}<br>in a major release</`))
   assert.doesNotMatch(await badges(side('same-hands', '1.0.0', published('alice')), side('same-hands', '1.1.0', published('alice'))), /npm-compare-publisher/u)
   assert.doesNotMatch(await badges(side('unsaid', '1.0.0'), side('unsaid', '1.1.0', published('alice'))), /npm-compare-publisher/u, 'not where npm doesn\'t say')
 

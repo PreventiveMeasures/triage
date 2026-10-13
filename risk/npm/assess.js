@@ -7,15 +7,15 @@ import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
 import { npmDownloadMonths, npmSettledDownloads, npmTierLevel } from './downloads.js'
-import { NpmRiskError, npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
+import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
 import { npmMalwareFinding } from './malware.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE } from './release.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
 
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-const RISK_VERSION = 6
+const RISK_VERSION = 7
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or
@@ -60,16 +60,19 @@ function filesRisk(version, what) {
 // what risk read of it (filesRisk); and its dependencies added and changed,
 // each with its flags (dependencies.js). Its own findings are told fresh
 // (npmAssessmentOf). The managed server's assessments keep it (`lasting`),
-// and a test can tell what one says of versions it holds.
-export const npmLastingRisk = (other, base = null) => lastingOf(other, base, filesRisk(other, `${other.npm.name}@${other.npm.version}`))
+// and a test can tell what one says of versions it holds. Each publisher's
+// standing on the package is told where `standing` is given (release.js
+// npmAccountStanding, of the open version).
+export const npmLastingRisk = (other, base = null, standing = null) => lastingOf(other, base, filesRisk(other, `${other.npm.name}@${other.npm.version}`), standing)
 
 // npmLastingRisk's, the open version's files read within bounds (`files`,
 // filesRisk's), as the one compared with's are where `base` has them, before
 // the findings read them all.
-function lastingOf(other, base, files) {
+function lastingOf(other, base, files, standing) {
   if (base?.json) filesRisk(base, `${base.npm.name}@${base.npm.version}`)
   const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base?.npm.manifest, other.npm.manifest), base, other)
-  const findings = base ? npmCompareFindings(base, other, { added, changed }) : [...npmHeldFindings(other), ...npmDependencyFindings({ added, changed }, null)]
+  const findings = base ? npmCompareFindings(base, other, { added, changed }, standing)
+    : [...npmHeldFindings(other), ...npmDependencyFindings({ added, changed }, null)]
   const kept = { findings: plain(findings), files, dependencies: plain({ added, changed }) }
   if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(`${other.npm.name}@${other.npm.version}`)
   return kept
@@ -79,17 +82,26 @@ function lastingOf(other, base, files) {
 // reading and pair, its versions' files read from npm only where it isn't:
 // the open version's first, then the one compared with's only where they
 // could change what is found (compare.js npmBaseFilesTell), that one else
-// told by what npm's document of it says alone.
+// told by what npm's document of it says alone; and where another account
+// published it, each one's standing on the package (release.js
+// npmAccountStanding), by its versions as `facts` read them, or as its
+// document is read again where they were kept. A standing changes as npm
+// removes a version, its publisher then unknown, and never else, so such a
+// pair is kept by how many npm has removed (`~<removals>`), read anew as it
+// removes another.
 async function lasting(name, version, oldVersion, facts, context) {
-  const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}`
+  const old = oldVersion === null ? null : facts.versions.get(oldVersion)
+  const publishers = [old, facts.versions.get(version)].map(fact => fact?.manifest.publisher)
+  const changed = publishers.every(Boolean) && publishers[0] !== publishers[1]
+  const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}${changed ? `~${facts.removals}` : ''}`
   const hit = context.cache ? await context.cache.read('risk/npm/assessments', key) : null
   if (hit) return hit
   const other = await npmVersionFiles(name, version, facts.versions.get(version), context)
   const files = filesRisk(other, `${name}@${version}`)
-  const old = oldVersion === null ? null : facts.versions.get(oldVersion)
   const base = old === null ? null : npmBaseFilesTell(other, old.manifest) ? await npmVersionFiles(name, oldVersion, old, context)
     : { npm: { name, version: oldVersion, manifest: old.manifest, published: old.published }, json: null }
-  const kept = lastingOf(other, base, files)
+  const standing = changed ? npmAccountStanding(facts.releases ?? await npmPackageReleases(name, context), other.npm.published) : null
+  const kept = lastingOf(other, base, files, standing)
   if (context.cache) await context.cache.write('risk/npm/assessments', key, kept)
   return kept
 }

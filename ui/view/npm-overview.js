@@ -648,28 +648,33 @@ function deprecatedBadge(finding) {
 
 // The npm account that published each version, where npm says for both and
 // they differ, as when a package changes hands, or is taken over: linking
-// to the open version's publisher's profile. Each account green where it is
-// known to publish one of npm's most downloaded packages (npm-packages.ts
-// npmManifest's `knownAccounts`), else orange; the chip in its severity's
-// tint (risk/npm/compare.js): grey where the open version's is known, orange
-// where neither is, and red where a known one gave way to one that isn't, a
-// level lower in a major release. Its tooltip's note a line each: that the
-// account changed, then what each is (what the one before is on a line of
-// its own), and a major release.
+// to the open version's publisher's profile. Each account by its standing on
+// the package, as risk tells it (risk/npm/release.js npmAccountStanding):
+// green where it is known to publish one of npm's most downloaded packages
+// (npm-packages.ts npmManifest's `knownAccounts`), yellow where it is one of
+// the package's maintainers (on it three months, or first to publish it),
+// else orange, an unknown publisher, new to it where risk says so. The chip
+// in its severity's tint (risk/npm/compare.js): grey to a known account or
+// one of the package's maintainers, orange to another, and red where a known
+// one gave way to one that isn't, a level lower in a major release. Its
+// tooltip's note a line each: that the account changed, what the open
+// version's is, what the one before's was, and a major release.
 const PUBLISHER_TINTS = { critical: 'is-from-known', high: 'is-to-unknown' }
+const ACCOUNT_TINTS = { known: 'is-known', maintainer: 'is-maintainer' }
+const ACCOUNT_NOTES = { known: 'one that publishes one of npm\'s most downloaded packages', maintainer: 'one of the package\'s maintainers',
+  new: 'an unknown publisher, new to the package', unknown: 'an unknown publisher' }
 function publisherBadge([from, to], finding) {
   if (!finding) return nothing
   const { was, now, wasKnown, nowKnown, severity, major } = finding
-  const account = (name, known) => html`<span class=${`npm-compare-account ${known ? 'is-known' : 'is-unknown'}`}>~${name}</span>`
-  const [mark, which] = nowKnown ? [',', 'one that publishes one of npm\'s most downloaded packages']
-    : wasKnown ? [',', html`one that publishes none of npm's most downloaded packages,<br>after one that does`]
-    : [';', 'neither publishes one of npm\'s most downloaded packages']
+  const wasStanding = finding.wasStanding ?? (wasKnown ? 'known' : 'unknown')
+  const nowStanding = finding.nowStanding ?? (nowKnown ? 'known' : 'unknown')
+  const account = (name, standing) => html`<span class=${`npm-compare-account ${ACCOUNT_TINTS[standing] ?? 'is-unknown'}`}>~${name}</span>`
   const tint = PUBLISHER_TINTS[severity] ?? 'is-to-known'
-  const note = html`A different npm account published the open version${mark}<br>${which}${major ? html`<br>in a major release` : nothing}`
+  const note = html`A different npm account published the open version,<br>${ACCOUNT_NOTES[nowStanding]},<br>after ${ACCOUNT_NOTES[wasStanding]}${major ? html`<br>in a major release` : nothing}`
   return html`<li><a class=${`npm-extension npm-compare-publisher ${tint}`} href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
     data-tooltip=${`Published by ~${was} (${from.version}), then ~${now} (${to.version})`}
-    .tooltipContent=${compareTip('Published by', [from, to], [account(was, wasKnown), account(now, nowKnown)], note)}>
-    <span>Publisher</span><span class="npm-extension-count">${account(was, wasKnown)} → ${account(now, nowKnown)}</span></a></li>`
+    .tooltipContent=${compareTip('Published by', [from, to], [account(was, wasStanding), account(now, nowStanding)], note)}>
+    <span>Publisher</span><span class="npm-extension-count">${account(was, wasStanding)} → ${account(now, nowStanding)}</span></a></li>`
 }
 
 // Provenance the one compared with has and the open version hasn't (npm's

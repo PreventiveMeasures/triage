@@ -25,12 +25,20 @@ const assessment = await assessNpm('axios', '1.14.1', {
 
 ## Picking the version compared with
 
-A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
+A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. Each account is told by its standing on the package when the open version was published (`npm/release.js` `npmAccountStanding`), as the `publisher` finding tells it, and the viewer tints it:
 
-1. Where an account not known to publish published it, one another account published, as an attack may have published more than one; and where the highest of those a known account published, as when a package is taken from its maintainers, one a known account published. An account is known where it published one of npm's most downloaded packages (`@preventive/publishers`, `npm/manifest.js` `knownAccounts`), as the `publisher` finding takes it.
-2. One published before it, not after, as one published since (a backport) is no version it came from; a known account's too.
-3. One published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at; but for one a known account other than its own published, trusted however new, as an account taken leaves another's versions alone. Its own account's are held to both, as it may be the one taken.
-4. One npm doesn't say is deprecated, as one a maintainer took back.
+- `known`, green: one that publishes one of npm's most downloaded packages (`@preventive/publishers`, `npm/manifest.js` `knownAccounts`), and only that.
+- `maintainer`, yellow: one of the package's maintainers, known to no list but on it three months or more, or the first to publish it, as its sole maintainer is. The package's own history tells what the list can't of most packages.
+- `new`, orange: an unknown publisher new to the package, as one taking it from its maintainers is.
+
+Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
+
+1. Where an account new to it published it, one another account published, as an attack may have published more than one.
+2. One published before it, not after, as one published since (a backport) is no version it came from.
+3. Where the highest of those an account of a higher standing than its own published, as when a package is taken from its maintainers, one an account of that standing or higher published.
+4. One published a day or more apart from any version since removed from npm, as not one of the attack npm removed those of: npm's document keeps a removed version's time, though not the version.
+5. One published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at; but for one a known account other than its own published, trusted however new, as an account taken leaves another's versions alone, and one another of its maintainers published, held to the week alone, as a maintainer no list knows of is taken with its peers as often. Its own account's are held to both, as it may be the one taken.
+6. One npm doesn't say is deprecated, as one a maintainer took back.
 
 The highest is in the open version's branch (`1.x.y`, `0.2.y`, `0.0.y`) where one is there, else in the closest branch below. The pick is told by npm's document alone, read at most once an assessment, and kept an hour: no tarball is read for it, and the one picked has its tarball read only where its files could change what is found, as any version compared with.
 
@@ -47,7 +55,7 @@ What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` 
 | `risk/npm/advisories` | `<name>@<version>` | npm's advisories of it | asked again after an hour |
 | `risk/npm/public` | `<name>` | when a public package (a dependency) was first published | asked again after an hour |
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
-| `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
+| `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>][~<removals>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves, and a pair another account published as npm removes a version, as its publishers' standings may change |
 
 An assessment kept needs no tarball. Against `oldVersion`, its tarball is read only where its files could change what is found (`npm/compare.js` `npmBaseFilesTell`): the open version's files are read first, and a pair's file findings only ever flag what they hold that the old version's didn't, so where none of them runs code beyond itself, names a service under one of the hosts' tags or a host past `ALLOWED_HOSTS`, bears an obfuscator's fingerprint, has a line over 2,000 characters or is large code, nor could a `binding.gyp` change the old version's install scripts, the old version is told by npm's document of it alone: its publisher, provenance, install scripts and dependencies. What depends on the time (malware, a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
 
@@ -70,7 +78,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
 
   Against `oldVersion`, what changed:
   - `deprecated`
-  - `publisher`: red from a known account, orange between unknown ones, yellow to a known one; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
+  - `publisher`: each account's standing on the package (`wasStanding`, `nowStanding`, below), yellow to a known account or one of its maintainers, red from a known account to one new to it, else orange; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
   - `provenance-lost`
   - `install-scripts`
   - `non-registry-deps`, `unused-deps`

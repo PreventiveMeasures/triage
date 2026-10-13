@@ -542,11 +542,12 @@ export function factFile(path, files, label = path) {
 
 // An npm account, linking its profile: green where it's known to publish
 // one of npm's most downloaded packages (npm-packages.ts npmManifest's
-// `knownAccounts`), else yellow.
+// `knownAccounts`), else yellow, an unknown publisher, said so apart from
+// the known ones' tooltip.
 function npmAccount(manifest, account, label) {
   const known = manifest.knownAccounts?.includes(account)
   return html`<a class=${`bundle-origin-link npm-account ${known ? 'is-known' : 'is-unknown'}`} href=${`https://www.npmjs.com/~${encodeURIComponent(account)}`}
-    data-tooltip=${known ? 'Publishes one of npm\'s most downloaded packages' : 'Publishes none of npm\'s most downloaded packages'}
+    data-tooltip=${known ? 'Publishes one of npm\'s most downloaded packages' : 'Unknown publisher'}
     target="_blank" rel="noopener noreferrer"><span>${label}</span></a>`
 }
 
