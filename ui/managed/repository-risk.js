@@ -247,7 +247,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _lockfileStatus(lockfile) {
     if (lockfile.error) {
-      return html`<span class="risk-error" title=${lockfile.detail ?? nothing}>${errorText(lockfile.error)}${lockfile.detail ? `: ${lockfile.detail}` : ''}</span>`
+      return html`<span class="risk-error risk-wrap">${errorText(lockfile.error)}${lockfile.detail ? `: ${lockfile.detail}` : ''}</span>`
     }
     return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
@@ -296,8 +296,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._risk(row)}</td>
       <td>${row.risk?.findings?.length ? html`<ul class="risk-findings">${row.risk.findings.map(finding => html`<li class=${`risk-${finding.severity}`}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
-      <td title=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</td>
-      <td title=${used.join('\n')}>${used.length === 1 ? used[0] : `${formatCount.format(used.length)} lockfiles`}</td>
+      <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
+      <td>${used.length === 1 ? html`<span class="risk-clip" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
+        : html`<span class="risk-clip" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`}</td>
     </tr>`
   }
 

@@ -6,10 +6,13 @@
 .risk-section { margin-top: 1.5rem; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
 .risk-section .collection-toolbar { margin-bottom: .5rem; }
-/* The tables are links.css's, their cells wrapped. */
-th, td { white-space: normal; vertical-align: top; }
+/* The tables are links.css's, each cell on one line: findings, and why a
+   lockfile wasn't read, wrap where the row doesn't fit, and where a package
+   is used is cut short, its tooltip telling it whole. */
 th:last-child, td:last-child { text-align: left; }
-td { overflow-wrap: anywhere; }
+td { vertical-align: top; }
+.risk-wrap { white-space: normal; overflow-wrap: break-word; }
+.risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-pending, .risk-none { color: var(--muted); }
 .risk-error { color: var(--critical); }
 .risk-chip {
