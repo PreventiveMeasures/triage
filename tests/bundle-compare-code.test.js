@@ -1468,6 +1468,28 @@ test('a file is labelled where a package starts from it, a package.json with its
   assert.match(render('index.js'), /<alert malware>[^]*?bundle-compare-code-letter added/u, 'in the tree too')
 })
 
+test('a file is tagged with the hosts it names that the one compared with named nowhere, as its source finds them, in its head and the tree, in both views', async () => {
+  await import('../ui/view/bundle-compare-all.js')
+  const base = version('a', { 'lib/api.js': 'get("https://a.dev")\n', 'lib/gone.js': 'get("https://b.dev")\n' })
+  const other = version('b', { 'lib/api.js': 'get("https://a.dev")\nget("https://c.dev")\n', 'lib/new.js': 'get("https://d.dev")\nget("https://e.dev")\n' })
+  const fields = { newHosts: new Map([['lib/api.js', [{ host: 'c.dev', line: 2 }]], ['lib/new.js', [{ host: 'd.dev', line: 1 }, { host: 'e.dev', line: 2 }]],
+    ['lib/gone.js', [{ host: 'b.dev', line: 1 }]]]), newHostTag: hosts => `<new ${hosts.map(({ host, line }) => `${host}:${line}`).join(' ')}>` }
+  const { render, head } = compareOf(base, other, fields)
+  assert.match(head('lib/api.js'), /<new c\.dev:2>/u)
+  assert.match(head('lib/new.js'), /<new d\.dev:1 e\.dev:2>/u)
+  assert.doesNotMatch(head('lib/gone.js'), /<new/u, 'none for a file removed')
+  const rows = Object.fromEntries([...render('lib/api.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
+  assert.match(rows['lib/new.js'], /<new d\.dev:1 e\.dev:2>/u, 'in the tree too')
+  assert.doesNotMatch(rows['lib/gone.js'], /<new/u)
+  const all = Object.assign(new (customElements.get('bundle-compare-all'))(), { base, other, resolutions: [],
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files, ...fields })
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const heads = [...renderText(all.render()).matchAll(/<header class="bundle-code-main-bar bundle-compare-all-file-head">([^]*?)<\/header>/gu)].map(([, bar]) => bar)
+  assert.deepEqual(heads.map(bar => /<new [^>]*>/u.exec(bar)?.[0] ?? null).toSorted(), ['<new c.dev:2>', '<new d.dev:1 e.dev:2>', null], 'each file\'s head in the Diff view')
+  assert.doesNotMatch(compareOf(base, other).head('lib/api.js'), /<new/u, 'none where the source tells of none')
+})
+
 test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
   const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
   const big = '// big\n'.repeat(40_000)

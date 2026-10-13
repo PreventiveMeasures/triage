@@ -273,6 +273,12 @@ export class BundleCompareCode extends LitElement {
     baseAlerts: { attribute: false },
     otherAlerts: { attribute: false },
     alertTags: { attribute: false },
+    // The hosts each file of the open side names that the other's named in
+    // none of its files, by path, `[{ host, line }]` each, and their tag: an
+    // npm version's, as the pair's risk finds them (npm-overview.js
+    // npmNewHosts).
+    newHosts: { attribute: false },
+    newHostTag: { attribute: false },
     // A source's dependency changes, `{ removed, added, changed }`
     // (npm-package.js npmDependencyChanges, with npm-dependency-checks.js's
     // `flags`), what opens one, and what tags one (npm-overview.js
@@ -306,6 +312,8 @@ export class BundleCompareCode extends LitElement {
     this.baseAlerts = null
     this.otherAlerts = null
     this.alertTags = null
+    this.newHosts = null
+    this.newHostTag = null
     this.extensions = null
     this._treeLimit = 300
     this._treeRemaining = Infinity
@@ -1216,7 +1224,7 @@ export class BundleCompareCode extends LitElement {
   // All comparison file chips, shared by Compare and Review in headers and trees.
   // The tree uses the same signals, with shorter labels where needed.
   _fileTags(path, entry, compact = false) {
-    return html`${compact ? nothing : this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._flagTags(path, entry)}${compact ? this._treeTag(path, entry) : this._readability(path, entry)}${this._installTags(path, entry, compact)}${fileMetaTags(entry.meta, compact)}`
+    return html`${compact ? nothing : this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._newHostTags(path, entry)}${this._flagTags(path, entry)}${compact ? this._treeTag(path, entry) : this._readability(path, entry)}${this._installTags(path, entry, compact)}${fileMetaTags(entry.meta, compact)}`
   }
 
   // The file on GitHub, at the revision of the side it's read from (the one
@@ -1232,6 +1240,13 @@ export class BundleCompareCode extends LitElement {
   _alertTags(path, { kind, basePath = path }) {
     const alerts = kind === 'removed' ? this.baseAlerts?.get(basePath) : this.otherAlerts?.get(path)
     return alerts?.length > 0 && this.alertTags ? this.alertTags(alerts) : nothing
+  }
+
+  // The hosts a file names that the one compared with named in none of its
+  // files (`newHosts`), in its head and in the tree; none for one removed.
+  _newHostTags(path, { kind }) {
+    const hosts = kind === 'removed' ? null : this.newHosts?.get(path)
+    return hosts && this.newHostTag ? this.newHostTag(hosts) : nothing
   }
 
   // What a file's code can run beyond itself (file-runs-code.js: eval,

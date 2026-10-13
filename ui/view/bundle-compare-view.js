@@ -12,6 +12,7 @@ export function renderComparisonViewer({ base, other, diff, source, path, seek, 
   const tag = mode === 'diff' ? literal`bundle-compare-all` : literal`bundle-compare-code`
   return staticTemplate`<${tag} .base=${base} .other=${other} .files=${diff.files} .resolutions=${diff.resolutions?.changed ?? []}
     .baseAlerts=${source?.files?.alerts?.(base) ?? null} .otherAlerts=${source?.files?.alerts?.(other) ?? null} .alertTags=${source?.files?.alertTags ?? null}
+    .newHosts=${source?.files?.newHosts?.(base, other) ?? null} .newHostTag=${source?.files?.newHostTag ?? null}
     .dependencies=${source?.dependencies?.(base, other) ?? null} .openDependency=${source?.openDependency ?? null} .dependencyTags=${source?.dependencyTags ?? null}
     .models=${combined?.models ?? null} .path=${path} .seek=${seek} .extensions=${extensions} baseName=${baseName} otherName=${otherName}
     @compare-code-select=${event => { event.stopPropagation(); select(event.detail.path) }}></${tag}>`

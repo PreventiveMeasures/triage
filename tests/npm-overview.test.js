@@ -886,6 +886,24 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   assert.deepEqual(tags('lib/geo.js', { details: base, path: 'lib/geo.js' }), ['IP lookup moderate: ipinfo (line 1)'], 'named already')
   assert.deepEqual(npmCompareFiles.flags(other, 'lib/new.js', null).map(({ name, severity }) => `${name} ${severity}`), ['Remote critical', 'IP lookup high'])
   assert.deepEqual(tags('lib/old.js'), [])
+  // Each file's hosts named anew, by path, for Compare's tree and heads, the
+  // same until another risk arrives, and their tag in orange.
+  const newHosts = npmCompareFiles.newHosts(base, other)
+  assert.deepEqual(Object.fromEntries([...newHosts].map(([path, hosts]) => [path, hosts.map(({ host, line }) => `${host}:${line}`)])),
+    { 'lib/new.js': ['api.telegram.org:2', 'api.ipify.org:3'], 'lib/api.js': ['webhook.site:2'], 'lib/old.js': ['docs.new.dev:2'] })
+  assert.equal(npmCompareFiles.newHosts(base, other), newHosts, 'the same, for Compare\'s files to keep')
+  assert.equal(npmCompareFiles.newHosts(base, base).size, 0)
+  assert.equal(npmCompareFiles.newHosts(null, other), null, 'nothing compared')
+  const hostTag = path => rendered(npmCompareFiles.newHostTag(newHosts.get(path)))
+  assert.equal(hostTag('lib/new.js'), '<span class="npm-new-host" data-tooltip=Hosts the version compared with named in none of its files: api.telegram.org (line 2), api.ipify.org (line 3)>New hosts</span>')
+  assert.equal(hostTag('lib/old.js'), '<span class="npm-new-host" data-tooltip=A host the version compared with named in none of its files: docs.new.dev (line 2)>New host</span>')
+  assert.equal(hostTag('lib/geo.js'), '')
+})
+
+test('Compare\'s new hosts by file wait for the pair\'s risk', () => {
+  const version = ver => held({ integrity: `waits@${ver}`, kind: 'sourcemap', json: { version: 3, sources: ['a.js'], sourcesContent: ['get("https://x.new.dev")\n'] },
+    npm: { name: 'waits', version: ver } })
+  assert.equal(npmCompareFiles.newHosts(version('1.0.0'), version('1.1.0')), null)
 })
 
 test('a version\'s files with no text are its binaries, counted apart from its text files, before its risk arrives too', async () => {
