@@ -98,7 +98,7 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     'in a template\'s text, and in a string in its substitution, on its own line')
 })
 
-test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry', () => {
+test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry\'s URL', () => {
   assert.deepEqual(found('a.js', 'execSync(\'npm publish --access public\')\nspawn(\'npm\', [\'publish\'])\nconst c = `pnpm publish ${dir}`\n'
     + 'fetch(\'https://registry.npmjs.org/-/whoami\', { headers })\nconst { publish } = require(\'libnpmpublish\')\n'), { publish: [1, 2, 3, 4, 5] })
   assert.deepEqual(found('a.js', 'const registry = \'https://registry.npmjs.org/\'\nfetch(registry + name, { method: \'PUT\', body })\naxios.put(url, body)\noptions.method = "put"\n'),
@@ -112,6 +112,10 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     'a PUT where the file names no registry, and publish not run by npm')
   assert.equal(found('a.js', 'const methods = [\'GET\', \'PUT\']\nconst registry = \'https://registry.npmjs.org/\'\nfetch(registry + \'-/v1/search\')\n'), null,
     'PUT named, not a request\'s method')
+  assert.deepEqual(found('a.js', 'fetch(url, { method: \'PUT\', body })\nwrite(`//registry.npmjs.org/:_authToken=${token}`)\n'), { publish: [1] }, '.npmrc\'s URL')
+  assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
+  assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
+    + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')
 })
 
 test('a template literal\'s substitutions are code, read as their own, its text not', () => {
@@ -174,7 +178,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
   ]) assert.deepEqual(found('a.js', text), runs)
   for (const [text, runs] of [
     [`${"'npm', 'publish', ".repeat(1e5)}\n`, { publish: [1] }],
-    [`${"{ method: 'PUT' }, ".repeat(1e5)}'registry.npmjs.org'\n`, { publish: [1] }],
+    [`${"{ method: 'PUT' }, ".repeat(1e5)}'https://registry.npmjs.org'\n`, { publish: [1] }],
     [`${'JSON.stringify( '.repeat(1e5)}process.env)\n`, { env: [1] }],
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
     [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
