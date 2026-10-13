@@ -75,6 +75,16 @@ export function npmEncodingTag(readability, brief = false) {
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${brief ? short ?? tag : tag}</span>`
 }
 
+// How a file's text is encoded, ASCII or UTF-8, for a file's head, which tags
+// it beside a tag that says something else (Minified, Inline map, Map) rather
+// than leave it out; nothing where its tag says it already, or for a file
+// that isn't text.
+export function npmTextKindTag(readability) {
+  const kind = readability?.kind
+  if ((kind !== 'ascii' && kind !== 'utf8') || npmTaggedCategory(readability) === kind) return nothing
+  return npmEncodingTag({ ...readability, category: kind })
+}
+
 // A file's Controls, Invisible and Long lines (npmReadabilityLabels), beside
 // its tag as Obfuscated is (npmFileFlagTags), not in its place: a minified
 // file can hold control and invisible characters, and has long lines. Each says what it found, marked as it is on

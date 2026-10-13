@@ -1381,12 +1381,13 @@ test('the one-list Code lists a file whose only change is a repointed import by 
     combinedDiffRows(code.base, code.other, code.files).rows + code.resolutions.length * 2 + 1, 'its head and its imports counted')
 })
 
-test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its controls and long lines beside that', () => {
+test('a file\'s head tags how it reads, as the npm Overview does: as it reads now, after how it read where that differs, its controls and long lines beside that, and how its text is encoded beside a tag that says something else', () => {
   const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
   const files = [{ 'src/ctl.js': 'const a = 1\n', 'src/same.js': 'const b = 1\n', 'src/long.js': `${code}\n`, 'src/short.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
-    'dist/min.js': `${code}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}\n' },
+    'dist/min.js': `${code}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AAAA"}\n', 'dist/kept.min.js': `${'var a=1;'.repeat(200)}\n`, 'dist/wide.min.js': `${'var a=1;'.repeat(200)}\n` },
   { 'src/ctl.js': 'const a = "\u202E1"\n', 'src/same.js': 'const b = 2\n', 'src/new.js': 'const ü = 1\n', 'src/long.js': `${code}\nconst x = '${'y'.repeat(1001)}'\n${code}\n`,
-    'src/short.js': `${code}\n`, 'dist/min.js': `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AACA"}\n' }]
+    'src/short.js': `${code}\n`, 'dist/min.js': `var r=/[ \t\f]/;${'var a=1;'.repeat(200)}\n`, 'dist/min.js.map': '{"version":3,"mappings":"AACA"}\n',
+    'dist/kept.min.js': `${'var a=2;'.repeat(200)}\n`, 'dist/wide.min.js': `${'var ü=2;'.repeat(200)}\n` }]
   const rendered = path => renderText(view(path, files).render())
   const head = path => /<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(rendered(path))[1]
   const tags = markup => [...markup.matchAll(/class=npm-encoding-tag[^>]*>([^<]+)</gu)].map(m => m[1])
@@ -1397,7 +1398,13 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   // Every label a minified file has, as lit-html 2's lit-html.js: a form feed
   // in a regular expression, its long lines, minified code's.
   assert.deepEqual(flags(head('dist/min.js')), ['Controls warn', 'Long lines notice'])
-  assert.deepEqual(tags(head('dist/min.js')), ['ASCII', 'Minified'])
+  assert.deepEqual(tags(head('dist/min.js')), ['ASCII', 'Minified', 'ASCII'], 'minified now, its text ASCII still')
+  // Minified on both sides: once, its text's encoding kept beside it, its long lines and all.
+  assert.deepEqual(flags(head('dist/kept.min.js')), ['Long lines notice'])
+  assert.deepEqual(tags(head('dist/kept.min.js')), ['Minified', 'ASCII'])
+  assert.doesNotMatch(head('dist/kept.min.js'), /bundle-compare-code-readability/u)
+  assert.deepEqual(tags(head('dist/wide.min.js')), ['Minified', 'ASCII', 'Minified', 'UTF-8'], 'its encoding what differs')
+  assert.match(head('dist/wide.min.js'), /bundle-compare-code-readability/u)
   assert.deepEqual(tags(head('src/same.js')), ['ASCII'], 'once where it reads alike')
   assert.deepEqual(tags(head('src/new.js')), ['UTF-8'], 'an added file as it reads now')
   assert.deepEqual(tags(head('src/legacy.js')), ['ASCII'], 'a removed one as it read')
@@ -1417,7 +1424,7 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   assert.doesNotMatch(row('ctl'), /npm-encoding-tag/u, 'its controls alone where it reads as UTF-8')
   assert.deepEqual(flags(row('ctl')), ['Controls warn'])
   // A source map tagged Map in its head, wide enough, not in the tree, where its name says so.
-  assert.deepEqual(tags(head('dist/min.js.map')), ['Map'])
+  assert.deepEqual(tags(head('dist/min.js.map')), ['Map', 'ASCII'])
   const mapRow = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes('data-tooltip=dist/min.js.map>'))
   assert.doesNotMatch(mapRow, /npm-encoding-tag/u)
 })
