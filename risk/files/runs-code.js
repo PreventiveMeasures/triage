@@ -67,19 +67,21 @@ const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?
 // dropped (`delete process.env.NPM_TOKEN`), the token the whole of what is
 // negated or deleted (ABSENT_ENDS: not `!process.env.GITHUB_TOKEN.trim()`,
 // `!(process.env.GITHUB_TOKEN === x)`), nor where it is only set
-// (`process.env.NPM_TOKEN = token`, `const NPM_TOKEN = …`), but for a default
-// as it is destructured (`{ NPM_TOKEN = '' } = process.env`); looked back on,
-// a few names and dots at most, only where the name starts.
+// (`process.env.NPM_TOKEN = token`), but for a default as it is destructured
+// (`{ NPM_TOKEN = '' } = process.env`), nor declared (`const NPM_TOKEN = …`,
+// TypeScript's `let GITHUB_TOKEN: string`) or an optional member typed
+// (`GITHUB_TOKEN?: string`); looked back on, a few names and dots at most,
+// only where the name starts.
 const TOKEN_VAR = '(?:NPM|GITHUB)_TOKEN'
 const SET = String.raw`\s{0,4}=(?![=>])`
 // What may follow a token negated or deleted whole: the parentheses around
-// it closed, nothing read of what they hold (`!(token).trim()`), or else what
+// it closed, nothing read of what they hold (`!(token).trim()`, `!(token)()`), or else what
 // ends an operand (`&&`, `||`, `??`, a ternary's `?`, `;`, `,`, `:`, `}`, `]`,
 // the line's end).
-const ABSENT_ENDS = String.raw`\s{0,4}(?:(?:\)\s{0,4}){1,4}(?![\s)]{0,8}(?:[.[]|\?\.))|&&|\|\||\?\?|\?(?!\.)|[;,:}\]]|$)`
-const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])`
+const ABSENT_ENDS = String.raw`\s{0,4}(?:(?:\)\s{0,4}){1,4}(?![\s)]{0,8}(?:[.[(]|\?\.))|&&|\|\||\?\?|\?(?!\.)|[;,:}\]]|$)`
+const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!\b(?:const|let|var)\s{1,4})`
   + String.raw`(?:(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})|(?!${TOKEN_VAR}${ABSENT_ENDS}))`
-  + String.raw`${TOKEN_VAR}(?![\p{ID_Continue}$])(?:(?!${SET})|(?<=[{,]\s{0,4}${TOKEN_VAR}))`
+  + String.raw`${TOKEN_VAR}(?![\p{ID_Continue}$])(?!\s{0,4}\?:)(?:(?!${SET})|(?<=[{,]\s{0,4}${TOKEN_VAR}))`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
