@@ -38,9 +38,10 @@ const LOCAL = /^(?:localhost|.+\.(?:localhost|local|test|invalid|example|interna
 const ESCAPED = /\\([/.])/gu
 
 // The pages github.com shows of a repository that a person reads, past its
-// owner and name, as links and error messages name them.
+// owner and name, as links and error messages name them: not its Actions,
+// whose runs' artifacts and logs are downloads of what its workflows made.
 const GITHUB_PAGES = new Set(['issues', 'pull', 'pulls', 'blob', 'tree', 'wiki', 'discussions', 'commit', 'commits', 'compare', 'blame',
-  'security', 'actions', 'projects', 'labels', 'milestone', 'milestones', 'releases', 'tags', 'graphs', 'network', 'stargazers'])
+  'security', 'projects', 'labels', 'milestone', 'milestones', 'releases', 'tags', 'graphs', 'network', 'stargazers'])
 // The paths past github.com that name no repository but a page of GitHub's
 // own (`github.com/sponsors/someone`, `github.com/orgs/someone/people`).
 const GITHUB_OWN = new Set(['sponsors', 'orgs', 'apps', 'marketplace', 'features', 'topics', 'collections', 'settings', 'login', 'search', 'explore', 'about'])
@@ -56,8 +57,9 @@ const GITHUB_OWN = new Set(['sponsors', 'orgs', 'apps', 'marketplace', 'features
 // `commit/….diff`, `commits/main.atom`). Any other (a repository's own URL,
 // which git clones, `raw/…`, `archive/…`, `tarball`, `repo.git`, a path GitHub
 // may add, one read otherwise) leads to whatever a repository holds: named by
-// it (`github.com/owner/repo`), so that it is never taken for one of
-// github.com's links to code and docs (compare.js ALLOWED_HOSTS).
+// it (`github.com/owner/repo`, in lower case, as GitHub's names are any), so
+// that it is never taken for one of github.com's links to code and docs
+// (compare.js ALLOWED_HOSTS).
 const RAW = /[?&]raw=(?:true|1)(?:&|$)/u
 const FILE_PATHS = new Set(['blob', 'tree', 'blame', 'wiki'])
 const FORMAT = /\.(?:patch|diff|atom)$/u
@@ -73,7 +75,7 @@ function githubNamed(url) {
     && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))
     && !(!FILE_PATHS.has(section) && FORMAT.test(segments.at(-1)))
   const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || GITHUB_OWN.has(owner) || repositoryPage)
-  return page ? 'github.com' : `github.com/${decoded(owner)}/${decoded(repo.replace(/\.git$/u, ''))}`
+  return page ? 'github.com' : `github.com/${decoded(owner)}/${decoded(repo.replace(/\.git$/u, ''))}`.toLowerCase()
 }
 
 // The hosts a script's strings name, each with the line it is first named on,
