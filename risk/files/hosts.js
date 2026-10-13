@@ -41,28 +41,32 @@ const ESCAPED = /\\([/.])/gu
 // owner and name, as links and error messages name them.
 const GITHUB_PAGES = new Set(['issues', 'pull', 'pulls', 'blob', 'tree', 'wiki', 'discussions', 'commit', 'commits', 'compare', 'blame',
   'security', 'actions', 'projects', 'labels', 'milestone', 'milestones', 'releases', 'tags', 'graphs', 'network', 'stargazers'])
-// How a github.com URL (`url`, as written from its scheme on) is named among
-// a file's hosts, read as fetch reads it (WHATWG URL: a port, a trailing dot,
-// backslashes as slashes, `..` resolved): `github.com` for its home or a
-// person's, a repository's home, a page a person reads (GITHUB_PAGES), a
+// The paths past github.com that name no repository but a page of GitHub's
+// own (`github.com/sponsors/someone`, `github.com/orgs/someone/people`).
+const GITHUB_OWN = new Set(['sponsors', 'orgs', 'apps', 'marketplace', 'features', 'topics', 'collections', 'settings', 'login', 'search', 'explore', 'about'])
+// How a github.com URL (`url`, as written from its scheme on, the punctuation
+// a sentence ends it with aside) is named among a file's hosts, read as fetch
+// reads it (WHATWG URL: a port, a trailing dot, backslashes as slashes, `..`
+// resolved): `github.com` for its home or a person's, a page of GitHub's own
+// (GITHUB_OWN), a page of a repository a person reads (GITHUB_PAGES), a
 // release's page (`releases/tag/v1`, `releases/latest`) but not its assets'
 // (`releases/latest/download/…`), and a file's page but not the file raw
-// (`blob/…?raw=true`). Any other path (`raw/…`, `archive/…`, `tarball`,
-// `repo.git`, one GitHub may add, one read otherwise) leads to whatever a
-// repository holds: named by it (`github.com/owner/repo`), so that it is
-// never taken for one of github.com's links to code and docs (compare.js
-// ALLOWED_HOSTS).
+// (`blob/…?raw=true`). Any other (a repository's own URL, which git clones,
+// `raw/…`, `archive/…`, `tarball`, `repo.git`, a path GitHub may add, one
+// read otherwise) leads to whatever a repository holds: named by it
+// (`github.com/owner/repo`), so that it is never taken for one of
+// github.com's links to code and docs (compare.js ALLOWED_HOSTS).
 const RAW = /[?&]raw=(?:true|1)(?:&|$)/u
 const decoded = part => { try { return decodeURIComponent(part) } catch { return part } }
 function githubNamed(url) {
   let parsed = null
-  try { parsed = new URL(url.replace(/^(\w+)\?:/u, '$1:')) } catch {}
+  try { parsed = new URL(url.replace(/^(\w+)\?:/u, '$1:').replace(/[)\]}>.,;:!]+$/u, '')) } catch {}
   if (!parsed) return 'github.com/'
   const segments = parsed.pathname.split('/').slice(1)
   if (segments.length > 1 && segments.at(-1) === '') segments.pop()
   const [owner, repo = '', section, ...rest] = segments
-  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || (owner !== '' && repo !== '' && !repo.endsWith('.git')
-    && (section === undefined || GITHUB_PAGES.has(section)) && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))))
+  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || GITHUB_OWN.has(owner) || (owner !== '' && repo !== ''
+    && !repo.endsWith('.git') && GITHUB_PAGES.has(section) && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))))
   return page ? 'github.com' : `github.com/${decoded(owner)}/${decoded(repo.replace(/\.git$/u, ''))}`
 }
 

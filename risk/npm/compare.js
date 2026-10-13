@@ -60,14 +60,15 @@ function npmFileFindings(base, other, files) {
 
 // Hosts whose naming anew calls for no look: where packages keep their code
 // and docs, as their links and error messages name them, the most a version
-// names anew of popular packages a year apart (lit.dev, Lit's). Each as it is
-// written, not a host under it, so one an attack sends to or fetches from
-// there (`api.github.com`, `raw.githubusercontent.com`) is still named, as is
-// a repository github.com serves files or releases from, named by it
-// (hosts.js githubNamed); and no link shortener (`git.io`, `git.new`),
-// which can lead anywhere.
+// names anew of popular packages a year apart (lit.dev, Lit's), and none
+// whose content anyone may publish (a wiki's raw pages) but github.com's
+// pages, as hosts.js githubNamed names them: a repository's own URL, its
+// files and releases are named by it. Each as it is written, not a host
+// under it, so one an attack sends to or fetches from there
+// (`api.github.com`, `raw.githubusercontent.com`) is still named; and no link
+// shortener (`git.io`, `git.new`), which can lead anywhere.
 const ALLOWED_HOSTS = new Set(['github.com', 'lit.dev', 'developer.mozilla.org', 'json-schema.org', 'nodejs.org', 'babeljs.io', 'tseslint.com',
-  'devblogs.microsoft.com', 'semver.org', 'en.wikipedia.org'])
+  'devblogs.microsoft.com', 'semver.org'])
 
 // The hosts the open version's code names in its URLs that the one compared
 // with's named in none of its, ALLOWED_HOSTS aside, each `{ host, path, line,
