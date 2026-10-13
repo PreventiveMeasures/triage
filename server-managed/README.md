@@ -1144,9 +1144,11 @@ kept or made as `pretty` keeps and makes them. It answers Brotli-encoded
 ndjson as each is worked out, a line each, the answer for that pair asked
 about alone with both files' paths, `path` and `otherPath`, or `{ path, hash,
 otherPath, otherHash, error, status }` where it has none (a file that does
-not format, the server busy). Access is checked as for `pretty?other=`,
-again before each line; a pair the viewer pairs otherwise, or one the server
-was too busy for, it asks for alone.
+not format, the server busy). With `&scope=reason:<tree>`, as a Compare
+narrowed to a tree of Stasis bundles asks, each side's files are those of the
+tree alone (`bundleCompareFiles`), paired as that Compare pairs them. Access is
+checked as for `pretty?other=`, again before each line; a pair the viewer pairs
+otherwise, or one the server was too busy for, it asks for alone.
 
 `GET /api/bundles/:id/type-only?other=` tells which TypeScript files that
 changed between the two bundles changed in types alone, for Compare's **Hide
@@ -1163,8 +1165,9 @@ thread, off the event loop, a comparison at a time per process, up to sixteen
 more waiting (the response cut short past that, or past a minute), and
 answered as Brotli-encoded ndjson once all are proven, a line each, `{ path,
 hash, otherPath, otherHash }`, a side not there null, which the viewer checks
-name the files it shows. Access is checked as for `pretty?other=`; a public
-link answers for two of its own bundles.
+name the files it shows; within a tree with `&scope=`, as the stream above.
+Access is checked as for `pretty?other=`; a public link answers for two of its
+own bundles.
 
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,

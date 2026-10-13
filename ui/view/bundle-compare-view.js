@@ -10,7 +10,7 @@ export function renderComparisonViewer({ base, other, diff, source, path, seek, 
   const combined = mode ? null : diff.combined ??= combinedDiffRows(base, other, diff.files, { resolutions: diff.resolutions?.changed ?? [] })
   mode ??= combined.rows < COMBINED_DIFF_MAX ? 'diff' : 'code'
   const tag = mode === 'diff' ? literal`bundle-compare-all` : literal`bundle-compare-code`
-  return staticTemplate`<${tag} .base=${base} .other=${other} .files=${diff.files} .resolutions=${diff.resolutions?.changed ?? []}
+  return staticTemplate`<${tag} .base=${base} .other=${other} .files=${diff.files} .scope=${diff.scope ?? ''} .resolutions=${diff.resolutions?.changed ?? []}
     .baseAlerts=${source?.files?.alerts?.(base) ?? null} .otherAlerts=${source?.files?.alerts?.(other) ?? null} .alertTags=${source?.files?.alertTags ?? null}
     .newHosts=${source?.files?.newHosts?.(base, other) ?? null} .newHostTag=${source?.files?.newHostTag ?? null}
     .dependencies=${source?.dependencies?.(base, other) ?? null} .openDependency=${source?.openDependency ?? null} .dependencyTags=${source?.dependencyTags ?? null}

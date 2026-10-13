@@ -13,6 +13,7 @@ import { brotliDecompress } from 'node:zlib'
 import { format } from '@preventive/compare/pretty.js'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
+import { bundleCompareFiles } from '../common/bundle-compare-inputs.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { MAX_PRETTY_BYTES, needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import type { OpenedBlob } from './blob-store.ts'
@@ -219,10 +220,12 @@ async function sideFiles(entries: Iterable<[string, string | Uint8Array]>): Prom
   return { files, hashes }
 }
 
-// A bundle's side, from its details: its files, as sideFiles reads them, and
-// its packages' directories.
-async function bundleSide(details: Parameters<typeof bundlePackageDirs>[0]): Promise<Pick<ComparedSide, 'files' | 'hashes' | 'packageDirs'>> {
-  return { ...await sideFiles(bundleSourcesAsMap(details)), packageDirs: bundlePackageDirs(details) }
+// A bundle's side, from its details: its files, as sideFiles reads them,
+// within a reason `scope` as Compare reads them there (bundleCompareFiles),
+// and its packages' directories.
+async function bundleSide(details: Parameters<typeof bundlePackageDirs>[0], scope: string): Promise<Pick<ComparedSide, 'files' | 'hashes' | 'packageDirs'>> {
+  const scoped = scope ? new Set(bundleCompareFiles(details, scope).keys()) : null, sources = bundleSourcesAsMap(details)
+  return { ...await sideFiles(scoped ? [...sources].filter(([path]) => scoped.has(path)) : sources), packageDirs: bundlePackageDirs(details) }
 }
 
 // A version's files by path, from one load of them.
@@ -330,9 +333,10 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     // Two bundles' sides, or two versions', as a comparison reads them, read
     // before this resolves: for the files that changed between them
     // pretty-printed (compared), and their diffs with renamed names hidden
-    // (rename-diff.ts renamedPairs).
-    async bundleSides(base: ManagedBundle, other: ManagedBundle): Promise<[ComparedSide, ComparedSide]> {
-      const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await bundleSide(await bundleDetails(record)),
+    // (rename-diff.ts renamedPairs); a bundle's within a reason `scope`
+    // where one is asked for, as Compare reads it then.
+    async bundleSides(base: ManagedBundle, other: ManagedBundle, scope = ''): Promise<[ComparedSide, ComparedSide]> {
+      const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await bundleSide(await bundleDetails(record), scope),
         kept: request => kept(() => bundles.open(record.id, prettyFile(request))),
         made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
       return [await sideOf(base, 'base'), await sideOf(other, 'other')]

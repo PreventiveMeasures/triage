@@ -49,7 +49,7 @@ async function named(details, path, hash) {
 // A comparison's proofs, each kept where it names both its sides' files as
 // they are, all taken at once as its request ends; where it failed for a
 // reason that may pass, asked for again a while after.
-async function load(key, comparison, base, other) {
+async function load(key, comparison, base, other, scope) {
   let failed = false
   const files = new Set()
   try {
@@ -57,7 +57,7 @@ async function load(key, comparison, base, other) {
       if (path === undefined || otherPath === undefined || (path ?? otherPath) === null) return
       if (await named(base, path, hash) && await named(other, otherPath, otherHash)) files.add(pairOf(path, otherPath))
     }
-    await (base.npm ? fetchNpmTypeOnly(base.npm.name, base.npm.version, other.npm.version, line) : fetchBundleTypeOnly(base.managedId, other.managedId, line))
+    await (base.npm ? fetchNpmTypeOnly(base.npm.name, base.npm.version, other.npm.version, line) : fetchBundleTypeOnly(base.managedId, other.managedId, line, { scope }))
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {
@@ -83,18 +83,20 @@ async function load(key, comparison, base, other) {
 // Whether a file of a comparison, `entry` as Compare lists it and `contents`
 // its two sides' texts, changed in types alone, as the server proved: false
 // till that came, and for a file other than TypeScript on either side there,
-// or a text other than its side's file. `notify` called once it came.
-export function typeOnly(base, other, path, { kind, basePath = path }, { before, after }, notify) {
+// or a text other than its side's file. `notify` called once it came. A
+// comparison within a reason `scope` (bundle-comparison.js) has those of the
+// files it compares within it, apart from the whole bundles'.
+export function typeOnly(base, other, path, { kind, basePath = path }, { before, after }, notify, scope = '') {
   if (kind === 'repointed' || !renameDiffable(base, other)) return false
   const sides = [kind === 'added' ? null : basePath, kind === 'removed' ? null : path]
   if (!sides.every(file => file === null || TYPESCRIPT.has(prettyExtension(file)))) return false
   if ((sides[0] !== null && before !== bundleFilesAsMap(base).get(basePath)) || (sides[1] !== null && after !== bundleFilesAsMap(other).get(path))) return false
-  const key = `${base.integrity}\0${other.integrity}`
+  const key = `${base.integrity}\0${other.integrity}\0${scope}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
   if (!comparison) {
     comparison = { files: new Set(), notify: null, ended: false }
-    load(key, comparison, base, other)
+    load(key, comparison, base, other, scope)
   }
   comparisons.set(key, comparison)
   evict()

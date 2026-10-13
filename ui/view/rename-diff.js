@@ -109,7 +109,7 @@ function evict() {
 // was busy, left to be asked for alone once this ends; where the request
 // failed, what every pair it brought none of has, the comparison asked for
 // again a while after where that may succeed.
-async function loadComparison(key, comparison, base, other) {
+async function loadComparison(key, comparison, base, other, scope) {
   let rest = null
   try {
     const line = async ({ path, otherPath, hash, otherHash, status, message, ...answer }) => {
@@ -128,7 +128,7 @@ async function loadComparison(key, comparison, base, other) {
       tell(comparison.notify)
     }
     await (base.npm ? fetchNpmRenameDiffs(base.npm.name, base.npm.version, other.npm.version, line)
-      : fetchBundleRenameDiffs(base.managedId, other.managedId, line))
+      : fetchBundleRenameDiffs(base.managedId, other.managedId, line, { scope }))
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {
@@ -191,16 +191,18 @@ async function load(comparison, pair, asked, base, basePath, before, other, path
 // out from are those the view draws, as `drawn` names them (their hashes),
 // its blocks else of other lines: told as an error then, asked for again
 // alone a while after. A text other than its side's file, as Compare shows
-// one side's for both where an importer was captured on one, has none.
-export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn, alone = false) {
-  const key = `${base.integrity}\0${other.integrity}`
+// one side's for both where an importer was captured on one, has none. A
+// comparison within a reason `scope` (bundle-comparison.js) has its pairs
+// found within it, apart from the whole bundles'.
+export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn, alone = false, scope = '') {
+  const key = `${base.integrity}\0${other.integrity}\0${scope}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
   // One whose request failed for a reason that may have passed asked for
   // again once due, the pairs it brought kept.
   if (!comparison || (comparison.rest?.until !== undefined && Date.now() >= comparison.rest.until)) {
     comparison = { diffs: comparison?.diffs ?? new Map(), notify: null, ended: false, rest: null, tries: comparison?.rest?.tries }
-    loadComparison(key, comparison, base, other)
+    loadComparison(key, comparison, base, other, scope)
   }
   comparisons.set(key, comparison)
   evict()

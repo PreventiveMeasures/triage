@@ -6,7 +6,8 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brotliDecompressSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
+import { Bundle } from '@exodus/stasis-core/bundle'
 import { format } from '@preventive/compare/pretty.js'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createBundleCache } from '../server-managed/bundle-cache.ts'
@@ -93,7 +94,16 @@ async function setup(t) {
       uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1, repoDirectory: '' }, Date.now())
     return id
   }
-  return { dir, db, raw: stores.raw, stores, users, send, seed, team }
+  // A Stasis bundle of `files`, each tree of it (`reason`) naming its paths.
+  async function seedStasis(files, reason) {
+    const bytes = brotliCompressSync(Buffer.from(new Bundle({ modules: new Map([['.', { name: 'app', version: '1', files }]]), reason }).serialize()))
+    const id = randomUUID()
+    const dataKey = await stores.bundleStore.put(id, bytes, 'stasis')
+    await db.insertBundle({ id, integrity: bundleIntegrity(bytes), filename: 'app.stasis.code.br', kind: 'stasis', byteSize: bytes.length, dataKey,
+      uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1, repoDirectory: '' }, Date.now())
+    return id
+  }
+  return { dir, db, raw: stores.raw, stores, users, send, seed, seedStasis, team }
 }
 
 const npmPretty = (name, version) => `/api/npm/pretty?${new URLSearchParams({ name, version })}`
@@ -689,4 +699,23 @@ test('a comparison\'s files are paired renamed within a package alone, as the vi
     await h.seed({ 'node_modules/b/dist/x-3c4d.js': chunk.replace('c*b', 'c*b+1'), 'node_modules/c/dist/y-3c4d.js': renamedLong })]
   const pairs = linesOf(await h.send(bundleRenameDiffs(base, other))).map(({ path, otherPath }) => [path, otherPath])
   assert.deepEqual(pairs, [['node_modules/c/dist/y-1a2b.js', 'node_modules/c/dist/y-3c4d.js']], 'none across packages')
+})
+
+test('a scoped comparison\'s pairs and type-only files are of the files it compares within its scope', async t => {
+  const h = await setup(t)
+  // In the web tree, a minified file gone and one like it come, and a
+  // declaration file come: across the whole bundles, the one unchanged, the
+  // other added, and the declaration file unchanged.
+  const declared = 'export type W = string;\n'
+  const [base, other] = [await h.seedStasis({ 'dist/a.js': long, 'dist/b.js': renamedLong, 'types/w.d.ts': declared }, { web: ['dist/a.js'] }),
+    await h.seedStasis({ 'dist/a.js': long, 'dist/b.js': renamedLong, 'types/w.d.ts': declared }, { web: ['dist/b.js', 'types/w.d.ts'] })]
+  const scoped = path => `${path}&${new URLSearchParams({ scope: 'reason:web' })}`
+  const pairs = async path => linesOf(await h.send(path)).map(({ path: from, otherPath }) => [from, otherPath])
+  assert.deepEqual(await pairs(bundleRenameDiffs(base, other)), [], 'nothing changed across the whole bundles')
+  assert.deepEqual(await pairs(scoped(bundleRenameDiffs(base, other))), [['dist/a.js', 'dist/b.js']], 'within the web tree, one renamed')
+  assert.deepEqual(await pairs(bundleTypeOnly(base, other)), [])
+  assert.deepEqual(await pairs(scoped(bundleTypeOnly(base, other))), [[null, 'types/w.d.ts']], 'within it, a declaration file added, in types alone')
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  assert.deepEqual(linesOf(await h.send(scoped(bundleTypeOnly(base, other)), null, { headers })).map(({ otherPath }) => otherPath), ['types/w.d.ts'], 'a public link\'s alike')
 })
