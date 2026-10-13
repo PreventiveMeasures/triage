@@ -64,7 +64,7 @@ export class DependencyReviewList extends LitElement {
     return html`<section id=${`review-details-${review.id}`} class="dependency-review-details" aria-label=${`Details for ${reviewTitle(review)}`}>
       ${review.comment ? html`<div class="dependency-review-final-note" role="note" aria-label="Final note">${reviewNote(review.comment)}</div>` : nothing}
       ${review.entries.length > 0 ? html`<ul class="dependency-review-entries">${review.entries.map(entry => html`<li>
-        <span class="dependency-review-entry-file">${entry.file === null ? nothing : sourceFileIcon(entry.file)}<span>${entry.file ?? 'Review note'}</span></span>
+        <span class="dependency-review-entry-file">${sourceFileIcon(entry.file)}<span>${entry.file}</span></span>
         ${entry.status ? verdictLabel(entry.status) : html`<span></span>`}
         <div>${reviewNote(entry.comment)}</div></li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
     </section>`
@@ -72,7 +72,7 @@ export class DependencyReviewList extends LitElement {
   _row(review) {
     const route = dependencyReviewRoute(review)
     const expanded = this._expanded.has(review.id), published = review.publishedAt !== null
-    const checked = new Set(review.entries.filter(entry => entry.file !== null && entry.status).map(entry => entry.file)).size
+    const checked = new Set(review.entries.filter(entry => entry.status).map(entry => entry.file)).size
     const notes = review.entries.filter(entry => entry.comment.trim()).length + Number(Boolean(review.comment.trim()))
     const open = event => {
         if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {

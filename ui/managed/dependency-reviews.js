@@ -3,7 +3,7 @@ import { managedAppState } from './state.js'
 
 const ERRORS = {
   'review-content-changed': 'The package bytes changed. Reload the package before reviewing.',
-  'review-conflict': 'This review changed or was published in another tab. Refresh reviews before editing it again.',
+  'review-conflict': 'This review changed or was published in another tab. Reload the page before editing it again.',
   'package-not-found': 'One of these package versions is no longer available to you.',
   'unknown-review-file': 'This file is not in the comparison.',
   'non-text-review-file': 'Verdicts for non-text files are not supported yet.',

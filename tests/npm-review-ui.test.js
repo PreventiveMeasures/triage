@@ -42,7 +42,7 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { EMPTY_REVIEW_BASE, NpmReview, REVIEW_DISPLAY_LIMITS, reviewContext } = await import('../ui/view/npm-review.js')
-const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewPublished, reviewExtensions } = await import('../ui/view/npm-review-view.js')
+const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewEntry, reviewExtensions } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
@@ -96,7 +96,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
     const editor = text(renderReviewEditor(page, 'asset.bin', mode === 'diff'))
     assert.equal((editor.match(/\?disabled=true/gu) ?? []).length, 5, 'all verdict controls, including Not checked, are disabled')
     assert.match(editor, /Non-text file.*remains unchecked/u)
-    assert.match(editor, /aria-label=File note/u)
+    assert.match(editor, /aria-label="File note"/u)
     requests.length = 0
     for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) await page._setFileStatus('asset.bin', status)
     assert.equal(requests.length, 0)
@@ -208,14 +208,16 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
   assert.deepEqual(page._allowedVerdicts, ['reject'])
 })
 
-test('review URLs round trip scoped dependencies, version-only shorthand and Diff mode', () => {
+test('review URLs round trip scoped dependencies and version-only shorthand, ignoring the obsolete mode', () => {
   assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/reviews'))), '/reviews')
   for (const path of ['/npm/lib@2.0.0/review', '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0',
-    '/npm/@scope/lib/review/@other/base@next?mode=diff']) {
+    '/npm/@scope/lib/review/@other/base@next']) {
     const parsed = parseManagedRoute(new URL(path, 'https://test'))
     assert.equal(parsed.bundleTab, 'review')
     assert.equal(managedRoutePath(parsed), path)
   }
+  assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/npm/@scope/lib/review/@other/base@next?mode=diff'))),
+    '/npm/@scope/lib/review/@other/base@next')
   const shorthand = parseManagedRoute(new URL('https://test/npm/lib@2.0.0/review/1.0.0'))
   assert.equal(managedRoutePath(shorthand), '/npm/lib@2.0.0/review/lib@1.0.0')
   assert.equal(parseManagedRoute(new URL('https://test/npm/lib@2/review/@bad')), null)
@@ -332,12 +334,12 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.deepEqual(requests[0][1], { action: 'publish', reviewId: 'review', revision: 1, teamIds: ['two'], finalStatus: 'request-changes', finalComment: 'Check the second file too.' })
   assert.equal(page._canEdit, false)
-  assert.match(text(renderReviewPublished(page, published)), /Continue in a new review/u)
+  assert.match(text(renderReviewEntry(page, published)), /Continue in a new review/u)
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u, 'no editor for a published set')
-  assert.match(text(renderReviewPublished(page, published)), /Publish to more teams/u)
-  assert.match(text(renderReviewPublished(page, published)), /Revoke/u)
-  assert.doesNotMatch(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Publish to more teams/u)
-  assert.match(text(renderReviewPublished(page, { ...published, revokedAt: 300 })), /Revoked/u)
+  assert.match(text(renderReviewEntry(page, published)), /Publish to more teams/u)
+  assert.match(text(renderReviewEntry(page, published)), /Revoke/u)
+  assert.doesNotMatch(text(renderReviewEntry(page, { ...published, revokedAt: 300 })), /Publish to more teams/u)
+  assert.match(text(renderReviewEntry(page, { ...published, revokedAt: 300 })), /Revoked/u)
 })
 
 test('a review without a base compares every package file against an empty package', async () => {
@@ -579,9 +581,14 @@ test('viewing a frozen set never loads or overwrites private unsaved buffers', (
   assert.equal(page._editorState(page._file).comment, 'A note', 'the frozen file shows its saved content')
   assert.equal(page._unsaved, true, 'changing comparison cannot discard a private edit while its frozen file is shown')
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u)
+  assert.match(text(renderReviewEntry(page, published)), /aria-current=true/u)
+  assert.match(text(renderReviewEntry(page, review)), /aria-current=false/u)
+  assert.doesNotMatch(text(renderReviewEntry(page, review)), />Revoke<|>Continue<|Publish to more teams/u, 'private reviews only expose Open')
   page._resume()
   assert.equal(page._editorState(page._file).comment, 'Private pending note')
   assert.equal(page._canEdit, true)
+  assert.match(text(renderReviewEntry(page, review)), /aria-current=true/u)
+  assert.match(text(renderReviewEntry(page, published)), /aria-current=false/u)
 })
 
 test('opening a specific published list row selects that snapshot even with an active review', async () => {
@@ -591,6 +598,33 @@ test('opening a specific published list row selects that snapshot even with an a
   await page._refresh()
   assert.equal(page._shownReview.id, 'published')
   assert.equal(page._canEdit, false)
+})
+
+test('version-wide reviews keep bases separate when opening, continuing and sharing', async () => {
+  const page = component(), published = { ...review, id: 'earlier-base', baseVersion: '0.8.0', baseIntegrity: 'sha512-earlier', publishedAt: 200 }
+  const otherPrivate = { ...review, id: 'other-private', baseVersion: '0.9.0', baseIntegrity: 'sha512-other' }
+  page._reviews = [published, otherPrivate, review]
+  assert.equal(page._activeReview, review)
+  assert.deepEqual(page._ownPublished, [], 'a review for another base does not freeze the current one')
+  navigations.length = 0
+  await page._openReview(published, true)
+  assert.equal(navigations[0].reviewSpec, '0.8.0')
+  page._context = { ...context, baseVersion: published.baseVersion, baseIntegrity: published.baseIntegrity }
+  answer = { reviews: page._reviews, teams: [] }
+  await page._refresh()
+  assert.equal(requests.at(-1)[0].allBases, true)
+  assert.equal(page._continuation.source, published)
+  assert.equal(page._activeReview.publishedAt, null, 'continue starts privately in the selected base')
+  const continuation = page._continuation
+  requests.length = 0
+  const anotherPublished = { ...review, id: 'original-base', publishedAt: 300 }
+  page._reviews.push(anotherPublished)
+  answer = { review: { ...anotherPublished, revision: 2, teams: [{ id: 'one', name: 'One' }] } }
+  await page._change({ action: 'publish', reviewId: anotherPublished.id, revision: 1, teamIds: ['one'] })
+  assert.equal(requests.length, 1, 'sharing an older review does not persist the active continuation')
+  assert.deepEqual(requests[0][0], context, 'actions use the subject review’s base')
+  assert.equal(page._continuation, continuation)
+  assert.equal(page._shownReview, continuation.review)
 })
 
 test('dense file tree counts verdicts rather than notes and bounds the initial DOM for large packages', () => {
@@ -1000,7 +1034,7 @@ test('review automatically uses whole diff below both line and byte limits', () 
   assert.equal(reviewViewMode([{ before: '', after: { format: 'digest', size: 2 * 1024 * 1024 } }]), 'code')
 })
 
-test('the shared tree keeps review decorations, progress and next-unchecked behavior', () => {
+test('the shared tree keeps review decorations, progress and unchecked filtering', () => {
   const page = component()
   page._files = ['src/a.js', 'src/b.js', 'index.js']; page._path = 'src/b.js'
   page._reviews = [{ ...review, entries: [{ ...file, file: 'src/a.js', status: 'accept' }, { ...file, file: 'src/b.js', status: null }] }]
@@ -1010,10 +1044,6 @@ test('the shared tree keeps review decorations, progress and next-unchecked beha
   assert.match(text(extras.fileSuffix('src/b.js')), /Has notes/u)
   assert.equal(extras.fileLabel('src/a.js'), 'src/a.js, Accept')
   assert.match(text(extras.filters), /Unchecked 2/u)
-  const selected = []
-  const footer = extras.footer(path => selected.push(path))
-  footer.values.find(value => typeof value === 'function')()
-  assert.deepEqual(selected, ['index.js'])
   page._unchecked = true
   const filtered = reviewExtensions(page)
   assert.equal(filtered.fileFilter('src/a.js'), false)
@@ -1021,6 +1051,6 @@ test('the shared tree keeps review decorations, progress and next-unchecked beha
   assert.equal(filtered.canSelect(), true)
   page._saveBlocked = true
   assert.equal(filtered.canSelect(), false)
-  page._saveBlocked = false; page._panel = 'notes'
-  assert.equal(filtered.canSelect(), false, 'scrolling behind a dialog must not replace its notes editor')
+  page._saveBlocked = false; page._panel = 'reviews'
+  assert.equal(filtered.canSelect(), false, 'scrolling behind a dialog must not change the selected file')
 })

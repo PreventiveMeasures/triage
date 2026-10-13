@@ -74,10 +74,10 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
   const compare = state.bundleCompare?.bundle === state.selectedBundle ? state.bundleCompare : null
   if (npm && tab === 'review' && state.bundleDetailsTab === 'compare' && compare?.target
     && !(review?.started && review.user === state.managedSession?.id)) {
-    return { reviewPackage: npm.name, reviewSpec: compare.target, ...(compare.mode === 'diff' ? { reviewMode: 'diff' } : {}) }
+    return { reviewPackage: npm.name, reviewSpec: compare.target }
   }
   if (npm && tab === 'compare' && state.bundleDetailsTab === 'review' && review?.reviewPackage === npm.name) {
-    return { compareSpec: review.reviewSpec, ...compareModeField(review.reviewMode === 'diff' ? 'diff' : compare?.mode ?? 'code') }
+    return { compareSpec: review.reviewSpec, ...compareModeField(compare?.mode ?? 'code') }
   }
   if (tab === 'review' && review) {
     const { bundle: _bundle, started: _started, user: _user, resume: _resume, ...location } = review

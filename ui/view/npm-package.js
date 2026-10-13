@@ -352,8 +352,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   if (tab === 'review') {
     state.npmReview = { bundle: entry.integrity,
-      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}),
-      ...(route.reviewMode === 'diff' ? { reviewMode: 'diff' } : {}) }
+      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}) }
   }
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)

@@ -8,7 +8,7 @@ import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summar
 import { prepareComparison } from './bundle-comparison.js'
 import { comparisonFileList, withinComparisonLimits } from './bundle-compare-files.js'
 import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
-import { selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
+import { sameReviewContext, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview } from './npm-review-view.js'
 import './bundle-selector.js'
 import './mode-switch.js'
@@ -49,12 +49,12 @@ export class NpmReview extends LitElement {
     if (state.bundleDetailsTab !== 'review' || state.selectedBundle !== this.entry?.integrity || !this._context || (!this._activeReview && this._ownPublished.length === 0 && !this._unsaved)) return
     state.npmReview = { bundle: this.entry.integrity,
       ...(this._context.basePackage ? { reviewPackage: this._context.basePackage, reviewSpec: this._context.baseVersion } : {}),
-      ...(this._mode === 'diff' ? { reviewMode: 'diff' } : {}), started: true, user: this.session?.id }
+      started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
-  get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null)
+  get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))
     ?? (this._continuation && this._continuation.review.user === this.session?.id ? this._continuation.review : null) }
-  get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null).toSorted((a, b) => b.publishedAt - a.publishedAt) }
+  get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context)).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
   get _canEdit() { return this._writable && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
   _isDirty(file, editor) { return editor.comment !== (editor.edit?.comment ?? '') || editor.status !== (this._nonTextFiles.includes(file) ? '' : editor.edit?.status ?? '') }
@@ -80,11 +80,11 @@ export class NpmReview extends LitElement {
       && this._summary.checkedFiles > 0 && !this._needsPackageJson && !this._unchangedContinuation
       && this._selectedTeams.size > 0 && !this._unsaved && this._allowedVerdicts.includes(this._finalStatus)
   }
-  _location(target, mode = this._mode) {
+  _location(target) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
-    return { ...(parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}), ...(mode === 'diff' ? { reviewMode: 'diff' } : {}) }
+    return parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}
   }
-  _navigate(target, mode) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, mode))) }
+  _navigate(target) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target))) }
   async _navigateTo(route) {
     if (this._blocked || this._loading) return
     const key = this._key, navigation = this._navigation = {}
@@ -145,14 +145,18 @@ export class NpmReview extends LitElement {
     const dismiss = this._dismissLoading = showToast('Loading reviews…', { duration: 0 })
     this._loading = true; this._error = null
     try {
-      const { reviews, teams } = await dependencyReviews(this._context, null, null, this._controller.signal)
+      const { reviews, teams } = await dependencyReviews({ ...this._context, allBases: true }, null, null, this._controller.signal)
       if (key === this._key) {
         const preserve = this._unsaved
         this._reviews = reviews; this._teams = teams
-        if (reviews.some(review => review.user === this.session?.id && review.publishedAt === null)) this._continuation = null
+        if (reviews.some(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))) this._continuation = null
         this._rememberBase()
         const selection = takeReviewSelection(this._context)
-        if (selection && reviews.some(review => review.id === selection && review.publishedAt !== null)) this._selectedReview = selection
+        const selected = selection && reviews.find(review => review.id === selection.review.id)
+        if (selected?.publishedAt != null) {
+          if (selection.continueReview) this._continue(selected.id, selected.revision)
+          else this._selectedReview = selected.id
+        }
         this._selectedTeams = new Set(teams.filter(team => initializeTeams ? teams.length === 1 : this._selectedTeams.has(team.id)).map(team => team.id))
         if (!preserve) { this._editors.clear(); this._resetEditor(this._file) }
       }
@@ -185,16 +189,22 @@ export class NpmReview extends LitElement {
     this._seek = { path, line: line - 1, query }
     this._selectFile(path)
   }
-  _open(file = null) {
-    if (this._blocked) return
-    this._resetEditor(file)
-    if (file === null) this._panel = 'notes'
-    else { this._path = file; this._panel = null }
+  _openPanel(panel) { this._panel = panel }
+  async _openReview(review, continueReview = false) {
+    if (this._blocked || this._loading) return
+    if (sameReviewContext(review, this._context)) {
+      if (continueReview) this._continue(review.id, review.revision)
+      else if (review.publishedAt === null) this._resume()
+      else this._showPublished(review)
+      return
+    }
+    const key = this._key
+    if (this._unsaved && !await this._saveAll() || key !== this._key) return
+    selectReviewOnOpen(review, continueReview)
+    await this._navigate(review.basePackage ? dependency(review.basePackage, review.baseVersion) : '(empty)')
   }
-  _openPanel(panel) { if (panel === 'notes') this._open(); else this._panel = panel }
   _closePanel() {
     if (this._blocked) return
-    if (this._panel === 'notes') { this._resetEditor(this._path) }
     this.querySelector('dialog')?.close(); this._panel = null
   }
   _showPublished(review) {
@@ -204,7 +214,7 @@ export class NpmReview extends LitElement {
   }
   _resume() { this._selectedReview = null; this._panel = null; this._resetEditor(this._path) }
   _continue(reviewId, revision) {
-    const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.user === this.session?.id && review.publishedAt !== null)
+    const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context))
     if (!source || this._activeReview) return null
     this._continuation = { source, review: { ...source, publishedAt: null, revokedAt: null, status: null, teams: [] } }
     this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : [])
@@ -282,15 +292,17 @@ export class NpmReview extends LitElement {
     const key = this._key
     this._saving = true; this._error = null
     try {
-      if (change.action === 'publish' && this._continuation) {
+      if (change.action === 'publish' && change.finalStatus && this._continuation) {
         const continued = await this._persistContinuation()
         if (!continued) return null
         change = { ...change, reviewId: continued.id, revision: continued.revision }
       }
-      const { review } = await dependencyReviews(this._context, change, this.session.csrfToken, this._controller.signal)
+      const subject = this._reviews.find(review => review.id === change.reviewId) ?? this._context
+      const context = Object.fromEntries(Object.keys(this._context).map(field => [field, subject[field]]))
+      const { review } = await dependencyReviews(context, change, this.session.csrfToken, this._controller.signal)
       if (key !== this._key) return null
       this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
-      if (change.action === 'publish') {
+      if (change.action === 'publish' && change.finalStatus && sameReviewContext(review, this._context)) {
         this._selectedReview = review.id; this._panel = null
         this._editors.clear(); this._notice = 'Published. Verdicts and notes are now frozen.'
       }
@@ -309,7 +321,7 @@ export class NpmReview extends LitElement {
       return review
     }
     return this._queueSave({ action: 'save', reviewId: review?.id ?? null, revision: editor.revision,
-      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: file === null || this._nonTextFiles.includes(file) ? null : editor.status || null })
+      entryId: editor.edit?.id ?? null, file, comment: editor.comment, status: this._nonTextFiles.includes(file) ? null : editor.status || null })
   }
   async _saveAll() {
     const key = this._key

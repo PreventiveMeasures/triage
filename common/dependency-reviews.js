@@ -19,7 +19,7 @@ export function isReviewableFile(before, after) {
 export function summarizeReview(entries, files, nonTextFiles = []) {
   const verdicts = Object.keys(REVIEW_VERDICTS)
   const excluded = new Set(nonTextFiles ?? [])
-  const checks = entries.filter(entry => entry.file !== null && nonTextFiles !== null && !excluded.has(entry.file) && verdicts.includes(entry.status))
+  const checks = entries.filter(entry => nonTextFiles !== null && !excluded.has(entry.file) && verdicts.includes(entry.status))
   const verdictLimit = verdicts.findLast(verdict => checks.some(entry => entry.status === verdict)) ?? 'accept'
   if (files === null) return { coverage: null, checkedFiles: null, totalFiles: null, verdictLimit }
   const checked = new Set(checks.map(entry => entry.file))
@@ -65,8 +65,7 @@ export function parseReviewNotes(comment) {
     .map((text, index) => ({ text: text.trim(), bullet: index > 0 })).filter(note => note.text)
 }
 
-function auditNotes(comment, file = null) {
-  const prefix = file === null ? '' : `In ${markdownText(file)}: `
+function auditNotes(comment, prefix = '') {
   return parseReviewNotes(comment).map(note => `* ${prefix}${markdownText(note.text)}`)
 }
 
@@ -77,6 +76,6 @@ export function auditMarkdown(review) {
   const dependency = review.basePackage === null ? target
     : review.basePackage === review.package ? `${review.package} ${review.baseVersion} -> ${review.version} ${review.integrity}`
     : `${review.basePackage} ${review.baseVersion} -> ${target}`
-  const notes = [...review.entries.flatMap(entry => auditNotes(entry.comment, entry.file)), ...auditNotes(review.comment)]
+  const notes = [...review.entries.flatMap(entry => auditNotes(entry.comment, `In ${markdownText(entry.file)}: `)), ...auditNotes(review.comment)]
   return `Audited:\n\`\`\`\n${dependency}\n\`\`\`${notes.length > 0 ? `\n\nNotes:\n${notes.join('\n')}` : ''}`
 }

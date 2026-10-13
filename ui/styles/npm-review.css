@@ -19,7 +19,6 @@ npm-review {
     border: 0; background: transparent; color: var(--muted); padding: .2rem 0;
     &:hover { color: var(--accent); }
   }
-  &.npm-review-icon-button { border: 0; background: transparent; width: 1.8rem; padding: .2rem; }
   &.npm-review-danger { color: var(--critical); }
 }
 .npm-review-button:disabled, .dependency-review-list button:disabled { opacity: .45; }
@@ -44,11 +43,10 @@ npm-review textarea {
 .npm-review-toolbar,
 .npm-review-toolbar-group,
 .npm-review-filters,
-.npm-review-tree-footer,
 .npm-review-history-heading,
 .npm-review-coverage > div:first-child,
 .npm-review-decision > header { display: flex; align-items: center; }
-.npm-review-summary-actions { gap: 1.1rem; flex-shrink: 0; }
+.npm-review-summary-actions { gap: 1.1rem; flex-shrink: 0; flex-wrap: wrap; }
 .npm-review-progress-block { width: 8.6rem; }
 .npm-review-progress-block > span {
   display: flex; justify-content: space-between; gap: .6rem;
@@ -65,7 +63,12 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   padding: .4rem 1rem;
   border-bottom: 1px solid var(--border);
   }
-.npm-review-toolbar-group { flex-wrap: wrap; gap: .8rem; }
+.npm-review-toolbar-group { min-width: 0; gap: .15rem; color: var(--muted); }
+.npm-review-toolbar-group > :not(.npm-review-package) { flex: none; }
+.npm-review-toolbar-group .npm-review-text-button { padding: .3rem .5rem; }
+.npm-review-package { min-width: 0; }
+.npm-review-package > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.npm-review-package .npm-review-count { flex: none; }
 .npm-review-count, .npm-review-badge {
   border-radius: 3px;
   background: var(--surface-active);
@@ -75,20 +78,12 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
-npm-review :is(.npm-review-filters, .npm-review-tree-footer) button { padding: 0; border: 0; background: transparent; }
-npm-review .npm-review-filters button { min-height: 1.4rem; color: var(--muted); font-size: .68rem; }
+npm-review .npm-review-filters button {
+  padding: 0; border: 0; background: transparent; min-height: 1.4rem; color: var(--muted); font-size: .68rem;
+  }
 npm-review .npm-review-filters button[aria-pressed='true'] { color: var(--text); }
 .npm-review-note-dot { color: var(--muted); }
-.npm-review-tree-footer {
-  justify-content: space-between;
-  gap: .4rem;
-  padding: .35rem .65rem;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: .65rem;
-  }
-npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
-.npm-review-decision, .npm-review-published, .npm-review-dialog-body { display: flex; flex-direction: column; gap: .55rem; }
+.npm-review-decision, .npm-review-entry, .npm-review-dialog-body { display: flex; flex-direction: column; gap: .55rem; }
 .npm-review-decision {
   align-items: flex-start;
   flex: none;
@@ -153,7 +148,7 @@ npm-review .npm-review-tree-footer button { min-height: 1.5rem; }
 .npm-review-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 npm-review .npm-review-dialog {
   position: fixed; inset: 0 0 0 auto; margin: 0; width: min(26rem, 100%); max-width: 100%; height: 100dvh; max-height: 100dvh;
-  border: 0;
+  border: 0; padding: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
@@ -163,20 +158,16 @@ npm-review .npm-review-dialog {
 npm-review .npm-review-dialog[open] { display: flex; flex-direction: column; }
 npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .npm-review-dialog-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  padding: 1.1rem 1.25rem .9rem;
+  padding: .85rem 2rem .75rem 1rem;
   border-bottom: 1px solid var(--border);
   }
-.npm-review-dialog-head h2 { font-size: 1.15rem; }
+.npm-review-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
+.npm-review-dialog-head h2 { margin: 0; font-size: 1rem; }
 .npm-review-dialog-head p { margin: .2rem 0 0; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
 .npm-review-dialog-body { gap: 1.1rem; padding: 1rem 1.25rem; }
 .npm-review-dialog-body > label { display: block; font-weight: 600; }
 .npm-review-dialog-body label textarea { margin-top: .5rem; font-weight: 400; }
 .npm-review-dialog-body .npm-review-help { display: block; font-weight: 400; margin-top: .4rem; }
-.npm-review-dialog-body .npm-review-decision { max-height: none; padding: 0; border: 0; background: none; overflow: visible; }
 .npm-review-dialog-body .npm-review-error { padding: 0; }
 .npm-review-publish-form { display: flex; flex: 1; flex-direction: column; }
 .npm-review-coverage { padding: .8rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--surface); }
@@ -202,16 +193,27 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   }
 .npm-review-dialog-footer > p { margin: 0 0 .75rem; color: var(--muted); font-size: .7rem; }
 .npm-review-dialog-footer > button { width: 100%; }
-.npm-review-history-heading { justify-content: space-between; gap: .6rem; }
-.npm-review-published {
+.npm-review-history-heading { gap: .45rem; }
+.npm-review-history-heading .npm-review-badge { margin-left: auto; }
+.npm-review-current { color: var(--accent); font-size: .65rem; }
+.npm-review-dialog-body.npm-review-entries { gap: 0; padding: .5rem; }
+.npm-review-entry {
   align-items: flex-start;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--border);
+  gap: .3rem; padding: .65rem .7rem;
+  border-left: 2px solid transparent;
   }
-.npm-review-published .npm-review-history-heading, .npm-review-published fieldset { width: 100%; }
-.npm-review-published :is(.npm-review-help, .npm-review-note), .npm-review-decision > :is(p, ul) { margin: 0; }
-.npm-review-revoke { margin-top: .9rem; }
-.npm-review-revoke button { margin-top: .6rem; }
+.npm-review-entry + .npm-review-entry { border-top: 1px solid var(--border); }
+.npm-review-entry[aria-current='true'] { border-left-color: var(--accent); background: rgb(from var(--accent) r g b / .05); }
+.npm-review-entry .npm-review-history-heading, .npm-review-share { width: 100%; }
+.npm-review-entry :is(.npm-review-help, .npm-review-note), .npm-review-decision > :is(p, ul) { margin: 0; }
+.npm-review-entry .npm-review-help { font-size: .68rem; }
+.npm-review-entry-result { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .7rem; }
+.npm-review-entry-actions { display: flex; align-items: center; gap: .35rem; margin-top: .2rem; width: 100%; }
+.npm-review-entry-actions .npm-review-button { min-height: 1.7rem; padding: .25rem .5rem; font-size: .7rem; white-space: nowrap; }
+.npm-review-entry-actions review-audit-copy { display: inline-flex; margin-left: auto; }
+.npm-review-share { font-size: .72rem; }
+.npm-review-share summary { padding-block: .25rem; color: var(--muted); }
+.npm-review-share fieldset { margin-top: .5rem; }
 .dependency-review-list {
   max-width: 76rem; width: 100%; margin-inline: auto; padding: 2rem;
   container-type: inline-size; container-name: review-list;
@@ -316,7 +318,6 @@ review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .
   npm-review bundle-code-splitter { display: none; }
   .npm-review-decision { max-height: none; overflow: visible; }
   .npm-review-summary-actions { justify-content: space-between; gap: .5rem; }
-  .npm-review-toolbar-group { gap: .65rem; }
 }
 @media (width <= 600px) {
   .dependency-review-list { padding: 1rem; }

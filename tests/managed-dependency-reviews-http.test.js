@@ -163,7 +163,7 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.equal((await h.send(url(context), { who: 'anonymous' })).status, 401)
   assert.equal((await h.send('/api/npm/reviews', { body, csrf: false })).status, 403)
   assert.equal((await h.send('/api/npm/reviews', { body, who: 'view' })).status, 403)
-  for (const patch of [{ status: 'approve' }, { status: ['accept'] }, { action: ['save'] }, { status: null, comment: '' }, { comment: 'x'.repeat(20001) }, { file: '../escape' }]) {
+  for (const patch of [{ status: 'approve' }, { status: ['accept'] }, { action: ['save'] }, { status: null, comment: '' }, { comment: 'x'.repeat(20001) }, { file: '../escape' }, { file: null, status: null }, { file: undefined, status: null }]) {
     assert.equal((await h.send('/api/npm/reviews', { body: { ...body, ...patch } })).status, 400)
   }
   for (const patch of [{ integrity: 'sha512-wrong' }, { baseIntegrity: 'sha512-wrong' }, { version: 'latest' }]) {
@@ -222,11 +222,14 @@ test('reviews recheck private access to both packages, including before publicat
   const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'index.js', status: 'reject', comment: 'Do not upgrade' } })
   assert.equal(saved.status, 200)
   const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
+  const versionReviews = `${url({ ...context, basePackage: null, baseVersion: null, baseIntegrity: null })}&allBases=true`
   assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].id, saved.body.review.id)
   assert.equal((await h.send(latest)).body.review.id, saved.body.review.id)
+  assert.equal((await h.send(versionReviews)).body.reviews[0].id, saved.body.review.id)
   await h.db.setTeamNpmScopes(adminId, 'team', [])
   assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews, [])
   assert.equal((await h.send(latest)).body.review, null)
+  assert.deepEqual((await h.send(versionReviews)).body.reviews, [], 'a public target cannot expose notes about an inaccessible private base')
   assert.equal((await h.send(url(context))).status, 404)
   assert.equal((await h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: saved.body.review.id, revision: 1, teamIds: ['team'] } })).status, 404)
 })
@@ -302,12 +305,13 @@ test('discard requires author, CSRF and current revision, without fetching packa
 
 test('latest review is specific to the author and exact target, across different bases', async t => {
   const h = await fixture(t), sid = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
-  registry(t, [packageOf('lib', '2.0.0', {}), packageOf('other-lib', '1.0.0', {})])
-  const context = { ecosystem: 'npm', package: 'lib', version: '2.0.0', integrity: 'sha512-current',
+  const after = packageOf('lib', '2.0.0', {}), before = packageOf('other-lib', '1.0.0', {})
+  registry(t, [after, before])
+  const context = { ecosystem: 'npm', package: 'lib', version: '2.0.0', integrity: after.doc.dist.integrity,
     basePackage: null, baseVersion: null, baseIntegrity: null }
   const create = (patch, time) => h.db.changeDependencyReview({ ...context, ...patch }, sid, { action: 'start', reviewId: null, revision: null }, time)
-  await create({}, 100)
-  const latest = await create({ basePackage: 'other-lib', baseVersion: '1.0.0', baseIntegrity: 'sha512-base' }, 200)
+  const first = await create({}, 100)
+  const latest = await create({ basePackage: 'other-lib', baseVersion: '1.0.0', baseIntegrity: before.doc.dist.integrity }, 200)
   await create({ version: '3.0.0' }, 300)
   await create({ integrity: 'sha512-different' }, 400)
   const path = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
@@ -319,6 +323,10 @@ test('latest review is specific to the author and exact target, across different
   assert.equal(response.status, 200)
   assert.equal(response.body.review.id, latest.id)
   assert.equal(response.body.review.basePackage, 'other-lib')
+  assert.deepEqual((await h.send(url(context))).body.reviews.map(review => review.id), [first.id])
+  const allBases = `${url(context)}&allBases=true`
+  assert.deepEqual((await h.send(allBases)).body.reviews.map(review => review.id), [first.id, latest.id])
+  assert.deepEqual((await h.send(allBases, { who: 'admin' })).body.reviews, [], 'a version list does not expose another author’s unpublished reviews')
 })
 
 

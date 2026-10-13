@@ -34,6 +34,8 @@ test('legacy notes become one editable note when continuing, without rewriting f
   await original.close()
   const raw = new DatabaseSync(path)
   t.after(() => raw.close())
+  assert.throws(() => raw.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, status, comment, time) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('whole-note', review.id, null, null, 'Only the final comment is supported.', 200), /NOT NULL/u)
   raw.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, status, comment, time) VALUES (?, ?, ?, ?, ?, ?)')
     .run('legacy-note', review.id, 'index.js', 'accept-with-nits', 'Second concern.', 200)
   const db = openSqliteManagedDb(path)

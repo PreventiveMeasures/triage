@@ -95,7 +95,7 @@ function npmPackagePath(route) {
   if (tab === 'review') {
     if (route.reviewPackage != null && !isNpmPackageName(route.reviewPackage) || route.reviewSpec != null && !isNpmPackageSpec(route.reviewSpec)) return null
     const base = route.reviewPackage == null ? '' : `/${route.reviewPackage}${route.reviewSpec == null ? '' : `@${route.reviewSpec}`}`
-    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${route.reviewMode === 'diff' ? '?mode=diff' : ''}`
+    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}`
   }
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
   const lines = file && isLineNumber(route.line)
@@ -104,7 +104,7 @@ function npmPackagePath(route) {
   return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
 }
 
-function parseNpmRoute(path, hash, params) {
+function parseNpmRoute(path, hash) {
   const review = /^\/npm\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?\/review(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?)?$/u.exec(path)
   if (review) {
     if (!isNpmPackageName(review[1]) || review[2] != null && !isNpmPackageSpec(review[2])
@@ -112,8 +112,7 @@ function parseNpmRoute(path, hash, params) {
     // The full dependency form is canonical; a bare version is a shortcut.
     const versionOnly = review[3] && /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(review[3]) && review[4] == null
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
-      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}),
-      ...(params.get('mode') === 'diff' ? { reviewMode: 'diff' } : {}) }
+      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}) }
   }
   const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
@@ -168,7 +167,7 @@ export function parseManagedRoute(url) {
     if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
     return { ...route, file, ...codeLines(url.hash) }
   }
-  const npm = parseNpmRoute(path, url.hash, url.searchParams)
+  const npm = parseNpmRoute(path, url.hash)
   if (npm !== undefined) return npm
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
