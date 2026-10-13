@@ -738,8 +738,9 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 /* An added file's head counts no lines removed: its −0 unseen, keeping its room. */
 .bundle-code-main-bar:has(> .bundle-compare-code-pill.added) > .bundle-compare-code-counts > .del { visibility: hidden; }
 /* A file's lines added and removed in the tree, before its letter: `=` for
-   one renamed as it was, and a count with nothing in it there unseen but
-   keeping its room, so the counts line up. */
+   one renamed as it was, `≈` for one whose changes the settings drawing it
+   set aside, and a count with nothing in it there unseen but keeping its
+   room, so the counts line up. */
 .bundle-compare-code-line-counts {
   flex: none;
   display: inline-flex;
