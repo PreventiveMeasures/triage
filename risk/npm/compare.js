@@ -91,13 +91,14 @@ function npmMajorRelease(was, now) {
 }
 
 // Whether the open version's file at `path` (`basePath` in the one compared
-// with) had its source map rebuilt with it: its last line names a map file of
-// the package by a plain path from the file's own (MAP_NAME), a source map
+// with) had its source map rebuilt with it: its last line, a
+// `sourceMappingURL` comment and no more, names a map file of the package by
+// a plain path from the file's own (MAP_NAME), a source map
 // (its `mappings`, or each of an indexed map's `sections`, told), new or
 // changed from the one at its path, or beside the file's own before it was
 // renamed, as a build writes them together. An attack editing a built file
 // leaves its map as it was.
-const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
+const SOURCE_MAP_FILE = /^\s*(?:\/\/[#@] sourceMappingURL=(\S+)|\/\*[#@] sourceMappingURL=(\S+?)\s*\*\/)\s*$/u
 // A map name a build writes (`a.js.map`, `../maps/a.map`): segments of
 // letters, digits and `._~@+-`, as a browser reads them alike. One at a URL,
 // from a site's root, or with an escape or a backslash names none.
@@ -113,7 +114,8 @@ function besideFile(file, name) {
 }
 function rebuiltWithMap(base, other, path, basePath) {
   const text = bundleFilesAsMap(other).get(path)
-  const name = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1))?.[1] : null
+  const directive = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1)) : null
+  const name = directive?.[1] ?? directive?.[2]
   if (!name || !MAP_NAME.test(name)) return false
   const [map, was] = [bundleFilesAsMap(other).get(besideFile(path, name)), bundleFilesAsMap(base)]
   return isSourceMap(map) && map !== was.get(besideFile(path, name)) && map !== was.get(besideFile(basePath, name))
