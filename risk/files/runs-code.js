@@ -183,11 +183,13 @@ const URL_STRIPPED = /[\t\n\r]/gu
 // (`/dev/tcp/host/port`), and PowerShell running what it fetches (`iex (iwr
 // https://…).Content`, `irm https://… | iex`, long options before the pipe
 // too, `iwr … -Headers @{…} | iex`, `IEX (New-Object
-// Net.WebClient).DownloadString(…)`), its line continued too, not the next
-// pipeline's, `iex $x && iwr …`); in any case, as Windows' are written, and
-// by its path (`/usr/bin/curl`).
+// Net.WebClient).DownloadString(…)`), its line continued by a backtick too,
+// not the next pipeline's, `iex $x && iwr …`); in any case, as Windows' are
+// written, and by its path (`/usr/bin/curl`).
 const CONTINUED = String.raw`[\\^\u0060]\r?\n`
 const ON_ITS_LINE = String.raw`(?:[^\n;|&]|${CONTINUED})`
+// PowerShell's own, its backtick alone (not `\⏎`, a new statement there).
+const POWERSHELL_CONTINUED = String.raw`\u0060\r?\n`
 // A command's text up to its end, its arguments' quotes kept, a quote left
 // open (`it's`) as any other character.
 const ARGUMENTS = String.raw`(?:[^\n;|&"']|${CONTINUED}|"[^"\n]*"|'[^'\n]*'|"(?![^"\n]*")|'(?![^'\n]*'))`
@@ -198,8 +200,8 @@ const OPTIONS = String.raw`(?:${APART}+--?\w[\w-]*(?:=\S*|${APART}+(?!-)\S+)?){0
 const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ARGUMENTS}){0,2000}?["']?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|\\]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
-  + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])${ON_ITS_LINE}{0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
-  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|]|${CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
+  + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])(?:[^\n;|&]|${POWERSHELL_CONTINUED}){0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
+  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|]|${POWERSHELL_CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
 // A place code runs from again later: a shell's rc file (`~/.bashrc`,
 // `.zshrc`, `.zshenv`, `.zlogin`, `.bash_profile`, `.bash_login`,
 // `.zprofile`, and `.profile` in a path, `~/.profile`, not a selector's
@@ -286,7 +288,7 @@ const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 // `outputs[i]`, `options?.out`), its first 20 arguments, however long.
 const COMMAND = /^(["'\u0060])(?:\S*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl)(?:\.exe)?\1$/iu
 // An argument a shell would need quoted, its separators no command's end
-// (`'Cookie: a=b; c=d'`).
+// (`'Cookie: a=b; c=d'`), its own double quotes single then.
 const SEPARATES = /[;|&]/u
 const VALUES_BETWEEN = new RegExp(String.raw`^(?:[\s,[\]\w$.?]|${COMMENT})*$`, 'u')
 // A place named by its parts one after the other, as path.join takes them
@@ -404,7 +406,7 @@ function read(code, base, at) {
     if (PROGRAM.test(string)) [program, option] = [true, false]
     if (command && command.arguments < 20 && VALUES_BETWEEN.test(code.slice(end, index))) {
       const argument = text.slice(1, -1)
-      command.line += ` ${SEPARATES.test(argument) && !argument.includes('"') ? `"${argument}"` : argument}`
+      command.line += ` ${SEPARATES.test(argument) ? `"${argument.replaceAll('"', "'")}"` : argument}`
       command.arguments++
       const { line } = command
       const hit = SHELL_HOLDS.find(([, holds]) => line.search(holds) !== -1)
