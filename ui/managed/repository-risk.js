@@ -60,9 +60,13 @@ const SCOPES = [['all', 'All repositories'], ['team', 'Team'], ['repo', 'Reposit
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
 
-// A package row's risk, malware an advisory names in it first, as critical.
-const severityOf = row => row.malware ? 'critical' : row.risk?.severity ?? null
-const findingsOf = row => [...row.malware ? [{ id: 'malware', severity: 'critical' }] : [], ...row.risk?.findings ?? []]
+// The malware advisories name in a package. They speak of npm's artifact:
+// not of one risk finds differs from npm's, and of a mirror's only once risk
+// finds it is npm's, as one of a private package of a public one's name isn't.
+const malwareOf = row => (row.source === 'mirror' ? row.risk && !row.risk.error : row.risk?.error !== 'integrity-mismatch') ? row.malware ?? null : null
+// A package row's risk, its malware first, as critical.
+const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
+const findingsOf = row => [...malwareOf(row) ? [{ id: 'malware', severity: 'critical' }] : [], ...row.risk?.findings ?? []]
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
@@ -416,7 +420,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._risk(row)}</td>
       <td>${findings.length > 0 ? html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
-        data-tooltip=${finding.id === 'malware' ? [...row.malware].join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
+        data-tooltip=${finding.id === 'malware' ? [...malwareOf(row)].join('\n') : nothing}>${FINDING_LABELS[finding.id] ?? finding.id}</li>`)}</ul>` : nothing}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
       <td>${usedInCell(row.usedIn)}</td>
     </tr>`
@@ -424,8 +428,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _risk(row) {
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
-    if (!row.malware && !row.risk) return this._pending('Waiting…', 'Not assessed')
-    if (!row.malware && row.risk.error) return html`<span class="risk-error">${errorText(row.risk.error)}</span>`
+    const malware = malwareOf(row)
+    if (!malware && !row.risk) return this._pending('Waiting…', 'Not assessed')
+    if (!malware && row.risk.error) return html`<span class="risk-error">${errorText(row.risk.error)}</span>`
     const severity = severityOf(row)
     return severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : html`<span class="risk-none">None found</span>`
   }
