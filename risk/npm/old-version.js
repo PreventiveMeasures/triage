@@ -90,7 +90,7 @@ export function npmOldVersion(version, releases, now) {
   const time = row => row.published === null ? Number.NaN : Date.parse(row.published)
   const opened = time(open)
   const versions = releases.flatMap(row => { const of = parsed(row.version); return of ? [{ ...row, of }] : [] })
-  const removed = versions.filter(row => row.removed).map(time)
+  const removed = versions.filter(row => row.removed).map(time).filter(Number.isFinite)
   // When each account first published the package.
   const since = new Map()
   for (const row of versions) {

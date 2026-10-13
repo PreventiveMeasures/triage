@@ -217,6 +217,8 @@ test('the version risk picks to compare with, by what npm\'s document keeps: non
   const pick = (number, releases) => npmOldVersion(number, releases, NOW)
   assert.equal(pick('1.2.0', [at('1.0.0', 90), at('1.1.0', 60), gone('1.1.1', 59.9), at('1.2.0', 1)]), '1.0.0',
     'none published within a day of one since removed from npm, nor that one')
+  assert.equal(pick('1.2.0', [at('1.0.0', 90), at('1.1.0', 60), gone('1.1.1', 59.9), { ...gone('1.1.2', 0), published: null }, at('1.2.0', 1)]), '1.0.0',
+    'one removed npm lists no time of none, nor turning the others off')
   assert.equal(pick('1.2.0', [at('1.0.0', 90), at('1.1.0', 60), gone('1.1.1', 50), gone('created', 60.01), at('1.2.0', 1)]), '1.1.0',
     'one ten days apart; a time of no version, as `created`, none')
   const known = publishers[0]
