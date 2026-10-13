@@ -450,7 +450,9 @@ test('the Diff view\'s rename diffs past those a few kept are dropped once it is
     all._query = 'dist/k'
     return all
   }
-  // Painted until every file's diff came, then those asked for again, of ours.
+  // Painted until every file's diff came, then those asked for again, of ours,
+  // in path order: each is sent once its texts' hashes are found, in whatever
+  // order that ends.
   const settled = async all => {
     const asked = renameDiffs.length
     const deadline = Date.now() + 20_000
@@ -458,7 +460,7 @@ test('the Diff view\'s rename diffs past those a few kept are dropped once it is
       renderText(all.render())
       await new Promise(resolve => { setTimeout(resolve, 5) })
     }
-    return renameDiffs.slice(asked).filter(({ id }) => id === 'b37').map(({ path }) => path)
+    return renameDiffs.slice(asked).filter(({ id }) => id === 'b37').map(({ path }) => path).toSorted()
   }
   state.bundleSourcePretty = true
   const first = opened()
