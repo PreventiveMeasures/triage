@@ -114,7 +114,7 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     'PUT named, not a request\'s method')
   assert.deepEqual(found('a.js', 'fetch(url, { method: \'PUT\', body })\nwrite(`//registry.npmjs.org/:_authToken=${token}`)\n'), { publish: [1] }, '.npmrc\'s URL')
   for (const url of ['\'https://user:pass@registry.npmjs.org/pkg\'', '`https://${token}@registry.npmjs.org/${name}`', '"https://@registry.yarnpkg.com/x"',
-    '\'https:\\/\\/registry.npmjs.org/pkg\'']) {
+    '\'https:\\/\\/registry.npmjs.org/pkg\'', '\'https:\\x2f\\x2fregistry.npmjs.org/pkg\'', '\'https:\\u002F\\u002Fregistry.npmjs.org\'', '\'https:\\u{2f}\\u{2f}registry.npmjs.org\'']) {
     assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [1] }, `a token before its host, or its slashes escaped: ${url}`)
   }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
