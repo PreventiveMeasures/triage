@@ -195,7 +195,7 @@ export function reviewExtensions(page) {
   return {
     railLabel: 'Files', treeLabel: 'Review files', collapseLabel: 'Collapse folders',
     searchLabel: 'Find a file', searchPlaceholder: 'Find a file…',
-    treePageSize: 300, openAllMax: 0, filterContent: false, fullPaths: true, collapseClearsSearch: true,
+    treePageSize: 300, filterContent: false, fullPaths: true, collapseClearsSearch: true,
     canSelect: () => !page._blocked && !page._panel,
     fileFilter: page._unchecked ? path => !states.get(path)?.status : null,
     fileLabel: path => `${path}, ${verdictLabels[states.get(path)?.status] ?? 'Not reviewed'}`,
