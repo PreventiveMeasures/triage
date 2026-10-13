@@ -2617,9 +2617,12 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
     const reader = await npmReader(deps, cookie)
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     const documents = new Map<string, Promise<NpmVersionDocument | null>>()
+    // Public versions' documents as the viewer keeps them (npm-kept.ts), a
+    // day: a list asks npm for none it read within it.
+    const kept = npmVersionStore(deps.db, deps.config.debug)
     const read = (name: string, version: string) => {
       const key = `${name}@${version}`
-      if (!documents.has(key)) documents.set(key, readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal))
+      if (!documents.has(key)) documents.set(key, readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, kept))
       return documents.get(key)!
     }
     const packages = await Promise.all(reviews.map(review => Promise.all([
@@ -2737,7 +2740,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   try {
     const reader = await npmReader(deps, cookie)
     if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-    const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal)
+    const kept = npmVersionStore(deps.db, deps.config.debug)
+    const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal, kept)
     const [doc, base] = await Promise.all([read(name, version), context.basePackage ? read(context.basePackage, context.baseVersion!) : null])
     if (!doc || (context.basePackage && !base)) { sendJson(res, 404, { error: 'package-not-found' }); return }
     if (doc.version !== version || doc.dist.integrity !== integrity
