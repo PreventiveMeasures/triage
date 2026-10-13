@@ -42,7 +42,7 @@ import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
-import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
+import { forgetRenameDiffs, paintingRenameDiffs, renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -573,7 +573,14 @@ export class BundleCompareCode extends LitElement {
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
   }
 
+  // The renamed names this view wants are those each paint asks for (rename-diff.js).
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    forgetRenameDiffs()
+  }
+
   render() {
+    paintingRenameDiffs()
     const rail = this._railState()
     const current = this._entries.has(this.path) ? this.path : rail.order[0] ?? null
     if (current && current !== this._current) this._reveal(current, rail.prefix)

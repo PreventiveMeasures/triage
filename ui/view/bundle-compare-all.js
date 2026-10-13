@@ -15,6 +15,7 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
+import { paintingRenameDiffs } from './rename-diff.js'
 
 export const COMBINED_DIFF_MAX = 25_000
 // Files drawn at a time, as Review's whole diff draws them.
@@ -171,6 +172,7 @@ class BundleCompareAll extends BundleCompareCode {
   }
 
   render() {
+    paintingRenameDiffs()
     const rail = this._railState()
     const { prefix, order } = rail
     this._order = order

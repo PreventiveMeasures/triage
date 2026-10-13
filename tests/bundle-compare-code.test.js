@@ -476,6 +476,48 @@ test('the Diff view filtered before its rename diffs all came asks for none of t
   assert.deepEqual(others, [], 'those shown no longer not asked for as their turns came')
 })
 
+test('the Diff view with pretty-print turned off before its rename diffs all came asks for none of them, as their turns come', async t => {
+  const files = Array.from({ length: 6 }, (_, i) => `dist/o${i}.min.js`)
+  t.after(() => {
+    state.bundleSourcePretty = false
+    for (const path of files) for (const id of ['b29', 'b30']) pretty.delete(`${id}:${path}`)
+  })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
+  code.base.managedId = 'b29'
+  code.other.managedId = 'b30'
+  for (const path of files) {
+    pretty.set(`b29:${path}`, `var Y = 1;\nq(Y);\nh(${JSON.stringify(path)});\nmodule.exports = 1;\n`)
+    pretty.set(`b30:${path}`, `var X = 1;\nq(X);\nh(${JSON.stringify(path)});\nmodule.exports = 2;\n`)
+  }
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'dist/o'
+  let release
+  flying.held = new Promise(resolve => { release = resolve })
+  t.after(() => { release(); flying.held = null })
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 400 && flying.now < 2; i++) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(flying.now, 2, 'two on their way, the rest waiting their turn')
+  const asked = renameDiffs.length
+  // Pretty-print turned off: the paints that follow ask for no diff.
+  state.bundleSourcePretty = false
+  for (let i = 0; i < 3; i++) {
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    renderText(all.render())
+  }
+  release()
+  flying.held = null
+  for (let i = 0; i < 100 && flying.now > 0; i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  assert.deepEqual(renameDiffs.slice(asked).filter(({ id }) => id === 'b29'), [], 'none of those waiting sent')
+})
+
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {
   t.after(() => { state.bundleSourcePretty = false; all._setRenames(false) })
   await import('../ui/view/bundle-compare-all.js')

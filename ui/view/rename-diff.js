@@ -62,21 +62,33 @@ async function inTurn(work, wanted) {
   }
 }
 
-// Diffs asked for in the task now running and in the last one that asked, as
-// a view painting asks for all it shows: kept past KEPT_DIFFS, as are those
-// still coming, so a view showing more than that never drops one it shows and
-// asks for it again.
+// Diffs asked for in the task now running and in the last one that painted or
+// asked, as a view painting asks for all it shows: kept past KEPT_DIFFS, as
+// are those still coming, so a view showing more than that never drops one it
+// shows and asks for it again; and sent only while so wanted.
 let asking = false, wanted = new Set(), wantedBefore = new Set()
 
 const wantedNow = key => wanted.has(key) || wantedBefore.has(key)
 
+// A view painting what it shows, the diffs it asks for from then on those it
+// wants: one asking none (pretty-printing turned off, a list filtered to
+// none) wants none of those it asked for before.
+export function paintingRenameDiffs() {
+  if (asking) return
+  asking = true
+  wantedBefore = wanted
+  wanted = new Set()
+  setTimeout(() => { asking = false })
+}
+
+// A view gone wants none it asked for.
+export function forgetRenameDiffs() {
+  wanted = new Set()
+  wantedBefore = new Set()
+}
+
 function want(key) {
-  if (!asking) {
-    asking = true
-    wantedBefore = wanted
-    wanted = new Set()
-    setTimeout(() => { asking = false })
-  }
+  paintingRenameDiffs()
   wanted.add(key)
 }
 
@@ -89,12 +101,14 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const answer = await inTurn(() => base.npm
       ? fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
       : fetchBundleRenameDiff(base.managedId, other.managedId, params), () => wantedNow(key))
-    // Wanted no longer: asked again where a view asks again.
+    // Wanted no longer: dropped, the view that asked painted again, to ask
+    // again where it shows it still.
     if (answer === STALE) {
-      if (diffs.get(key) === asked) {
-        diffs.delete(key)
-        notifiers.delete(key)
-      }
+      if (diffs.get(key) !== asked) return
+      const notify = notifiers.get(key)
+      diffs.delete(key)
+      notifiers.delete(key)
+      notify?.()
       return
     }
     const { before: renamed, blocks, reason, reads, marks, prettyHash, otherPrettyHash } = answer
