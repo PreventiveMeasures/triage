@@ -111,8 +111,11 @@ export type RepositoryRiskLine =
   | { type: 'done' }
 
 // What an error is known by: a GitHub or npm failure's code, or `failed`;
-// risk's with what it asked of npm and how that failed, where it says.
-function failureOf(error: unknown): RiskFailure {
+// GitHub not reached with what failed (githubUnreachable), while `doing` what
+// of a repository, and risk's with what it asked of npm and how that failed,
+// where they say.
+function failureOf(error: unknown, doing?: string): RiskFailure {
+  if (error instanceof GithubApiError && error.detail) return { error: error.message, detail: doing ? `${doing}: ${error.detail}` : error.detail }
   if (error instanceof GithubApiError || error instanceof NpmPackageError) return { error: error.message }
   if (!(error instanceof NpmRiskError)) return { error: 'failed' }
   return error.message === error.code ? { error: error.code } : { error: error.code, detail: error.message }
@@ -299,16 +302,18 @@ function assessLater(scan: Scan, packages: LockedPackage[]) {
 // for its commit or else from GitHub, those of its `paths` alone; null, with
 // its line telling why, where either failed, or where the scan stopped.
 async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
+  let doing = 'opening it'
   try {
     const opened = await scan.source.open(repo)
     if (scan.signal.aborted) return null
     const key = `${repo.repoId}@${opened.commit}`
     let listed = scan.caches.listings.get(key)
+    doing = 'listing its lockfiles'
     if (!listed) scan.caches.listings.set(key, listed = await opened.lockfiles())
     const lockfiles = listed.filter(({ path, format }) => NPM_LOCKFILE_FORMATS.has(format) && lockfileOf(path, repo.paths))
     return { opened, lockfiles }
   } catch (error) {
-    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error) })
+    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, doing) })
     return null
   }
 }
@@ -353,7 +358,7 @@ async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
     lockfiles.push(await readLockfile(scan, repo.repoId, listed.opened, lockfile))
   }
   try { await listed.opened.recheck() } catch (error) {
-    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error) })
+    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, 'checking access to it again') })
     return
   }
   if (scan.signal.aborted) return
