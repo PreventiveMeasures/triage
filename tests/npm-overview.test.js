@@ -915,10 +915,19 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   assert.equal(npmCompareFiles.newHosts(base, other), newHosts, 'the same, for Compare\'s files to keep')
   assert.equal(npmCompareFiles.newHosts(base, base).size, 0)
   assert.equal(npmCompareFiles.newHosts(null, other), null, 'nothing compared')
-  const hostTag = path => rendered(npmCompareFiles.newHostTag(newHosts.get(path)))
-  assert.equal(hostTag('lib/new.js'), '<span class="npm-new-host" data-tooltip=Hosts the version compared with named in none of its files: api.telegram.org (line 2), api.ipify.org (line 3)>New hosts</span>')
-  assert.equal(hostTag('lib/old.js'), '<span class="npm-new-host" data-tooltip=A host the version compared with named in none of its files: docs.new.dev (line 2)>New host</span>')
-  assert.equal(hostTag('lib/geo.js'), '')
+  // Its tooltip a list, as the New host chip's and the file's other tags' are:
+  // in text, and styled, a row for each host and its line, the version none
+  // of whose files named them under them.
+  const hostTag = path => {
+    const [, tooltip, tip, tag] = /^<span class="npm-new-host" data-tooltip=(.*?)\s+\.tooltipContent=([^]*<\/div>)>([^<]+)<\/span>$/u.exec(rendered(npmCompareFiles.newHostTag(newHosts.get(path))))
+    const rows = [...tip.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, host, line]) => `${host}: ${line}`)
+    return { tag, tooltip, head: /compare-tip-head">([^<]+)</u.exec(tip)[1], rows, note: /compare-tip-note">([^<]+)</u.exec(tip)[1] }
+  }
+  assert.deepEqual(hostTag('lib/new.js'), { tag: 'New hosts', tooltip: 'New hosts: api.telegram.org, line 2; api.ipify.org, line 3 · None of 1.0.0\'s files named them',
+    head: 'New hosts', rows: ['api.telegram.org: line 2', 'api.ipify.org: line 3'], note: 'None of 1.0.0\'s files named them' })
+  assert.deepEqual(hostTag('lib/old.js'), { tag: 'New host', tooltip: 'New host: docs.new.dev, line 2 · None of 1.0.0\'s files named it',
+    head: 'New host', rows: ['docs.new.dev: line 2'], note: 'None of 1.0.0\'s files named it' })
+  assert.equal(rendered(npmCompareFiles.newHostTag(newHosts.get('lib/geo.js'))), '')
 })
 
 test('Compare\'s new hosts by file wait for the pair\'s risk', () => {

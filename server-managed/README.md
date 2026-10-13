@@ -1626,7 +1626,10 @@ control. A version shows in the bundle view with four tabs:
   kept for examples and tests, a local network's, or W3C's, whose URLs name
   XML namespaces, its tooltip listing each with every file that names it and
   the line it is first named on there, and the chip, where one host is named
-  in one file alone, opening that file at its line in Code;
+  in one file alone, opening that file at its line in Code; each file naming
+  one tagged `New host` in its head and in the tree, its tooltip a list of the
+  hosts with their lines, under them the version none of whose files named
+  them (`None of 1.0.0-beta.3's files named them`);
   `Non-registry deps`, dependencies the open version takes from
   elsewhere than npm's registry, as the Overview tags them, where the one
   compared with didn't, or by another spec, their names and each version's
