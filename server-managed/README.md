@@ -252,7 +252,7 @@ they are read (`.filter(…)`, `.find(…)`, `.reduce(…)`, as npm's agent find
 its proxy's); and `publish` to npm (`npm publish` run, the registry's
 `/-/whoami`, libnpmpublish, a PUT request in a file naming the registry: its
 URL as JavaScript reads the string, its escapes decoded, the host after a
-slash, a backslash, userinfo's `@` or the scheme's `:`
+URL's two slashes (or backslashes) or an http(s) scheme, userinfo between
 (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`), or its
 host starting a string, its whole or before its path or port; not its host in
 prose, as the advisories' consent dialog tells it). Each label is marked as an install script is, `whole env` and

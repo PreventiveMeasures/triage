@@ -119,27 +119,31 @@ const KEY_SET = new RegExp(String.raw`^\s{0,4}\]${SET}`, 'u')
 const KEY_ENDS = new RegExp(String.raw`^\s{0,4}\]${ABSENT_ENDS}`, 'mu')
 const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 // A string's text as JavaScript reads it, its escapes decoded (`\x2f`,
-// `\u002f`, `\u{2f}`, `\/`, `\\`), a control's (`\n`, `\r`) a blank, a line
-// continued (a backslash before a line's end) joined: what a URL in it
-// spells, however its separators are escaped or its lines broken.
-const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|(\r\n|[^]))/giu
-const CONTROLS = new Set(['n', 'r', 't', 'b', 'f', 'v', '0'])
+// `\u002f`, `\u{2f}`, sloppy mode's octal `\057`, `\/`, `\\`), a control's
+// (`\n`, `\r`) a blank, a line continued (a backslash before a line's end)
+// joined: what a URL in it spells, however its separators are escaped or its
+// lines broken.
+const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|([0-3][0-7]{0,2}|[4-7][0-7]?)|(\r\n|[^]))/giu
+const CONTROLS = new Set(['n', 'r', 't', 'b', 'f', 'v'])
 const LINE_ENDS = new Set(['\n', '\r', '\r\n', '\u2028', '\u2029'])
-const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, char) => {
+const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, octal, char) => {
   if (char !== undefined) return LINE_ENDS.has(char) ? '' : CONTROLS.has(char) ? ' ' : char
-  const code = Number.parseInt(hex ?? unit ?? point, 16)
+  const code = octal === undefined ? Number.parseInt(hex ?? unit ?? point, 16) : Number.parseInt(octal, 8)
   return code <= 0x10_FFFF ? String.fromCodePoint(code) : escape
 })
-// The registry's host in a string, as JavaScript reads it (unescaped), named
-// as a URL's is: after a URL's slash, a backslash URLs take for one, its
-// userinfo's `@` or its scheme's `:` (`https://registry.npmjs.org/`,
-// `.npmrc`'s `//registry.npmjs.org/`, `https://${token}@registry.npmjs.org/`,
-// `https:\\\\registry.npmjs.org`, `https:\x2f\x2fregistry.npmjs.org`), or
-// starting the string, its whole or before its path or port (npm-profile's
-// `'registry.npmjs.org'`, a URL joined, `'https://' + 'registry.npmjs.org/'`).
-// Not in prose, after anything else (`registry.npmjs.org</span>`, `asks
-// registry.npmjs.org`, `[registry.npmjs.org]`, `'registry.npmjs.org is down'`).
-const REGISTRY_URL = /(?<=[/\\@:])registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)(?=\1$|[/:])/iu
+// The registry's host in a string, as JavaScript reads it (unescaped), as a
+// URL's authority: after two slashes, backslashes URLs take for them too, or
+// after an http(s) scheme's colon (its slashes optional there, as URLs take
+// them), its userinfo between (`https://registry.npmjs.org/`, `.npmrc`'s
+// `//registry.npmjs.org/`, `https://${token}@registry.npmjs.org/`,
+// `https:\\\\registry.npmjs.org`, `https:\x2f\x2fregistry.npmjs.org`,
+// `https:registry.npmjs.org`); or starting the string, its whole or before its
+// path or port (npm-profile's `'registry.npmjs.org'`, a URL joined,
+// `'https://' + 'registry.npmjs.org/'`). Not in prose, as anywhere else
+// (`registry.npmjs.org</span>`, `asks registry.npmjs.org`, `[registry.npmjs.org]`,
+// `note:registry.npmjs.org`, `user@registry.npmjs.org`, `docs/registry.npmjs.org`).
+const REGISTRY_HOST = String.raw`registry\.(?:npmjs\.org|yarnpkg\.com)`
+const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\@"'\u0060\n]{0,256}@)?${REGISTRY_HOST}|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:])`, 'iu')
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
