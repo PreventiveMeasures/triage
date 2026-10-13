@@ -122,11 +122,6 @@ const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}
 // says it in a few words, and a note why a file whose changes it would hide
 // shows them all as their blanks mix kinds (_fileState).
 const HIDE_RENAMES = 'Hide renamed names', HIDE_TYPES = 'Hide type-only changes', HIDE_WHITESPACE = 'Hide whitespace changes'
-// The icons of what the diff hides (_hides): names swapped, a space, a T.
-const hideIcon = path => html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${path}/></svg>`
-const RENAMES_ICON = hideIcon('M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5')
-const WHITESPACE_ICON = hideIcon('M2 9.5v2.5h12V9.5')
-const TYPES_ICON = hideIcon('M3.5 3.5h9M8 3.5v9')
 const WHITESPACE_KEPT = {
   mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
 }
@@ -1580,8 +1575,8 @@ export class BundleCompareCode extends LitElement {
       </div>` : nothing}`
   }
 
-  // What the diff hides, in one frame, Hide: each a switch named with its icon
-  // (mode-switch, as the treemap's Sunburst), there where it has use: renamed
+  // What the diff hides, in one frame, Hide: each a named switch (mode-switch,
+  // as the treemap's Sunburst), there where it has use: renamed
   // names where hiding them hides any (`renamed`, see _fileState), which gives
   // the old side the new side's names wherever a minifier renamed a variable
   // alike throughout, an old one no new one stands for named apart (r_old),
@@ -1590,12 +1585,12 @@ export class BundleCompareCode extends LitElement {
   // alone where the server proved any (`types`).
   _hides(renamed, whitespace, types) {
     const switches = [
-      renamed && ['Renames', HIDE_RENAMES, prefs.ignoreRenames, () => this._setRenames(!prefs.ignoreRenames), RENAMES_ICON],
-      whitespace && ['Whitespace', HIDE_WHITESPACE, prefs.ignoreWhitespace, () => this._setWhitespace(!prefs.ignoreWhitespace), WHITESPACE_ICON],
-      types && ['Type-only', HIDE_TYPES, prefs.ignoreTypes, () => this._setTypes(!prefs.ignoreTypes), TYPES_ICON],
+      renamed && ['Renames', HIDE_RENAMES, prefs.ignoreRenames, () => this._setRenames(!prefs.ignoreRenames)],
+      whitespace && ['Whitespace', HIDE_WHITESPACE, prefs.ignoreWhitespace, () => this._setWhitespace(!prefs.ignoreWhitespace)],
+      types && ['Type-only', HIDE_TYPES, prefs.ignoreTypes, () => this._setTypes(!prefs.ignoreTypes)],
     ].filter(Boolean)
     if (switches.length === 0) return nothing
-    return html`<span class="bundle-compare-code-hide" role="group" aria-label="Hide"><span class="bundle-compare-code-hide-label" aria-hidden="true">Hide:</span>${switches.map(([label, name, on, toggle, icon]) => html`<mode-switch compact borderless .checked=${on} accessible-label=${name} label=${label} @click=${toggle}>${icon}</mode-switch>`)}</span>`
+    return html`<span class="bundle-compare-code-hide" role="group" aria-label="Hide"><span class="bundle-compare-code-hide-label" aria-hidden="true">Hide:</span>${switches.map(([label, name, on, toggle]) => html`<mode-switch compact borderless .checked=${on} accessible-label=${name} label=${label} @click=${toggle}></mode-switch>`)}</span>`
   }
 
   _setWhitespace(value) {

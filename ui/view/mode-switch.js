@@ -1,7 +1,6 @@
 // Shared switch for display modes in toolbars, graphs, and bundle views.
 // Owners control `checked` and handle the native composed click event; the
-// shadow root keeps every instance styled by the same rules in any view. What
-// it holds (an icon) goes before its label, in the switch alone.
+// shadow root keeps every instance styled by the same rules in any view.
 import { LitElement, html, unsafeCSS } from 'lit'
 import switchCSS from './mode-switch.css'
 
@@ -32,7 +31,7 @@ class ModeSwitch extends LitElement {
   render() {
     return html`<button type="button" part="button" aria-pressed=${String(this.checked)}
       aria-label=${this.accessibleLabel || this.label} ?disabled=${this.disabled}
-    ><slot></slot><span>${this.label}</span><span class="track" part="track" aria-hidden="true"></span></button>
+    ><span>${this.label}</span><span class="track" part="track" aria-hidden="true"></span></button>
     <label class="checkbox-mode" @click=${this._checkboxClick}>
       <input type="checkbox" part="checkbox" .checked=${this.checked} ?disabled=${this.disabled}
         aria-label=${this.accessibleLabel || this.label}>

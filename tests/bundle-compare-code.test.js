@@ -783,8 +783,8 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /\.checked=true accessible-label=Hide renamed names/u, 'there to turn off')
   assert.doesNotMatch(bar, /aria-label="Mark renamed lines"/u, 'shown, renamed names are marked')
-  assert.match(bar, /<span class="bundle-compare-code-hide" role="group" aria-label="Hide"><span class="bundle-compare-code-hide-label" aria-hidden="true">Hide:<\/span><mode-switch compact borderless \.checked=true accessible-label=Hide renamed names label=Renames @click=><svg/u,
-    'one frame, Hide:, its switch named with its icon, and no tooltip')
+  assert.match(bar, /<span class="bundle-compare-code-hide" role="group" aria-label="Hide"><span class="bundle-compare-code-hide-label" aria-hidden="true">Hide:<\/span><mode-switch compact borderless \.checked=true accessible-label=Hide renamed names label=Renames @click=><\/mode-switch>/u,
+    'one frame, Hide:, its switch named, with no icon and no tooltip')
   all._mode = 'code'
   all._query = 'q(X)'
   assert.match(renderText(all.render()), /bundle-code-search-empty">No matches\./u, 'its lines aren\'t listed: its diff draws no row to open')
