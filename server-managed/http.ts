@@ -1421,8 +1421,10 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
-    // alone: no repository's.
-    async advisories(packages, signal) {
+    // alone: no repository's. Each lockfile's audit is bounded on its own, for
+    // one npm doesn't answer to fail alone and the scan to carry on.
+    async advisories(packages, scanning) {
+      const signal = AbortSignal.any([scanning, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)])
       const audited = await fetchBundleAdvisories(packages.map(pkg => ({ ecosystem: 'npm' as const, ...pkg })), signal,
         { debug: deps.config.debug, cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug) })
       if (audited.status !== 200) throw new NpmPackageError(502, audited.body.error)
