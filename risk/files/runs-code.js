@@ -67,7 +67,7 @@ const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}
 const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh)`
 const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
 const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
-  + String.raw`|\$profile|_profile\.ps1|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
+  + String.raw`|\$profile|profile\.ps1|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
@@ -197,7 +197,8 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl
 // `.zshrc`, `.zshenv`, `.zlogin`, `.bash_profile`, `.bash_login`,
 // `.zprofile`, and `.profile` in a path, `~/.profile`, not a selector's
 // class, nor one after another, `.nav`), PowerShell's profile (`$PROFILE`,
-// `Microsoft.PowerShell_profile.ps1`), macOS's LaunchAgents and
+// `Microsoft.PowerShell_profile.ps1`, all hosts' `PowerShell\Profile.ps1`,
+// `$PSHOME\Profile.ps1`, not another folder's), macOS's LaunchAgents and
 // LaunchDaemons, systemd's user units (`~/.config/systemd/user`, `systemctl
 // --user enable`, other options before it, `--now`, or `--user` after it in
 // its command, `systemctl enable --user`; not `start`, which runs a unit
@@ -208,7 +209,7 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl
 // writes it (`"\\.claude\\settings.json"`, `\/`).
 const SEPARATOR = String.raw`(?:\\?\/|\\{1,2})`
 const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])`
-  + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
+  + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|(?:PowerShell|\$pshome)${SEPARATOR}profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],

