@@ -201,7 +201,7 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
   + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])(?:[^\n;|&]|${POWERSHELL_CONTINUED}){0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
-  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|]|${POWERSHELL_CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
+  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|&]|${POWERSHELL_CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
 // A place code runs from again later: a shell's rc file (`~/.bashrc`,
 // `.zshrc`, `.zshenv`, `.zlogin`, `.bash_profile`, `.bash_login`,
 // `.zprofile`, and `.profile` in a path, `~/.profile`, not a selector's
@@ -231,8 +231,9 @@ const HOLDS = [
 const SHELL_HOLDS = HOLDS.filter(([kind]) => kind === 'shell' || kind === 'persistence')
 // A shell script, by its extension, its name a shell's startup file's
 // (`.bashrc`, `.profile`), or its hashbang: a shell's, by its path or env's,
-// env's options before it (`#!/bin/ksh`, `#!/usr/bin/env -S bash -e`,
-// `#!/usr/bin/env pwsh`), past a byte order mark.
+// env's options and settings before it (`#!/bin/ksh`, `#!/usr/bin/env -S
+// bash -e`, `#!/usr/bin/env -S MODE=x bash`, `#!/usr/bin/env pwsh`), past a
+// byte order mark.
 const SHELL_SCRIPT = /(?:\.(?:sh|bash|zsh|ksh|mksh|dash|ash|csh|tcsh|fish|command|bat|cmd|ps1|psm1)|(?:^|[\\/])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|profile))$/iu
 // A shell script's comment, a line's whole (`# curl … | sh`) or its end
 // after a command (`echo ok # don't curl …`, `echo ok;# …`) where the quotes
@@ -240,17 +241,16 @@ const SHELL_SCRIPT = /(?:\.(?:sh|bash|zsh|ksh|mksh|dash|ash|csh|tcsh|fish|comman
 // backtick), not in one (`"a # b"`), and no other `#` (`$#`, `<#`) is;
 // PowerShell's, by its extension or hashbang, its blocks too (`<# … #>`,
 // opened where a command or value may start, `$x=<# … #>1`, not in a
-// string, `"<#"`, to the end where none closes); a batch file's, cmd's `::`
+// string, `"<#"`, `"a <#"`, to the end where none closes); a batch file's, cmd's `::`
 // and `REM` (`@REM`, and `REM` after `&` or `||`, `echo ok & REM …`); as
 // none of its commands.
 const SHELL_COMMENT = /^[ \t]*#.*$|^((?:[^'"\n#\\]|\\.|'[^'\n]*'|"(?:[^"\n\\]|\\.)*")*?[ \t;&|])#.*$/gmu
 const POWERSHELL = /\.psm?1$/iu
-const POWERSHELL_HASHBANG = /^\uFEFF?#!\s*\S*\/(?:env\s+(?:-\S+\s+)*)?pwsh(?![\w-])/u
-const POWERSHELL_LINE_COMMENT = /^[ \t]*#.*$|^((?:[^'"\n#\u0060]|\u0060.|'[^'\n]*'|"(?:[^"\n\u0060]|\u0060.)*")*?[ \t;&|])#.*$/u
-const POWERSHELL_COMMENT = new RegExp(String.raw`(?<![^\s;({=,])<#[\s\S]*?(?:#>|(?![\s\S]))|${POWERSHELL_LINE_COMMENT.source}`, 'gmu')
+const POWERSHELL_HASHBANG = /^\uFEFF?#!\s*\S*\/(?:env\s+(?:(?:-\S+|\w+=\S*)\s+)*)?pwsh(?![\w-])/u
+const POWERSHELL_COMMENT = /^((?:[^'"\n#\u0060]|\u0060.|'[^'\n]*'|"(?:[^"\n\u0060]|\u0060.)*")*?)(?:(?<=^|[\s;({=,])<#[\s\S]*?(?:#>|(?![\s\S]))|(?<=^|[ \t;&|])#.*$)/gmu
 const BATCH = /\.(?:bat|cmd)$/iu
 const BATCH_COMMENT = /^[ \t]*@?(?:::|rem(?![\w-])).*$|(?<=&|\|\|)[ \t]*@?rem(?![\w-]).*$/gimu
-const SHELL_HASHBANG = new RegExp(String.raw`^\uFEFF?#!\s*\S*\/(?:env\s+(?:-\S+\s+)*)?${SHELLS}(?![\w-])`, 'u')
+const SHELL_HASHBANG = new RegExp(String.raw`^\uFEFF?#!\s*\S*\/(?:env\s+(?:(?:-\S+|\w+=\S*)\s+)*)?${SHELLS}(?![\w-])`, 'u')
 // A directory and a file in it named apart, as path.join takes them
 // (`join(home, '.claude', 'settings.json')`): a place code runs from again
 // later where a file names both.

