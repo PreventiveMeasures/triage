@@ -10,6 +10,7 @@ import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
+import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
 import riskStyles from './styles/repository-risk.css'
@@ -255,18 +256,21 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </div>`
   }
 
+  // A team's chosen from a list, and a repository with the picker the other
+  // pages share, by owner and searchable.
   _scopeBar() {
     const running = this._state === 'running'
-    const choices = this._scope === 'team' ? (this._choices?.teams ?? []).map(team => [team.id, team.hidden ? `${team.name} (hidden)` : team.name])
-      : this._scope === 'repo' ? (this._choices?.repos ?? []).map(repo => [String(repo.repoId), repo.fullName]) : null
-    const what = this._scope === 'team' ? 'team' : 'repository'
+    const loading = this._choices ? '' : 'Loading…'
     return html`<div class="risk-scope-bar">
       <div class="risk-scope" role="group" aria-label="What to scan">${SCOPES.map(([scope, label]) => html`<button type="button"
         aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._choose(scope)}>${label}</button>`)}</div>
-      ${choices ? html`<select aria-label=${`Which ${what}`} ?disabled=${running} @change=${event => this._choose(this._scope, event.target.value)}>
-        <option value="" ?selected=${!this._target}>${this._choices ? `Choose a ${what}…` : 'Loading…'}</option>
-        ${choices.map(([value, label]) => html`<option value=${value} ?selected=${value === this._target}>${label}</option>`)}
+      ${this._scope === 'team' ? html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
+        <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
+        ${(this._choices?.teams ?? []).map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${team.hidden ? `${team.name} (hidden)` : team.name}</option>`)}
       </select>` : nothing}
+      ${this._scope === 'repo' ? html`<repository-selector label="Which repository" placeholder=${loading || 'Choose a repository…'} ?disabled=${running || !this._choices}
+        .options=${(this._choices?.repos ?? []).map(repo => ({ value: String(repo.repoId), label: repo.fullName }))} .value=${this._target || null}
+        @repository-change=${event => this._choose('repo', event.detail.value)}></repository-selector>` : nothing}
     </div>`
   }
 
