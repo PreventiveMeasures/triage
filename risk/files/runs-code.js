@@ -89,6 +89,10 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // registry's host, where a PUT request is one publishing.
 // Told first of a string by what any of them says.
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
+// Before a token's name as a key, its absence told or the token dropped, as
+// TOKEN_NAME tells of one as a name (`!process.env['GITHUB_TOKEN']`,
+// `delete process.env['NPM_TOKEN']`): a few names and dots at most.
+const KEY_ABSENT = /(?:!|\bdelete\s)\s{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
@@ -185,7 +189,11 @@ function read(code, base, at) {
     // What a string holds, a template's text alone, its substitutions' code
     // read as code, its comments and regular expressions aside.
     const text = inner.length === 0 ? string : textOf(string, inner)
-    if (HOLDS_ANY.test(text)) for (const [kind, holds] of HOLDS) for (const { index: within } of text.matchAll(holds)) at(kind, base + index + within)
+    // A token's name as the string's whole (`within` 0, its quote) is a key,
+    // not one where its absence is told or it is dropped.
+    const keyed = () => !KEY_ABSENT.test(code.slice(Math.max(0, index - 300), index))
+    const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
+    for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
     if (program && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
       if (PUBLISH.test(string)) at('publish', base + index)
