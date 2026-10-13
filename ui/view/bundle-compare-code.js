@@ -1252,19 +1252,16 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's pretty-print, layout, whitespace and renamed names toggles, as
-  // a file has use for them: pretty-printing a minified file (`pretty` from
-  // _pretty), a diff its layout, whitespace where hiding it hides a change
-  // (`whitespace`) and, in JavaScript minified on both sides (`renames`,
-  // _generated), renamed names. Hiding them gives the old side the new side's
-  // names wherever a minifier renamed a variable alike throughout, an old one
-  // no new one stands for named apart (r_old). Lines always wrap.
+  // The diff's layout, whitespace, renamed names and pretty-print toggles, as
+  // a file has use for them: a diff its layout, whitespace where hiding it
+  // hides a change (`whitespace`), in JavaScript minified on both sides
+  // (`renames`, _generated) renamed names, and pretty-printing a minified file
+  // (`pretty` from _pretty), last, as pressing it can show or hide the others.
+  // Hiding renamed names gives the old side the new side's names wherever a
+  // minifier renamed a variable alike throughout, an old one no new one stands
+  // for named apart (r_old). Lines always wrap.
   _toggles(diffable, pretty = null, renames = false, reading = false, whitespace = null) {
-    return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
-          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
-          data-tooltip=${prettyTooltip(pretty)}
-          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
-        ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
+    return html`${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>
         ${whitespace ? this._whitespaceToggle(whitespace) : nothing}
@@ -1273,7 +1270,11 @@ export class BundleCompareCode extends LitElement {
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}
-        ${renames && prefs.ignoreRenames ? this._marksToggle(reading) : nothing}` : nothing}`
+        ${renames && prefs.ignoreRenames ? this._marksToggle(reading) : nothing}` : nothing}
+        ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
+          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
+          data-tooltip=${prettyTooltip(pretty)}
+          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}`
   }
 
   // Every line quoting each repointed specifier. Rows for one specifier
