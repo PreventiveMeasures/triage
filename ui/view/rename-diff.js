@@ -17,6 +17,10 @@ const KEPT_DIFFS = 16
 // asked, as a view asks for all it shows (Compare's Diff view, every file
 // minified on both sides); one the server kept comes back at once.
 const MAX_FETCHES = 2
+// A failure that may pass (the server busy, a timeout) is asked again on a
+// paint this long after it came, twice as long each time it fails again.
+const RETRY_MS = 5_000
+const RETRY_MAX_MS = 5 * 60_000
 
 // Diffs by both sides' integrity and path and the whitespace setting:
 // `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason, reads,
@@ -25,7 +29,8 @@ const MAX_FETCHES = 2
 // which either side reads names, the blocks of the diff of the files as they
 // are that differ in renamed names alone, and the hashes of the copies it was
 // worked out from), or `{ status: 'error', message, retry }`,
-// `retry` where asking again may succeed (the server busy, a timeout).
+// `retry` where asking again may succeed (the server busy, a timeout), then
+// `until` when, `tries` the failures so far.
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
@@ -96,8 +101,14 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     next = { status: 'error', message: err?.message ?? String(err), retry: !(err?.status >= 400 && err.status < 500 && err.status !== 429) }
   }
   if (diffs.get(key) !== asked) return
-  diffs.set(key, next)
   const notify = notifiers.get(key)
+  if (next.status === 'error' && next.retry) {
+    const wait = Math.min(RETRY_MS * 2 ** (asked.tries ?? 0), RETRY_MAX_MS)
+    Object.assign(next, { until: Date.now() + wait, tries: (asked.tries ?? 0) + 1 })
+    // Painted again then, to ask again.
+    if (notify) setTimeout(notify, wait)?.unref?.()
+  }
+  diffs.set(key, next)
   notifiers.delete(key)
   evict()
   notify?.()
@@ -123,13 +134,15 @@ function evict() {
 export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn) {
   const key = `${base.integrity}\0${basePath}\0${other.integrity}\0${path}\0${ignoreWhitespace}`
   const asked = diffs.get(key)
-  let diff = asked ?? { status: 'loading' }
+  // One that failed for a reason that may have passed, asked again once due.
+  const due = asked?.status === 'error' && asked.until !== undefined && Date.now() >= asked.until
+  let diff = asked && !due ? asked : { status: 'loading', tries: asked?.tries }
   if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) diff = { status: 'error', message: MISMATCH, retry: true }
   diffs.delete(key)
   diffs.set(key, diff)
   want(key)
   if (diff.status === 'loading') notifiers.set(key, notify)
-  if (!asked) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
+  if (!asked || due) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
   evict()
   return diff
 }

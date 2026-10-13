@@ -1702,6 +1702,34 @@ test('pretty-printed, a minified file marks its renamed lines unasked, the plain
   assert.match(hidden, /aria-pressed=true aria-label="Hide renamed names"/u)
 })
 
+test('a minified file whose rename diff failed for a reason that may pass is asked again a while after, and marked then', async t => {
+  const now = Date.now
+  t.after(() => { Date.now = now; state.bundleSourcePretty = false; misanswered.clear() })
+  const element = view('dist/later.min.js', [{ 'dist/later.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/later.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b23'
+  element.other.managedId = 'b24'
+  const copy = 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n'
+  pretty.set('b23:dist/later.min.js', copy)
+  pretty.set('b24:dist/later.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  pretty.set('b23:dist/later.min.js', Object.assign(new Error('The server is busy.'), { status: 503 }))
+  const state_ = () => element._fileState('dist/later.min.js', element._entries.get('dist/later.min.js'))
+  for (let i = 0; i < 200 && state_().changes?.status !== 'error'; i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(state_().changes.status, 'error')
+  const failed = renderText(element.render())
+  assert.match(failed, /aria-label="Diff"/u, 'the plain diff drawn')
+  assert.doesNotMatch(failed, /diff-row del renamed|Couldn't hide/u)
+  pretty.set('b23:dist/later.min.js', copy)
+  const asked = renameDiffs.length
+  renderText(element.render())
+  assert.equal(renameDiffs.length, asked, 'not asked again at once')
+  Date.now = () => now() + 6_000
+  for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
+  assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
+})
+
 test('names a file reads leave its renamed names hidden, saying what a rename may change, and offer them marked', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=function(){};${'q(X);'.repeat(250)}f(X.name);\n` }])
