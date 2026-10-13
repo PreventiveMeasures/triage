@@ -79,13 +79,14 @@ async function jsonOf(res, limit, what) {
 
 // What npm answers `url` as JSON (jsonOf), null where it answers 404; given up
 // on after REQUEST_MS, or once the caller's `signal` aborts, its abort
-// rethrown as it is. `upstream-unavailable` where npm can't be asked or
-// answers otherwise.
+// rethrown as it is. `upstream-busy` where npm asks to be asked later (429),
+// as its downloads API does past a burst of requests;
+// `upstream-unavailable` where it can't be asked or answers otherwise.
 async function askNpm(url, headers, limit, what, { signal }) {
   try {
     const res = await fetch(url, { headers: { accept: 'application/json', ...headers }, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(REQUEST_MS), ...signal ? [signal] : []]) })
     if (res.status === 404) { await res.body?.cancel(); return null }
-    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError('upstream-unavailable', `npm answered ${res.status} for ${what}`) }
+    if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError(res.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm answered ${res.status} for ${what}`) }
     return await jsonOf(res, limit, what)
   } catch (error) {
     if (error instanceof NpmRiskError || signal?.aborted) throw error

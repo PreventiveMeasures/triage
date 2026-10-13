@@ -909,7 +909,12 @@ their tab. npm's registry hasn't every one of GitHub's malware advisories
 (those of nx's malicious versions, for one), which OSV's records would add.
 Assessments are `spare` ones (`npm-risk.ts`): two at most across the server,
 leaving the rest to readers, and without asking npm of each dependency's
-package. Scans keep in the instance's memory a repository's lockfiles as listed
+package. One refused as busy (`npm-busy`), or that npm asked to ask later
+(risk's `upstream-busy`, as npm's downloads API answers 429 past a burst of
+requests, a hundred or so, for some seconds), is asked again after a wait, so a
+large scan goes at the pace npm allows. A package's risk that still fails tells
+its code, and, where risk failed, risk's `detail` of what it asked of npm and
+how that failed. Scans keep in the instance's memory a repository's lockfiles as listed
 at a commit, a lockfile's packages by its blob, and a package's risk line for an
 hour, so a scan again asks GitHub only for each repository's head and access,
 and npm for nothing it told within the hour; what risk keeps of each package

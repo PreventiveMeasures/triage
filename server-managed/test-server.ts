@@ -495,7 +495,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
       advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '>=1.0.0 <1.2.6', ['1.2.5']),
     ].filter(row => row.versions.length > 0) },
     risk('minimist', '0.0.8', []),
-    risk('minimist', '1.2.5', []),
+    { type: 'risk', name: 'minimist', version: '1.2.5', error: 'upstream-unavailable', detail: 'npm couldn\'t be asked for minimist\'s downloads: The operation was aborted due to timeout' },
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
     { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
     { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [

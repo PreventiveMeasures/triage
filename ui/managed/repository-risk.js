@@ -46,6 +46,7 @@ const ERRORS = {
   'integrity-mismatch': 'Differs from npm’s',
   'npm-busy': 'Server busy',
   'package-too-large': 'Too large to assess',
+  'upstream-busy': 'npm busy',
   'upstream-unavailable': 'npm unavailable',
   'upstream-too-large': 'npm answered too much',
   'upstream-invalid': 'npm answered unexpectedly',
@@ -245,7 +246,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
-      if (row) row.risk = line.error ? { error: line.error } : { severity: line.severity, findings: line.findings, published: line.published }
+      if (row) row.risk = line.error ? { error: line.error, detail: line.detail ?? null } : { severity: line.severity, findings: line.findings, published: line.published }
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
     }
@@ -430,7 +431,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
     const malware = malwareOf(row)
     if (!malware && !row.risk) return this._pending('Waiting…', 'Not assessed')
-    if (!malware && row.risk.error) return html`<span class="risk-error">${errorText(row.risk.error)}</span>`
+    if (!malware && row.risk.error) return html`<span class="risk-error" data-tooltip=${row.risk.detail ?? nothing}>${errorText(row.risk.error)}</span>`
     const severity = severityOf(row)
     return severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : html`<span class="risk-none">None found</span>`
   }

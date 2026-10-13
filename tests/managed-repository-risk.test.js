@@ -240,6 +240,20 @@ test('an assessment refused as busy is asked again, its version read once', asyn
   assert.deepEqual(risks.map(line => [line.name, line.error ?? line.severity]), [['is-number', null], ['left-pad', null]])
 })
 
+test('a package npm asks to ask later is asked again; risk\'s failure told with what it asked of npm', async () => {
+  let asked = 0
+  const source = sourceOf(onePnpmRepo, ({ name }) => {
+    if (name === 'left-pad' && asked++ === 0) return Promise.reject(new NpmRiskError('upstream-busy', 'npm answered 429 for left-pad\'s downloads'))
+    if (name === 'is-number') return Promise.reject(new NpmRiskError('upstream-unavailable', 'npm couldn\'t be asked for is-number: fetch failed'))
+    return Promise.resolve({ published: null, findings: [] })
+  })
+  const risks = risksOf(await Array.fromAsync(scan(source)))
+  assert.equal(asked, 2)
+  assert.deepEqual(risks.map(line => [line.name, line.error ?? line.severity, line.detail]), [
+    ['is-number', 'upstream-unavailable', 'npm couldn\'t be asked for is-number: fetch failed'], ['left-pad', null, undefined],
+  ])
+})
+
 // A source whose assessments wait until they are given up on, each one's
 // signal kept in `signals`.
 const hangingSource = signals => sourceOf(onePnpmRepo, (_doc, _teamScoped, signal) => new Promise((_resolve, reject) => {
