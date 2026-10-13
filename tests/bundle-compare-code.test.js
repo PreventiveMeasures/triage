@@ -467,13 +467,11 @@ test('the Diff view\'s rename diffs past those a few kept are dropped once it is
   first.disconnectedCallback()
   const again = opened()
   assert.deepEqual(await settled(again), files.slice(0, 4), 'those dropped asked for again, opened again')
-  // Pretty-print turned off: two paints asking none, each a task of its own,
-  // and the same dropped as the second ends.
+  // Pretty-print turned off: the one paint it asks for asks none, and the same
+  // are dropped as it ends.
   state.bundleSourcePretty = false
-  for (let i = 0; i < 2; i++) {
-    await new Promise(resolve => { setTimeout(resolve, 0) })
-    renderText(again.render())
-  }
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  renderText(again.render())
   await new Promise(resolve => { setTimeout(resolve, 0) })
   state.bundleSourcePretty = true
   assert.deepEqual(await settled(again), files.slice(0, 4), 'and turned back on')
@@ -509,12 +507,10 @@ test('the Diff view filtered before its rename diffs all came asks for none of t
   }
   assert.equal(flying.now, 2, 'two on their way')
   const asked = renameDiffs.length
-  // Filtered to one file, painted as the view paints, in tasks of their own.
+  // Filtered to one file, painted once, in a task of its own, as the view is.
   all._query = 'dist/s9.'
-  for (let i = 0; i < 3; i++) {
-    await new Promise(resolve => { setTimeout(resolve, 0) })
-    renderText(all.render())
-  }
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  renderText(all.render())
   release()
   flying.held = null
   const one = () => all._fileState(files[9], all._entries.get(files[9])).changes?.status
@@ -556,12 +552,10 @@ test('the Diff view with pretty-print turned off before its rename diffs all cam
   }
   assert.equal(flying.now, 2, 'two on their way, the rest waiting their turn')
   const asked = renameDiffs.length
-  // Pretty-print turned off: the paints that follow ask for no diff.
+  // Pretty-print turned off: the one paint that follows asks for no diff.
   state.bundleSourcePretty = false
-  for (let i = 0; i < 3; i++) {
-    await new Promise(resolve => { setTimeout(resolve, 0) })
-    renderText(all.render())
-  }
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  renderText(all.render())
   release()
   flying.held = null
   for (let i = 0; i < 100 && flying.now > 0; i++) await new Promise(resolve => { setTimeout(resolve, 5) })

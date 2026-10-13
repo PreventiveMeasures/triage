@@ -50,12 +50,12 @@ const turns = []
 // What a request whose turn came once no view wants it any longer gives.
 const STALE = Symbol('stale')
 
-// `work` once a turn is free, or STALE where by then `wanted` says no view
+// `work` once a turn is free, or STALE where by then `still` says no view
 // asks for it: a view left, or a list filtered, before its diffs all came.
-async function inTurn(work, wanted) {
+async function inTurn(work, still) {
   if (fetches < MAX_FETCHES) fetches++
   else await new Promise(resolve => { turns.push(resolve) })
-  try { return wanted() ? await work() : STALE }
+  try { return still() ? await work() : STALE }
   finally {
     const next = turns.shift()
     if (next) next()
@@ -63,13 +63,11 @@ async function inTurn(work, wanted) {
   }
 }
 
-// Diffs asked for in the task now running and in the last one that painted or
-// asked, as a view painting asks for all it shows: kept past KEPT_DIFFS, as
-// are those still coming, so a view showing more than that never drops one it
-// shows and asks for it again; and sent only while so wanted.
-let asking = false, wanted = new Set(), wantedBefore = new Set()
-
-const wantedNow = key => wanted.has(key) || wantedBefore.has(key)
+// Diffs asked for by the last paint, as a view painting asks for all it shows
+// (each is asked for as a view paints, and only then): kept past KEPT_DIFFS,
+// as are those still coming, so a view showing more than that never drops one
+// it shows and asks for it again; and sent only while so wanted.
+let asking = false, wanted = new Set()
 
 // A view painting what it shows, the diffs it asks for from then on those it
 // wants: one asking none (pretty-printing turned off, a list filtered to
@@ -78,7 +76,6 @@ const wantedNow = key => wanted.has(key) || wantedBefore.has(key)
 export function paintingRenameDiffs() {
   if (asking) return
   asking = true
-  wantedBefore = wanted
   wanted = new Set()
   setTimeout(() => {
     asking = false
@@ -89,7 +86,6 @@ export function paintingRenameDiffs() {
 // A view gone wants none it asked for, past KEPT_DIFFS dropped.
 export function forgetRenameDiffs() {
   wanted = new Set()
-  wantedBefore = new Set()
   evict()
 }
 
@@ -106,7 +102,7 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const params = { path: basePath, hash, otherPath: path, otherHash, ignoreWhitespace }
     const answer = await inTurn(() => base.npm
       ? fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
-      : fetchBundleRenameDiff(base.managedId, other.managedId, params), () => wantedNow(key))
+      : fetchBundleRenameDiff(base.managedId, other.managedId, params), () => wanted.has(key))
     // Wanted no longer: dropped, the view that asked painted again, to ask
     // again where it shows it still.
     if (answer === STALE) {
@@ -155,12 +151,11 @@ function due(key, failure, tries = 0) {
 
 // Past KEPT_DIFFS, the least recent no view waits for: as a paint ends, not
 // before (one asking for more than that would drop those it is yet to ask
-// for, those it asked for before wanted no longer), as one comes that may be
-// wanted no longer, and as a view goes.
+// for), as one comes that may be wanted no longer, and as a view goes.
 function evict() {
   for (const [old, kept] of diffs) {
     if (diffs.size <= KEPT_DIFFS) break
-    if (wanted.has(old) || wantedBefore.has(old) || kept.status === 'loading') continue
+    if (wanted.has(old) || kept.status === 'loading') continue
     diffs.delete(old)
     notifiers.delete(old)
   }
