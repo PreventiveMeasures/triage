@@ -183,6 +183,21 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   assert.ok(!calls.some(call => call.url === huge.doc.dist.tarball))
 })
 
+test('a team\'s own package isn\'t flagged as few download it, as it isn\'t as just published', async t => {
+  const pkg = packageOf('quiet-own', '1.0.0', { 'package.json': '{}' })
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = String(input)
+    if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
+    if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'quiet-own', downloads: [] }))
+    return Promise.resolve(Response.json({ name: 'quiet-own', versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
+  })
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const doc = { ...pkg.doc, private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} }
+  const unpopular = async teamScoped => (await npmRisk(doc, null, { db, teamScoped, privileged: false, signal: new AbortController().signal })).findings.some(({ id }) => id === 'popularity')
+  assert.equal(await unpopular(false), true, 'anyone else\'s is')
+  assert.equal(await unpopular(true), false)
+})
+
 test('a risk assessment whose reader is gone stops waiting on its tarball, which loads on for others', async t => {
   const pkg = packageOf('slow-risk', '1.0.0', { 'package.json': '{}' })
   let answer = () => {}

@@ -107,9 +107,9 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 }
 
 // The version `doc` names assessed against `old`'s, where given, each as the
-// reader's readNpmVersion read it: trusted however new where a team lists its
-// scope (`teamScoped`), its own packages; else held to risk's minimum release
-// age. Its documents are read with npm's token where the reader may have it
+// reader's readNpmVersion read it: trusted however new and however few
+// download it where a team lists its scope (`teamScoped`), its own packages;
+// else held to risk's minimum release age and flagged as unpopular. Its documents are read with npm's token where the reader may have it
 // (`privileged`, as readNpmVersion), its dependencies' without; what is kept
 // of it is shared only where neither version is private.
 export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
@@ -117,7 +117,7 @@ export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument |
   if (assessing >= MAX_ACTIVE_ASSESSMENTS) throw new NpmPackageError(429, 'npm-busy')
   assessing++
   try {
-    return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
+    return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: !teamScoped,
       cache: npmRiskCache(stores, !doc.private && !old?.private), signal,
       packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
       tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
