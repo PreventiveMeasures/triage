@@ -113,6 +113,9 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
   assert.equal(found('a.js', 'const methods = [\'GET\', \'PUT\']\nconst registry = \'https://registry.npmjs.org/\'\nfetch(registry + \'-/v1/search\')\n'), null,
     'PUT named, not a request\'s method')
   assert.deepEqual(found('a.js', 'fetch(url, { method: \'PUT\', body })\nwrite(`//registry.npmjs.org/:_authToken=${token}`)\n'), { publish: [1] }, '.npmrc\'s URL')
+  for (const url of ['\'https://user:pass@registry.npmjs.org/pkg\'', '`https://${token}@registry.npmjs.org/${name}`', '"https://@registry.yarnpkg.com/x"']) {
+    assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [1] }, `a token before its host: ${url}`)
+  }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
     + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')

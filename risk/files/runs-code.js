@@ -107,7 +107,8 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // publish …`, options before it as npm takes them, `npm --tag next publish`)
 // or the registry's who-am-I, a publisher's first step with a token. And the
 // registry, where a PUT request is one publishing: its URL
-// (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`) or its
+// (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`, a
+// token before its host too, `https://${token}@registry.npmjs.org/`) or its
 // host as a string's whole (npm-profile's `'registry.npmjs.org'`), not its
 // host in prose, as a dialog tells where it asks (`registry.npmjs.org</span>`).
 // Told first of a string by what any of them says.
@@ -125,7 +126,7 @@ const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
-  ['registry', /\/\/registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)\1$/gu],
+  ['registry', /\/\/(?:[^/@"'\u0060\n]{0,256}@)?registry\.(?:npmjs\.org|yarnpkg\.com)|^(["'\u0060])registry\.(?:npmjs\.org|yarnpkg\.com)\1$/gu],
 ]
 // A module a kind loads: vm, child_process, and libnpmpublish, npm's own
 // publishing.
