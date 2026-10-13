@@ -10,7 +10,8 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
+  setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -560,6 +561,65 @@ test('registry documents read at once are held to a budget: four version lists, 
   gate.resolve()
   assert.deepEqual((await Promise.all(lists)).map(list => list.versions), [['1.0.0'], ['1.0.0'], ['1.0.0'], ['1.0.0']])
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
+})
+
+// A disk cache for whole documents, set as the server sets it off Vercel.
+async function documentCache(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-npm-documents-'))
+  setNpmDocumentCache(dir)
+  t.after(async () => { setNpmDocumentCache(null); await rm(dir, { recursive: true, force: true }) })
+  return dir
+}
+
+// npm's whole document of `name`, as `answer()` has it now ({ etag, doc } or
+// null for none), answered 304 to its own ETag; each request noted with the
+// ETag it gave and what was answered.
+function wholeDocuments(t, name, answer) {
+  const asked = []
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    const headers = new Headers(init.headers)
+    const given = headers.get('if-none-match'), now = answer(headers.get('authorization'))
+    const status = String(input) !== `${REGISTRY}/${name}` || !now ? 404 : given === now.etag ? 304 : 200
+    asked.push([given, status])
+    return Promise.resolve(status === 200 ? Response.json(now.doc, { headers: { etag: now.etag } }) : new Response(null, { status }))
+  })
+  return asked
+}
+
+test('off Vercel, a public package\'s whole document is kept on disk and asked for again with its ETag, read from npm only once changed', async t => {
+  const dir = await documentCache(t)
+  const signal = new AbortController().signal
+  const docOf = versions => ({ name: 'kept-doc', versions: Object.fromEntries(versions.map(v => [v, { name: 'kept-doc', version: v }])), time: { [versions[0]]: '2025-01-01T00:00:00.000Z' } })
+  let now = { etag: 'W/"one"', doc: docOf(['1.0.0']) }
+  const asked = wholeDocuments(t, 'kept-doc', () => now)
+  assert.deepEqual(await readNpmPackument('kept-doc', false, signal), now.doc)
+  assert.deepEqual(await readNpmPackument('kept-doc', false, signal), now.doc, 'the kept one, npm answering 304')
+  assert.deepEqual((await readNpmVersions('kept-doc', false, signal, { times: true })).versions, ['1.0.0'], 'the viewer\'s read of it kept alike')
+  now = { etag: 'W/"two"', doc: docOf(['1.0.0', '1.1.0']) }
+  assert.deepEqual(await readNpmPackument('kept-doc', false, signal), now.doc, 'changed, read again')
+  assert.deepEqual(await readNpmPackument('kept-doc', false, signal), now.doc)
+  assert.deepEqual(asked, [[null, 200], ['W/"one"', 304], ['W/"one"', 304], ['W/"one"', 200], ['W/"two"', 304]])
+  await readFile(join(dir, 'npm/packuments', 'kept-doc.json.gz'))
+  now = null
+  assert.equal(await readNpmPackument('kept-doc', false, signal), null)
+  await assert.rejects(readFile(join(dir, 'npm/packuments', 'kept-doc.json.gz')), { code: 'ENOENT' }, 'one npm has none of no longer kept')
+  setNpmDocumentCache(null)
+  now = { etag: 'W/"three"', doc: docOf(['2.0.0']) }
+  await readNpmPackument('kept-doc', false, signal)
+  await readNpmPackument('kept-doc', false, signal)
+  assert.deepEqual(asked.slice(-2), [[null, 200], [null, 200]], 'on Vercel none kept, none asked conditionally')
+})
+
+test('a private package\'s whole document, read with the server\'s token, is never kept', async t => {
+  withToken(t)
+  const dir = await documentCache(t)
+  const signal = new AbortController().signal
+  const doc = { name: '@team/secret', versions: { '1.0.0': {} } }
+  const asked = wholeDocuments(t, '@team/secret', auth => auth === 'Bearer server-token' ? { etag: 'W/"private"', doc } : null)
+  assert.deepEqual(await readNpmPackument('@team/secret', true, signal), doc)
+  assert.deepEqual(await readNpmPackument('@team/secret', true, signal), doc)
+  assert.deepEqual(asked, [[null, 404], [null, 200], [null, 404], [null, 200]], 'asked anonymously, then with the token, never with an ETag')
+  await assert.rejects(readFile(join(dir, 'npm/packuments', '@team+secret.json.gz')), { code: 'ENOENT' })
 })
 
 test('a package\'s first version was published when the earliest time its whole document lists says, one since unpublished among them', async t => {

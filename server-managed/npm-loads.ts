@@ -3,15 +3,14 @@
 // registry, and the viewer's response built from it, each shared by the
 // readers asking for it meanwhile and held to a few at once per process.
 import { Buffer } from 'node:buffer'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
 import { encodeBrotli } from './brotli.ts'
 import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
   npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
-import { readKeptFile, upstreamCachePath } from './upstream-cache.ts'
+import { keepFile, readKeptFile, upstreamCachePath } from './upstream-cache.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
 // A tarball larger than that cannot unpack within it, so it is refused as it
@@ -77,7 +76,6 @@ const sha512 = async (bytes: Uint8Array) => Buffer.from(await crypto.subtle.dige
 // Upstream's disk cache (setCacheDir), where tarballs are kept between
 // loads, or null to keep none and read none.
 let tarballCache: string | null = null
-let tmpSeq = 0
 
 export function setNpmTarballCache(dir: string | null) {
   tarballCache = dir === null ? null : resolve(dir)
@@ -94,15 +92,6 @@ function npmCachePath(hash: string): string | null {
   } catch { return null }
   const hex = Buffer.from(hash, 'base64').toString('hex')
   return join(root, '_cacache', 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4), hex.slice(4))
-}
-
-async function keep(path: string, bytes: Uint8Array) {
-  const tmp = `${path}.${process.pid}.${++tmpSeq}.tmp`
-  try {
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(tmp, bytes)
-    await rename(tmp, path)
-  } catch { await rm(tmp, { force: true }).catch(() => {}) }
 }
 
 // The version's tarball from the registry, at the package's own path: with
@@ -132,7 +121,7 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
   }
   const bytes = await downloadTarball(url, doc.private)
   if (await sha512(bytes) !== expected) throw new NpmPackageError(502, 'upstream-invalid')
-  if (kept !== null) await keep(kept, bytes)
+  if (kept !== null) await keepFile(kept, bytes)
   return bytes
 }
 
