@@ -143,7 +143,7 @@ export const riskCaches = (): RiskCaches => ({
   risks: lru(50_000),
   advisories: lru(50_000, kept => kept.rows.length + 1),
 })
-const RISK_KEPT_MS = 60 * 60_000
+export const RISK_KEPT_MS = 60 * 60_000
 const shared = riskCaches()
 
 // Items in the order they are added, each taken once by whichever reader asks

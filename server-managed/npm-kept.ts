@@ -1,9 +1,12 @@
-// What the repository risk scan keeps in the database (managed_upstream_cache,
-// upstream-cache.ts), beyond the instance, so that a scan after a restart, or
-// on another instance, reads none of it again: public versions' documents, of
-// the fields read of them (npm-manifest.ts npmVersionFields), for good, as npm
-// never changes a version (whether npm still has one, risk tells); and each
-// package's risk line, for as long as a scan keeps it (repository-risk.ts).
+// What the npm viewer and repository risk scans keep in the database
+// (managed_upstream_cache, upstream-cache.ts), beyond the instance, so that
+// neither asks for it again on every read, nor after a restart or on another
+// instance: public versions' documents, of the fields read of them
+// (npm-manifest.ts npmVersionFields), as npm never changes a version (whether
+// npm still has one, risk tells; whether a scoped one is still public,
+// readNpmVersion asks again a day on); and, for scans, each package's risk
+// line, for as long as a scan keeps it (repository-risk.ts), those older
+// removed as a scan starts (pruneRiskLines).
 // The database is an optimization: a failure reads as a miss, and writes
 // nothing.
 import { createHash } from 'node:crypto'
@@ -39,10 +42,16 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
   return {
     async read(name, version) {
       const hit = await kept.read(`${name}@${version}`)
-      return hit && plainObject(hit.value) ? hit.value : null
+      return hit && plainObject(hit.value) ? { at: hit.at, json: hit.value } : null
     },
     write: (name, version, json) => kept.write(`${name}@${version}`, json, Date.now()),
   }
 }
 
-export const riskLineStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository-risk/lines', debug)
+const RISK_LINES = 'repository-risk/lines'
+export const riskLineStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, RISK_LINES, debug)
+
+// Risk lines kept longer ago than `ms`, which no scan reads, removed.
+export async function pruneRiskLines(db: UpstreamCacheStore, ms: number, debug = false) {
+  try { await db.deleteUpstreamCacheEntries(`${RISK_LINES}/`, Date.now() - ms) } catch (error) { if (debug) console.warn('managed: pruning kept risk lines failed:', error) }
+}

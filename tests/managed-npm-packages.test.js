@@ -128,6 +128,22 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: Buffer.alloc(MAX_NPM_PACKAGE_BYTES + 1) }])), /package-too-large/u)
 })
 
+test('the viewer reads an exact public version\'s document from the database once npm answered it; a dist-tag from npm each time', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('kept-viewed', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [pkg])
+  const asked = () => calls.filter(call => call.url === `${REGISTRY}/kept-viewed/1.0.0`).length
+  for (const path of [packagePath('kept-viewed', '1.0.0'), '/api/npm/tags?name=kept-viewed&version=1.0.0', packagePath('kept-viewed', '1.0.0')]) {
+    assert.equal((await h.send(path)).status, 200)
+  }
+  assert.equal(asked(), 1, 'its document asked of npm once')
+  const tagged = () => calls.filter(call => call.url === `${REGISTRY}/kept-viewed/latest`).length
+  await h.send(packagePath('kept-viewed', 'latest'))
+  const once = tagged()
+  await h.send(packagePath('kept-viewed', 'latest'))
+  assert.ok(once > 0 && tagged() > once, 'asked of npm on every view')
+})
+
 test('anyone with workspace access opens a public version, asked of the registry without credentials', async t => {
   const h = await setup(t)
   withToken(t)
@@ -670,6 +686,25 @@ test('with a store, a public version\'s document is kept and read from it, never
   assert.equal(calls.length, asked + 1, 'a dist-tag asked of npm')
   assert.equal((await readNpmVersion('@team/secret', '1.0.0', true, signal, store)).private, true)
   assert.equal(await store.read('@team/secret', '1.0.0'), null, 'one only the token reads not kept')
+})
+
+test('a scoped package\'s kept version is asked of npm again a day on, as npm lets one be made private', async t => {
+  withToken(t)
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  const scoped = packageOf('@org/turned', '1.0.0', { 'index.js': '' })
+  let secret = false
+  const calls = registry(t, [{ ...scoped, get private() { return secret } }])
+  const signal = new AbortController().signal
+  assert.equal((await readNpmVersion('@org/turned', '1.0.0', true, signal, store)).private, false)
+  const asked = calls.length
+  await readNpmVersion('@org/turned', '1.0.0', true, signal, store)
+  assert.equal(calls.length, asked, 'kept within the day')
+  secret = true
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * 60 * 60_000 })
+  assert.equal((await readNpmVersion('@org/turned', '1.0.0', true, signal, store)).private, true, 'asked again, and private now')
+  assert.ok(calls.length > asked)
 })
 
 test('a private package\'s whole document, read with the server\'s token, is never kept', async t => {

@@ -81,7 +81,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, riskLineStore } from './npm-kept.ts'
+import { npmVersionStore, pruneRiskLines, riskLineStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -120,7 +120,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { repositoryRiskLines } from './repository-risk.ts'
+import { RISK_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -1388,6 +1388,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
   const scopes = new Map<string, Promise<boolean>>()
   const versions = npmVersionStore(deps.db, deps.config.debug)
+  await pruneRiskLines(deps.db, RISK_KEPT_MS, deps.config.debug)
   const lines = repositoryRiskLines({
     repos: () => Promise.resolve(repos),
     async open(repo) {
@@ -1407,8 +1408,9 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
       if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
       return scopes.get(scope)!
     },
-    // Public versions' documents kept in the database for good (npm-kept.ts):
-    // whether npm still has one, its whole document tells risk.
+    // Public versions' documents kept in the database (npm-kept.ts), as the
+    // viewer keeps them: whether npm still has one, its whole document tells
+    // risk.
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
     assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
@@ -2819,10 +2821,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   let token: Promise<string | null> | undefined
   const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
   const privileged = canReadPrivateNpm(reader, name)
+  // Public versions' documents, kept in the database (npm-kept.ts), as
+  // repository risk scans keep them: an exact version's, read on every view,
+  // asked of npm once, a scoped package's once a day.
+  const keptVersions = npmVersionStore(deps.db, deps.config.debug)
   // The latest version, read once a request: the package's figures and
   // advisories go by the repository it names.
   let latest: Promise<NpmVersionDocument | null> | undefined
-  const latestDoc = () => latest ??= readNpmVersion(name, 'latest', privileged, controller.signal)
+  const latestDoc = () => latest ??= readNpmVersion(name, 'latest', privileged, controller.signal, keptVersions)
   const advisoryOptions = npmAdvisoryOptions(deps, githubToken, latestDoc)
   // The figures of the repository the latest version names, noted as its
   // repository for npmKnown; null where it names none, or they can't be had.
@@ -2861,7 +2867,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       await reply(doc.private, { name, downloads, github })
       return
     }
-    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal))
+    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal, keptVersions))
     if (spec === 'latest') latest = Promise.resolve(doc)
     const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
     // What the viewer asks about a version beside its files, by its route,
@@ -2883,7 +2889,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // download it where a team lists its scope, its own packages, as a new
     // dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
-      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
@@ -2912,7 +2918,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     }
     if (path === NPM_PRETTY_PATH) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
       const lines = other ? await deps.prettyCache.npmChanges(doc, other) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
       if (!(await recheck(isPrivate))) return
@@ -2928,7 +2934,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (diffed) {
       const { prettyCache } = deps
       if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const other = found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
