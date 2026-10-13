@@ -235,8 +235,9 @@ head one no longer named struck through. For an npm version, a file
 Socket raises an alert on is labelled with it in its head and in the tree.
 A script is labelled with what its code can do beyond itself, in its head
 and in the tree: run a string as code, one `eval` label for `eval`,
-`Function` (with `new` or without), `vm` and Module's `_compile` (called or
-hooked), its tooltip naming each; run other programs (`child_process`);
+`Function` (with `new` or without, but not `Function('return this')()`,
+older code's way to the global object, as lodash's and ejs's), `vm` and
+Module's `_compile` (called or hooked), its tooltip naming each; run other programs (`child_process`);
 reach for `credentials` (a path to `.npmrc`, `.ssh` or `.aws`, the name
 `NPM_TOKEN` or `GITHUB_TOKEN`); read out the `whole env`, as
 `JSON.stringify(process.env)` or `Object.entries(process.env)` do, not where

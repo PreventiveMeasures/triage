@@ -9,8 +9,12 @@ const found = (path, text) => {
 
 test('a script is read for eval, Function and child_process, each with the lines it is on', () => {
   assert.deepEqual(found('a.js', 'const y = (0, eval)(code)\nwindow.eval(a)\nglobalThis . eval(b)\nglobalThis?.eval(c)\n'), { eval: [1, 2, 3, 4] })
-  assert.deepEqual(found('a.js', 'new Function("return this")()\nconst f = Function("a", "b")\nnew window.Function(c)\n'),
+  assert.deepEqual(found('a.js', 'new Function("return payload")()\nconst f = Function("a", "b")\nnew window.Function(c)\n'),
     { function: [1, 2, 3] }, 'with new or without, as the global object\'s too')
+  assert.equal(found('a.js', 'var root = freeGlobal || freeSelf || Function(\'return this\')();\nvar g = new Function("return this;")()\nvar h = Function( /* c */ ` return this ` )()\n'), null,
+    'not to find the global object, as lodash and core-js do')
+  assert.deepEqual(found('a.js', 'Function(\'return this.x\')()\nFunction(\'return (async function(){}).constructor;\')()\nFunction(\'a\', \'return this\')\n'
+    + 'Function("return this" + s)()\nFunction(\'return this\', x)\n'), { function: [1, 2, 3, 4, 5] }, 'but where it does more, or is made of more')
   assert.deepEqual(found('a.js', 'Function?.("return payload")()\nglobalThis.Function?.("x")()\nFunction.call(null, "y")\nFunction.apply(null, ["z"])\neval?.(w)\n'),
     { eval: [5], function: [1, 2, 3, 4] }, 'called optionally, or by its call or apply')
   assert.deepEqual(found('a.js', 'window?.Function("x")()\nself?.Function?.("y")()\n'), { function: [1, 2] }, 'the global object\'s, reached optionally')
