@@ -1447,7 +1447,7 @@ export class BundleCompareCode extends LitElement {
         </button>` : nothing}
         ${whitespace ? this._whitespaceToggle() : nothing}
         ${types ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreTypes)} aria-label=${HIDE_TYPES}
-          data-tooltip=${`${HIDE_TYPES}: those proven to run nothing on either side`} @click=${() => this._setTypes(!prefs.ignoreTypes)}>
+          data-tooltip=${HIDE_TYPES} @click=${() => this._setTypes(!prefs.ignoreTypes)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 3.5h9M8 3.5v9"/></svg>
         </button>` : nothing}` : nothing}
         ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
