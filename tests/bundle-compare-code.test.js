@@ -405,7 +405,7 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   assert.match(markup, /Only renamed names changed in this file\./u, 'its one change hidden')
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
-  assert.match(bar, /aria-label="Mark renamed lines" data-tooltip=Mark renamed lines @click/u)
+  assert.match(bar, /aria-label="Mark renamed lines" data-tooltip="Mark renamed lines" @click/u)
   assert.match(bar, /aria-label="Hide renamed names"\s+data-tooltip="Hide renamed names"/u, 'each toggle saying what it does in three words')
   all._mode = 'code'
   all._query = 'q(X)'
@@ -1619,31 +1619,48 @@ test('a diff the server answers for other files than those asked about, or of ot
   assert.doesNotMatch(shown, /Only renamed names changed/u)
 })
 
-test('names a file reads keep renamed names from being hidden: its renamed lines are marked instead, the file as it is', async t => {
+test('names a file reads leave its renamed names hidden, saying what a rename may change, and offer them marked', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
-  const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=1;${'q(X);'.repeat(250)}f(X.name);\n` }])
+  const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=function(){};${'q(X);'.repeat(250)}f(X.name);\n` }])
   element.base.managedId = 'b13'
   element.other.managedId = 'b14'
   // Three lines differing in names alone, one between them unchanged, and a number changed.
-  pretty.set('b13:dist/named.min.js', 'var Y = 1;\nq(Y);\nf(Y.name);\nh();\ng(1);\nmodule.exports = 1;\n')
-  pretty.set('b14:dist/named.min.js', 'var X = 1;\nq(X);\nf(X.name);\nh();\ng(2);\nmodule.exports = 1;\n')
+  pretty.set('b13:dist/named.min.js', 'var Y = function () {};\nq(Y);\nf(Y.name);\nh();\ng(1);\nmodule.exports = 1;\n')
+  pretty.set('b14:dist/named.min.js', 'var X = function () {};\nq(X);\nf(X.name);\nh();\ng(2);\nmodule.exports = 1;\n')
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /(?:Hiding renamed names|Marking renamed lines)…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
   element._setRenames(true)
   await settle()
   const read = renderText(element.render())
-  assert.match(read, /Renamed lines are marked rather than hidden: the file reads names \(\.name\), which a rename changes\./u)
-  assert.match(read, /aria-pressed=true aria-disabled=true\s+aria-label="Mark renamed lines" data-tooltip=Code reads names @click/u, 'marking on, and kept on, saying why')
-  assert.match(read, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is, marked')
-  assert.match(read, /diff-row del renamed/u)
-  assert.match(read, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
-  assert.match(read, /≈3/u, 'the renamed lines counted apart')
+  assert.match(read, /Renamed names are hidden, though the file reads \.name, which a rename may change\. <button type="button" @click=>Mark renamed lines<\/button>/u)
+  assert.doesNotMatch(read, /diff-row del renamed/u, 'its renamed names hidden')
+  assert.match(read, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, shown')
+  assert.match(read, /aria-pressed=false\s+aria-label="Mark renamed lines" data-tooltip="Mark renamed lines"/u, 'the toggle free')
   element._setMarks(true)
+  await settle()
   const marked = renderText(element.render())
-  assert.match(marked, /diff-row del renamed/u, 'marked as asked, too')
-  assert.doesNotMatch(marked, /Renamed lines are marked rather than hidden/u, 'no note where the viewer asked for it')
-  assert.match(marked, /aria-pressed=true aria-disabled=\s+aria-label="Mark renamed lines"/u, 'and the toggle free to turn it off for other files')
+  assert.match(marked, /var <mark class="diff-word">Y<\/mark> = function/u, 'the old side as it is, marked as asked')
+  assert.match(marked, /diff-row del renamed/u)
+  assert.match(marked, /≈3/u, 'the renamed lines counted apart')
+  assert.doesNotMatch(marked, /Renamed names are hidden, though/u, 'no note where they are marked')
+  assert.match(marked, /aria-pressed=true\s+aria-label="Mark renamed lines"/u)
+})
+
+test('a file whose renamed names alone changed says what they may change where it reads a function\'s source', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
+  const element = view('dist/same.min.js', [{ 'dist/same.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(Y.toString());module.exports=1;\n` }, { 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}f(X.toString());module.exports=1;\n` }])
+  element.base.managedId = 'b17'
+  element.other.managedId = 'b18'
+  pretty.set('b17:dist/same.min.js', 'var Y = 1;\nq(Y);\nf(Y.toString());\nmodule.exports = 1;\n')
+  pretty.set('b18:dist/same.min.js', 'var X = 1;\nq(X);\nf(X.toString());\nmodule.exports = 1;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.match(shown, /Only renamed names changed in this file\.<\/p>\s*<p>Renamed names are hidden, though the file reads \.toString, which a rename may change\.<\/p>/u)
+  assert.match(shown, />Show renamed names<\/button>[^]*>Mark renamed lines<\/button>/u)
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {

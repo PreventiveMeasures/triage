@@ -1583,9 +1583,10 @@ control. A version shows in the bundle view with four tabs:
   not, asking again when the names are hidden again.
   **Mark renamed lines**, beside it, rather diffs the two sides as they are,
   drawing faint and counting apart (`≈`) the lines the server finds differ
-  in names renamed alone. Where either side reads names (`.name`, `.toString`, `.stack`,
-  `.callee`, `.caller`), whose values a rename changes, renamed lines are
-  marked so rather than hidden, whatever the toggle, and it says so. It
+  in names renamed alone. Where either side reads names (`.name`, told only
+  where a name renamed is a function's or class's, `.toString`, `.stack`,
+  `.callee`, `.caller`), whose values a rename may change, renamed names
+  are hidden still, with a note saying so and offering them marked. It
   is offered for those files alone: an author's name renamed, to a
   minifier's or to another author's, always shows. A global (`Map`, `$`) is
   kept, as is a name declared at a script's top level, a global another
