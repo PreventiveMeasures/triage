@@ -133,7 +133,9 @@ const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, octal,
 // The registry's host in a string, as JavaScript reads it (unescaped) and a
 // URL's parsing does, its tabs and line breaks gone, as a URL's authority: after two slashes, backslashes URLs take for them too, or
 // after an http(s) scheme's colon (its slashes optional there, as URLs take
-// them), its userinfo between, to its last `@` (`https://registry.npmjs.org/`, `.npmrc`'s
+// them), its userinfo between, to its last `@`, quotes and all, 256
+// characters at most, as credentials are, so a URL's every start is read
+// in bounded time (`https://registry.npmjs.org/`, `.npmrc`'s
 // `//registry.npmjs.org/`, `https://${token}@registry.npmjs.org/`,
 // `https:\\\\registry.npmjs.org`, `https:\x2f\x2fregistry.npmjs.org`,
 // `https:registry.npmjs.org`); or starting the string, its whole or before its
@@ -142,7 +144,7 @@ const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, octal,
 // (`registry.npmjs.org</span>`, `asks registry.npmjs.org`, `[registry.npmjs.org]`,
 // `note:registry.npmjs.org`, `user@registry.npmjs.org`, `docs/registry.npmjs.org`).
 const REGISTRY_HOST = String.raw`registry\.(?:npmjs\.org|yarnpkg\.com)`
-const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\"'\u0060\n]{0,256}@)?${REGISTRY_HOST}|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:?#])`, 'iu')
+const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\]{0,256}@)?${REGISTRY_HOST}|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:?#])`, 'iu')
 const URL_STRIPPED = /[\t\n\r]/gu
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
