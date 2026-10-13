@@ -643,21 +643,24 @@ test('a public link diffs the pairs of its own bundles\' files in one request', 
 const bundleTypeOnly = (id, other) => `/api/bundles/${id}/type-only?${new URLSearchParams({ other })}`
 const npmTypeOnly = (name, version, otherVersion) => `/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`
 // Two builds' TypeScript files: changed in types alone, at one path, renamed,
-// added and removed; and, left out, one that runs code once changed, one whose
-// `export {}` goes, which then runs otherwise once transpiled to CommonJS, one
-// not named as a declaration file, and one the same.
+// added and removed, and added with nothing but an `export {}` left once its
+// types are stripped; and, left out, one that runs code once changed, one whose
+// `export {}` goes, which then runs otherwise once transpiled to CommonJS, two
+// not named as declaration files, and one the same.
 const members = Array.from({ length: 12 }, (_, i) => `  m${i}: string;\n`).join('')
 const typedBuilds = [
   { 'types/index.d.ts': 'export interface A { a: string }\n', 'types/old-name.d.ts': `export interface R {\n${members}}\n`, 'lib/gone.d.ts': 'declare const x: number;\n',
     'types/run.d.ts': 'export interface B {}\n', 'types/inert.d.ts': 'export interface X {}\nexport {};\n', 'src/app.ts': 'export type T = 1;\n', 'types/same.d.ts': 'export type S = 1;\n' },
   { 'types/index.d.ts': 'export interface A { a: number }\n', 'types/new-name.d.ts': `export interface R {\n${members}  m12: number;\n}\n`, 'lib/added.d.ts': 'export type C = string;\n',
-    'types/run.d.ts': 'export interface B {}\nconsole.log(1);\n', 'types/inert.d.ts': 'export interface X { y: 1 }\n', 'src/app.ts': 'export type T = 2;\n', 'types/same.d.ts': 'export type S = 1;\n' },
+    'types/run.d.ts': 'export interface B {}\nconsole.log(1);\n', 'types/inert.d.ts': 'export interface X { y: 1 }\n', 'src/app.ts': 'export type T = 2;\n', 'types/same.d.ts': 'export type S = 1;\n',
+    'types/global.d.ts': 'declare global {\n  interface Window { z: 1 }\n}\nexport {};\n', 'src/empty.ts': 'export {};\n' },
 ]
 // Those changed in types alone, in path order, a side not there null.
 const typedLines = () => {
   const [olds, news] = typedBuilds
   const line = (path, otherPath) => ({ path, hash: path && fileHash(olds[path]), otherPath, otherHash: otherPath && fileHash(news[otherPath]) })
-  return [line(null, 'lib/added.d.ts'), line('lib/gone.d.ts', null), line('types/index.d.ts', 'types/index.d.ts'), line('types/old-name.d.ts', 'types/new-name.d.ts')]
+  return [line(null, 'lib/added.d.ts'), line('lib/gone.d.ts', null), line(null, 'types/global.d.ts'), line('types/index.d.ts', 'types/index.d.ts'),
+    line('types/old-name.d.ts', 'types/new-name.d.ts')]
 }
 
 test('the files that changed between two bundles in types alone are told in one request, as @preventive/compare proves them', async t => {
@@ -667,7 +670,7 @@ test('the files that changed between two bundles in types alone are told in one 
   assert.equal(res.status, 200)
   assert.equal(res.headers['content-type'], 'application/x-ndjson')
   assert.equal(res.headers['cache-control'], 'private, no-store')
-  assert.deepEqual(linesOf(res), typedLines(), 'added, removed, at one path and renamed; none that runs code, drops an `export {}` or is no declaration file')
+  assert.deepEqual(linesOf(res), typedLines(), 'added, an `export {}` alone left of one, removed, at one path and renamed; none that runs code, drops an `export {}` or is no declaration file')
   assert.deepEqual(linesOf(await h.send(bundleTypeOnly(other, other))), [], 'none between a bundle and itself')
   assert.equal((await h.send(bundleTypeOnly(base, other), 'outsider')).status, 404)
   assert.equal((await h.send(bundleTypeOnly(base, other), null)).status, 401)
