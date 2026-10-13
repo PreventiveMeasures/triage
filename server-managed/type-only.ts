@@ -1,8 +1,8 @@
 // Compare's changes to TypeScript declaration files in types alone (GET
 // /api/bundles/:id/type-only?other=, GET /api/npm/type-only): every file
 // that changed between a comparison's two sides, added and removed ones too,
-// paired as its viewer pairs them (computeBundleDiff, as rename-diff.ts
-// renamedPairs), whose change @preventive/compare's compareTrees stamps
+// paired as its viewer pairs them (rename-diff.ts comparedFiles), whose
+// change @preventive/compare's compareTrees stamps
 // `typeOnly` -- each side there a file named as a declaration file and
 // proven to hold types alone, so that it runs nothing (proveTypeOnly) --
 // and nothing else. Proven in a worker, off the event loop, a comparison at a
@@ -10,8 +10,8 @@
 // otherPath, otherHash }`, a side not there null, which the viewer checks
 // name the files it shows. Access is the caller's to check.
 import { Worker } from 'node:worker_threads'
-import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import { type ComparedSide, PrettyError, type PrettyRequest } from './pretty-print.ts'
+import { comparedFiles } from './rename-diff.ts'
 
 // TypeScript files, by extension as the pretty-print cache reads them: none
 // other is asked about.
@@ -79,14 +79,9 @@ function proven(pairs: Array<[File | null, File | null]>, deadline: number): Pro
 // The files that changed between a comparison's two sides in types alone,
 // as the viewer pairs them, a line each once all are proven, in path order.
 export function typeOnlyFiles([base, other]: readonly [ComparedSide, ComparedSide]): AsyncGenerator<TypeOnlyLine> {
-  // Every file, those that can be formatted by their texts and the rest by their hashes.
-  const contents = ({ files, hashes }: ComparedSide) => {
-    const texts = new Map(files.map(file => [file.path, file.text]))
-    return new Map<string, unknown>([...hashes].map(([path, hash]) => [path, texts.get(path) ?? { format: 'digest', digest: hash }]))
-  }
   const typescript = ({ files }: ComparedSide) => new Map(files.filter(file => TYPESCRIPT.has(file.extension)).map(file => [file.path, file]))
   const [olds, news] = [typescript(base), typescript(other)]
-  const { changed, onlyBase, onlyOther } = computeBundleDiff(contents(base), contents(other), () => '.').files
+  const { changed, onlyBase, onlyOther } = comparedFiles([base, other])
   // A side there not a TypeScript file this reads leaves its pair out; one not there is null.
   const pairs = [...changed.map(({ path, basePath = path }) => [olds.get(basePath), news.get(path)]),
     ...onlyBase.map(({ path, basePath = path }) => [olds.get(basePath), null]), ...onlyOther.map(({ path }) => [null, news.get(path)])]

@@ -205,6 +205,8 @@
     "common/bundle-compare-diff.d.ts",
     "common/bundle-compare-inputs.js",
     "common/bundle-metadata.d.ts",
+    "common/bundle-pkg-of.d.ts",
+    "common/bundle-pkg-of.js",
     "common/bundle-metadata.js",
     "common/bundle-reasons.d.ts",
     "common/bundle-reasons.js",

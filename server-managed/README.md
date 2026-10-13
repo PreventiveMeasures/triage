@@ -1138,7 +1138,7 @@ again after the diff; a public link answers for two of its own bundles.
 of JavaScript files minified on both sides that changed between the two
 bundles in one request, as Compare's Diff view and tree want them all:
 paired as the viewer pairs them (`computeBundleDiff`, at one path or renamed,
-every file as of one package), in path order, one after another (leaving a
+within a package as the bundles record their packages, `bundlePkgOf`), in path order, one after another (leaving a
 worker to the files a viewer asks for alone), each from both sides' copies,
 kept or made as `pretty` keeps and makes them. It answers Brotli-encoded
 ndjson as each is worked out, a line each, the answer for that pair asked

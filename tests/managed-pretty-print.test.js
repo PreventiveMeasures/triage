@@ -681,3 +681,12 @@ test('the files that changed between two npm versions in types alone are told in
   assert.equal((await h.send(npmTypeOnly('lib', '1.0.0', ''))).status, 400)
   assert.equal((await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'), null)).status, 401)
 })
+
+test('a comparison\'s files are paired renamed within a package alone, as the viewer pairs them', async t => {
+  const h = await setup(t)
+  // A chunk renamed within its package, and one like it gone from one package and come in another.
+  const [base, other] = [await h.seed({ 'node_modules/a/dist/x-1a2b.js': chunk, 'node_modules/c/dist/y-1a2b.js': long }),
+    await h.seed({ 'node_modules/b/dist/x-3c4d.js': chunk.replace('c*b', 'c*b+1'), 'node_modules/c/dist/y-3c4d.js': renamedLong })]
+  const pairs = linesOf(await h.send(bundleRenameDiffs(base, other))).map(({ path, otherPath }) => [path, otherPath])
+  assert.deepEqual(pairs, [['node_modules/c/dist/y-1a2b.js', 'node_modules/c/dist/y-3c4d.js']], 'none across packages')
+})

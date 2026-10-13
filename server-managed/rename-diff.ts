@@ -18,9 +18,11 @@ import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
+import { layoutPackageDirs, treeLayout } from '@preventive/compare'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
+import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 import { needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
@@ -221,21 +223,32 @@ const renamable = ({ extension }: PrettyRequest) => RENAMABLE.has(extension)
 // none, as a PrettyError tells it.
 export type RenamedLine = { path: string; hash: string; otherPath: string; otherHash: string } & (Partial<RenameDiff> | { error: string; status: number })
 
-// The pairs of JavaScript files minified on both sides that changed between a
-// comparison's two sides, paired as its viewer pairs them (computeBundleDiff:
-// at one path, or renamed, every file as of one package), each diffed as
-// renameDiffOf diffs it, from both sides' copies, kept or made, as they are
-// iterated: in path order, one after another, leaving a worker to the files a
-// viewer asks for alone (a pair it reads otherwise, one it shows first).
-export function renamedPairs([base, other]: readonly [ComparedSide, ComparedSide], keep = true): AsyncGenerator<RenamedLine> {
-  // Every file, those that can be formatted by their texts and the rest by their hashes.
-  const contents = ({ files, hashes }: ComparedSide) => {
+// The files that changed between a comparison's two sides, as its viewer
+// pairs them (ui/view/bundle-comparison.js prepareComparison): at one path as
+// the other side lays them out, or renamed within a package, as the bundles
+// record their packages; every file there, those that can be formatted by
+// their texts and the rest by their hashes. A file the viewer pairs otherwise
+// (its files are its resources too) it asks about alone.
+export function comparedFiles(sides: readonly [ComparedSide, ComparedSide]) {
+  const [olds, news] = sides.map(({ files, hashes }) => {
     const texts = new Map(files.map(file => [file.path, file.text]))
     return new Map<string, unknown>([...hashes].map(([path, hash]) => [path, texts.get(path) ?? { format: 'digest', digest: hash }]))
-  }
+  }) as [Map<string, unknown>, Map<string, unknown>]
+  const layout = treeLayout(olds.keys(), news.keys())
+  const packageDirs = layoutPackageDirs(sides[0].packageDirs, sides[1].packageDirs, layout)
+  return computeBundleDiff(olds, news, path => bundlePkgOf(path, { packageDir: packageDirs?.get(path) }), layout).files
+}
+
+// The pairs of JavaScript files minified on both sides that changed between a
+// comparison's two sides, paired as its viewer pairs them (comparedFiles),
+// each diffed as renameDiffOf diffs it, from both sides' copies, kept or
+// made, as they are iterated: in path order, one after another, leaving a
+// worker to the files a viewer asks for alone (a pair it reads otherwise, one
+// it shows first).
+export function renamedPairs([base, other]: readonly [ComparedSide, ComparedSide], keep = true): AsyncGenerator<RenamedLine> {
   const formattable = ({ files }: ComparedSide) => new Map(files.map(file => [file.path, file]))
   const [olds, news] = [formattable(base), formattable(other)]
-  const pairs = computeBundleDiff(contents(base), contents(other), () => '.').files.changed.flatMap(({ path, basePath = path }) => {
+  const pairs = comparedFiles([base, other]).changed.flatMap(({ path, basePath = path }) => {
     const [from, to] = [olds.get(basePath), news.get(path)]
     return from && to && from.hash !== to.hash && [from, to].every(file => renamable(file) && needsPrettyPrint(file.path, file.text)) ? [[from, to] as const] : []
   }).toSorted(([, a], [, b]) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
