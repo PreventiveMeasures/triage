@@ -58,8 +58,12 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     + 'write(\'//registry.npmjs.org/:_authToken=${NPM_TOKEN}\')\nexec(\'echo %NPM_TOKEN%\')\n'), { tokens: [1, 2, 3, 4, 5] }, 'a token\'s value read, or expanded by a shell or .npmrc')
   assert.equal(found('a.js', 'if (repoAdvisories && !process.env.GITHUB_TOKEN) fail(\'Error: --repo-advisories requires a GitHub token in GITHUB_TOKEN\')\n'
     + 'delete process.env.NPM_TOKEN\nif (! env . NPM_TOKEN) ask()\nif (!process.env[\'NPM_TOKEN\']) ask()\ndelete process.env [ "GITHUB_TOKEN" ]\n'
-    + 'if (!(process.env.GITHUB_TOKEN)) ask()\nif (!( process.env[\'NPM_TOKEN\'] )) ask()\ndelete (process.env.NPM_TOKEN)\n'), null,
-    'its absence told, or the token dropped, dotted or as a key, and text naming it')
+    + 'if (!(process.env.GITHUB_TOKEN)) ask()\nif (!( process.env[\'NPM_TOKEN\'] )) ask()\ndelete (process.env.NPM_TOKEN)\n'
+    + 'process.env.NPM_TOKEN = token\nconst GITHUB_TOKEN = input\nprocess.env[\'NPM_TOKEN\'] = token\n'), null,
+    'its absence told, the token dropped or only set, dotted or as a key, and text naming it')
+  assert.deepEqual(found('a.js', 'process.env.NPM_TOKEN ||= ask()\nif (process.env.GITHUB_TOKEN === x) f()\nconst { NPM_TOKEN = \'\' } = process.env\n'
+    + 'const { a, GITHUB_TOKEN = null } = process.env\nprocess.env[\'NPM_TOKEN\'] ??= ask()\nconst NPM_TOKEN = process.env.NPM_TOKEN\n'), { tokens: [1, 2, 3, 4, 5, 6] },
+    'read as it is set, compared, or destructured with a default')
   assert.deepEqual(found('a.js', 'const token = process.env[\'NPM_TOKEN\']\nif (process.env?.[\'GITHUB_TOKEN\']) use()\nif (!check(process.env.GITHUB_TOKEN)) ask()\n'),
     { tokens: [1, 2, 3] }, 'read as a key, or handed on')
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),
