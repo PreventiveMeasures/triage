@@ -31,8 +31,9 @@ const HKDF_TAG_INFO = 'deepview-objstore.v1.tag'
 
 // Bytes prepended to each fileName / integrity before HMAC. Domain-
 // separating prefixes prevent a hypothetical bug from cross-mapping
-// a report `resourceTag` to a bundle's `bundleResourceTag` (or
-// vice-versa) when they're both derived from the same `tagKey` —
+// a report's tag (`computeResourceTag`) to a bundle's
+// (`computeBundleResourceTag`), or vice-versa, when they're both
+// derived from the same `tagKey` —
 // distinct prefixes make the tag spaces disjoint by construction.
 // The literal `\n` separator matches the convention
 // canonicalObjstore* uses.

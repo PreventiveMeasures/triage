@@ -229,7 +229,7 @@ async function handleFetch(deps: ObjstoreDeps, socket: WebSocket, msg: ObjstoreF
 // the reaper's TTL pass within `STAGING_TTL_MS_DEFAULT` — no per-
 // socket bookkeeping is needed on disconnect today. If that ever
 // changes, wire a `cleanupSocket(socket)` into both this bundle and
-// server-e2e/index.ts's close handler.
+// server-e2e/ws-server.ts's per-socket close handler.
 
 export type ObjstoreHandlers = {
   handlePutBegin: (s: WebSocket, m: ObjstorePutBeginMsg) => Promise<void>

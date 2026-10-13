@@ -177,8 +177,9 @@ export type ObjstorePutEvent = { resourceTag: string; version: number; incarnati
 
 // Per-client deps. The client opens one WebSocket and multiplexes
 // every workspace's session over it. `authResolver` is shared too —
-// the server's `socketAuthorized` flag is per-WebSocket, so a single
-// password unlocks all workspaces over this client's socket.
+// the server's `Peer.authorized` flag (server-e2e/peer.ts) is
+// per-WebSocket, so a single password unlocks all workspaces over
+// this client's socket.
 export type ObjstoreClientDeps = {
   // WebSocket URL — `ws://host:port/api/sync` (the same URL the
   // triage-sync relay listens on; objstore handlers are wired into

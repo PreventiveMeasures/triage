@@ -1358,9 +1358,8 @@ describe('client/sync/objstore-presence', () => {
   // discovery that never auto-attached, or a peer-uploaded copy
   // under a different name — falls through to `fetchByTag` →
   // `maybeAutoDownload(Bundle)` so the workspace converges on the
-  // remote inventory. This subsumes the previous
-  // `dropFileFromPresenceCaches` / `dropBundleFromPresenceCaches`
-  // cleanup helpers (no longer needed).
+  // remote inventory. This subsumes the separate per-file /
+  // per-bundle presence-cache cleanup that used to be needed.
   // -----------------------------------------------------------------
 
   it('ensureRemoteNames re-discovers a report when a cached name is NOT in workspace.reports', async () => {

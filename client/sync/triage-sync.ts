@@ -2040,8 +2040,8 @@ export const triageSync = {
 
   // Ensure a sync session — and thus the single `workspace-subscribe`
   // for this tag on the shared socket — exists, returning a token the
-  // objstore presence layer MUST pass into
-  // `objstoreClient.openWorkspace`. This is the seam coupling every
+  // objstore presence layer MUST pass into the objstore client's
+  // `openWorkspace` (objstore.ts). This is the seam coupling every
   // objstore session to a backing sync subscribe: objstore never
   // subscribes itself, so it refuses to open (and send ops) without
   // this proof. Idempotent (delegates to `openSession`). Returns null

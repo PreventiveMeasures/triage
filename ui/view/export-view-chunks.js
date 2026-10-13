@@ -43,10 +43,11 @@ export const CHUNK_MAX = 320
 const HEADING_RE = /^ {0,3}#{1,6}(?: |$)/u
 const SETEXT_UNDERLINE_RE = /^ {0,3}(?:=+|-+) *$/u
 // A table row and the delimiter line under a header row, as Prism's
-// markdown grammar sees them (its `tableRow` / `tableLine`): at least
-// two cells, no indentation. Prism's table is a row followed by a
-// delimiter line followed by any run of rows, so these two are what
-// decide where a table starts and how far it reaches.
+// markdown grammar sees them (its `tableRow` / `tableLine`, in
+// prismjs/components/prism-markdown.js): at least two cells, no
+// indentation. Prism's table is a row followed by a delimiter line
+// followed by any run of rows, so these two are what decide where a
+// table starts and how far it reaches.
 const TABLE_ROW_RE = /^\|?[^|\n]+(?:\|[^|\n]+)+\|?$/u
 const TABLE_DELIM_RE = /^\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?$/u
 

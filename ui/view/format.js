@@ -308,8 +308,8 @@ export function formatBytes(n) {
 }
 
 // Strip the longest common DIRECTORY prefix shared by every path
-// in `paths`. Mirrors `stripCommonPrefix` in src/paths.js so the
-// UI matches what the analyzer-side normalisation produces:
+// in `paths`. Mirrors the analyzer-side path normalisation so the
+// UI matches what it produces:
 //
 //   * Segment-level (only whole directory segments are stripped).
 //   * Caps the prefix so it never ends in a `@scope` segment or

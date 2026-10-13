@@ -1,8 +1,9 @@
 // Shared in-memory + secure-storage cache for the operator-side sync
-// password. Both `client/triage-sync.ts` and `client/objstore.ts`
-// authenticate independently (separate WebSocket per session, separate
-// per-socket `socketAuthorized` flag on the server), so both need the
-// same cached password to silently replay on reconnect / re-upload.
+// password. The server's password gate is a per-socket flag
+// (`Peer.authorized`, server-e2e/peer.ts), so every socket
+// `socket-transport.ts` opens for triage-sync and objstore has to
+// authenticate on its own, and needs the same cached password to
+// silently replay on reconnect.
 //
 // Storage shape:
 //   * `inMemory` is the source of truth for synchronous reads from

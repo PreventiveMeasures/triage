@@ -560,7 +560,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // Reports list — same brand-sticker chip the Issues tab uses on
   // each row, sized up so it reads as a list rather than a row
   // affordance. data-bundle-issue-report wires into the existing
-  // events.js delegate that calls switchToFile.
+  // events.js delegate that calls switchToFile (ingest.js).
   const reportsTpl = reports.length > 0 ? html`<ul class="bundles-reports-list">
     ${reports.map((name) => {
       const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
@@ -2055,7 +2055,7 @@ function renderBundleSlide(entry) {
 // report collapses into a trailing ", and more…" hint so the row
 // stays readable when a finding is shared across many reports.
 // Each chip is clickable — the data attribute hands the report
-// name to events.js, which calls switchToFile to navigate.
+// name to events.js, which calls ingest.js's switchToFile to navigate.
 function bundleIssueReportsTemplate(finding, ctx = {}) {
   if (!finding) return nothing
   // Hash-keyed lookup is the original path — analyzer-native
@@ -2064,7 +2064,9 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   // file. Markdown-parsed findings (Codex / Claude Security)
   // don't carry a hash, so the bucket-keyed fallbacks below
   // pick them up via the package / repository index's
-  // `keyReports` map. `ctx.kind` + `ctx.bucketKey` flow in from
+  // `_keyReports` map (client/bundle-finding-index.js
+  // `reportsForFindingByPackage` / `reportsForFindingByRepo`).
+  // `ctx.kind` + `ctx.bucketKey` flow in from
   // `renderIssuesGroupedByFile` so this template knows which
   // index to consult when the hash path comes up empty.
   let reports = []
@@ -2196,7 +2198,7 @@ function renderBundleIssuesList(details) {
 //   * Package + Repository slides: handed to
 //     `bundleIssueReportsTemplate` so report chips for findings
 //     without a `fileHash` (Codex / Claude Security markdown
-//     findings) still surface, via the bucket's `keyReports`
+//     findings) still surface, via the bucket's `_keyReports`
 //     map.
 export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = {}) {
   // Strip the shared root once for the file headers; the leading

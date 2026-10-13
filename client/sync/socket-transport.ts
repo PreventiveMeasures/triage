@@ -36,7 +36,7 @@ export type SocketTransportDeps = {
   // Empty string is allowed — `setServerUrl(url)` populates later.
   serverUrl: string
   // Optional. Shared between consumers since the server's
-  // `socketAuthorized` flag is per-WebSocket.
+  // `Peer.authorized` flag (server-e2e/peer.ts) is per-WebSocket.
   authResolver?: AuthResolver
   // Heartbeat cadence in ms. 0 disables (test seam). Defaults:
   // 15 s ping, 5 s pong timeout.

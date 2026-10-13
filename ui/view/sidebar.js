@@ -1563,7 +1563,7 @@ triageSync.onStatusChange(renderSyncStatus)
 // transition; the client-sync passthrough defers this until the lazy
 // sync chunk loads, so the first fire lands after mount.
 //
-// `shownThisEpisode` makes it one-shot (not re-shown on unrelated
+// `degradedShownThisEpisode` makes it one-shot (not re-shown on unrelated
 // re-renders) and resets when the latch clears, so a fresh degradation
 // re-notifies. If the dialog can't open because another modal is up
 // (modal-conflict → resolves `{ shown: false }`), retry on a short
