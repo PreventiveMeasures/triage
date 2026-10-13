@@ -3,7 +3,7 @@
 // between weeks and months and the hovered period's downloads at its top
 // right. Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
-import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel } from '../../risk/npm/downloads.js'
+import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel, npmTierLow } from '../../risk/npm/downloads.js'
 
 const HEIGHT = 72
 // The plot runs to the card's right edge, as the switch over it does.
@@ -23,7 +23,12 @@ const monthYear = dateFormat({ month: 'short', year: 'numeric' })
 const monthName = dateFormat({ month: 'long', year: 'numeric' })
 
 export const npmTierName = tier => tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`
-const tierChip = tier => html`<dd class=${`npm-downloads-tier ${npmTierLevel(tier)}`}>${npmTierName(tier)}</dd>`
+// Its tier, in its tint: yellow at most where `known` says why, in its
+// tooltip, past the top 20,000 (npm-overview.js knownNote).
+const tierChip = (tier, known) => {
+  const capped = known && npmTierLow(tier)
+  return html`<dd class=${`npm-downloads-tier ${capped ? 'is-mid' : npmTierLevel(tier)}`} data-tooltip=${capped ? known : nothing}>${npmTierName(tier)}</dd>`
+}
 
 const PERIODS = {
   week: { label: 'Weekly', of: downloads => npmDownloadWeeks(downloads).slice(-52), name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
@@ -55,9 +60,10 @@ export function niceCeiling(max) {
 class NpmDownloadsChart extends LitElement {
   // `status` is its downloads' load, as npmPackageData has it: 'loading',
   // 'error' (until it asks again) or 'ready' (`downloads` null where the
-  // server has none).
+  // server has none). `known` says why its tier is yellow at most, null
+  // where it isn't (tierChip).
   static properties = {
-    downloads: { attribute: false }, status: {}, _width: { state: true }, _at: { state: true }, _unit: { state: true },
+    downloads: { attribute: false }, status: {}, known: { attribute: false }, _width: { state: true }, _at: { state: true }, _unit: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -66,6 +72,7 @@ class NpmDownloadsChart extends LitElement {
     super()
     this.downloads = null
     this.status = 'loading'
+    this.known = null
     this._width = 0
     this._at = null
     this._unit = 'week'
@@ -193,7 +200,7 @@ class NpmDownloadsChart extends LitElement {
       <dl class="npm-stats">
         ${this._latestStat()}
         ${this._stat('Downloads, last 12 months', this._year, 'year')}
-        ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt>${tierChip(this._tier)}</div>` : nothing}
+        ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt>${tierChip(this._tier, this.known)}</div>` : nothing}
       </dl>
       ${charted ? this._controls(at) : nothing}
     </div>

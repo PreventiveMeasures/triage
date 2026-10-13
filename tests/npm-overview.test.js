@@ -27,7 +27,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmReviewLimit, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmStatsRow, npmTakenDown } = await import('../ui/view/npm-overview.js')
 const { npmFileFlagTags, npmFileReadabilityOf, npmObfuscationFound, npmReadabilityFlags } = await import('../ui/view/file-readability.js')
 const { NPM_LARGE_CODE, NPM_LONG_LINE, npmBecameUnreadable, npmFileReadability, npmLargeCode, npmObfuscation, npmReadabilityLabels } = await import('../risk/files/readability.js')
 const { npmTextEncoding } = await import('../risk/files/characters.js')
@@ -446,6 +446,31 @@ test('a file Socket raises an alert on is named in its severity\'s color, its no
   assert.match(malware, /data-tooltip=Socket: Malware, critical · Steals tokens\.>Malware</u)
   assert.match(scripts, /sev-moderate[^]*>Install scripts</u, 'Socket\'s middle severity reads as moderate')
   assert.deepEqual(npmSocketFileTags(), [])
+})
+
+test('the downloads card\'s tier is yellow at most past the top 20,000 where risk says the version is known, its tooltip saying why', async () => {
+  globalThis.ResizeObserver ??= class { observe() {} disconnect() {} }
+  const Chart = customElements.get('npm-downloads-chart')
+  const KNOWN = 'Published by an account that publishes one of npm\'s most downloaded packages'
+  // Its tier's chip, `perDay` downloaded each day of two months.
+  const chip = (perDay, known = null) => {
+    const chart = Object.assign(new Chart(), { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => perDay) }, status: 'ready', known })
+    chart.willUpdate(new Map([['downloads', null]]))
+    return /<dd class=npm-downloads-tier [^]*?<\/dd>/u.exec(rendered(chart.render()))[0]
+  }
+  assert.equal(chip(500), '<dd class=npm-downloads-tier is-low data-tooltip=>top 100,000</dd>', 'orange, 3,500 a week')
+  assert.equal(chip(1), '<dd class=npm-downloads-tier is-unpopular data-tooltip=>unpopular</dd>')
+  assert.equal(chip(500, KNOWN), `<dd class=npm-downloads-tier is-mid data-tooltip=${KNOWN}>top 100,000</dd>`, 'yellow where known, saying why')
+  assert.equal(chip(1, KNOWN), `<dd class=npm-downloads-tier is-mid data-tooltip=${KNOWN}>unpopular</dd>`)
+  assert.equal(chip(1e6, KNOWN), '<dd class=npm-downloads-tier is-top data-tooltip=>top 5,000</dd>', 'no lower for it')
+
+  // As the version's risk tells it, once it arrives.
+  const row = async entry => { held({ npm: entry.npm }); npmStatsRow(entry); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmStatsRow(entry)) }
+  answers.stats.carded = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 500) } }
+  assert.match(await row({ npm: { name: 'carded', version: '2.0.0', manifest: { publisher: 'known', knownAccounts: ['known'] } } }), new RegExp(`\\.known=${KNOWN}>`, 'u'))
+  answers.stats['@babel/carded'] = answers.stats.carded
+  assert.match(await row({ npm: { name: '@babel/carded', version: '2.0.0', manifest: {} } }), /\.known=In @babel, the scope of one of npm's most downloaded packages, which only its owner publishes in>/u)
+  assert.match(await row({ npm: { name: 'carded', version: '1.0.0', manifest: { publisher: 'someone' } } }), /\.known=>/u, 'none where it isn\'t')
 })
 
 test('Compare\'s badges flag the advisories affecting either version, Socket\'s scores under their bars, and a package few download', async () => {
