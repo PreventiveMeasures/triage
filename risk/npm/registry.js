@@ -231,7 +231,8 @@ export async function npmPackageReleases(name, context) {
 // `{ id, url, title?, cwe, aliases }`: GitHub's advisories and the malicious
 // packages' (MAL-…, OpenSSF's) among them, each page read to OSV_BYTES, the
 // next asked as its `next_page_token` names one, as OSV pages what it can't
-// answer at once, up to OSV_PAGES; `upstream-invalid` past them.
+// answer at once, up to OSV_PAGES; `upstream-invalid` past them, or for a
+// page not as OSV answers one, so that none is taken for no records.
 const OSV_BYTES = 8 * 1024 * 1024
 const OSV_PAGES = 10
 const strings = value => Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
@@ -242,8 +243,10 @@ async function osvRecords(name, version, context) {
   for (let page = 0; page < OSV_PAGES; page++) {
     const json = await askNpm(OSV_QUERY, {}, OSV_BYTES, what, context,
       { body: { package: { ecosystem: 'npm', name }, version, ...next ? { page_token: next } : {} }, from: 'OSV' })
-    records = records.concat(Array.isArray(json?.vulns) ? json.vulns : [])
-    next = typeof json?.next_page_token === 'string' && json.next_page_token !== '' ? json.next_page_token : null
+    const { vulns = [], next_page_token: following = '' } = json !== null && typeof json === 'object' && !Array.isArray(json) ? json : { vulns: null }
+    if (!Array.isArray(vulns) || typeof following !== 'string') throw new NpmRiskError('upstream-invalid', `${what}: not as OSV answers`)
+    records = records.concat(vulns)
+    next = following || null
     if (!next) {
       return records.filter(record => typeof record?.id === 'string' && record.id.length <= 64)
         .map(record => ({ id: record.id, url: `https://osv.dev/vulnerability/${encodeURIComponent(record.id)}`, ...typeof record.summary === 'string' ? { title: record.summary } : {},
