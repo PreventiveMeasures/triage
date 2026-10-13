@@ -30,7 +30,7 @@ const RETRY_MAX_MS = 5 * 60_000
 // are that differ in renamed names alone, and the hashes of the copies it was
 // worked out from), or `{ status: 'error', message, retry }`,
 // `retry` where asking again may succeed (the server busy, a timeout), then
-// `until` when, `tries` the failures so far.
+// `until` when; `tries` the failures before, for how long until then.
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
@@ -46,11 +46,15 @@ export const renameDiffable = (base, other) => !!(base?.managedId && other?.mana
 
 let fetches = 0
 const turns = []
+// What a request whose turn came once no view wants it any longer gives.
+const STALE = Symbol('stale')
 
-async function inTurn(work) {
+// `work` once a turn is free, or STALE where by then `wanted` says no view
+// asks for it: a view left, or a list filtered, before its diffs all came.
+async function inTurn(work, wanted) {
   if (fetches < MAX_FETCHES) fetches++
   else await new Promise(resolve => { turns.push(resolve) })
-  try { return await work() }
+  try { return wanted() ? await work() : STALE }
   finally {
     const next = turns.shift()
     if (next) next()
@@ -63,6 +67,8 @@ async function inTurn(work) {
 // still coming, so a view showing more than that never drops one it shows and
 // asks for it again.
 let asking = false, wanted = new Set(), wantedBefore = new Set()
+
+const wantedNow = key => wanted.has(key) || wantedBefore.has(key)
 
 function want(key) {
   if (!asking) {
@@ -82,12 +88,20 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const params = { path: basePath, hash, otherPath: path, otherHash, ignoreWhitespace }
     const answer = await inTurn(() => base.npm
       ? fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
-      : fetchBundleRenameDiff(base.managedId, other.managedId, params))
+      : fetchBundleRenameDiff(base.managedId, other.managedId, params), () => wantedNow(key))
+    // Wanted no longer: asked again where a view asks again.
+    if (answer === STALE) {
+      if (diffs.get(key) === asked) {
+        diffs.delete(key)
+        notifiers.delete(key)
+      }
+      return
+    }
     const { before: renamed, blocks, reason, reads, marks, prettyHash, otherPrettyHash } = answer
     next = answer.hash === hash && answer.otherHash === otherHash && typeof renamed === 'string' && Array.isArray(blocks)
       && (reason == null || typeof reason === 'string') && Array.isArray(reads) && reads.every(read => typeof read === 'string') && Array.isArray(marks)
       && typeof prettyHash === 'string' && typeof otherPrettyHash === 'string'
-      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null, reads, marks, copies: [prettyHash, otherPrettyHash] }
+      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null, reads, marks, copies: [prettyHash, otherPrettyHash], tries: asked.tries }
       : { status: 'error', message: MISMATCH, retry: true }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
@@ -102,16 +116,20 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
   }
   if (diffs.get(key) !== asked) return
   const notify = notifiers.get(key)
-  if (next.status === 'error' && next.retry) {
-    const wait = Math.min(RETRY_MS * 2 ** (asked.tries ?? 0), RETRY_MAX_MS)
-    Object.assign(next, { until: Date.now() + wait, tries: (asked.tries ?? 0) + 1 })
-    // Painted again then, to ask again.
-    if (notify) setTimeout(notify, wait)?.unref?.()
-  }
+  if (next.status === 'error' && next.retry) due(next, asked.tries, notify)
   diffs.set(key, next)
   notifiers.delete(key)
   evict()
   notify?.()
+}
+
+// A failure that may pass, given when it is asked again (`until`), counting
+// `tries`, the view that asked painted again then.
+function due(failure, tries = 0, notify = null) {
+  const wait = Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS)
+  Object.assign(failure, { until: Date.now() + wait, tries: tries + 1 })
+  if (notify) setTimeout(notify, wait)?.unref?.()
+  return failure
 }
 
 // Past KEPT_DIFFS, the least recent no view waits for: as one is asked for,
@@ -135,14 +153,18 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   const key = `${base.integrity}\0${basePath}\0${other.integrity}\0${path}\0${ignoreWhitespace}`
   const asked = diffs.get(key)
   // One that failed for a reason that may have passed, asked again once due.
-  const due = asked?.status === 'error' && asked.until !== undefined && Date.now() >= asked.until
-  let diff = asked && !due ? asked : { status: 'loading', tries: asked?.tries }
-  if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) diff = { status: 'error', message: MISMATCH, retry: true }
+  const again = asked?.status === 'error' && asked.until !== undefined && Date.now() >= asked.until
+  let diff = asked && !again ? asked : { status: 'loading', tries: asked?.tries }
+  // Worked out from other copies than those drawn (printed again since, as a
+  // formatter changed): asked again, as a failure that may pass is.
+  if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) {
+    diff = due({ status: 'error', message: MISMATCH, retry: true }, asked.tries, notify)
+  }
   diffs.delete(key)
   diffs.set(key, diff)
   want(key)
   if (diff.status === 'loading') notifiers.set(key, notify)
-  if (!asked || due) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
+  if (!asked || again) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
   evict()
   return diff
 }

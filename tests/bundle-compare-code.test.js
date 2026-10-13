@@ -13,8 +13,9 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // (@preventive/compare's renamedDiff), naming the two files' hashes (each
 // asked for noted; an error in place of the base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
-// The rename diffs the mock server is working out at once, and the most so far.
-const flying = { now: 0, most: 0 }
+// The rename diffs the mock server is working out at once, and the most so far;
+// `held`, while set, a promise each waits for before it answers.
+const flying = { now: 0, most: 0, held: null }
 // Bundles whose diffs the server answers for another base file than the one
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
@@ -26,6 +27,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
     if (before instanceof Error) throw before
     flying.most = Math.max(flying.most, ++flying.now)
+    await flying.held
     const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' }).finally(() => { flying.now-- })
     assert.deepEqual(warnings, [])
     const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
@@ -424,6 +426,54 @@ test('the Diff view marks the renamed lines of every minified file it shows, how
   assert.equal(ours.length, files.length, 'each asked for once, past those a few kept, painted again as it may be')
   assert.ok(flying.most <= 2, `two at a time, as the server works them out (${flying.most})`)
   assert.match(renderText(all.render()), /aria-pressed=false aria-label="Hide renamed names"/u)
+})
+
+test('the Diff view filtered before its rename diffs all came asks for none of those it shows no longer, as their turns come', async t => {
+  const files = Array.from({ length: 10 }, (_, i) => `dist/s${i}.min.js`)
+  t.after(() => {
+    state.bundleSourcePretty = false
+    for (const path of files) for (const id of ['b27', 'b28']) pretty.delete(`${id}:${path}`)
+  })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
+  code.base.managedId = 'b27'
+  code.other.managedId = 'b28'
+  for (const path of files) {
+    pretty.set(`b27:${path}`, `var Y = 1;\nq(Y);\nh(${JSON.stringify(path)});\nmodule.exports = 1;\n`)
+    pretty.set(`b28:${path}`, `var X = 1;\nq(X);\nh(${JSON.stringify(path)});\nmodule.exports = 2;\n`)
+  }
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'dist/s'
+  // The server's answers held, the view asks for all ten: two on their way, the rest waiting their turn.
+  let release
+  flying.held = new Promise(resolve => { release = resolve })
+  t.after(() => { release(); flying.held = null })
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 400 && flying.now < 2; i++) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(flying.now, 2, 'two on their way')
+  const asked = renameDiffs.length
+  // Filtered to one file, painted as the view paints, in tasks of their own.
+  all._query = 'dist/s9.'
+  for (let i = 0; i < 3; i++) {
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    renderText(all.render())
+  }
+  release()
+  flying.held = null
+  const one = () => all._fileState(files[9], all._entries.get(files[9])).changes?.status
+  for (let i = 0; i < 400 && (one() !== 'ready' || flying.now > 0); i++) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(one(), 'ready', 'the file shown marked')
+  const others = renameDiffs.slice(asked).filter(({ id, path }) => id === 'b27' && path !== files[9])
+  assert.deepEqual(others, [], 'those shown no longer not asked for as their turns came')
 })
 
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {
@@ -1724,6 +1774,31 @@ test('a minified file whose rename diff failed for a reason that may pass is ask
   const asked = renameDiffs.length
   renderText(element.render())
   assert.equal(renameDiffs.length, asked, 'not asked again at once')
+  Date.now = () => now() + 6_000
+  for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
+  assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
+})
+
+test('a minified file whose rename diff was worked out from other copies than those drawn is asked again a while after, and marked then', async t => {
+  const now = Date.now
+  t.after(() => { Date.now = now; state.bundleSourcePretty = false; misanswered.clear() })
+  const element = view('dist/recopied.min.js', [{ 'dist/recopied.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/recopied.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b25'
+  element.other.managedId = 'b26'
+  pretty.set('b25:dist/recopied.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
+  pretty.set('b26:dist/recopied.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
+  misanswered.add('b25:copy')
+  state.bundleSourcePretty = true
+  const changes = () => element._fileState('dist/recopied.min.js', element._entries.get('dist/recopied.min.js')).changes
+  for (let i = 0; i < 200 && changes()?.status !== 'error'; i++) {
+    renderText(element.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.equal(changes().status, 'error', 'told as a mismatch')
+  assert.doesNotMatch(renderText(element.render()), /diff-row del renamed/u, 'the plain diff drawn')
+  misanswered.clear()
+  const asked = renameDiffs.length
   Date.now = () => now() + 6_000
   for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.equal(renameDiffs.length, asked + 1, 'asked again once due')
