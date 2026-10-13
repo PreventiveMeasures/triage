@@ -93,7 +93,7 @@ function npmMajorRelease(was, now) {
 // Whether the open version's file at `path` (`basePath` in the one compared
 // with) had its source map rebuilt with it: its last line names a map file of
 // the package (`//# sourceMappingURL=name.js.map`, by a path from the file's
-// own; not one inline or at a URL), a source map (`.map`, its `mappings`
+// own; not one inline, at a URL, or from a site's root), a source map (`.map`, its `mappings`
 // told), new or changed, as a build writes them together. An attack editing
 // a built file leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
@@ -102,7 +102,7 @@ const besideFile = (file, name) => name.split('/').reduce((parts, part) => part 
 function rebuiltWithMap(base, other, path, basePath) {
   const text = bundleFilesAsMap(other).get(path)
   const name = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1))?.[1] : null
-  if (!name || /^[a-z][\w+.-]*:/iu.test(name)) return false
+  if (!name || name.startsWith('/') || /^[a-z][\w+.-]*:/iu.test(name)) return false
   const map = bundleFilesAsMap(other).get(besideFile(path, name))
   return SOURCE_MAP.test(name) && isSourceMap(map) && map !== bundleFilesAsMap(base).get(besideFile(basePath, name))
 }
