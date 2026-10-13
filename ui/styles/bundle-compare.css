@@ -670,8 +670,10 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
    bit, its being an entry point), there and in the Overview's rows, what it
    no longer is struck through; and what a file's code can run beyond itself
    (file-runs-code.js), and an exfiltration host it names (file-hosts.js),
-   wherever the file is listed. */
-:is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration, .npm-install-script-name) {
+   wherever the file is listed; and in Compare's heads and tree, the hosts it
+   names that the version compared with named nowhere (npm-overview.js
+   npmNewHostTag). */
+:is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration, .npm-new-host, .npm-install-script-name) {
   flex: none; padding: 0 .3rem;
   color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
   border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);

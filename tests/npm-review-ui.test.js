@@ -122,7 +122,8 @@ test('Review uses the current comparison source for badges, dependency chips, an
   page.source = { choices: [], options: [], widest: { name: '0.0.0', detail: 'latest' },
     badges: (...sides) => { called.push(sides); return 'Shared comparison chips' },
     dependencies: (...sides) => { dependencyCalls.push(sides); return 'Shared dependency changes' }, dependencyTags, openDependency,
-    files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {} },
+    files: { alerts: details => details === page._base ? 'Base alerts' : 'Version alerts', alertTags: () => {},
+      newHosts: (was, now) => was === page._base && now === page.details ? 'New hosts by path' : null, newHostTag: () => {} },
   }
   for (const mode of ['code', 'diff']) {
     page._mode = mode
@@ -133,6 +134,8 @@ test('Review uses the current comparison source for badges, dependency chips, an
     assert.match(rendered, /bundle-compare-picker is-versions/u)
     assert.match(rendered, /Shared comparison chips/u)
     assert.match(rendered, /\.baseAlerts=Base alerts \.otherAlerts=Version alerts/u)
+    assert.match(rendered, /\.newHosts=New hosts by path/u)
+    assert.ok(values(result).includes(page.source.files.newHostTag))
     assert.match(rendered, /\.dependencies=Shared dependency changes/u)
     assert.ok(values(result).includes(openDependency))
     assert.ok(values(result).includes(dependencyTags))

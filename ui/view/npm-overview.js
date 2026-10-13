@@ -492,10 +492,39 @@ export function npmFileFlags(details, path, alerts = [], base = undefined) {
     ...stamps.map(stamp => hosts?.has(stamp.name) ? { ...stamp, severity: hosts.get(stamp.name) } : stamp)]
 }
 
+// The hosts each file of the open version (`other`, its details) names that
+// the one compared with's (`base`) named in none of its files, as the pair's
+// risk finds them (`new-hosts`, hostsBadge), by path, `[{ host, line }]`
+// each: null until it arrives. Kept by the risk read, so Compare's files are
+// handed the same until another arrives.
+const newHostsRead = new WeakMap()
+function npmNewHosts(base, other) {
+  const risk = base && other?.npm ? npmRisk(other.npm, base.npm?.version ?? '(empty)') : null
+  if (!risk) return null
+  if (!newHostsRead.has(risk)) {
+    const byPath = new Map()
+    for (const { host, places } of findingsOf(risk).get('new-hosts')?.hosts ?? []) {
+      for (const { path, line } of places) byPath.set(path, [...byPath.get(path) ?? [], { host, line }])
+    }
+    newHostsRead.set(risk, byPath)
+  }
+  return newHostsRead.get(risk)
+}
+
+// A file's tag in Compare's tree and its head where it names hosts the one
+// compared with named in none of its files (`hosts`, npmNewHosts), in orange
+// as the New host chip, each with its line in its tooltip.
+function npmNewHostTag(hosts) {
+  if (!hosts?.length) return nothing
+  const said = hosts.map(({ host, line }) => `${host} (line ${line})`).join(', ')
+  return html`<span class="npm-new-host" data-tooltip=${`${hosts.length === 1 ? 'A host' : 'Hosts'} the version compared with named in none of its files: ${said}`}>${hosts.length === 1 ? 'New host' : 'New hosts'}</span>`
+}
+
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
 // one's type icon and Socket's alerts on it, the tags of one the open version
-// adds or changes, and over them, where any of those can be hard to review by reading it, the Overview's
-// warning, counting those alone.
+// adds or changes, the hosts it names anew, and over them, where any of those
+// can be hard to review by reading it, the Overview's warning, counting those
+// alone.
 export const npmCompareFiles = {
   // A file either side holds as not text, under that side's path, is no
   // license, whatever its name.
@@ -503,6 +532,9 @@ export const npmCompareFiles = {
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
+  // The hosts each file names anew, and their tag (npmNewHosts).
+  newHosts: npmNewHosts,
+  newHostTag: npmNewHostTag,
   // Its tags, and its flags as they show them, for its lists' Flags order,
   // `base` the file as the version compared with has it (npmFileTags).
   tag: (details, path, base) => npmFileTags(details, path, false, base),
