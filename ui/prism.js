@@ -20,6 +20,7 @@
 // php-extras augments php via insertBefore so it must follow php.
 import Prism from 'prismjs/prism.js'
 import { stringifySourceLinks } from './view/prism-source-links.js'
+import { scanTemplateLiterals } from './view/prism-template-literals.js'
 import 'prismjs/components/prism-markup.js'
 import 'prismjs/components/prism-clike.js'
 import 'prismjs/components/prism-javascript.js'
@@ -47,6 +48,10 @@ import 'prismjs/components/prism-php-extras.js'
 // DOMContentLoaded callback, which fires after this module body
 // runs, so setting it here is in time.
 Prism.manual = true
+
+// After every grammar above, so each copy of the JavaScript rule is there to
+// rewire (view/prism-template-literals.js says why).
+scanTemplateLiterals(Prism.languages)
 
 // Returns highlighted HTML for `code` under `lang`, or null when
 // the language isn't loaded. Caller falls back to plain text on
