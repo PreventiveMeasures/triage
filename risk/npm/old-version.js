@@ -53,11 +53,14 @@ function compared(a, b) {
 //   packages, as @preventive/publishers lists them), one another published,
 //   as an attack may have published more than one; and where the highest of
 //   those a known account published, as when a package is taken from its
-//   maintainers, one a known account published, trusted however new.
+//   maintainers, one a known account published.
 // - One published before it, not after, as one published since (a
 //   backport) is no version it came from; a known account's too.
-// - Else one published a week or more apart from it, as not one of an
-//   attack's, and on npm a month or more, as looked at.
+// - One published a week or more apart from it, as not one of an attack's,
+//   and on npm a month or more, as looked at; but for one a known account
+//   other than its own published, trusted however new, as an account taken
+//   leaves another's versions alone. Its own account's are held to both, as
+//   it may be the one taken.
 // - One npm doesn't say is deprecated, as one a maintainer took back.
 //
 // The highest is in its branch (`1.x.y`, `0.2.y`, `0.0.y`) where one is
@@ -74,8 +77,8 @@ export function npmOldVersion(version, releases, now) {
   const time = row => row.published === null ? Number.NaN : Date.parse(row.published)
   const opened = time(open)
   rows = prefer(rows, row => time(row) < opened)
-  const vouched = Boolean(open.publisher && !open.known && rows[0]?.known)
-  if (vouched) rows = rows.filter(row => row.known)
-  else rows = prefer(prefer(rows, row => Math.abs(time(row) - opened) >= CLOSE_MS), row => now - time(row) >= SETTLED_MS)
+  if (open.publisher && !open.known && rows[0]?.known) rows = rows.filter(row => row.known)
+  const vouched = row => row.known && row.publisher !== open.publisher
+  rows = prefer(prefer(rows, row => vouched(row) || Math.abs(time(row) - opened) >= CLOSE_MS), row => vouched(row) || now - time(row) >= SETTLED_MS)
   return prefer(rows, row => !row.deprecated)[0]?.version ?? null
 }

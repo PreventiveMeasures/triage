@@ -156,11 +156,18 @@ test('the version risk picks to compare with, by who published it: a known accou
   assert.equal(pick('1.14.2', taken), '1.14.0', 'its maintainers\' latest, trusted however new; none the new account published')
   assert.equal(pick('2.0.0', [at('1.9.8', 30, known, { known: true }), at('1.9.9', 0.2, known, { known: true }), at('2.0.0', 1, 'someone-new')]), '1.9.8',
     'theirs published before it, not a backport since')
+  assert.equal(pick('1.5.1', [at('1.4.0', 90, known, { known: true }), at('1.4.9', 60, 'bob'), at('1.5.0', 5, known, { known: true, deprecated: true }), at('1.5.1', 1, 'someone-new')]),
+    '1.4.0', 'a known account\'s still where theirs is deprecated, as whoever took it can deprecate one')
   const handed = [at('1.0.0', 300, 'alice'), at('1.1.0', 100, 'alice'), at('1.2.0', 60, 'mallory'), at('1.2.1', 20, 'alice'), at('1.3.0', 1, 'mallory')]
   assert.equal(pick('1.3.0', handed), '1.1.0', 'another unknown account\'s, held to a month as any')
   assert.equal(pick('1.0.2', [at('1.0.0', 90, 'solo'), at('1.0.1', 60, 'solo'), at('1.0.2', 1, 'solo')]), '1.0.1', 'one account\'s all: its own')
   assert.equal(pick('2.0.1', [at('1.0.0', 90, known, { known: true }), at('2.0.0', 60, 'someone'), at('2.0.1', 1, known, { known: true })]), '2.0.0',
     'a known account publishing it: whoever published the one before')
+  const other = publishers[1]
+  assert.equal(pick('2.0.1', [at('1.9.0', 60, known, { known: true }), at('2.0.0', 3, known, { known: true }), at('2.0.1', 1, known, { known: true })]), '1.9.0',
+    'its own known account\'s held to a month, as it may be the one taken')
+  assert.equal(pick('2.0.1', [at('1.9.0', 60, known, { known: true }), at('2.0.0', 3, other, { known: true }), at('2.0.1', 1, known, { known: true })]), '2.0.0',
+    'another known account\'s trusted however new')
 })
 
 test('against the version risk picks: an attack\'s own earlier version passed over for its maintainers\', picked by npm\'s document and kept an hour', async t => {
