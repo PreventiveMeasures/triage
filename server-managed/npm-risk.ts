@@ -123,11 +123,9 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // its dependencies without asking npm of their packages (assessNpm
 // `dependencies`), nor its advisories, which a scan asks of a lockfile's
 // packages at once (repository-risk.ts).
-export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
+export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
   { teamScoped, ownScope = () => Promise.resolve(false), privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean;
     ownScope?: (scope: string) => Promise<boolean>; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
-  if (assessing >= (spare ? MAX_SPARE_ASSESSMENTS : MAX_ACTIVE_ASSESSMENTS)) throw new NpmPackageError(429, 'npm-busy')
-  assessing++
   const scopes = new Map<string, Promise<boolean>>()
   const owned = (name: string) => {
     const scope = npmPackageScope(name)
@@ -135,12 +133,19 @@ export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument |
     if (!scopes.has(scope)) scopes.set(scope, ownScope(scope))
     return scopes.get(scope)!
   }
-  try {
-    return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: !teamScoped,
-      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, owned,
-      packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
-      tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
-  } finally { assessing-- }
+  return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
+    popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, owned,
+    packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
+    tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) }))
+}
+
+// An assessment made within MAX_ACTIVE_ASSESSMENTS, a `spare` one within
+// MAX_SPARE_ASSESSMENTS, all across the server; one past them refused as
+// busy (`npm-busy`).
+async function bounded(spare: boolean, assess: () => Promise<NpmAssessment>): Promise<NpmAssessment> {
+  if (assessing >= (spare ? MAX_SPARE_ASSESSMENTS : MAX_ACTIVE_ASSESSMENTS)) throw new NpmPackageError(429, 'npm-busy')
+  assessing++
+  try { return await assess() } finally { assessing-- }
 }
 
 // A version npm has no document of, as risk tells one npm removed, as it
@@ -149,11 +154,12 @@ export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument |
 // packages at once (repository-risk.ts). Its package's document read with
 // npm's token where the reader may have it (`privileged`), and kept as a
 // private package's is; no tarball read, nothing of the version being left.
-// An NpmRiskError where nothing tells of it.
+// Spare, within MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError
+// where nothing tells of it.
 export function npmRiskRemoved(name: string, version: string,
   { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
-  return assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false, advisories: false,
-    cache: npmRiskCache(stores, false), signal,
+  return bounded(true, () => assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
+    advisories: false, cache: npmRiskCache(stores, false), signal,
     packument: (read, { authorized }) => readNpmPackument(read, privileged && authorized, signal),
-    tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
+    tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) }))
 }

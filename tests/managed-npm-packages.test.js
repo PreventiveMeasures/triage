@@ -13,7 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
-import { npmRisk, npmRiskCache } from '../server-managed/npm-risk.ts'
+import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { ADVISORIES, REGISTRY, packageOf, registry, tar, withToken } from './_managed-npm.js'
@@ -248,6 +248,32 @@ test('a risk assessment whose reader is gone stops waiting on its tarball, which
   answer()
   assert.equal((await load.result).byteLength, pkg.tgz.byteLength, 'the load went on for whoever else reads it')
   load.release()
+})
+
+test('a version npm removed is assessed as a scan\'s others are, within the spare assessments the server makes at once', async t => {
+  const pkgs = ['spare-one', 'spare-two'].map(name => packageOf(name, '1.0.0', { 'package.json': '{}' }))
+  const placeholder = packageOf('spare-gone', '0.0.1-security', { 'package.json': '{}' },
+    { description: 'security holding package', _npmUser: { name: 'npm', email: 'npm@npmjs.com' } })
+  const answers = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = String(input)
+    const pkg = pkgs.find(({ doc }) => url === doc.dist.tarball)
+    if (pkg) return new Promise(resolve => { answers.push(() => resolve(new Response(pkg.tgz))) })
+    if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
+    const gone = { name: 'spare-gone', 'dist-tags': { latest: '0.0.1-security' }, versions: { '0.0.1-security': placeholder.doc },
+      time: { '0.0.1-security': '2025-02-01T00:00:00.000Z', '1.0.0': '2025-01-01T00:00:00.000Z' } }
+    if (url === `${REGISTRY}/spare-gone`) return Promise.resolve(Response.json(gone))
+    const named = pkgs.find(({ doc }) => url === `${REGISTRY}/${doc.name}`)
+    return Promise.resolve(Response.json({ name: named.doc.name, versions: { '1.0.0': named.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
+  })
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const options = { db, teamScoped: false, privileged: false, signal: new AbortController().signal }
+  const busy = pkgs.map(({ doc }) => npmRisk({ ...doc, private: false, dist: { ...doc.dist, unpackedSize: null, fileCount: null }, manifest: {} }, null, { ...options, spare: true }))
+  while (answers.length < pkgs.length) await new Promise(resolve => { setImmediate(resolve) })
+  await assert.rejects(npmRiskRemoved('spare-gone', '1.0.0', options), /npm-busy/u, 'two spare in flight: none more')
+  for (const answer of answers) answer()
+  await Promise.all(busy)
+  assert.deepEqual((await npmRiskRemoved('spare-gone', '1.0.0', options)).findings, [{ id: 'malware', severity: 'critical', takenDown: true }], 'once they are done')
 })
 
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
