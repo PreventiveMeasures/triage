@@ -221,6 +221,13 @@ const NPM_RISK_PATH = '/api/npm/risk'
 // having no such package or version, or a tarball unpacking past risk's
 // bounds; npm failing otherwise a 502.
 const NPM_RISK_STATUS: Partial<Record<string, number>> = { 'package-not-found': 404, 'version-not-found': 404, 'package-too-large': 413 }
+// A risk failure answered with its code alone, as risk's status for it (NPM_RISK_STATUS, else 502), its cause
+// logged where it is the server's or npm's, not the reader's (a 5xx), for the logs to say why.
+function sendRiskError(res: ServerResponse, err: NpmRiskError) {
+  const status = NPM_RISK_STATUS[err.code] ?? 502
+  if (status >= 500) console.error(`managed: npm risk failed (${err.code}):`, err.message)
+  sendJson(res, status, { error: err.code })
+}
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
   NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH])
 // How long an npm response may go unread before its connection is dropped.
@@ -1548,7 +1555,8 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
-  const timer = setTimeout(() => controller.abort(), ADVISORIES_TIMEOUT_MS)
+  // Its deadline aborts as AbortSignal.timeout does, for a failure it leaves to be told from the reader's leaving.
+  const timer = setTimeout(() => controller.abort(new DOMException('advisories took too long', 'TimeoutError')), ADVISORIES_TIMEOUT_MS)
   try {
     if (res.destroyed) return
     const needsGithub = inventory.packages.some(pkg => repoAdvisories || pkg.ecosystem === 'github' || pkg.ecosystem === 'soldeer')
@@ -2804,7 +2812,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
-    if (err instanceof NpmRiskError) { sendJson(res, NPM_RISK_STATUS[err.code] ?? 502, { error: err.code }); return }
+    if (err instanceof NpmRiskError) { sendRiskError(res, err); return }
     throw err
   } finally { res.off('close', onClose) }
 }
@@ -3010,7 +3018,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     writeResponse(res, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (err) {
     if (err instanceof NpmPackageError || err instanceof PrettyError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
-    if (err instanceof NpmRiskError) { if (!res.headersSent && !res.destroyed) sendJson(res, NPM_RISK_STATUS[err.code] ?? 502, { error: err.code }); return }
+    if (err instanceof NpmRiskError) { if (!res.headersSent && !res.destroyed) sendRiskError(res, err); return }
     if (controller.signal.aborted) return
     throw err
   } finally {

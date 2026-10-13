@@ -1270,6 +1270,27 @@ test('where GitHub refuses the listing, or can\'t say whether the repository is 
   assert.equal(listings(), 3)
 })
 
+test('where npm\'s audit fails, advisories and risk answer 502 with its code alone, and log why', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('unlogged', '1.0.0', { 'package.json': '{}', 'index.js': '' }, { dependencies: {} })])
+  insights(t, {})
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => String(input) === `${REGISTRY}/-/npm/v1/security/advisories/bulk`
+    ? Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 })) : fetch(input, init))(globalThis.fetch))
+  const logged = t.mock.method(console, 'error', () => {}), warned = t.mock.method(console, 'warn', () => {})
+  const advisories = await h.send('/api/npm/advisories?name=unlogged')
+  assert.deepEqual([advisories.status, advisories.json()], [502, { error: 'upstream-unavailable' }])
+  const [label, cause] = warned.mock.calls.at(-1).arguments
+  assert.equal(label, 'managed: advisories failed:')
+  assert.match(cause, /503/u, 'upstream\'s message, npm\'s answer in it')
+  const risk = await h.send('/api/npm/risk?name=unlogged&version=1.0.0')
+  assert.deepEqual([risk.status, risk.json()], [502, { error: 'upstream-unavailable' }], 'what the reader is told is the code')
+  assert.equal(logged.mock.calls.at(-1).arguments[0], 'managed: npm risk failed (upstream-unavailable):')
+  assert.match(logged.mock.calls.at(-1).arguments[1], /^advisories of unlogged@1\.0\.0 couldn't be had: /u, 'the logs say why')
+  logged.mock.resetCalls()
+  assert.equal((await h.send('/api/npm/risk?name=unlogged&version=9.9.9')).status, 404)
+  assert.equal(logged.mock.callCount(), 0, 'nor one the reader asked for wrong')
+})
+
 test('a kept listing asks GitHub nothing: where npm\'s audit fails, it isn\'t asked a third time, and where upstream won\'t take the listing, npm\'s are alone', async t => {
   const h = await setup(t)
   const names = { unaudited: 'org/unaudited', outdated: 'org/outdated' }
