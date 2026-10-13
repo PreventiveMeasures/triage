@@ -168,7 +168,7 @@ test('the version risk picks to compare with, by who published it: a known accou
   assert.equal(pick('1.5.1', [at('1.4.0', 90, known, { known: true }), at('1.4.9', 60, 'bob'), at('1.5.0', 5, known, { known: true, deprecated: true }), at('1.5.1', 1, 'someone-new')]),
     '1.4.0', 'a known account\'s still where theirs is deprecated, as whoever took it can deprecate one')
   const handed = [at('1.0.0', 300, 'alice'), at('1.1.0', 100, 'alice'), at('1.2.0', 60, 'mallory'), at('1.2.1', 20, 'alice'), at('1.3.0', 1, 'mallory')]
-  assert.equal(pick('1.3.0', handed), '1.1.0', 'another unknown account\'s, held to a month as any')
+  assert.equal(pick('1.3.0', handed), '1.2.1', 'its maintainer\'s, on it three months, trusted however new; none of the account on it two months')
   assert.equal(pick('1.0.2', [at('1.0.0', 90, 'solo'), at('1.0.1', 60, 'solo'), at('1.0.2', 1, 'solo')]), '1.0.1', 'one account\'s all: its own')
   assert.equal(pick('2.0.1', [at('1.0.0', 90, known, { known: true }), at('2.0.0', 60, 'someone'), at('2.0.1', 1, known, { known: true })]), '2.0.0',
     'a known account publishing it: whoever published the one before')
@@ -204,8 +204,32 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   const listed = documentOf({ name: 'handed', versions })
   listed.versions['1.1.1'] = null
   listed.time['1.1.1'] = ago(40)
-  assert.equal((await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, packument: () => Promise.resolve(listed) })).oldVersion, '1.1.0',
-    'none npm lists no document of')
+  const pickedOf = async () => (await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, packument: () => Promise.resolve(listed) })).oldVersion
+  assert.equal(await pickedOf(), '1.1.0', 'none npm lists no document of')
+  delete listed.versions['1.1.1']
+  listed.time['1.1.1'] = ago(4.9)
+  assert.equal(await pickedOf(), '1.0.0', 'none published within a day of one npm since removed, its time kept')
+})
+
+test('the version risk picks to compare with, by what npm\'s document keeps: none published with one since removed, and a package\'s own maintainers trusted', () => {
+  const at = (number, days, publisher = 'maintainer', extra = {}) => ({ version: number, published: ago(days), publisher, known: false, deprecated: false, removed: false, ...extra })
+  const gone = (number, days) => at(number, days, null, { removed: true })
+  const pick = (number, releases) => npmOldVersion(number, releases, NOW)
+  assert.equal(pick('1.2.0', [at('1.0.0', 90), at('1.1.0', 60), gone('1.1.1', 59.9), at('1.2.0', 1)]), '1.0.0',
+    'none published within a day of one since removed from npm, nor that one')
+  assert.equal(pick('1.2.0', [at('1.0.0', 90), at('1.1.0', 60), gone('1.1.1', 50), gone('created', 60.01), at('1.2.0', 1)]), '1.1.0',
+    'one ten days apart; a time of no version, as `created`, none')
+  const known = publishers[0]
+  assert.equal(pick('1.14.2', [at('1.13.0', 60, known, { known: true }), at('1.14.0', 5, known, { known: true }), gone('1.14.1', 4.95), at('1.14.2', 1, 'someone-new')]), '1.13.0',
+    'a known account\'s too, where one since removed came with it')
+  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), at('1.3.0', 5, 'alice'), at('1.3.1', 1, 'mallory')]), '1.3.0',
+    'taken from a maintainer on it three months: theirs, trusted however new')
+  assert.equal(pick('1.3.1', [at('1.0.0', 400, 'alice'), { ...at('1.0.1', 0, 'alice'), published: null }, at('1.3.0', 5, 'alice'), at('1.3.1', 1, 'mallory')]), '1.3.0',
+    'one of theirs npm lists no time of not taken as their first')
+  assert.equal(pick('1.3.0', [at('1.0.0', 200, 'bob'), at('1.1.0', 100, 'mallory'), at('1.2.0', 40, 'mallory'), at('1.3.0', 1, 'mallory')]), '1.2.0',
+    'its own account on it three months: its own, held to time as any')
+  assert.equal(pick('1.3.0', [at('1.0.0', 200, 'bob'), at('1.1.0', 80, 'mallory'), at('1.2.0', 40, 'mallory'), at('1.3.0', 1, 'mallory')]), '1.0.0',
+    'on it under three months: another\'s')
 })
 
 test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {

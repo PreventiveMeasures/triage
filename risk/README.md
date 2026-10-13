@@ -25,12 +25,14 @@ const assessment = await assessNpm('axios', '1.14.1', {
 
 ## Picking the version compared with
 
-A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
+A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. An account is trusted where it is known, as one that published one of npm's most downloaded packages (`@preventive/publishers`, `npm/manifest.js` `knownAccounts`, as the `publisher` finding takes it), or where it published the package three months or more before the open version, as one of its maintainers: the package's own history tells what the list of known accounts can't of most packages. Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
 
-1. Where an account not known to publish published it, one another account published, as an attack may have published more than one; and where the highest of those a known account published, as when a package is taken from its maintainers, one a known account published. An account is known where it published one of npm's most downloaded packages (`@preventive/publishers`, `npm/manifest.js` `knownAccounts`), as the `publisher` finding takes it.
-2. One published before it, not after, as one published since (a backport) is no version it came from; a known account's too.
-3. One published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at; but for one a known account other than its own published, trusted however new, as an account taken leaves another's versions alone. Its own account's are held to both, as it may be the one taken.
-4. One npm doesn't say is deprecated, as one a maintainer took back.
+1. Where an account not trusted published it, one another account published, as an attack may have published more than one.
+2. One published before it, not after, as one published since (a backport) is no version it came from.
+3. Where it isn't trusted and the highest of those a trusted account published, as when a package is taken from its maintainers, one a trusted account published.
+4. One published a day or more apart from any version since removed from npm, as not one of the attack npm removed those of: npm's document keeps a removed version's time, though not the version.
+5. One published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at; but for one a trusted account other than its own published, trusted however new, as an account taken leaves another's versions alone. Its own account's are held to both, as it may be the one taken.
+6. One npm doesn't say is deprecated, as one a maintainer took back.
 
 The highest is in the open version's branch (`1.x.y`, `0.2.y`, `0.0.y`) where one is there, else in the closest branch below. The pick is told by npm's document alone, read at most once an assessment, and kept an hour: no tarball is read for it, and the one picked has its tarball read only where its files could change what is found, as any version compared with.
 

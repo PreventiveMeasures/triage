@@ -118,12 +118,16 @@ const firstPublished = doc => Object.entries(doc?.time ?? {}).filter(([key, at])
   .reduce((first, at) => first === null || Date.parse(at) < Date.parse(first) ? at : first, null)
 
 // Each version a package's document lists, as old-version.js npmOldVersion
-// picks among them: `{ version, published, publisher, known, deprecated }`,
-// its publisher's account as manifest.js reads it, and whether that is known;
-// none it lists no document of, as npmPackageFacts reads none of it.
-const releasesOf = (doc, deprecated) => Object.entries(doc.versions ?? {}).filter(([, json]) => json).map(([version, json]) => {
-  const { publisher = null, knownAccounts } = npmVersionManifest(json)
-  return { version, published: isTime(doc.time?.[version]) ? doc.time[version] : null, publisher, known: Boolean(knownAccounts), deprecated: Object.hasOwn(deprecated, version) }
+// picks among them: `{ version, published, publisher, known, deprecated,
+// removed }`, its publisher's account as manifest.js reads it, and whether
+// that is known; and each it lists a time of and no document, as one since
+// removed from npm, `removed`, its time alone, as npmPackageFacts reads none
+// of it. Its times' other keys (`created`, `modified`) are no versions.
+const releasesOf = (doc, deprecated) => [...new Set([...Object.keys(doc.versions ?? {}), ...Object.keys(doc.time ?? {})])].map(version => {
+  const json = doc.versions?.[version]
+  const { publisher = null, knownAccounts } = json ? npmVersionManifest(json) : {}
+  return { version, published: isTime(doc.time?.[version]) ? doc.time[version] : null, publisher, known: Boolean(knownAccounts),
+    deprecated: Object.hasOwn(deprecated, version), removed: !json }
 })
 
 // What risk reads of `version` of a package, of the one it is compared with
