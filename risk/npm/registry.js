@@ -171,7 +171,7 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
     const gone = Object.fromEntries(Object.entries(doc.time ?? {}).filter(([at, when]) => at !== 'created' && at !== 'modified' && isTime(when) && !doc.versions?.[at]))
     await Promise.all([...read].map(([at, fact]) => cache.write('risk/npm/versions', `${name}@${at}`, fact)))
     await cache.write('risk/npm/packages', name, { at: now, deprecated, takenDown, removed: gone })
-    if (oldVersion === true && opened) await cache.write('risk/npm/old-versions', `${name}@${version}`, { at: now, oldVersion: old })
+    if (oldVersion === true) await cache.write('risk/npm/old-versions', `${name}@${version}`, { at: now, oldVersion: old })
   }
   return { versions: read, removed, deprecated, takenDown, oldVersion: old }
 }

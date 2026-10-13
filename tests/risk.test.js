@@ -419,6 +419,21 @@ test('a version npm removes once its facts are kept is told as removed, by its p
   }
 })
 
+test('a version npm removes once a version was picked to compare it with is compared with none, its pick kept or not', async t => {
+  const versions = ['1.0.0', '1.0.1', '1.1.0'].map((number, i) => version('repicked', number, { 'package.json': '{}' }, { dependencies: {} }, ago(400 - 100 * i)))
+  const pkg = { name: 'repicked', versions }
+  npm(t, [pkg], {}, { repicked: [advisory(1, 'GHSA-ssss-tttt-uuuu', 'Malware in repicked', '=1.1.0')] })
+  const cache = store()
+  const assessed = () => assessNpm('repicked', '1.1.0', { oldVersion: true, now: NOW, downloads: false, cache })
+  assert.equal((await assessed()).oldVersion, '1.0.1', 'picked while published')
+  cache.kept.delete('risk/npm/packages repicked')
+  Object.assign(pkg, { versions: versions.slice(0, 2), removed: { '1.1.0': ago(200) } })
+  for (const when of ['its package\'s record gone, its pick kept', 'its package\'s record kept again']) {
+    const removed = await assessed()
+    assert.deepEqual([removed.removed, removed.oldVersion, ids(removed)], [true, null, ['malware']], when)
+  }
+})
+
 test('npm having no such package or version is said so', async t => {
   npm(t, [{ name: 'there', versions: [version('there', '1.0.0', { 'package.json': '{}' }, {}, ago(30))] }])
   await assert.rejects(assessNpm('there', '9.9.9', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'version-not-found')

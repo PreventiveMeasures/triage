@@ -173,7 +173,7 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, context) : [] })
   if (!facts.versions.has(version)) {
     if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
-    return { name, version, oldVersion: old, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
+    return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
   }
   const { published } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context)
