@@ -51,7 +51,7 @@ Prism.manual = true
 
 // After every grammar above, so each copy of the JavaScript rule is there to
 // rewire (view/prism-template-literals.js says why).
-scanTemplateLiterals(Prism.languages)
+scanTemplateLiterals(Prism)
 
 // Returns highlighted HTML for `code` under `lang`, or null when
 // the language isn't loaded. Caller falls back to plain text on

@@ -16,6 +16,15 @@ const { default: Prism } = await import('prismjs/prism.js')
 
 const text = (token) => (typeof token === 'string' ? token : [token.content].flat().map(text).join(''))
 
+// Tokens as `ui/prism.js` gets them: Prism's tokenize between its hooks.
+function tokenize(code, lang) {
+  const env = { code, grammar: Prism.languages[lang], language: lang }
+  Prism.hooks.run('before-tokenize', env)
+  env.tokens = Prism.tokenize(env.code, env.grammar)
+  Prism.hooks.run('after-tokenize', env)
+  return env.tokens
+}
+
 // The outermost template literals Prism found, wherever they sit (a markup
 // `<script>` nests its code a few tokens deep).
 function templates(code, lang = 'javascript') {
@@ -27,7 +36,7 @@ function templates(code, lang = 'javascript') {
       else if (Array.isArray(token.content)) walk(token.content)
     }
   }
-  walk(Prism.tokenize(code, Prism.languages[lang]))
+  walk(tokenize(code, lang))
   return found
 }
 
@@ -48,7 +57,7 @@ function typesAt(code, needle, lang = 'javascript') {
     }
     return path
   }
-  return find(Prism.tokenize(code, Prism.languages[lang]), [])
+  return find(tokenize(code, lang), [])
 }
 
 const nav = `function fn(t, e, n = !1) {
@@ -125,14 +134,70 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(typesAt('`\\\\${a}`', 'a}'), ['template-string', 'interpolation'])
   })
 
-  it('runs a template the text never closes to its end', () => {
-    assert.deepEqual(templates('a = `b ${c({ d })} e\nlet f = 1'), ['`b ${c({ d })} e\nlet f = 1'])
+  it('reads a regex compared, and a JSX tag\'s </ as no regex', () => {
+    const code = 'a = `${/`/ < b}` + `${/`/ > c}`; let h = 1'
+    assert.deepEqual(templates(code), ['`${/`/ < b}`', '`${/`/ > c}`'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
+    const jsx = 'const e = <p>{`a`}</p>; const g = <div><br/>{`b ${c}`}<i>x</i></div>; let s = `d`'
+    assert.deepEqual(templates(jsx, 'jsx'), ['`a`', '`b ${c}`', '`d`'])
+    const fragment = 'const e = <><A.B>{`a`}</A.B>{`b`}</ >{`c`}</>; let s = `d`'
+    for (const lang of ['jsx', 'tsx']) assert.deepEqual(templates(fragment, lang), ['`a`', '`b`', '`c`', '`d`'], lang)
+    // A tag's name is any identifier. Read as a regex, its slash would run on
+    // to the one past the template, and Prism's own pattern, taking over,
+    // ends the template at the backtick of the one nested in it.
+    const unicode = 'const t = `${f({a:{b:{c:{d:<组件></组件>}}}}, `x`)}` /foo; let h = 1'
+    for (const lang of ['jsx', 'tsx']) {
+      assert.deepEqual(templates(unicode, lang), ['`${f({a:{b:{c:{d:<组件></组件>}}}}, `x`)}`'], lang)
+      assert.deepEqual(typesAt(unicode, '}`', lang), ['template-string', 'interpolation', 'interpolation-punctuation'], lang)
+    }
+    // Minified code compares with a regex's result, and no tag follows; the
+    // braces are deeper than Prism's own pattern reads, so only the scan can
+    // end the `${…}` at its last `}`.
+    const minified = 'a = `${i</`/.exec(s).index+f({b:{c:{d}}})}`; let h = 1'
+    assert.deepEqual(templates(minified), ['`${i</`/.exec(s).index+f({b:{c:{d}}})}`'])
+    assert.deepEqual(typesAt(minified, '}`'), ['template-string', 'interpolation', 'interpolation-punctuation'])
+    assert.deepEqual(typesAt(minified, 'let'), ['keyword'])
+    // Without JSX, even a regex that opens like a tag is one.
+    for (const lang of ['javascript', 'typescript']) {
+      const tagLike = 'a = `${x</p>[}]/u.test(s)+f({b:{c:{d}}})}`; let h = 1'
+      assert.deepEqual(templates(tagLike, lang), [tagLike.slice(4, tagLike.indexOf(';'))], lang)
+      assert.deepEqual(typesAt(tagLike, '}`', lang), ['template-string', 'interpolation', 'interpolation-punctuation'], lang)
+    }
+  })
+
+  it('ends a line comment at every line terminator', () => {
+    for (const end of ['\n', '\r', ' ', ' ']) {
+      const code = `a = \`\${b // c${end}}\`; let h = \`\${1}\``
+      assert.deepEqual(templates(code), [`\`\${b // c${end}}\``, '`${1}`'], JSON.stringify(end))
+    }
+  })
+
+  it('leaves a template it can\'t close to Prism\'s pattern, rather than running it to the end', () => {
+    // A text that doesn't parse, and one whose `{} / 2` the scan misreads:
+    // its slash taken for a regex's, the regex runs on to the `/` past `}`.
+    assert.deepEqual(templates('a = `b ${c({ d })} e\nlet f = 1'), [])
+    const code = 'a = `x${{} / 2}/-text`; let h = 1'
+    assert.deepEqual(templates(code), ['`x${{} / 2}/-text`'])
+    assert.deepEqual(typesAt(code, 'x$'), ['template-string', 'string'])
+    assert.deepEqual(typesAt(code, '${'), ['template-string', 'interpolation', 'interpolation-punctuation'])
+    assert.deepEqual(typesAt(code, '2}'), ['template-string', 'interpolation', 'number'])
+    assert.deepEqual(typesAt(code, '/-text'), ['template-string', 'string'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
+  })
+
+  it('counts what it leaves open within one highlight, not across them', () => {
+    // A template it leaves open, then the lit templates only the scan reads:
+    // were the count kept from one highlight to the next, the fifth would
+    // hand them all to Prism's own pattern, and `var` would be in a string.
+    const code = `z = \`\${{} / 2}/-\`;\n${nav}`
+    for (let i = 1; i <= 6; i++) assert.deepEqual(typesAt(code, 'var mn'), ['keyword'], `highlight ${i}`)
   })
 
   it('does the same in TypeScript, JSX, TSX and a markup <script>', () => {
     for (const lang of ['typescript', 'jsx', 'tsx']) {
       assert.deepEqual(templates(nav, lang)[0], header, lang)
       assert.deepEqual(typesAt(nav, 'var mn', lang), ['keyword'], lang)
+      assert.deepEqual(templates('a = `${{} / 2}/-text`', lang), ['`${{} / 2}/-text`'], lang)
     }
     assert.deepEqual(templates(`<script>${nav}</script>`, 'markup')[0], header)
   })
