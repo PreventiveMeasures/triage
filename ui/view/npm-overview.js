@@ -588,6 +588,17 @@ function heldFileBadges(found) {
   ]
 }
 
+// The files become unreadable (`now-unreadable`), as a file chip: red, or
+// orange where risk says less of them, each with its longest line before and
+// now, and its source map rebuilt with it where it was, or the release major.
+function unreadableBadge(finding) {
+  const rows = finding?.files ?? []
+  const said = row => [`${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`,
+    ...row.rebuilt ? ['its source map rebuilt with it'] : [], ...finding.major ? ['in a major release'] : []]
+  return finding?.severity === 'critical' || !finding ? fileBadge('npm-compare-unreadable', 'Now unreadable', rows, said)
+    : listBadge(`${SEVERITY_CHIPS[finding.severity]} npm-held-file npm-compare-unreadable`, 'Now unreadable', rows, said)
+}
+
 // A chip for each hosts' tag a finding names services under (risk/npm/held.js
 // and compare.js: Exfiltration, Remote, IP lookup), its id `prefix`ed, in its
 // severity's color, red, orange or yellow, the services named, each file's
@@ -627,18 +638,22 @@ function deprecatedBadge(finding) {
 // they differ, as when a package changes hands, or is taken over: linking
 // to the open version's publisher's profile. Each account green where it is
 // known to publish one of npm's most downloaded packages (npm-packages.ts
-// npmManifest's `knownAccounts`), else orange; the chip grey where the open
-// version's is known, orange where neither is, and red where a known one gave
-// way to one that isn't. Its tooltip's note a line each: that the account
-// changed, then what each is (what the one before is on a line of its own).
+// npmManifest's `knownAccounts`), else orange; the chip in its severity's
+// tint (risk/npm/compare.js): grey where the open version's is known, orange
+// where neither is, and red where a known one gave way to one that isn't, a
+// level lower in a major release. Its tooltip's note a line each: that the
+// account changed, then what each is (what the one before is on a line of
+// its own), and a major release.
+const PUBLISHER_TINTS = { critical: 'is-from-known', high: 'is-to-unknown' }
 function publisherBadge([from, to], finding) {
   if (!finding) return nothing
-  const { was, now, wasKnown, nowKnown } = finding
+  const { was, now, wasKnown, nowKnown, severity, major } = finding
   const account = (name, known) => html`<span class=${`npm-compare-account ${known ? 'is-known' : 'is-unknown'}`}>~${name}</span>`
-  const [tint, mark, which] = nowKnown ? ['is-to-known', ',', 'one that publishes one of npm\'s most downloaded packages']
-    : wasKnown ? ['is-from-known', ',', html`one that publishes none of npm's most downloaded packages,<br>after one that does`]
-    : ['is-to-unknown', ';', 'neither publishes one of npm\'s most downloaded packages']
-  const note = html`A different npm account published the open version${mark}<br>${which}`
+  const [mark, which] = nowKnown ? [',', 'one that publishes one of npm\'s most downloaded packages']
+    : wasKnown ? [',', html`one that publishes none of npm's most downloaded packages,<br>after one that does`]
+    : [';', 'neither publishes one of npm\'s most downloaded packages']
+  const tint = PUBLISHER_TINTS[severity] ?? 'is-to-known'
+  const note = html`A different npm account published the open version${mark}<br>${which}${major ? html`<br>in a major release` : nothing}`
   return html`<li><a class=${`npm-extension npm-compare-publisher ${tint}`} href=${`https://www.npmjs.com/~${encodeURIComponent(now)}`} target="_blank" rel="noopener noreferrer"
     data-tooltip=${`Published by ~${was} (${from.version}), then ~${now} (${to.version})`}
     .tooltipContent=${compareTip('Published by', [from, to], [account(was, wasKnown), account(now, nowKnown)], note)}>
@@ -682,7 +697,8 @@ const TIP_FILES = 8
 // services under a hosts' tag new to a file, a chip a tag, red, or orange for
 // an IP lookup (hostBadges), the services named;
 // a large code file it adds; a file become unreadable, its longest line before
-// and now; and a file newly obfuscated. Then in orange, as a file's tags are,
+// and now, in orange where its finding is (a major release, or each file's
+// source map rebuilt with it); and a file newly obfuscated. Then in orange, as a file's tags are,
 // what any of its files runs beyond itself that the red chip doesn't name,
 // kept from the version compared with.
 function fileBadges(found) {
@@ -691,7 +707,7 @@ function fileBadges(found) {
     fileBadge('npm-compare-runs', 'Runs code', rows('runs-code'), row => npmRunsCodeSaid(row.added), npmRunsCodeKinds(rows('runs-code').map(row => row.added))),
     ...hostBadges(found, '', 'npm-compare', 'added'),
     fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
-    fileBadge('npm-compare-unreadable', 'Now unreadable', rows('now-unreadable'), row => `${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`),
+    unreadableBadge(found.get('now-unreadable')),
     fileBadge('npm-compare-obfuscated', 'Obfuscated', rows('obfuscated'), row => npmObfuscationFound(row.obfuscation)),
     listBadge('is-warn npm-compare-kept-runs', 'Runs code', rows('kept-runs-code'), row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(rows('kept-runs-code').map(row => row.found))),
   ]

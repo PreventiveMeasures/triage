@@ -528,6 +528,11 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(joined, /npm-compare-publisher is-to-known /u, 'grey to a known one')
   assert.match(joined, /compare-tip-note">A different npm account published the open version,<br>one that publishes one of npm's most downloaded packages</u)
   assert.ok(joined.includes(`${account('alice', false)} → ${account('bob', true)}`))
+  // In a major release, a level lower, as a package changing hands with a
+  // rewrite does: orange from a known account, saying so.
+  const rewritten = await badges(side('rewritten', '1.4.1', published('alice', true)), side('rewritten', '2.0.0', published('mallory')))
+  assert.match(rewritten, /npm-compare-publisher is-to-unknown /u, 'orange in a major release')
+  assert.match(rewritten, /compare-tip-note">A different npm account published the open version,<br>[^<]*<br>after one that does<br>in a major release</u)
   assert.doesNotMatch(await badges(side('same-hands', '1.0.0', published('alice')), side('same-hands', '1.1.0', published('alice'))), /npm-compare-publisher/u)
   assert.doesNotMatch(await badges(side('unsaid', '1.0.0'), side('unsaid', '1.1.0', published('alice'))), /npm-compare-publisher/u, 'not where npm doesn\'t say')
 
@@ -689,6 +694,18 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.equal(counted.match(/compare-tip-path"/gu).length, 8)
   assert.match(counted, /compare-tip-note">and 2 more</u)
   assert.match(counted, /data-tooltip=Now unreadable: lib\/f0\.js \(25 → 2,013 characters\), (?:lib\/f\d\.js \([^)]+\), ){7}and 2 more\s/u, 'in text, as many')
+
+  // Orange where its source map was rebuilt with it, as a build minifies a
+  // file and writes its map together, or in a major release, saying which;
+  // red where its map is as it was, as an attack editing a built file leaves it.
+  const built = (ver, line, map) => version(ver, { 'lib/a.js': `${code}\n${line}\n//# sourceMappingURL=a.js.map\n`, 'lib/a.js.map': map })
+  const rebuilt = await badges(built('3.0.0', 'export {}', '{"version":3,"mappings":"A"}'), built('3.0.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3,"mappings":"B"}'))
+  assert.match(rebuilt, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?<span>Now unreadable<\/span>/u, 'orange, its map rebuilt')
+  assert.match(rebuilt, /compare-tip-path">lib\/a\.js<\/span><span class="compare-tip-said">[^]*?its source map rebuilt with it/u)
+  const edited = await badges(built('3.1.0', 'export {}', '{"version":3,"mappings":"A"}'), built('3.1.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3,"mappings":"A"}'))
+  assert.match(edited, /<li><span class=npm-extension npm-compare-file npm-compare-unreadable/u, 'red, its map as it was')
+  const major = await badges(many('4.2.0', 'export {}'), many('5.0.0', `const x = '${'z'.repeat(2001)}'`))
+  assert.match(major, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?in a major release/u, 'orange in a major release')
 })
 
 test('Compare flags in red code that runs beyond itself new to a file the open version adds or changes, naming the kinds', async () => {

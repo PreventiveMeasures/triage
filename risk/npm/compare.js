@@ -12,6 +12,7 @@ import { npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmLargeCode, npmUnreadable } from '../files/readability.js'
+import { SEVERITIES } from '../files/stamps.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
 import { npmFilesDiff } from './diff.js'
@@ -31,8 +32,12 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // (`obfuscated`). Then in orange what any of its files runs beyond itself that
 // `runs-code` doesn't name, kept from the version compared with
 // (`kept-runs-code`). A renamed file by its old path; one renamed alone,
-// unchanged, holds what it held.
-function npmFileFindings(base, other, files) {
+// unchanged, holds what it held. A file become unreadable calls for less
+// where its source map was rebuilt with it (`rebuilt`, rebuiltWithMap), as a
+// build minifies a file and writes its map together, and in a `major`
+// release (npmMajorRelease): `now-unreadable` orange where every such file is
+// either, else red.
+function npmFileFindings(base, other, files, major) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
   const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.renamedFrom ?? row.path)
@@ -51,8 +56,9 @@ function npmFileFindings(base, other, files) {
       return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
     }),
     { id: 'large-code', severity: 'critical', files: files.onlyOther.filter(row => npmLargeCode(row.path, sizes.get(row.path))).map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
-    { id: 'now-unreadable', severity: 'critical', files: changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability))
-      .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest })) },
+    { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability))
+      .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest,
+        ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
       .map(row => ({ path: row.path, obfuscation: after(row).readability.obfuscation })) },
     { id: 'kept-runs-code', severity: 'high', files: kept },
@@ -70,6 +76,61 @@ function npmFileFindings(base, other, files) {
 // shortener (`git.io`, `git.new`), which can lead anywhere.
 const ALLOWED_HOSTS = new Set(['github.com', 'lit.dev', 'developer.mozilla.org', 'json-schema.org', 'nodejs.org', 'babeljs.io', 'tseslint.com',
   'devblogs.microsoft.com', 'semver.org'])
+
+// A severity one level lower (stamps.js SEVERITIES).
+const lower = severity => SEVERITIES[Math.min(SEVERITIES.indexOf(severity) + 1, SEVERITIES.length - 1)]
+
+// Whether the open version (`now`) is a major release past the one compared
+// with (`was`): its major number higher, or its minor for 0.x. A rewrite
+// changes how a package's files read and who publishes it, and npm's `^`
+// ranges don't take a major release by themselves, as a hijacked release
+// wants them to.
+function npmMajorRelease(was, now) {
+  const [a, b] = [was, now].map(version => /^v?(\d+)\.(\d+)\./u.exec(version ?? '')?.slice(1).map(Number))
+  return Boolean(a && b) && (b[0] > a[0] || (a[0] === 0 && b[0] === 0 && b[1] > a[1]))
+}
+
+// Whether the open version's file at `path` (`basePath` in the one compared
+// with) had its source map rebuilt with it: its last line, a
+// `sourceMappingURL` comment and no more, names a map file of the package by
+// a plain path from the file's own (MAP_NAME), a source map
+// (its `mappings`, or each of an indexed map's `sections`, told), new or
+// changed from the one at its path, or beside the file's own before it was
+// renamed, as a build writes them together. An attack editing a built file
+// leaves its map as it was.
+const SOURCE_MAP_FILE = /^\s*(?:\/\/[#@] sourceMappingURL=(\S+)|\/\*[#@] sourceMappingURL=(\S+?)\s*\*\/)\s*$/u
+// A map name a build writes (`a.js.map`, `../maps/a.map`): segments of
+// letters, digits and `._~@+-`, as a browser reads them alike. One at a URL,
+// from a site's root, or with an escape or a backslash names none.
+const MAP_NAME = /^(?:[\w.~@+-]+\/)*[\w.~@+-]+\.map$/u
+function besideFile(file, name) {
+  const parts = file.split('/').slice(0, -1)
+  for (const part of name.split('/')) {
+    if (part === '..' && parts.length === 0) return null
+    if (part === '..') parts.pop()
+    else if (part !== '.') parts.push(part)
+  }
+  return parts.join('/')
+}
+function rebuiltWithMap(base, other, path, basePath) {
+  const text = bundleFilesAsMap(other).get(path)
+  const directive = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1)) : null
+  const name = directive?.[1] ?? directive?.[2]
+  if (!name || !MAP_NAME.test(name)) return false
+  const [map, was] = [bundleFilesAsMap(other).get(besideFile(path, name)), bundleFilesAsMap(base)]
+  return isSourceMap(map) && map !== was.get(besideFile(path, name)) && map !== was.get(besideFile(basePath, name))
+}
+const isSourceMap = text => {
+  try {
+    const json = JSON.parse(text)
+    return typeof json?.mappings === 'string'
+      || (Array.isArray(json?.sections) && json.sections.length > 0 && json.sections.every(section => typeof section?.map?.mappings === 'string'))
+  } catch { return false }
+}
+
+// The files become unreadable as a finding says them: red, but orange in a
+// major release, or where each had its source map rebuilt with it.
+const unreadableFinding = (major, files) => ({ severity: major || files.every(row => row.rebuilt) ? 'high' : 'critical', ...major ? { major } : {}, files })
 
 // The hosts the open version's code names in its URLs that the one compared
 // with's named in none of its, ALLOWED_HOSTS aside, each `{ host, path, line,
@@ -135,7 +196,8 @@ export function npmDependencyFindings({ added, changed }, base) {
 // Everything that calls for a look at the open version (`other`) against the
 // one compared with (`base`), whatever the time, in the order a reviewer reads
 // them: a publisher that changed (release.js npmPublisherChange,
-// `publisher`); provenance lost (`provenance-lost`); install scripts added or
+// `publisher`), a level lower in a major release (npmMajorRelease, `major`),
+// as a package changing hands with a rewrite does; provenance lost (`provenance-lost`); install scripts added or
 // changed (`install-scripts`); its `dependencies` added and changed, as
 // flagged (npmDependencyFindings); its files, by how they differ (diff.js
 // npmFilesDiff, npmFileFindings); and the hosts its code names anew
@@ -143,16 +205,17 @@ export function npmDependencyFindings({ added, changed }, base) {
 // where npmBaseFilesTell says they would change nothing, is found nothing of
 // by them.
 export function npmCompareFindings(base, other, dependencies) {
+  const major = npmMajorRelease(base.npm.version, other.npm.version)
   const publisher = npmPublisherChange(base.npm.manifest, other.npm.manifest)
   const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json?.sources })))
   const files = base.json ? npmFilesDiff(base, other) : null
   const hosts = files ? npmNewHosts(base, other, files) : []
   return [
-    ...publisher ? [{ id: 'publisher', ...publisher }] : [],
+    ...publisher ? [{ id: 'publisher', ...publisher, ...major ? { severity: lower(publisher.severity), major } : {} }] : [],
     ...npmProvenanceLost(base.npm.manifest, other.npm.manifest) ? [{ id: 'provenance-lost', severity: 'critical' }] : [],
     ...scripts ? [{ id: 'install-scripts', severity: 'high', ...scripts }] : [],
     ...npmDependencyFindings(dependencies, base),
-    ...files ? npmFileFindings(base, other, files) : [],
+    ...files ? npmFileFindings(base, other, files, major) : [],
     ...hosts.length > 0 ? [{ id: 'new-hosts', severity: 'high', hosts }] : [],
   ]
 }
