@@ -785,6 +785,30 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   &.is-loading { opacity: .55; cursor: default; }
   &.is-error { color: var(--critical); }
 }
+/* What the diff hides, in one frame as tall as the toggles beside it: Hide:,
+   then a named switch for each (mode-switch, as the treemap's Sunburst). In a
+   pane narrower than all of them, they wrap within it. */
+.bundle-compare-code-hide {
+  flex: 0 1 auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+  min-height: 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+
+  & mode-switch { --switch-track-width: 20px; --switch-track-height: 11px; }
+}
+.bundle-compare-code-hide-label {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 0 0 8px;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 600;
+}
 @container bundle-code (max-width: 560px) {
   .bundle-compare-code-bar .bundle-code-main-stats,
   .bundle-compare-code-pill { display: none; }

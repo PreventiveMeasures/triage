@@ -47,6 +47,7 @@ import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
+import './mode-switch.js'
 import { typeOnly } from './type-only.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
@@ -1438,27 +1439,12 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's renamed names, whitespace, pretty-print and layout toggles, as
-  // the file shown, or any of those listed, has use for them: renamed names
-  // where hiding them hides any (`renamed`, see _fileState), whitespace where
-  // hiding it hides a change (`whitespace`), changes in types alone where the
-  // server proved any (`types`), pretty-printing a minified file
-  // (`pretty` from _pretty), after those, as pressing it can show or hide
-  // them, and a diff its layout, last. Hiding renamed names gives the old side
-  // the new side's names wherever a minifier renamed a variable alike
-  // throughout, an old one no new one stands for named apart (r_old), rather
-  // than marking the lines that differ in them alone. Lines always wrap.
+  // The diff's hiding, pretty-print and layout controls, as the file shown, or
+  // any of those listed, has use for them: what it hides (_hides), then
+  // pretty-printing a minified file (`pretty` from _pretty), as pressing it
+  // can show or hide them, and a diff its layout, last. Lines always wrap.
   _toggles(diffable, pretty = null, renamed = false, whitespace = false, types = false) {
-    return html`${diffable ? html`${renamed ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
-          data-tooltip="Hide renamed names"
-          @click=${() => this._setRenames(!prefs.ignoreRenames)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
-        </button>` : nothing}
-        ${whitespace ? this._whitespaceToggle() : nothing}
-        ${types ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreTypes)} aria-label=${HIDE_TYPES}
-          data-tooltip=${HIDE_TYPES} @click=${() => this._setTypes(!prefs.ignoreTypes)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 3.5h9M8 3.5v9"/></svg>
-        </button>` : nothing}` : nothing}
+    return html`${diffable ? this._hides(renamed, whitespace, types) : nothing}
         ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
           data-tooltip=${`${prettyTooltip(pretty)}${affectedFiles(pretty.affects)}`}
@@ -1598,15 +1584,22 @@ export class BundleCompareCode extends LitElement {
       </div>` : nothing}`
   }
 
-  // Hiding whitespace changes, as diff -b: off for a file whose changes it may
-  // not hide (`whitespace` other than `hideable`, see _fileState), all of
-  // which show. Named for what it does in every state; where it is off, why
-  // is its tooltip and accessible description.
-  _whitespaceToggle() {
-    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace)}
-      aria-label=${HIDE_WHITESPACE} data-tooltip=${HIDE_WHITESPACE} @click=${() => this._setWhitespace(!prefs.ignoreWhitespace)}>
-      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
-    </button>`
+  // What the diff hides, in one frame, Hide: each a named switch (mode-switch,
+  // as the treemap's Sunburst), there where it has use: renamed
+  // names where hiding them hides any (`renamed`, see _fileState), which gives
+  // the old side the new side's names wherever a minifier renamed a variable
+  // alike throughout, an old one no new one stands for named apart (r_old),
+  // rather than marking the lines that differ in them alone; whitespace where
+  // hiding it, as diff -b, hides a change (`whitespace`); changes in types
+  // alone where the server proved any (`types`).
+  _hides(renamed, whitespace, types) {
+    const switches = [
+      renamed && ['Renames', HIDE_RENAMES, prefs.ignoreRenames, () => this._setRenames(!prefs.ignoreRenames)],
+      whitespace && ['Whitespace', HIDE_WHITESPACE, prefs.ignoreWhitespace, () => this._setWhitespace(!prefs.ignoreWhitespace)],
+      types && ['Type-only', HIDE_TYPES, prefs.ignoreTypes, () => this._setTypes(!prefs.ignoreTypes)],
+    ].filter(Boolean)
+    if (switches.length === 0) return nothing
+    return html`<span class="bundle-compare-code-hide" role="group" aria-label="Hide"><span class="bundle-compare-code-hide-label" aria-hidden="true">Hide:</span>${switches.map(([label, name, on, toggle]) => html`<mode-switch compact borderless .checked=${on} accessible-label=${name} label=${label} @click=${toggle}></mode-switch>`)}</span>`
   }
 
   _setWhitespace(value) {
