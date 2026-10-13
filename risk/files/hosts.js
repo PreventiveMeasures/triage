@@ -37,6 +37,13 @@ const LOCAL = /^(?:localhost|.+\.(?:localhost|local|test|invalid|example|interna
 // (`"https:\/\/api.example.com"`, as JSON can be written), read unescaped.
 const ESCAPED = /\\([/.])/gu
 
+// A URL github.com serves a repository's files or releases from (`/raw/`,
+// `/releases/download/`, `/archive/`), which leads to whatever the repository
+// holds, by its path past the host: named by that repository
+// (`github.com/owner/repo`), not as github.com, so that it is never taken for
+// one of github.com's links to code and docs (compare.js ALLOWED_HOSTS).
+const GITHUB_DOWNLOAD = /^\/([\w.-]+\/[\w.-]+)\/(?:raw|releases\/download|archive)\//u
+
 // The hosts a script's strings name, each with the line it is first named on,
 // in the order named, NPM_MAX_HOSTS at most; null for none, or for a file
 // that is no script.
@@ -49,9 +56,11 @@ export function npmHosts(path, text) {
     // across lines.
     const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
     if (!string?.includes('://')) continue
-    for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
+    for (const { 0: url, 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
-      if (!hosts.has(host) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(host, line(index + at))
+      const route = host === 'github.com' ? GITHUB_DOWNLOAD.exec(string.slice(at + url.length)) : null
+      const named = route ? `${host}/${route[1]}` : host
+      if (!hosts.has(named) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(named, line(index + at))
       if (hosts.size >= NPM_MAX_HOSTS) break
     }
   }

@@ -62,8 +62,10 @@ function npmFileFindings(base, other, files) {
 // and docs, as their links and error messages name them, the most a version
 // names anew of popular packages a year apart (lit.dev, Lit's). Each as it is
 // written, not a host under it, so one an attack sends to or fetches from
-// there (`api.github.com`, `raw.githubusercontent.com`) is still named; and no
-// link shortener (`git.io`, `git.new`), which can lead anywhere.
+// there (`api.github.com`, `raw.githubusercontent.com`) is still named, as is
+// a repository github.com serves files or releases from, named by it
+// (hosts.js GITHUB_DOWNLOAD); and no link shortener (`git.io`, `git.new`),
+// which can lead anywhere.
 const ALLOWED_HOSTS = new Set(['github.com', 'lit.dev', 'developer.mozilla.org', 'json-schema.org', 'nodejs.org', 'babeljs.io', 'tseslint.com',
   'devblogs.microsoft.com', 'semver.org', 'en.wikipedia.org'])
 
