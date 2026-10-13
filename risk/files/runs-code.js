@@ -61,13 +61,13 @@ const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}
 // What a shell command, and a place code runs from again later, may say
 // (SHELL, PERSISTENCE).
 // A shell, as a hashbang or a pipe names it (`#!/bin/ksh`, `| fish`,
-// BusyBox's `ash`); after a pipe, by its path or env's too (`| /bin/sh`,
+// BusyBox's `ash`, `| powershell`); after a pipe, by its path or env's too (`| /bin/sh`,
 // `| /usr/bin/env bash`), env's options, their values, and settings before
 // it on its line (`env -S`, `env -u NAME`, `env MODE=x`).
-const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh)`
+const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
 const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
 const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
-  + String.raw`|\$profile|profile\.ps1|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
+  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
@@ -180,7 +180,8 @@ const URL_STRIPPED = /[\t\n\r]/gu
 // -enc …`), rundll32, osascript and mshta, certutil fetching (`certutil
 // -urlcache -f http://…`) and bitsadmin's `/transfer`, and bash's network
 // redirection (`/dev/tcp/host/port`), and PowerShell running what it
-// fetches (`iex (iwr https://…).Content`, `irm https://… | iex`, `IEX
+// fetches (`iex (iwr https://…).Content`, `irm https://… | iex`, long
+// options before the pipe too, `iwr … -Headers @{…} | iex`, `IEX
 // (New-Object Net.WebClient).DownloadString(…)`), its line continued too,
 // not the next pipeline's, `iex $x && iwr …`); in any case, as Windows' are
 // written, and by its path (`/usr/bin/curl`).
@@ -197,23 +198,23 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
   + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])${ON_ITS_LINE}{0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
-  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:[^\n;|]|${CONTINUED}){0,200}\|\s*(?:iex|invoke-expression)(?![\w-])`
+  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|]|${CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
 // A place code runs from again later: a shell's rc file (`~/.bashrc`,
 // `.zshrc`, `.zshenv`, `.zlogin`, `.bash_profile`, `.bash_login`,
 // `.zprofile`, and `.profile` in a path, `~/.profile`, not a selector's
 // class, nor one after another, `.nav`), PowerShell's profile (`$PROFILE`,
 // `Microsoft.PowerShell_profile.ps1`, all hosts' `PowerShell\Profile.ps1`,
 // `$PSHOME\Profile.ps1`, not another folder's), macOS's LaunchAgents and
-// LaunchDaemons, systemd's user units (`~/.config/systemd/user`, `systemctl
-// --user enable`, other options before it, `--now`, or `--user` after it in
-// its command, `systemctl enable --user`; not `start`, which runs a unit
-// once), and the settings an AI agent or
-// an editor runs commands from on its own (`.claude/settings.json`,
-// `.vscode/tasks.json`); in any case, as Windows' and macOS's paths are, a
-// path's separator a slash or a backslash, escaped in a string as code
-// writes it (`"\\.claude\\settings.json"`, `\/`).
+// LaunchDaemons, fish's (`~/.config/fish/config.fish`, `conf.d`), systemd's
+// user units (`~/.config/systemd/user`, `systemctl --user enable`, other
+// options before it, `--now`, or `--user` after it in its command,
+// `systemctl enable --user`; not `start`, which runs a unit once), and the
+// settings an AI agent or an editor runs commands from on its own
+// (`.claude/settings.json`, `.vscode/tasks.json`); in any case, as Windows'
+// and macOS's paths are, a path's separator a slash or a backslash, escaped
+// in a string as code writes it (`"\\.claude\\settings.json"`, `\/`).
 const SEPARATOR = String.raw`(?:\\?\/|\\{1,2})`
-const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])`
+const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])|fish${SEPARATOR}(?:config\.fish|conf\.d)(?![\w-])`
   + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|(?:PowerShell|\$pshome)${SEPARATOR}profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
