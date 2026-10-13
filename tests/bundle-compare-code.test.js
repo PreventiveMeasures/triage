@@ -1847,6 +1847,47 @@ test('a minified file whose rename diff was worked out from other copies than th
   assert.match(renderText(element.render()), /diff-row del renamed/u, 'and marked then')
 })
 
+test('a rename diff that failed for a reason that may pass paints the view opened since once due, the one it failed for gone', async t => {
+  const now = Date.now, wait = globalThis.setTimeout
+  // The retry's timer kept, to be fired once it is due.
+  const timers = []
+  globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 5_000 ? (timers.push(fn), {}) : wait(fn, ms, ...rest))
+  t.after(() => { Date.now = now; globalThis.setTimeout = wait; state.bundleSourcePretty = false })
+  const files = [{ 'dist/reopened.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/reopened.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }]
+  const opened = () => {
+    const element = view('dist/reopened.min.js', files)
+    element.base.managedId = 'b35'
+    element.other.managedId = 'b36'
+    return element
+  }
+  const copy = 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n'
+  pretty.set('b35:dist/reopened.min.js', copy)
+  pretty.set('b36:dist/reopened.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
+  state.bundleSourcePretty = true
+  // The view it failed for, in no page.
+  const gone = opened()
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(gone.render())); i++) await new Promise(resolve => { wait(resolve, 5) })
+  pretty.set('b35:dist/reopened.min.js', Object.assign(new Error('The server is busy.'), { status: 503 }))
+  const status = element => element._fileState('dist/reopened.min.js', element._entries.get('dist/reopened.min.js')).changes?.status
+  for (let i = 0; i < 200 && status(gone) !== 'error'; i++) await new Promise(resolve => { wait(resolve, 5) })
+  assert.equal(status(gone), 'error')
+  assert.equal(timers.length, 1, 'its retry timed')
+  // The same file opened again before it is due, shown.
+  const shown = opened()
+  Object.defineProperty(shown, 'isConnected', { value: true, configurable: true })
+  let painted = 0
+  shown.requestUpdate = () => { painted++ }
+  assert.doesNotMatch(renderText(shown.render()), /diff-row del renamed/u, 'the plain diff drawn')
+  pretty.set('b35:dist/reopened.min.js', copy)
+  const asked = renameDiffs.length
+  Date.now = () => now() + 6_000
+  timers.shift()()
+  assert.equal(painted, 1, 'painted again once due')
+  for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(shown.render())); i++) await new Promise(resolve => { wait(resolve, 5) })
+  assert.equal(renameDiffs.length, asked + 1, 'asked again then')
+  assert.match(renderText(shown.render()), /diff-row del renamed/u, 'and marked')
+})
+
 test('a view gone is not painted again as a rename diff it asked for comes, so asks for none again', async t => {
   t.after(() => { state.bundleSourcePretty = false })
   const element = view('dist/gone.min.js', [{ 'dist/gone.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/gone.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])

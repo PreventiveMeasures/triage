@@ -32,7 +32,8 @@ const RETRY_MAX_MS = 5 * 60_000
 // `retry` where asking again may succeed (the server busy, a timeout), then
 // `until` when; `tries` the failures before, for how long until then.
 const diffs = new Map()
-// What a diff asked for calls once it comes: the view that last asked.
+// What a diff asked for calls once it comes, or a failure once it is due to
+// be asked again: the view that last asked.
 const notifiers = new Map()
 
 // What an answer not shaped as the server answers, for other files than those
@@ -130,19 +131,20 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
   }
   if (diffs.get(key) !== asked) return
   const notify = notifiers.get(key)
-  if (next.status === 'error' && next.retry) due(next, asked.tries, notify)
+  if (next.status === 'error' && next.retry) due(key, next, asked.tries)
+  else notifiers.delete(key)
   diffs.set(key, next)
-  notifiers.delete(key)
   evict()
   notify?.()
 }
 
 // A failure that may pass, given when it is asked again (`until`), counting
-// `tries`, the view that asked painted again then.
-function due(failure, tries = 0, notify = null) {
+// `tries`, the view that last asked for it painted again then: one opened
+// since it failed, where the view it failed for is gone.
+function due(key, failure, tries = 0) {
   const wait = Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS)
   Object.assign(failure, { until: Date.now() + wait, tries: tries + 1 })
-  if (notify) setTimeout(notify, wait)?.unref?.()
+  setTimeout(() => { if (diffs.get(key) === failure) notifiers.get(key)?.() }, wait)?.unref?.()
   return failure
 }
 
@@ -172,12 +174,12 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   // Worked out from other copies than those drawn (printed again since, as a
   // formatter changed): asked again, as a failure that may pass is.
   if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) {
-    diff = due({ status: 'error', message: MISMATCH, retry: true }, asked.tries, notify)
+    diff = due(key, { status: 'error', message: MISMATCH, retry: true }, asked.tries)
   }
   diffs.delete(key)
   diffs.set(key, diff)
   want(key)
-  if (diff.status === 'loading') notifiers.set(key, notify)
+  if (diff.status === 'loading' || diff.until !== undefined) notifiers.set(key, notify)
   if (!asked || again) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
   evict()
   return diff
@@ -186,5 +188,10 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
 // Turned back on, "Hide renamed names" asks again for diffs that failed for a
 // reason that may have passed.
 export function retryRenameDiffs() {
-  for (const [key, diff] of diffs) if (diff.status === 'error' && diff.retry) diffs.delete(key)
+  for (const [key, diff] of diffs) {
+    if (diff.status === 'error' && diff.retry) {
+      diffs.delete(key)
+      notifiers.delete(key)
+    }
+  }
 }
