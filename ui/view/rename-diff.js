@@ -73,19 +73,24 @@ const wantedNow = key => wanted.has(key) || wantedBefore.has(key)
 
 // A view painting what it shows, the diffs it asks for from then on those it
 // wants: one asking none (pretty-printing turned off, a list filtered to
-// none) wants none of those it asked for before.
+// none) wants none of those it asked for before, past KEPT_DIFFS dropped as
+// the paint ends.
 export function paintingRenameDiffs() {
   if (asking) return
   asking = true
   wantedBefore = wanted
   wanted = new Set()
-  setTimeout(() => { asking = false })
+  setTimeout(() => {
+    asking = false
+    evict()
+  })
 }
 
-// A view gone wants none it asked for.
+// A view gone wants none it asked for, past KEPT_DIFFS dropped.
 export function forgetRenameDiffs() {
   wanted = new Set()
   wantedBefore = new Set()
+  evict()
 }
 
 function want(key) {
@@ -148,8 +153,10 @@ function due(key, failure, tries = 0) {
   return failure
 }
 
-// Past KEPT_DIFFS, the least recent no view waits for: as one is asked for,
-// and as one comes that may be wanted no longer.
+// Past KEPT_DIFFS, the least recent no view waits for: as a paint ends, not
+// before (one asking for more than that would drop those it is yet to ask
+// for, those it asked for before wanted no longer), as one comes that may be
+// wanted no longer, and as a view goes.
 function evict() {
   for (const [old, kept] of diffs) {
     if (diffs.size <= KEPT_DIFFS) break
@@ -181,7 +188,6 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   want(key)
   if (diff.status === 'loading' || diff.until !== undefined) notifiers.set(key, notify)
   if (!asked || again) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
-  evict()
   return diff
 }
 

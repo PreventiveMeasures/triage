@@ -428,6 +428,57 @@ test('the Diff view marks the renamed lines of every minified file it shows, how
   assert.match(renderText(all.render()), /aria-pressed=false aria-label="Hide renamed names"/u)
 })
 
+test('the Diff view\'s rename diffs past those a few kept are dropped once it is gone, or paints asking for none', async t => {
+  const files = Array.from({ length: 20 }, (_, i) => `dist/k${i}.min.js`)
+  t.after(() => {
+    state.bundleSourcePretty = false
+    for (const path of files) for (const id of ['b37', 'b38']) pretty.delete(`${id}:${path}`)
+  })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
+  code.base.managedId = 'b37'
+  code.other.managedId = 'b38'
+  for (const path of files) {
+    pretty.set(`b37:${path}`, 'var Y = 1;\nq(Y);\nh();\nmodule.exports = 1;\n')
+    pretty.set(`b38:${path}`, 'var X = 1;\nq(X);\nh();\nmodule.exports = 2;\n')
+  }
+  const opened = () => {
+    const all = new (customElements.get('bundle-compare-all'))()
+    for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+    all.willUpdate(new Map([['base'], ['other'], ['files']]))
+    all._query = 'dist/k'
+    return all
+  }
+  // Painted until every file's diff came, then those asked for again, of ours.
+  const settled = async all => {
+    const asked = renameDiffs.length
+    const deadline = Date.now() + 20_000
+    while (files.some(path => all._fileState(path, all._entries.get(path)).changes?.status !== 'ready') && Date.now() < deadline) {
+      renderText(all.render())
+      await new Promise(resolve => { setTimeout(resolve, 5) })
+    }
+    return renameDiffs.slice(asked).filter(({ id }) => id === 'b37').map(({ path }) => path)
+  }
+  state.bundleSourcePretty = true
+  const first = opened()
+  assert.equal((await settled(first)).length, files.length, 'each asked for')
+  // Gone: the four least recent, past the sixteen kept, dropped.
+  first.disconnectedCallback()
+  const again = opened()
+  assert.deepEqual(await settled(again), files.slice(0, 4), 'those dropped asked for again, opened again')
+  // Pretty-print turned off: two paints asking none, each a task of its own,
+  // and the same dropped as the second ends.
+  state.bundleSourcePretty = false
+  for (let i = 0; i < 2; i++) {
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    renderText(again.render())
+  }
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  state.bundleSourcePretty = true
+  assert.deepEqual(await settled(again), files.slice(0, 4), 'and turned back on')
+})
+
 test('the Diff view filtered before its rename diffs all came asks for none of those it shows no longer, as their turns come', async t => {
   const files = Array.from({ length: 10 }, (_, i) => `dist/s${i}.min.js`)
   t.after(() => {
