@@ -249,14 +249,24 @@ the `whole env`, as
 `JSON.stringify(process.env)` or `Object.entries(process.env)` do, not where
 it is handed to a program, its names listed, or its entries picked among as
 they are read (`.filter(…)`, `.find(…)`, `.reduce(…)`, as npm's agent finds
-its proxy's); and `publish` to npm (`npm publish` run, the registry's
+its proxy's); `publish` to npm (`npm publish` run, the registry's
 `/-/whoami`, libnpmpublish, a PUT request in a file naming the registry: its
 URL as JavaScript reads the string, its escapes decoded, the host after a
 URL's two slashes (or backslashes) or an http(s) scheme, userinfo between
 (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`), or its
 host starting a string, its whole or before its path or port; not its host in
-prose, as the advisories' consent dialog tells it). Each label is marked as an install script is, `whole env` and
-`publish` in red, worse; its tooltip a list, as Compare's chips' are, of
+prose, as the advisories' consent dialog tells it); run `shell` commands
+fetching or handing off code (`curl` or `wget` given a URL, a download piped
+to a shell, `powershell -…`, rundll32, osascript, mshta, `certutil
+-urlcache`, `bitsadmin /transfer`, `/dev/tcp/`, PowerShell's `iex` of what
+`iwr` or `irm` fetches); and name a place code runs from again later,
+`persistence` (a shell's rc file, PowerShell's `$PROFILE`, LaunchAgents and
+LaunchDaemons, systemd's user units, `.claude/settings.json`,
+`.vscode/tasks.json`, a directory and its file named apart as `path.join`
+takes them). A shell script (`.sh`, `.bat`, `.ps1` …, or a shell's hashbang)
+is read whole for the last two. Each label is marked as an install script
+is, `whole env`, `publish` and `persistence` in red, worse; its tooltip a
+list, as Compare's chips' are, of
 what it found (each way a string runs as code, a credential file or a
 token, …) with the lines it is on, and where the version compared with
 didn't hold one (all of an added file's), a line under them naming it new
@@ -1484,7 +1494,7 @@ control. A version shows in the bundle view with four tabs:
   its severity's color, in the Files list and in Compare's file heads and
   tree, each version by its own report; and a script with what its code can
   do beyond itself (`eval`, `child_process`, `credentials`, `whole env`,
-  `publish`), and a file with Exfiltration, Remote or IP lookup where it
+  `publish`, `shell`, `persistence`), and a file with Exfiltration, Remote or IP lookup where it
   names such a host, each in its color, as Compare labels them, its lines in the
   tooltip, one on a single line opening the file's code there when clicked. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
@@ -1597,8 +1607,8 @@ control. A version shows in the bundle view with four tabs:
   its tooltip; in red, though their tags on the files say little of one
   alone or warn of it in orange, code that runs beyond itself new to a file
   the open version adds or changes (the kinds alone, as the file's tags say
-  them: eval, child_process, credentials, whole env, publish, `Runs code`
-  heading its tooltip), its tooltip listing each file with its new kinds and their lines,
+  them: eval, child_process, credentials, whole env, publish, shell,
+  persistence, `Runs code` heading its tooltip), its tooltip listing each file with its new kinds and their lines,
   each way a string runs as code by its own name (`Function (line 2)`); a
   host new to a file the open version adds or changes, a chip for each tag a
   level higher than the tag's own (`Exfiltration` and `Remote` in red, `IP
