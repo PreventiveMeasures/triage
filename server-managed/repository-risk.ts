@@ -14,17 +14,20 @@
 // from elsewhere (git, a tarball with no integrity, a file) is listed, not
 // assessed. Repositories are read one at a time, as GitHub's limits are the
 // caller's; packages are assessed meanwhile, as many at a time as npm-risk.ts
-// makes spare assessments.
+// makes spare assessments. A lockfile's packages of npm's registry or a
+// mirror are asked of npm's advisories all at once, as `npm audit` asks, each
+// advisory told with whether it is of malware (isMalware), which alone is a
+// supply chain's risk; the rest are vulnerabilities, told beside.
 import { setTimeout as delay } from 'node:timers/promises'
-import { LockfileError, parseNpmLockfile } from '@preventive/lockfile/npm.js'
-import { parsePnpmLockfile } from '@preventive/lockfile/pnpm.js'
-import { parseYarn1Lockfile } from '@preventive/lockfile/yarn1.js'
+import type { Advisory } from '@preventive/upstream/advisories.js'
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
+import { isExactVersion } from '@preventive/upstream/semver.js'
 import { NpmRiskError, SEVERITIES, type Severity } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import { GithubApiError } from './github-errors.ts'
 import { NpmPackageError, type NpmVersionDocument } from './npm-packages.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
+import { type LockedPackage, lockedPackages } from './locked-packages.ts'
 
 // The formats of npm's ecosystem, as findRepoLockfiles names them, and those
 // of them read here.
@@ -36,86 +39,9 @@ const READ_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm', 'yarn'
 const BUSY_RETRIES = 20
 const BUSY_WAIT_MS = 1000
 
-export interface LockedPackage {
-  name: string
-  // None for a git dependency whose package.json has none.
-  version: string | null
-  // Where it is installed from: npm's registry, another host's tarball with
-  // an integrity, such as a company's mirror of npm's, a git repository, a
-  // tarball with none, or a file of the project.
-  source: 'registry' | 'mirror' | 'git' | 'tarball' | 'file'
-  // Where one from elsewhere than npm's registry comes from, without any
-  // credentials its URL has.
-  from?: string
-  // A mirror's tarball's, as the lockfile has it: npm's package of its name
-  // and version only where npm's integrity is among it.
-  integrity?: string
-}
-
 // The most severe of `findings`, or null for none.
 export function highestSeverity(findings: readonly { severity: Severity }[]): Severity | null {
   return SEVERITIES.find(severity => findings.some(finding => finding.severity === severity)) ?? null
-}
-
-// A package as each reader resolves one, its name the one it is published
-// under, and a registry tarball's URL held to its name and version.
-type Resolution =
-  | { type: 'tarball'; tarball: string | undefined; integrity: string | undefined; gitHosted?: boolean }
-  | { type: 'git'; repo: string }
-  | { type: 'directory' }
-interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined }
-
-// The packages of a lockfile of `format`, as its reader resolves them.
-// Versions go unchecked against ranges, as only what is locked is asked for.
-function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
-  if (format === 'npm') return Object.values(parseNpmLockfile(text, { checkVersions: false }).packages)
-  if (format === 'pnpm') {
-    const { lockfile, env } = parsePnpmLockfile(text)
-    return [...Object.values(env?.packages ?? {}), ...Object.values(lockfile?.packages ?? {})]
-  }
-  if (format !== 'yarn') throw new TypeError(`lockedPackages: ${format} lockfiles are not read`)
-  // Yarn 2 and later write another format, which only the text tells apart.
-  if (/^__metadata:/mu.test(text)) throw new LockfileError('a yarn.lock of Yarn 2 or later, which is not read')
-  // Yarn 1 names an alias, `my-q@npm:q@^1.5.1`, by its own name.
-  return Object.values(parseYarn1Lockfile(text, { checkVersions: false }).packages)
-    .map(pkg => ({ ...pkg, name: /@npm:((?:@[^/@]+\/)?[^/@]+)/u.exec(pkg.patterns[0] ?? '')?.[1] ?? pkg.name }))
-}
-
-// npm's registry, by either of its names, and yarn's mirror of it, as
-// @preventive/lockfile holds their tarballs to a package's name and version.
-const REGISTRY_HOSTS = new Set(['registry.npmjs.org', 'registry.npmjs.com', 'registry.yarnpkg.com'])
-const isRegistry = (url: URL) => url.protocol === 'https:' && !url.port && !url.username && !url.password
-  && REGISTRY_HOSTS.has(url.hostname.replace(/\.+$/u, ''))
-// Where a URL is, as it may be shown: its credentials, query and fragment
-// left out.
-const shown = (url: URL | null) => url ? { from: `${url.protocol}//${url.host}${url.pathname}` } : {}
-
-// Where a package read comes from (LockedPackage); null for one a package
-// bundles, with no resolution, or one of the project's own directories.
-function locked({ name, version, resolution }: ReadPackage): LockedPackage | null {
-  const at = { name, version: version ?? null }
-  if (resolution === undefined || resolution.type === 'directory') return null
-  if (resolution.type === 'git') return { ...at, source: 'git', ...shown(URL.parse(resolution.repo)) }
-  const { tarball, integrity } = resolution
-  if (resolution.gitHosted) return { ...at, source: 'git', ...shown(URL.parse(tarball ?? '')) }
-  if (tarball === undefined) return { ...at, source: 'registry' }
-  if (tarball.startsWith('file:')) return { ...at, source: 'file' }
-  const url = URL.parse(tarball)
-  if (url && isRegistry(url)) return { ...at, source: 'registry' }
-  return integrity ? { ...at, ...shown(url), source: 'mirror', integrity } : { ...at, ...shown(url), source: 'tarball' }
-}
-
-// The packages a lockfile of `format` (npm, pnpm or yarn, as
-// findRepoLockfiles names them) locks, each once, in the lockfile's order.
-// Throws the reader's LockfileError or YamlError for one it refuses.
-export function lockedPackages(format: LockfileFormat, text: string): LockedPackage[] {
-  const found = new Map<string, LockedPackage>()
-  for (const pkg of packagesOf(format, text)) {
-    const one = locked(pkg)
-    const key = one && `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}`
-    if (one && key && !found.has(key)) found.set(key, one)
-  }
-  return [...found.values()]
 }
 
 // A repository to read: where `paths` are given, a team's directories in it,
@@ -151,7 +77,16 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // npm's document of a version; an NpmPackageError where npm has none.
   version(name: string, version: string, signal: AbortSignal): Promise<NpmVersionDocument>
   assess(doc: NpmVersionDocument, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
+  // npm's registry's advisories of these packages' versions, asked at once.
+  advisories(packages: { name: string; versions: string[] }[], signal: AbortSignal): Promise<Advisory[]>
 }
+
+// Whether an advisory is of malware rather than a vulnerability: GitHub's
+// malware advisories are CWE-506's, embedded malicious code, whatever their
+// title; and one's title may say it.
+export const isMalware = ({ cwe, title }: { cwe: readonly string[]; title?: string | undefined }) => cwe.includes('CWE-506') || /\bmalware\b/iu.test(title ?? '')
+
+type AdvisoryRow = Advisory & { malware: boolean }
 
 // Why a step failed, as a line says it: an error's code, and for a lockfile
 // refused, what of it its reader refused.
@@ -165,6 +100,7 @@ export type RepositoryRiskLine =
   | ({ type: 'lockfile'; repo: number; path: string; format: LockfileFormat } & ({ packages: LockedPackage[] } | RiskFailure))
   | ({ type: 'risk'; name: string; version: string; integrity?: string }
     & ({ published: string | null; severity: Severity | null; findings: { id: string; severity: Severity }[] } | RiskFailure))
+  | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | { type: 'done' }
 
 // What an error is known by: a GitHub or npm failure's code, or `failed`.
@@ -211,20 +147,23 @@ type LockfileRead = { packages: LockedPackage[] } | RiskFailure
 
 // What scans keep between them, in this instance's memory: a repository's
 // lockfiles as listed at a commit, and a lockfile's packages by its blob,
-// neither of which changes; and a package's risk line, told again after
-// RISK_KEPT_MS, as risk tells again what of it changes in time (a
-// deprecation, its age, its downloads). Each is told only once access to its
-// repository is checked as when it was read.
+// neither of which changes; and a package's risk line and a lockfile's
+// advisories, asked again after RISK_KEPT_MS, as risk tells again what of a
+// package changes in time (a deprecation, its age, its downloads) and npm
+// publishes advisories. Each is told only once access to its repository is
+// checked as when it was read.
 export interface RiskCaches {
   listings: Lru<ListedLockfile[]>
   lockfiles: Lru<LockfileRead>
   risks: Lru<{ at: number; line: RiskLine }>
+  advisories: Lru<{ at: number; rows: AdvisoryRow[] }>
 }
 export const riskCaches = (): RiskCaches => ({
   listings: lru(1000),
   // By the packages they hold, a few hundred bytes each.
   lockfiles: lru(200_000, read => 'packages' in read ? read.packages.length + 1 : 1),
   risks: lru(50_000),
+  advisories: lru(50_000, kept => kept.rows.length + 1),
 })
 const RISK_KEPT_MS = 60 * 60_000
 const shared = riskCaches()
@@ -356,9 +295,37 @@ async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
   }
 }
 
+type AdvisoriesLine = Extract<RepositoryRiskLine, { type: 'advisories' }>
+
+// A lockfile's advisories line: npm's registry's advisories of its packages
+// of the registry or a mirror, by its blob as kept, else asked at once and
+// kept; null where it locks none, or once the scan stops.
+async function readAdvisories(scan: Scan, { repo, path, format, packages }: LockfileLine & { packages: LockedPackage[] }, sha: string): Promise<AdvisoriesLine | null> {
+  const at = { type: 'advisories', repo, path } as const
+  const key = `${format}\0${sha}`
+  const kept = scan.caches.advisories.get(key)
+  if (kept && Date.now() - kept.at < RISK_KEPT_MS) return { ...at, advisories: kept.rows }
+  const asked = new Map<string, Set<string>>()
+  for (const { name, version, source } of packages) {
+    if ((source !== 'registry' && source !== 'mirror') || !isNpmPackageName(name) || !isExactVersion(version)) continue
+    if (!asked.has(name)) asked.set(name, new Set())
+    asked.get(name)!.add(version)
+  }
+  if (asked.size === 0) return null
+  try {
+    const rows = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
+      .map(advisory => ({ ...advisory, malware: isMalware(advisory) }))
+    scan.caches.advisories.set(key, { at: Date.now(), rows })
+    return { ...at, advisories: rows }
+  } catch (error) {
+    return scan.signal.aborted ? null : { ...at, ...failureOf(error) }
+  }
+}
+
 // A repository's line, its lockfiles or why they couldn't be listed, and
-// then its lockfiles': told once they are all read and access to the
-// repository is checked again, as GitHub may have withdrawn it meanwhile.
+// then its lockfiles', and their advisories: told once they are all read
+// and access to the repository is checked again, as GitHub may have
+// withdrawn it meanwhile.
 async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
   const listed = await listLockfiles(scan, repo)
   if (!listed) return
@@ -376,6 +343,11 @@ async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
   for (const line of lockfiles) {
     scan.lines.add(line)
     if ('packages' in line) assessLater(scan, line.packages)
+  }
+  for (const [at, line] of lockfiles.entries()) {
+    if (scan.signal.aborted) return
+    const advisories = 'packages' in line ? await readAdvisories(scan, line, listed.lockfiles[at]!.sha) : null
+    if (advisories) scan.lines.add(advisories)
   }
 }
 

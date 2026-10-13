@@ -7,7 +7,8 @@ import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { highestSeverity, lockedPackages, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { highestSeverity, isMalware, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
 import { NpmRiskError } from '../risk/index.js'
@@ -106,15 +107,17 @@ test('a package’s risk is its most severe finding', () => {
 // or `{ fullName, error }` where it can't be opened, `{ fullName,
 // lockfilesError }` where its lockfiles can't be listed and `revoked: true`
 // where access to it is gone once they are read, and `paths` where a team's
-// directories in it are; `assess` answering a version's document, and npm's
-// integrity of each package by name (`integrities`, its own name's sri
-// unless given). Each lockfile's blob is its repository's id and its path.
-// The packages a team lists the scope of are `scoped`; what was asked of
-// GitHub and npm is noted.
-function sourceOf(repos, assess, integrities = {}) {
-  const listed = [], opened = [], read = [], scoped = new Set(), versions = []
+// directories in it are; `assess` answering a version's document, npm's
+// integrity of each package its own name's sri; and npm's `advisories` by
+// package name, each row's `versions` those it covers, or none where
+// `advisoriesFail`. Each lockfile's blob is its repository's id and its
+// path. The packages a team lists the scope of are `scoped`; what was asked
+// of GitHub and npm is noted, each advisories request's packages in
+// `audited`.
+function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false } = {}) {
+  const audited = [], listed = [], opened = [], read = [], scoped = new Set(), versions = []
   return {
-    opened, listed, read, versions, scoped,
+    opened, listed, read, versions, scoped, audited,
     repos: () => Promise.resolve(Object.entries(repos).map(([id, repo]) => ({ repoId: Number(id), fullName: repo.fullName, ...repo.paths && { paths: repo.paths } }))),
     async open({ repoId }) {
       await setImmediate()
@@ -133,9 +136,16 @@ function sourceOf(repos, assess, integrities = {}) {
     teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
       versions.push(`${name}@${version}`)
-      return Promise.resolve({ name, version, dist: { integrity: integrities[name] ?? sri(name) } })
+      return Promise.resolve({ name, version, dist: { integrity: sri(name) } })
     },
     assess,
+    advisories(packages) {
+      audited.push(packages)
+      if (advisoriesFail) return Promise.reject(new NpmPackageError(502, 'upstream-unavailable'))
+      return Promise.resolve(packages.flatMap(({ name, versions: asked }) => (advisories[name] ?? [])
+        .map(row => ({ ecosystem: 'npm', source: 'registry', name, aliases: [], cwe: [], ...row, versions: row.versions.filter(version => asked.includes(version)) }))
+        .filter(row => row.versions.length > 0)))
+    },
   }
 }
 
@@ -256,7 +266,7 @@ test('a scan stopped ends its lines at once and gives up the assessments under w
   const reading = Array.fromAsync(scan(hangingSource(signals), stop.signal))
   while (signals.length < 2) await setImmediate()
   stop.abort()
-  assert.deepEqual((await reading).map(line => line.type), ['repos', 'repo', 'lockfile'])
+  assert.deepEqual((await reading).map(line => line.type), ['repos', 'repo', 'lockfile', 'advisories'])
   assert.ok(signals.every(signal => signal.aborted))
 })
 
@@ -268,21 +278,58 @@ test('a team’s repository is read for the lockfiles in its directories, or abo
   assert.deepEqual(repo.lockfiles.map(({ path }) => path), paths.slice(0, 4))
 })
 
-test('a scan again reads what one before it kept: lockfiles by commit and blob, and a package’s risk for the hour', async () => {
+test('a scan again reads what one before it kept: lockfiles by commit and blob, and a package’s risk and a lockfile’s advisories for the hour', async () => {
   const caches = riskCaches()
   const source = sourceOf(onePnpmRepo, () => Promise.resolve({ published: null, findings: [] }))
   const first = await Array.fromAsync(scan(source, undefined, caches))
-  assert.deepEqual([source.listed.length, source.read.length, source.versions.length], [1, 1, 2])
-  for (const asked of [source.opened, source.listed, source.read, source.versions]) asked.length = 0
+  assert.deepEqual([source.listed.length, source.read.length, source.versions.length, source.audited.length], [1, 1, 2, 1])
+  for (const asked of [source.opened, source.listed, source.read, source.versions, source.audited]) asked.length = 0
   const again = await Array.fromAsync(scan(source, undefined, caches))
   assert.deepEqual(again.filter(line => line.type !== 'risk'), first.filter(line => line.type !== 'risk'))
   assert.deepEqual(risksOf(again), risksOf(first))
   assert.deepEqual(source.opened, [1], 'its access checked again')
-  assert.deepEqual([source.listed, source.read, source.versions], [[], [], []], 'nothing asked of GitHub\'s listings and files, or of npm')
+  assert.deepEqual([source.listed, source.read, source.versions, source.audited], [[], [], [], []], 'nothing asked of GitHub\'s listings and files, or of npm')
   // Trusted once a team lists its scope, it is assessed again.
   source.scoped.add('left-pad')
   await Array.fromAsync(scan(source, undefined, caches))
   assert.deepEqual(source.versions, ['left-pad@1.3.0'])
+})
+
+test('an advisory is of malware where GitHub files it as embedded malicious code, or its title says so', () => {
+  assert.equal(isMalware({ cwe: ['CWE-506'], title: 'Critical severity vulnerability that affects event-stream and flatmap-stream' }), true)
+  assert.equal(isMalware({ cwe: ['CWE-94', 'CWE-506'], title: 'Embedded Malicious Code in node-ipc' }), true)
+  assert.equal(isMalware({ cwe: [], title: 'Malware in chalk' }), true)
+  assert.equal(isMalware({ cwe: ['CWE-601'], title: 'Open redirect to a malicious URL' }), false, 'not every malicious thing is malware')
+  assert.equal(isMalware({ cwe: ['CWE-1321'], title: 'Prototype Pollution in lodash' }), false)
+})
+
+test('a lockfile’s packages of npm’s registry or a mirror are asked of npm’s advisories at once, malware’s flagged', async () => {
+  const source = sourceOf({
+    1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }],
+      files: { 'package-lock.json': npmLockfile, 'web/pnpm-lock.yaml': pnpmLockfile } },
+  }, () => Promise.resolve({ published: null, findings: [] }), { advisories: {
+    'left-pad': [{ id: 'GHSA-left-pad', title: 'Malware in left-pad', severity: 'high', cwe: ['CWE-506'], versions: ['1.3.0'] }],
+    'is-number': [{ id: 'GHSA-is-number', title: 'ReDoS in is-number', severity: 'moderate', cwe: ['CWE-1333'], versions: ['7.0.0', '6.0.0'] }],
+  } })
+  const lines = await Array.fromAsync(scan(source))
+  // The git dependency isn't npm's to tell of; the mirror's is asked by its name.
+  assert.deepEqual(source.audited, [
+    [{ name: 'left-pad', versions: ['1.3.0'] }, { name: 'mirrored', versions: ['2.0.0'] }],
+    [{ name: 'is-number', versions: ['7.0.0'] }, { name: 'left-pad', versions: ['1.3.0'] }],
+  ])
+  const told = lines.filter(line => line.type === 'advisories')
+  assert.deepEqual(told.map(({ path, advisories }) => [path, advisories.map(({ id, name, versions, malware }) => [id, name, versions, malware])]), [
+    ['package-lock.json', [['GHSA-left-pad', 'left-pad', ['1.3.0'], true]]],
+    ['web/pnpm-lock.yaml', [['GHSA-is-number', 'is-number', ['7.0.0'], false], ['GHSA-left-pad', 'left-pad', ['1.3.0'], true]]],
+  ])
+  assert.ok(lines.findIndex(line => line.type === 'advisories') > lines.findLastIndex(line => line.type === 'lockfile'), 'once its lockfiles are told')
+})
+
+test('a lockfile whose advisories npm doesn’t answer is told so, and the scan goes on', async () => {
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve({ published: null, findings: [] }), { advisoriesFail: true })
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(lines.find(line => line.type === 'advisories'), { type: 'advisories', repo: 1, path: 'pnpm-lock.yaml', error: 'upstream-unavailable' })
+  assert.deepEqual(lines.at(-1), { type: 'done' })
 })
 
 test('a scan that fails as a whole throws once its lines are read', async () => {

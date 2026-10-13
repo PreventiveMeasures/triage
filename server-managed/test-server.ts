@@ -472,6 +472,10 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
   const [first, second, ...rest] = selected
   const commit = 'f'.repeat(40)
   const chalk = { name: 'chalk', version: '5.3.0', integrity: 'sha512-fixture' }
+  const advisory = (name: string, id: string, title: string, severity: string, cwe: string[], range: string, versions: string[]) => ({
+    ecosystem: 'npm', name, source: 'registry', id, ghsa: id, url: `https://github.com/advisories/${id}`, aliases: [], title, severity, cwe, range, versions,
+    malware: cwe.includes('CWE-506'),
+  })
   const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
     severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
   const lines: RiskFixtureLine[] = [
@@ -479,15 +483,28 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
     { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
       { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
-      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
+      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'minimist', version: '0.0.8', source: 'registry' },
+      { name: 'minimist', version: '1.2.5', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
     ] },
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
+    { type: 'advisories', repo: first!.id, path: 'package-lock.json', advisories: [
+      advisory('event-stream', 'GHSA-mh6f-8j2x-4483', 'Critical severity vulnerability that affects event-stream and flatmap-stream', 'critical', ['CWE-506'], '=3.3.6', ['3.3.6']),
+      advisory('lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', ['CWE-77', 'CWE-94'], '<4.17.21', []),
+      // npm answers an advisory once a range it covers.
+      advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '<0.2.4', ['0.0.8']),
+      advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '>=1.0.0 <1.2.6', ['1.2.5']),
+    ].filter(row => row.versions.length > 0) },
+    risk('minimist', '0.0.8', []),
+    risk('minimist', '1.2.5', []),
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
     { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
     { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [
       { name: 'lodash', version: '4.17.21', source: 'registry' }, { ...chalk, source: 'mirror', from: 'https://npm.example.com/api/npm/remote/chalk/-/chalk-5.3.0.tgz' },
     ] },
     risk('lodash', '4.17.21', []),
+    { type: 'advisories', repo: second!.id, path: 'pnpm-lock.yaml', advisories: [
+      advisory('lodash', 'GHSA-xxjr-mmjv-4gpg', 'Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit`', 'moderate', ['CWE-1321'], '>=4.0.0 <=4.17.22', ['4.17.21']),
+    ] },
     risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
     ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
     { type: 'risk', ...chalk, error: 'integrity-mismatch' },
@@ -495,7 +512,8 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
   ]
   // Those of the repositories scanned, and of the packages their lockfiles lock.
   const names = new Set(lines.flatMap(line => line.type === 'lockfile' && scanned.has(line.repo!) ? (line.packages ?? []).map(pkg => pkg.name) : []))
-  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : line.type === 'lockfile' ? scanned.has(line.repo!) : line.type !== 'risk' || names.has(line.name!))
+  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : ['lockfile', 'advisories'].includes(line.type) ? scanned.has(line.repo!)
+    : line.type !== 'risk' || names.has(line.name!))
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
   let at = 0
   const timer = setInterval(() => {

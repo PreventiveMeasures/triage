@@ -898,6 +898,15 @@ any of them is told. A package from npm's registry is assessed once a scan; one
 from another host with an integrity, such as a company's mirror, as npm's
 package of its name and version only where the lockfile's integrity is npm's;
 one from git, a tarball with no integrity or a file is listed but not assessed.
+Each lockfile's packages of npm's registry or a mirror are asked of npm's
+registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
+kept by the lockfile's blob for an hour), and told in an `advisories` line,
+each advisory with whether it is of malware: GitHub's CWE-506, embedded
+malicious code, or a title naming malware. The page lists them on a tab of
+their own, and a package an advisory of malware names is critical in its risk;
+other advisories are vulnerabilities, not a supply chain's risk, and stay on
+their tab. npm's registry hasn't every one of GitHub's malware advisories
+(those of nx's malicious versions, for one), which OSV's records would add.
 Assessments are `spare` ones (`npm-risk.ts`): two at most across the server,
 leaving the rest to readers, and without asking npm of each dependency's
 package. Scans keep in the instance's memory a repository's lockfiles as listed

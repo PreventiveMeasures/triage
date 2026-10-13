@@ -44,7 +44,7 @@ td { vertical-align: top; }
   gap: .75rem;
   margin: 0 0 1rem;
 }
-.risk-scope {
+.risk-scope, .risk-tabs {
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -52,7 +52,7 @@ td { vertical-align: top; }
   border-radius: var(--ui-radius, 6px);
   background: var(--bg);
 }
-.risk-scope button {
+.risk-scope button, .risk-tabs button {
   padding: .3rem .65rem;
   border: 0;
   border-radius: var(--ui-radius, 3px);
@@ -60,8 +60,10 @@ td { vertical-align: top; }
   color: var(--muted);
   font-size: .75rem;
 }
-.risk-scope button:hover:not(:disabled) { background: var(--surface-active); color: var(--text); }
-.risk-scope button[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
-.risk-scope button:focus-visible { outline-offset: -1px; }
+.risk-scope button:hover:not(:disabled), .risk-tabs button:hover { background: var(--surface-active); color: var(--text); }
+.risk-scope button[aria-pressed=true],
+.risk-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
+.risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
+.risk-tabs { width: fit-content; margin-bottom: .75rem; }
