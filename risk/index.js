@@ -3,4 +3,4 @@
 export { assessNpm } from './npm/assess.js'
 export { DEFAULT_MINIMUM_RELEASE_AGE } from './npm/release.js'
 export { NpmRiskError } from './npm/registry.js'
-export { npmFileRisk } from './files/stamps.js'
+export { SEVERITIES, npmFileRisk } from './files/stamps.js'

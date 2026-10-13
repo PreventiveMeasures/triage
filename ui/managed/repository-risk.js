@@ -3,16 +3,14 @@
 // them (GET /api/admin/repositories/risk, server-managed/repository-risk.ts).
 // Opened by its URL alone, /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
-import { managedFetch } from '../../client/managed/request.js'
+import { SEVERITIES } from '../../risk/files/stamps.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
-import { managedAppState } from './state.js'
+import { request, responseLines } from './bundle-data.js'
 import commonStyles from './styles/common.css'
+import linksStyles from './styles/links.css'
 import riskStyles from './styles/repository-risk.css'
-
-const SEVERITIES = ['critical', 'high', 'moderate', 'low', 'notice']
-const SEVERITY_LABELS = { critical: 'Critical', high: 'High', moderate: 'Moderate', low: 'Low', notice: 'Notice' }
 
 // What risk finds of a version on its own (risk/npm/held.js, compare.js).
 const FINDING_LABELS = {
@@ -46,9 +44,18 @@ const ERRORS = {
   'upstream-invalid': 'npm answered unexpectedly',
 }
 const errorText = code => ERRORS[code] ?? code
+const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.' }
 
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
+
+// Which package rows are shown, by the filter's value.
+const FILTERS = {
+  all: ['All packages', () => true],
+  flagged: ['Flagged', row => Boolean(row.risk?.severity)],
+  failed: ['Not assessed: failed', row => Boolean(row.risk?.error)],
+  elsewhere: ['Not assessed: not from npm', row => !assessable(row.source)],
+}
 
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
@@ -58,30 +65,14 @@ const DRAW_MS = 250
 const formatCount = new Intl.NumberFormat()
 
 // The scan's lines (repository-risk.ts RepositoryRiskLine), each as it comes.
-async function streamRisk(signal, onLine) {
-  const response = await managedFetch('/api/admin/repositories/risk', { credentials: 'same-origin', cache: 'no-store', signal })
-  if (!response.ok) {
-    throw new Error(response.status === 401 ? 'Sign in again to scan repositories.'
-      : response.status === 403 ? 'Only admins can scan repositories.' : `The scan couldn't start (${response.status}).`)
-  }
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
-  // The line being read, in the chunks it came in.
-  let parts = []
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    let start = 0
-    for (let end = value.indexOf('\n'); end !== -1; start = end + 1, end = value.indexOf('\n', start)) {
-      parts.push(value.slice(start, end))
-      const line = JSON.parse(parts.join(''))
-      parts = []
-      onLine(line)
-    }
-    parts.push(value.slice(start))
-  }
-}
+const streamRisk = (signal, onLine) => request('/api/admin/repositories/risk', START_ERRORS, async response => {
+  for await (const line of responseLines(response)) onLine(line)
+}, signal)
 
-const packageKey = pkg => assessable(pkg.source) ? `${pkg.name}@${pkg.version}` : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+// A package row's key: npm's package by its name and version, a mirror's by
+// its integrity too, as its risk line names it; any other by where it is from.
+const riskKey = ({ name, version, integrity }) => `${name}@${version}\0${integrity ?? ''}`
+const packageKey = pkg => assessable(pkg.source) ? riskKey(pkg) : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // A package row's rank: the most severe first, then those still to be told,
 // those that couldn't be, those found of nothing, and those not assessed.
@@ -94,7 +85,7 @@ function rank(row) {
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
   static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
-  static styles = [unsafeCSS(commonStyles), unsafeCSS(riskStyles)]
+  static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
   constructor() {
     super()
@@ -110,9 +101,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _reset() {
     // By id: { id, fullName, commit, lockfiles, error }; lockfiles by path,
-    // each { path, format, npm, packages, error, detail }.
+    // each { path, format, packages, error, detail }.
     this._repos = new Map()
-    // By packageKey: { name, version, source, from, usedIn: Set, risk }.
+    // By packageKey: { name, version, source, from, integrity, usedIn: Set, risk }.
     this._packages = new Map()
   }
 
@@ -124,16 +115,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Scans every connected repository anew, its lines drawn as they come.
   async start() {
     if (this._state === 'running') return
-    this.stop()
     this._reset()
     this._error = null
     this._state = 'running'
     const scan = new AbortController()
     this._scan = scan
-    const signal = AbortSignal.any([scan.signal, managedAppState.sessionController.signal])
     let done = false
     try {
-      await streamRisk(signal, line => {
+      await streamRisk(scan.signal, line => {
         if (line.type === 'done') done = true
         this._apply(line)
         this._draw()
@@ -141,7 +130,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       if (!done) throw new Error('The scan ended before it finished. Try again.')
       this._state = 'done'
     } catch (err) {
-      if (signal.aborted) return
+      if (scan.signal.aborted || err?.name === 'AbortError') return
       this._error = err?.message ?? String(err)
       this._state = 'stopped'
     } finally {
@@ -182,21 +171,22 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       if (!repo) return
       if (line.error) { repo.error = line.error; return }
       repo.commit = line.commit
-      repo.lockfiles = new Map(line.lockfiles.filter(lockfile => lockfile.npm).map(lockfile => [lockfile.path, { ...lockfile, packages: null, error: null }]))
+      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, { ...lockfile, packages: null, error: null }]))
     } else if (line.type === 'lockfile') {
       const repo = this._repos.get(line.repo)
       const lockfile = repo?.lockfiles?.get(line.path)
       if (!lockfile) return
       if (line.error) { Object.assign(lockfile, { error: line.error, detail: line.detail ?? null }); return }
       lockfile.packages = line.packages.length
+      const usedIn = `${repo.fullName}/${line.path}`
       for (const pkg of line.packages) {
         const key = packageKey(pkg)
         let row = this._packages.get(key)
         if (!row) this._packages.set(key, row = { ...pkg, usedIn: new Set(), risk: null })
-        row.usedIn.add(`${repo.fullName}/${line.path}`)
+        row.usedIn.add(usedIn)
       }
     } else if (line.type === 'risk') {
-      const row = this._packages.get(`${line.name}@${line.version}`)
+      const row = this._packages.get(riskKey(line))
       if (row) row.risk = line.error ? { error: line.error } : { severity: line.severity, findings: line.findings, published: line.published }
     }
   }
@@ -204,92 +194,93 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _counts() {
     const repos = [...this._repos.values()]
     const lockfiles = repos.flatMap(repo => [...repo.lockfiles?.values() ?? []])
-    const packages = [...this._packages.values()]
-    const assessed = packages.filter(row => assessable(row.source))
+    const assessed = [...this._packages.values()].filter(row => assessable(row.source))
     return {
       repos: repos.length, reposRead: repos.filter(repo => repo.lockfiles || repo.error).length,
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
-      packages: packages.length, assessable: assessed.length, told: assessed.filter(row => row.risk).length,
-      flagged: assessed.filter(row => row.risk?.severity).length,
+      assessable: assessed.length, told: assessed.filter(row => row.risk).length, flagged: assessed.filter(row => row.risk?.severity).length,
     }
   }
 
   _rows() {
     const query = this._query.trim().toLowerCase()
-    const shown = row => (this._filter === 'all' || (this._filter === 'flagged' ? Boolean(row.risk?.severity)
-      : this._filter === 'failed' ? Boolean(row.risk?.error) : !assessable(row.source)))
-      && (!query || row.name.toLowerCase().includes(query))
-    return [...this._packages.values()].filter(shown)
+    const [, shown] = FILTERS[this._filter]
+    return [...this._packages.values()].filter(row => shown(row) && (!query || row.name.toLowerCase().includes(query)))
       .toSorted((a, b) => rank(a) - rank(b) || (b.risk?.findings?.length ?? 0) - (a.risk?.findings?.length ?? 0)
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
 
   render() {
-    const counts = this._counts()
-    const running = this._state === 'running'
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <h1 class="sr-only">Repository risk</h1>
       <div class="page-intro"><p class="intro">Every connected repository’s npm lockfiles at its default branch, and what risk finds in each package they lock.</p>
-        ${running ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
+        ${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
           : html`<button type="button" class="btn primary" @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
-      <p class="risk-progress" role="status">${this._progress(counts)}</p>
+      <p class="risk-progress" role="status">${this._progress()}</p>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size > 0 ? this._lockfiles() : nothing}
-      ${this._packages.size > 0 ? this._packageTable(counts) : nothing}
+      ${this._packages.size > 0 ? this._packageTable() : nothing}
     </div>`
   }
 
-  _progress(counts) {
+  _progress() {
     if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while.'
-    const parts = [
-      `${formatCount.format(counts.reposRead)} of ${formatCount.format(counts.repos)} repositories read`,
-      `${formatCount.format(counts.lockfilesRead)} of ${formatCount.format(counts.lockfiles)} lockfiles`,
-      `${formatCount.format(counts.told)} of ${formatCount.format(counts.assessable)} packages assessed`,
-      `${formatCount.format(counts.flagged)} flagged`,
-    ]
+    const counts = this._counts()
+    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)} ${what}`
     const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    return `${state} · ${parts.join(' · ')}`
+    return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
+      of(counts.told, counts.assessable, 'packages assessed'), `${formatCount.format(counts.flagged)} flagged`].join(' · ')
+  }
+
+  _pending(running, otherwise) {
+    return html`<span class="risk-pending">${this._state === 'running' ? running : otherwise}</span>`
+  }
+
+  // What a repository's row says in place of its lockfiles, where it has none
+  // to list; null where it has.
+  _repoStatus(repo) {
+    if (repo.error) return html`<span class="risk-error">${errorText(repo.error)}</span>`
+    if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
+    return repo.lockfiles.size === 0 ? html`<span class="risk-none">No npm lockfiles</span>` : null
+  }
+
+  _lockfileStatus(lockfile) {
+    if (lockfile.error) {
+      return html`<span class="risk-error" title=${lockfile.detail ?? nothing}>${errorText(lockfile.error)}${lockfile.detail ? `: ${lockfile.detail}` : ''}</span>`
+    }
+    return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
 
   _lockfiles() {
     const rows = [...this._repos.values()].flatMap(repo => {
-      const status = repo.error ? html`<span class="risk-error">${errorText(repo.error)}</span>`
-        : repo.lockfiles === null ? html`<span class="risk-pending">${this._state === 'running' ? 'Waiting…' : 'Not read'}</span>` : null
-      if (status || repo.lockfiles.size === 0) {
-        return [html`<tr><td>${repo.fullName}</td><td colspan="3">${status ?? html`<span class="risk-none">No npm lockfiles</span>`}</td></tr>`]
-      }
-      return [...repo.lockfiles.values()].map(lockfile => html`<tr>
-        <td>${repo.fullName}</td><td class="mono">${lockfile.path}</td><td>${lockfile.format}</td>
-        <td>${lockfile.error ? html`<span class="risk-error" title=${lockfile.detail ?? nothing}>${errorText(lockfile.error)}${lockfile.detail ? html`: ${lockfile.detail}` : nothing}</span>`
-          : lockfile.packages === null ? html`<span class="risk-pending">${this._state === 'running' ? 'Reading…' : 'Not read'}</span>`
-          : `${formatCount.format(lockfile.packages)} packages`}</td>
-      </tr>`)
+      const status = this._repoStatus(repo)
+      return status ? [html`<tr><td>${repo.fullName}</td><td colspan="3">${status}</td></tr>`]
+        : [...repo.lockfiles.values()].map(lockfile => html`<tr>
+          <td>${repo.fullName}</td><td class="mono">${lockfile.path}</td><td>${lockfile.format}</td><td>${this._lockfileStatus(lockfile)}</td>
+        </tr>`)
     })
     return html`<section class="risk-section" aria-label="Lockfiles">
       <h2>Lockfiles</h2>
-      <div class="risk-table"><table>
+      <div class="link-table"><table>
         <thead><tr><th>Repository</th><th>Lockfile</th><th>Format</th><th>Packages</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </section>`
   }
 
-  _packageTable(counts) {
+  _packageTable() {
     const rows = this._rows()
     return html`<section class="risk-section" aria-label="Packages">
       <h2>Packages</h2>
       <div class="collection-toolbar">
         <input type="search" aria-label="Search packages" placeholder="Search by package…" .value=${this._query} @input=${event => { this._query = event.target.value }}>
         <select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
-          <option value="all">All packages</option>
-          <option value="flagged">Flagged</option>
-          <option value="failed">Not assessed: failed</option>
-          <option value="elsewhere">Not assessed: not from npm</option>
+          ${Object.entries(FILTERS).map(([value, [label]]) => html`<option value=${value}>${label}</option>`)}
         </select>
-        <span class="result-count">${rows.length === counts.packages ? '' : `${formatCount.format(rows.length)} of `}${formatCount.format(counts.packages)} packages</span>
+        <span class="result-count">${rows.length === this._packages.size ? '' : `${formatCount.format(rows.length)} of `}${formatCount.format(this._packages.size)} packages</span>
       </div>
-      <div class="risk-table"><table>
+      <div class="link-table"><table>
         <thead><tr><th>Package</th><th>Version</th><th>Risk</th><th>Findings</th><th>Source</th><th>Used in</th></tr></thead>
         <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row))}</tbody>
       </table></div>
@@ -312,10 +303,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _risk(row) {
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
-    if (!row.risk) return html`<span class="risk-pending">${this._state === 'running' ? 'Waiting…' : 'Not assessed'}</span>`
+    if (!row.risk) return this._pending('Waiting…', 'Not assessed')
     if (row.risk.error) return html`<span class="risk-error">${errorText(row.risk.error)}</span>`
     if (!row.risk.severity) return html`<span class="risk-none">None found</span>`
-    return html`<span class=${`risk-chip risk-${row.risk.severity}`}>${SEVERITY_LABELS[row.risk.severity]}</span>`
+    const { severity } = row.risk
+    return html`<span class=${`risk-chip risk-${severity}`}>${severity[0].toUpperCase()}${severity.slice(1)}</span>`
   }
 }
 customElements.define('managed-admin-repo-risk', ManagedAdminRepositoryRisk)

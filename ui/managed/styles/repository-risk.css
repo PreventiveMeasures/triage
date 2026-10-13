@@ -6,12 +6,9 @@
 .risk-section { margin-top: 1.5rem; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
 .risk-section .collection-toolbar { margin-bottom: .5rem; }
-.risk-table { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .8rem; }
-th { color: var(--muted); font-weight: 500; }
-th, td { padding: .5rem .65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-th:first-child, td:first-child { padding-left: 0; }
-th:last-child, td:last-child { padding-right: 0; }
+/* The tables are links.css's, their cells wrapped. */
+th, td { white-space: normal; vertical-align: top; }
+th:last-child, td:last-child { text-align: left; }
 td { overflow-wrap: anywhere; }
 .risk-pending, .risk-none { color: var(--muted); }
 .risk-error { color: var(--critical); }

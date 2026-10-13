@@ -37,6 +37,9 @@ import type { UpstreamCacheStore } from './upstream-cache.ts'
 const MEMORY_ENTRIES = 2000
 // As npm-loads.ts MAX_ACTIVE_LOADS.
 const MAX_ACTIVE_ASSESSMENTS = 4
+// Of them, those no reader waits on (`spare`), such as a scan's: the rest are
+// left for readers.
+export const MAX_SPARE_ASSESSMENTS = 2
 let assessing = 0
 // What memory holds at most, by its records' length as JSON: the first kept
 // go first past it, and a record past an eighth of it isn't kept at all.
@@ -109,16 +112,20 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // The version `doc` names assessed against `old`'s, where given, each as the
 // reader's readNpmVersion read it: trusted however new and however few
 // download it where a team lists its scope (`teamScoped`), its own packages;
-// else held to risk's minimum release age and flagged as unpopular. Its documents are read with npm's token where the reader may have it
+// else held to risk's minimum release age and flagged as unpopular. Its
+// documents are read with npm's token where the reader may have it
 // (`privileged`, as readNpmVersion), its dependencies' without; what is kept
-// of it is shared only where neither version is private.
+// of it is shared only where neither version is private. A `spare` one, no
+// reader waiting on it, is made only within MAX_SPARE_ASSESSMENTS, and tells
+// its dependencies without asking npm of their packages (assessNpm
+// `dependencies`).
 export async function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
-  { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
-  if (assessing >= MAX_ACTIVE_ASSESSMENTS) throw new NpmPackageError(429, 'npm-busy')
+  { teamScoped, privileged, signal, spare = false, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal; spare?: boolean }): Promise<NpmAssessment> {
+  if (assessing >= (spare ? MAX_SPARE_ASSESSMENTS : MAX_ACTIVE_ASSESSMENTS)) throw new NpmPackageError(429, 'npm-busy')
   assessing++
   try {
     return await assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: !teamScoped,
-      cache: npmRiskCache(stores, !doc.private && !old?.private), signal,
+      cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare,
       packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
       tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) })
   } finally { assessing-- }

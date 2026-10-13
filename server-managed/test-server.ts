@@ -460,27 +460,29 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
 // its lines a little apart as the server's come, and stopped with its reader.
 function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolean {
   if (url.pathname !== '/api/admin/repositories/risk' || method !== 'GET') return false
-  const [first, second, ...rest] = repositories.filter(repo => repo.selected)
+  const selected = repositories.filter(repo => repo.selected)
+  const [first, second, ...rest] = selected
   const commit = 'f'.repeat(40)
+  const chalk = { name: 'chalk', version: '5.3.0', integrity: 'sha512-fixture' }
   const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
     severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
   const lines = [
-    { type: 'repos', repos: [first!, second!, ...rest].map(repo => ({ id: repo.id, fullName: repo.fullName })) },
-    { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm', npm: true }, { path: 'docs/bun.lock', format: 'bun', npm: true }] },
+    { type: 'repos', repos: selected.map(repo => ({ id: repo.id, fullName: repo.fullName })) },
+    { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
     { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
       { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
       { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
     ] },
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
-    { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm', npm: true }, { path: 'Cargo.lock', format: 'cargo', npm: false }] },
+    { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
     risk('lodash', '4.17.21', []),
     { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [
-      { name: 'lodash', version: '4.17.21', source: 'registry' }, { name: 'chalk', version: '5.3.0', source: 'mirror', from: 'https://npm.example.com/api/npm/remote/chalk/-/chalk-5.3.0.tgz' },
+      { name: 'lodash', version: '4.17.21', source: 'registry' }, { ...chalk, source: 'mirror', from: 'https://npm.example.com/api/npm/remote/chalk/-/chalk-5.3.0.tgz' },
     ] },
     risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
     ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
-    { type: 'risk', name: 'chalk', version: '5.3.0', error: 'integrity-mismatch' },
+    { type: 'risk', ...chalk, error: 'integrity-mismatch' },
     { type: 'done' },
   ]
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })

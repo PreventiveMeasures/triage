@@ -5,6 +5,9 @@ import type { CacheStore } from '@preventive/upstream/npm.js'
 // a warning's orange, `moderate` yellow, `low`, and a `notice`.
 export type Severity = 'critical' | 'high' | 'moderate' | 'low' | 'notice'
 
+// The severities, the most severe first.
+export const SEVERITIES: readonly Severity[]
+
 // How old a version must be to be trusted unless said: two weeks, in ms.
 export const DEFAULT_MINIMUM_RELEASE_AGE: number
 
@@ -45,6 +48,9 @@ export interface AssessNpmOptions {
   // Whether npm's downloads are asked for: the package's popularity, and its
   // new dependencies' tiers and ages. True unless given.
   downloads?: boolean
+  // Whether its new dependencies' tiers and ages are asked for, a request or
+  // two of npm each, where `downloads` is. True unless given.
+  dependencies?: boolean
 }
 
 // What calls for a look, by `id`, with what it found beside.

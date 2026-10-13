@@ -132,13 +132,14 @@ async function addedDependencies(added, published, context) {
 // false, as a caller's own scopes take); `files`, each file's stamps and what risk read of it; and
 // `dependencies`, those added and changed against it, each with its flags,
 // an added one with its package's tier and age where `downloads` (true unless
-// given false) has them asked. `cache` keeps what is read (registry.js),
+// given false) has them asked, and `dependencies` (true unless given false)
+// too. `cache` keeps what is read (registry.js),
 // `packument` asks for a package's whole document and `tarball` for a
 // version's tarball in risk's stead (registry.js), `now` is when it is asked, `signal` gives up on what is
 // still asked of npm. Throws an NpmRiskError (registry.js), its `code` saying
 // why, where npm has no such package or version, answers past risk's bounds,
 // or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true } = {}) {
+export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true } = {}) {
   const context = { cache, packument, tarball, now, signal }
   const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
   const { published } = facts.versions.get(version)
@@ -146,7 +147,7 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = oldVersion === null ? null : facts.versions.get(oldVersion).published
-  const added = downloads ? await addedDependencies(kept.dependencies.added, [was, published], context) : kept.dependencies.added
+  const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context) : kept.dependencies.added
   return { name, version, oldVersion, published, ...npmAssessmentOf(kept, own, added) }
 }
 
