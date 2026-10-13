@@ -41,21 +41,29 @@ const ESCAPED = /\\([/.])/gu
 // owner and name, as links and error messages name them.
 const GITHUB_PAGES = new Set(['issues', 'pull', 'pulls', 'blob', 'tree', 'wiki', 'discussions', 'commit', 'commits', 'compare', 'blame',
   'security', 'actions', 'projects', 'labels', 'milestone', 'milestones', 'releases', 'tags', 'graphs', 'network', 'stargazers'])
-// The repository (`owner/repo`) a github.com URL serves what it holds from, by
-// its path past the host (`rest`): any but its home, a page a person reads
-// (GITHUB_PAGES), a release's (`releases/tag/v1`, `releases/latest`) but its
-// assets' (`releases/latest/download/…`), and a file's but raw
-// (`blob/…?raw=true`). Such a URL (`raw/…`, `archive/…`, `tarball`,
-// `repo.git`, a path GitHub may add) leads to whatever the repository holds:
-// named by it (`github.com/owner/repo`), not as github.com, so that it is never
-// taken for one of github.com's links to code and docs (compare.js
-// ALLOWED_HOSTS). Null for one that is no repository's, or a page.
-function githubRepository(rest) {
-  const [, owner, repo, section, path = ''] = /^\/([^/\s'"`?#]+)\/([^/\s'"`?#]+)(?:\/([^/\s'"`?#]+))?([^\s'"`#]*)/u.exec(rest) ?? []
-  if (!owner) return null
-  const page = !repo.endsWith('.git') && (section === undefined || GITHUB_PAGES.has(section))
-    && !(section === 'releases' && /\/download(?:[/?]|$)/u.test(path)) && !(section === 'blob' && /[?&]raw=(?:true|1)\b/u.test(path))
-  return page ? null : `${owner}/${repo.replace(/\.git$/u, '')}`
+// How a github.com URL (`url`, as written from its scheme on) is named among
+// a file's hosts, read as fetch reads it (WHATWG URL: a port, a trailing dot,
+// backslashes as slashes, `..` resolved): `github.com` for its home or a
+// person's, a repository's home, a page a person reads (GITHUB_PAGES), a
+// release's page (`releases/tag/v1`, `releases/latest`) but not its assets'
+// (`releases/latest/download/…`), and a file's page but not the file raw
+// (`blob/…?raw=true`). Any other path (`raw/…`, `archive/…`, `tarball`,
+// `repo.git`, one GitHub may add, one read otherwise) leads to whatever a
+// repository holds: named by it (`github.com/owner/repo`), so that it is
+// never taken for one of github.com's links to code and docs (compare.js
+// ALLOWED_HOSTS).
+const RAW = /[?&]raw=(?:true|1)(?:&|$)/u
+const decoded = part => { try { return decodeURIComponent(part) } catch { return part } }
+function githubNamed(url) {
+  let parsed = null
+  try { parsed = new URL(url.replace(/^(\w+)\?:/u, '$1:')) } catch {}
+  if (!parsed) return 'github.com/'
+  const segments = parsed.pathname.split('/').slice(1)
+  if (segments.length > 1 && segments.at(-1) === '') segments.pop()
+  const [owner, repo = '', section, ...rest] = segments
+  const page = parsed.hostname.replace(/\.$/u, '') === 'github.com' && (segments.length === 1 || (owner !== '' && repo !== '' && !repo.endsWith('.git')
+    && (section === undefined || GITHUB_PAGES.has(section)) && !(section === 'releases' && rest.includes('download')) && !(section === 'blob' && RAW.test(parsed.search))))
+  return page ? 'github.com' : `github.com/${decoded(owner)}/${decoded(repo.replace(/\.git$/u, ''))}`
 }
 
 // The hosts a script's strings name, each with the line it is first named on,
@@ -70,10 +78,9 @@ export function npmHosts(path, text) {
     // across lines.
     const string = token?.includes('\\') ? token.replaceAll(ESCAPED, '$1') : token
     if (!string?.includes('://')) continue
-    for (const { 0: url, 1: name, index: at } of string.matchAll(URL_HOST)) {
+    for (const { 1: name, index: at } of string.matchAll(URL_HOST)) {
       const host = name.toLowerCase()
-      const repository = host === 'github.com' ? githubRepository(string.slice(at + url.length)) : null
-      const named = repository ? `${host}/${repository}` : host
+      const named = host === 'github.com' ? githubNamed(/^[^\s'"\u0060]*/u.exec(string.slice(at))[0]) : host
       if (!hosts.has(named) && (NAMED.test(host) || IPV4.test(host)) && !LOCAL.test(host)) hosts.set(named, line(index + at))
       if (hosts.size >= NPM_MAX_HOSTS) break
     }
