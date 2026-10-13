@@ -962,7 +962,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   position: sticky;
   left: 0;
 }
-/* Why a diff with renamed names hidden shows them after all. */
+/* Why a diff with renamed names hidden shows them after all, or what they
+   may change hidden; its action a link in its text. */
 .bundle-compare-code-note {
   margin: 0;
   padding: .5rem .75rem;
@@ -970,6 +971,17 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   font-size: .72rem;
   position: sticky;
   left: 0;
+
+  & button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+
+    &:hover { text-decoration: underline; }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  }
 }
 .bundle-compare-code-message {
   display: flex;
