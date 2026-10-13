@@ -140,21 +140,16 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
 }
 
 // The files that changed between two sides, pretty-printed: each side's
-// formattable files the other has another text at the path of, or, where it
-// has none there, none of their text at a path of its own (a file renamed, or
-// moved with its tree, unchanged, has it there; a copy at a path both have is
-// not one), so both of every pair the viewer diffs, by the paths each side
-// has them at. As they are iterated, in path order, the base's first where
-// both have one: those kept, at once; then the rest, formatted one after
-// another, the minified before the others (needsPrettyPrint), as the viewer
-// prints those unasked.
+// formattable files but those the other has the same text at the path of, so
+// both of every pair the viewer diffs, however it pairs them (by path, by
+// root, as renamed), by the paths each side has them at; a file moved
+// unchanged among them, which it draws no diff of. As they are iterated, in
+// path order, the base's first where both have one: those kept, at once;
+// then the rest, formatted one after another, the minified before the others
+// (needsPrettyPrint), as the viewer prints those unasked.
 function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
-  // Each side's texts at the paths the other hasn't: where a file moved has its own.
-  const moved = sides.map((own, i) => new Set([...own.hashes].filter(([path]) => !sides[1 - i]!.hashes.has(path)).map(([, hash]) => hash)))
-  const changed = sides.flatMap((own, i) => {
-    const other = sides[1 - i]!.hashes
-    return own.files.filter(({ path, hash }) => (other.has(path) ? other.get(path) !== hash : !moved[1 - i]!.has(hash))).map(file => ({ own, file }))
-  }).toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
+  const changed = sides.flatMap((own, i) => own.files.filter(({ path, hash }) => sides[1 - i]!.hashes.get(path) !== hash).map(file => ({ own, file })))
+    .toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
   return (async function* () {
     const unkept: typeof changed = []
     for (const { own, file } of changed) {
