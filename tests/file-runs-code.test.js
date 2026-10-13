@@ -64,10 +64,12 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
   assert.deepEqual(found('a.js', 'process.env.NPM_TOKEN ||= ask()\nif (process.env.GITHUB_TOKEN === x) f()\nconst { NPM_TOKEN = \'\' } = process.env\n'
     + 'const { a, GITHUB_TOKEN = null } = process.env\nprocess.env[\'NPM_TOKEN\'] ??= ask()\nconst NPM_TOKEN = process.env.NPM_TOKEN\n'), { tokens: [1, 2, 3, 4, 5, 6] },
     'read as it is set, compared, or destructured with a default')
-  assert.equal(found('a.ts', 'const NPM_TOKEN: string = input\nlet GITHUB_TOKEN\nvar  NPM_TOKEN: string\ninterface ProcessEnv { GITHUB_TOKEN?: string }\n'), null,
-    'declared, typed or not, or an optional member typed')
-  assert.deepEqual(found('a.ts', 'const { NPM_TOKEN: token } = process.env\nconst t = x ? NPM_TOKEN : y\nif (!(process.env.NPM_TOKEN)()) ask()\n'), { tokens: [1, 2, 3] },
-    'destructured under another name, chosen in a ternary, or called')
+  assert.equal(found('a.ts', 'const NPM_TOKEN: string = input\nlet GITHUB_TOKEN\nvar  NPM_TOKEN: string\ninterface ProcessEnv { GITHUB_TOKEN?: string }\n'
+    + 'interface Env { NPM_TOKEN: string | undefined; GITHUB_TOKEN : string }\nfunction f(NPM_TOKEN: string) {}\n'), null,
+    'declared, typed or not, or a member or parameter typed')
+  assert.deepEqual(found('a.ts', 'const { NPM_TOKEN: token } = process.env\nconst t = x ? NPM_TOKEN : y\nif (!(process.env.NPM_TOKEN)()) ask()\n'
+    + 'const {\n        NPM_TOKEN = \'\',\n} = process.env\nconst u = x ? process.env.GITHUB_TOKEN : undefined\n'), { tokens: [1, 2, 3, 5, 7] },
+    'destructured under another name or with a default on a line of its own, chosen in a ternary, or called')
   assert.deepEqual(found('a.js', 'if (!process.env.GITHUB_TOKEN.trim()) ask()\nif (!process.env[\'GITHUB_TOKEN\'].length) ask()\nif (!env.NPM_TOKEN?.length) ask()\n'
     + 'if (!process.env.NPM_TOKEN [0]) ask()\ndelete process.env.NPM_TOKEN.x\nif (!(process.env.GITHUB_TOKEN === expected)) ask()\n'
     + 'if (!(process.env.GITHUB_TOKEN).trim()) ask()\nif (!(process.env[\'GITHUB_TOKEN\'] === x)) ask()\nif (!( (process.env[\'NPM_TOKEN\']) ) .length) ask()\n'),
