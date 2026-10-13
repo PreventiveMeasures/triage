@@ -120,17 +120,18 @@ const KEY_ENDS = new RegExp(String.raw`^\s{0,4}\]${ABSENT_ENDS}`, 'mu')
 const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 // The registry's host, named as a URL's is, however it is spelled: after
 // anything but what comes before a word in prose (a blank, a word's own
-// characters, a tag's `>`, a quote, `(`, `*`, a subdomain's `-` or `.`), so
-// after a URL's slash, its userinfo's `@` or a backslash URLs take for a
-// slash (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`,
+// characters, a tag's `<` or `>`, a quote, a bracket, `*`, `,`, `;`, a
+// subdomain's `-` or `.`), so after a URL's slash, its userinfo's `@`, its
+// scheme's `:` or a backslash URLs take for a slash
+// (`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`,
 // `https://${token}@registry.npmjs.org/`, `https:\\\\registry.npmjs.org`);
-// after either escaped, its last a digit (`\x2f`, `\u002f`, `\x40`); or
+// after one escaped, its last a digit (`\x2f`, `\u002f`, `\x40`, `\x3a`); or
 // starting a string, its whole or before its path or port (npm-profile's
 // `'registry.npmjs.org'`, a URL joined, `'https://' + 'registry.npmjs.org/'`).
 // Not in prose, as a dialog tells where it asks (`registry.npmjs.org</span>`,
-// `asks registry.npmjs.org`, `'registry.npmjs.org is down'`).
+// `asks registry.npmjs.org`, `[registry.npmjs.org]`, `'registry.npmjs.org is down'`).
 const REGISTRY_HOST = String.raw`registry\.(?:npmjs\.org|yarnpkg\.com)`
-const REGISTRY_NAMED = new RegExp(String.raw`(?<![\s>"'\u0060\p{L}\p{N}_$(*.\-\\])${REGISTRY_HOST}|(?<=\\\\|\\(?:x|u00)(?:2f|40|5c))${REGISTRY_HOST}`
+const REGISTRY_NAMED = new RegExp(String.raw`(?<![\s<>"'\u0060\p{L}\p{N}_$([{*,;.\-\\])${REGISTRY_HOST}|(?<=\\\\|\\(?:x|u00)(?:2f|40|5c|3a))${REGISTRY_HOST}`
   + String.raw`|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:])`, 'giu')
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],

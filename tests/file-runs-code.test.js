@@ -116,14 +116,16 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
   for (const url of ['\'https://user:pass@registry.npmjs.org/pkg\'', '`https://${token}@registry.npmjs.org/${name}`', '"https://@registry.yarnpkg.com/x"',
     '\'https:\\/\\/registry.npmjs.org/pkg\'', '\'https:\\x2f\\x2fregistry.npmjs.org/pkg\'', '\'https:\\u002F\\u002Fregistry.npmjs.org\'', '\'https:\\u{2f}\\u{2f}registry.npmjs.org\'',
     '\'https://token\\x40registry.npmjs.org/pkg\'', '\'https://token\\u0040registry.npmjs.org\'', '\'https://t\\u{40}registry.npmjs.org\'',
-    '\'https:\\\\\\\\registry.npmjs.org/pkg\'', '\'https:\\\\/registry.npmjs.org\'', '\'https:\\x5c\\x5cregistry.npmjs.org/pkg\'']) {
+    '\'https:\\\\\\\\registry.npmjs.org/pkg\'', '\'https:\\\\/registry.npmjs.org\'', '\'https:\\x5c\\x5cregistry.npmjs.org/pkg\'',
+    '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'']) {
     assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [1] }, `a token before its host, or its slashes escaped: ${url}`)
   }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
   assert.deepEqual(found('a.js', 'const registry = \'https://\' + \'registry.npmjs.org/\'; fetch(registry + name, { method: \'PUT\' })\nconst port = \'registry.npmjs.org:443\'\n'),
     { publish: [1] }, 'its host starting a string before its path or port, as a URL joined')
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nlog(\'registry.npmjs.org is down\')\nlog(\'(registry.npmjs.org), *registry.npmjs.org*\')\n'
-    + 'log(\'"registry.npmjs.org" my-registry.npmjs.org a.registry.npmjs.org\')\nconst cr = \'\\registry.npmjs.org\'\n'), null,
+    + 'log(\'"registry.npmjs.org" my-registry.npmjs.org a.registry.npmjs.org\')\nconst cr = \'\\registry.npmjs.org\'\n'
+    + 'log(\'[registry.npmjs.org] is npm, {registry.npmjs.org},registry.npmjs.org;registry.npmjs.org <registry.npmjs.org>\')\n'), null,
     'not prose, starting with it or naming it, nor another host, nor a carriage return')
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
     + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')
