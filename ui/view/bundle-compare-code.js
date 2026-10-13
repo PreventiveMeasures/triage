@@ -953,8 +953,8 @@ export class BundleCompareCode extends LitElement {
     // Renamed names are found by the server, in the copies it pretty-printed
     // (rename-diff.js), once those came: the lines that differ in them alone
     // marked, the diff of the files as they are drawn till then, or hidden
-    // where the viewer asks.
-    const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && (pretty?.status === 'ready' || pretty?.status === 'loading')
+    // where the viewer asks. A file whose copies failed has none found.
+    const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && ['ready', 'loading', 'error'].includes(pretty?.status)
       && this._generated(path, entry, contents)
     const renames = generated && pretty.status === 'ready'
     // A hit sought here asks for a diff too large to show unasked, as "Show
@@ -974,10 +974,10 @@ export class BundleCompareCode extends LitElement {
       const warned = hiding && changes.reason === null ? changes.reads : []
       // Hide renamed names is offered where it hides any: lines that differ in
       // renamed names alone, marked otherwise, or, while it is on, names it
-      // gave in lines that differ besides; and while it is on and the server's
-      // diff is coming, failed, or gave no names, as it said why, to be turned
-      // off.
-      const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && changes !== null
+      // gave in lines that differ besides; and while it is on, in any file it
+      // is for that it hides none in yet, to be turned off: its copies or the
+      // server's diff coming or failed, or no names given, as it said why.
+      const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && generated
       const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })
       // The old side as the server diffed it, given the new side's names, where they are hidden.
       const shown = hiding ? changes.before : before

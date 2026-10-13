@@ -2013,6 +2013,27 @@ test('a file renamed from another type to JavaScript offers no renamed names hid
   assert.doesNotMatch(renderText(element.render()), /Hide renamed names/u)
 })
 
+test('Hide renamed names, on, stays to be turned off in a minified file whose copies are coming or failed', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/unprinted.min.js', [{ 'dist/unprinted.min.js': `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/unprinted.min.js': `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b39'
+  element.other.managedId = 'b40'
+  pretty.set('b39:dist/unprinted.min.js', Object.assign(new Error("This file couldn't be read as code."), { status: 422 }))
+  pretty.set('b40:dist/unprinted.min.js', 'var X = 1;\nq(X);\nmodule.exports = 2;\n')
+  element._setRenames(true)
+  state.bundleSourcePretty = true
+  const toggle = /aria-pressed=true aria-label="Hide renamed names"/u
+  const coming = renderText(element.render())
+  assert.match(coming, /is-loading/u, 'its copies coming')
+  assert.match(coming, toggle, 'there to be turned off while they come')
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const failed = renderText(element.render())
+  assert.match(failed, /is-error/u, 'its copies failed')
+  assert.match(failed, toggle, 'and once they failed')
+  element._setRenames(false)
+  assert.doesNotMatch(renderText(element.render()), /Hide renamed names/u, 'not offered off: none of its lines marked')
+})
+
 test('a file whose names the server could not give the new side\'s says why, its renamed names shown', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
   const element = view('dist/eval.min.js', [{ 'dist/eval.min.js': `var Y=1;eval("Y");${'q(Y);'.repeat(250)}\n` }, { 'dist/eval.min.js': `var X=1;eval("X");${'q(X);'.repeat(250)}\n` }])
