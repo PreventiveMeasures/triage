@@ -1276,19 +1276,16 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's layout, whitespace, renamed names and pretty-print toggles, as
-  // a file has use for them: a diff its layout, whitespace where hiding it
-  // hides a change (`whitespace`), in JavaScript minified on both sides
-  // (`renames`, _generated) renamed names, and pretty-printing a minified file
-  // (`pretty` from _pretty), last, as pressing it can show or hide the others.
-  // Hiding renamed names gives the old side the new side's names wherever a
-  // minifier renamed a variable alike throughout, an old one no new one stands
-  // for named apart (r_old). Lines always wrap.
+  // The diff's whitespace, renamed names, pretty-print and layout toggles, as
+  // a file has use for them: whitespace where hiding it hides a change
+  // (`whitespace`), in JavaScript minified on both sides (`renames`,
+  // _generated) renamed names, pretty-printing a minified file (`pretty` from
+  // _pretty), after those, as pressing it can show or hide them, and a diff
+  // its layout, last. Hiding renamed names gives the old side the new side's
+  // names wherever a minifier renamed a variable alike throughout, an old one
+  // no new one stands for named apart (r_old). Lines always wrap.
   _toggles(diffable, pretty = null, renames = false, whitespace = null) {
-    return html`${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
-          ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
-        </span>
-        ${whitespace ? this._whitespaceToggle(whitespace) : nothing}
+    return html`${diffable ? html`${whitespace ? this._whitespaceToggle(whitespace) : nothing}
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
           data-tooltip="Hide renamed names"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
@@ -1298,7 +1295,10 @@ export class BundleCompareCode extends LitElement {
         ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
           data-tooltip=${prettyTooltip(pretty)}
-          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}`
+          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
+        ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
+          ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
+        </span>` : nothing}`
   }
 
   // Every line quoting each repointed specifier. Rows for one specifier

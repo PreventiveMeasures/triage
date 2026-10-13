@@ -316,8 +316,8 @@ test('the Diff view pretty-prints every minified file it shows, however many', a
   const markup = renderText(all.render())
   assert.doesNotMatch(markup, /is-loading|is-error|\?disabled=true/u)
   for (const path of files) assert.equal(all._fileState(path, all._entries.get(path)).pretty.status, 'ready', `${path} diffed as its copies have it`)
-  assert.match(markup, /aria-label="Diff layout"[^]*aria-label="Hide renamed names"[^]*aria-label="Pretty-print"[^]*?<\/button>\s*<\/header>/u,
-    'pretty-print last in the bar, after the toggles pressing it can show or hide')
+  assert.match(markup, /aria-label="Hide renamed names"[^]*aria-label="Pretty-print"[^]*?<\/button>\s*<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">[^]*?<\/span>\s*<\/header>/u,
+    'pretty-print after the toggles pressing it can show or hide, and the layout last in the bar')
 })
 
 test('the Diff view draws its files 40 at a time, more on asking or as one past them opens, counting them all', async () => {
