@@ -165,7 +165,7 @@ test('a public npm version\'s files that need it are pretty-printed in one reque
     { path: 'dist/other.min.js', source: hash, text: pretty },
   ], 'its minified files alone, in path order, each naming the file it was formatted from')
   // Kept in the public namespace, the same text once.
-  assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm', 'pretty-v2')), [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
+  assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm', 'pretty-v3')), [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
   assert.deepEqual(linesOf(await h.send(npmPretty('lib', '1.0.0'))), linesOf(first), 'and read from there')
 })
 
@@ -211,9 +211,9 @@ test('a bundle file is formatted once, kept encrypted in its cache, and removed 
   assert.equal(first.headers['x-source-hash'], hash, 'naming the file it was formatted from')
   assert.equal(first.text(), await formatted(minified))
   const copy = `${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`
-  const kept = await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v2'))
+  const kept = await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v3'))
   assert.deepEqual(kept, [copy])
-  const stored = await h.raw.open(`cache-encrypted-v1/bundles/${id}/pretty-v2/${copy}`)
+  const stored = await h.raw.open(`cache-encrypted-v1/bundles/${id}/pretty-v3/${copy}`)
   const chunks = []
   for await (const chunk of stored.stream) chunks.push(chunk)
   assert.equal(Buffer.concat(chunks).subarray(0, 16).toString(), 'DeepView.storage')
@@ -273,7 +273,7 @@ test('a bundle file is diffed with another bundle\'s, both pretty-printed, renam
   assert.equal(expected.blocks.length, 1, 'the renamed lines alike, the changed one shown')
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json(), await renamedBuilds(true))
   // Both copies were kept, as the pretty-print toggle's are.
-  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v2'))).length, 1)
+  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v3'))).length, 1)
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
 })
 
