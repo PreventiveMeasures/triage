@@ -120,13 +120,16 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'',
     '\'https://\\\nregistry.npmjs.org/pkg\'', '"https://\\\r\nregistry.npmjs.org"', '\'https://\\\u2028registry.npmjs.org\'',
     '\'https:\\057\\057registry.npmjs.org/pkg\'', '\'https://t\\100registry.npmjs.org\'', '\'https\\072//registry.npmjs.org\'',
-    '\'https://user:p@ss@registry.npmjs.org/pkg\'']) {
+    '\'https://user:p@ss@registry.npmjs.org/pkg\'', '\'https://\\nregistry.npmjs.org/pkg\'', '\'https:/\\t/\\rregistry.npmjs.org\'']) {
     assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [url.split(/\r\n|[\n\r]/u).length] },
       `a token before its host, its separators escaped or its line continued: ${url}`)
   }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
   assert.deepEqual(found('a.js', 'const registry = \'https://\' + \'registry.npmjs.org/\'; fetch(registry + name, { method: \'PUT\' })\nconst port = \'registry.npmjs.org:443\'\n'),
     { publish: [1] }, 'its host starting a string before its path or port, as a URL joined')
+  for (const host of ['\'registry.npmjs.org?write=true\'', '\'registry.npmjs.org#x\'']) {
+    assert.deepEqual(found('a.js', `fetch('https://' + ${host}, { method: 'PUT' })\n`), { publish: [1] }, `its query or fragment after it: ${host}`)
+  }
   assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nlog(\'registry.npmjs.org is down\')\nlog(\'(registry.npmjs.org), *registry.npmjs.org*\')\n'
     + 'log(\'"registry.npmjs.org" my-registry.npmjs.org a.registry.npmjs.org\')\nconst cr = \'\\registry.npmjs.org\'\n'
     + 'log(\'[registry.npmjs.org] is npm, {registry.npmjs.org},registry.npmjs.org;registry.npmjs.org <registry.npmjs.org>\')\n'
