@@ -154,7 +154,7 @@ const sourceSoldeerIcon = html`<svg class="bundle-code-tree-soldeer" width="16" 
 
 const sourceComposerIcon = html`<svg class="bundle-code-tree-composer" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
   <path d="M8 1 15 4.5v7L8 15l-7-3.5v-7Z" fill="#8892bf"/>
-  <path d="m1 4.5 7 3.5 7-3.5M8 8v7M4.5 2.75l7 3.5" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width=".9"/>
+  <path d="m1 4.5 7 3.5 7-3.5M8 8v7M4.5 2.75l7 3.5" fill="none" stroke="var(--surface, #fff)" stroke-width=".9"/>
 </svg>`
 
 // Front-center Cargo box, adapted from https://www.svgrepo.com/svg/373489/cargo (CC0).
