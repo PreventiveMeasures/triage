@@ -23,6 +23,10 @@ export interface AssessNpmOptions {
   // Younger than this, in ms, a version is `too-new`; 0 for none, as a
   // caller's own scopes take. Two weeks unless given.
   minimumReleaseAge?: number
+  // Whether the package is flagged as few download it (`popularity`); false
+  // for none, as a caller's own scopes take, its downloads then not asked.
+  // True unless given.
+  popularity?: boolean
   // Where what is read is kept, by type (risk/npm/registry.js and assess.js
   // name each): `npm/tarballs`, `risk/npm/versions`, `risk/npm/packages`,
   // `risk/npm/public`, `risk/npm/downloads` and `risk/npm/assessments`.

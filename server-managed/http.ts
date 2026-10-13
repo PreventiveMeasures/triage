@@ -2577,8 +2577,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_TAGS_PATH) { await reply(doc.private, { name, version: doc.version, tags: await tagsOf().catch(() => []) }); return }
     if (path === NPM_SOCKET_PATH) { await reply(doc.private, { name, version: doc.version, socket: await socketOf().catch(() => null) }); return }
     // What calls for a look at the version, as risk tells it (npm-risk.ts),
-    // against `otherVersion` where given; trusted however new where a team
-    // lists its scope, its own packages.
+    // against `otherVersion` where given; trusted however new and however few
+    // download it where a team lists its scope, its own packages.
     if (path === NPM_RISK_PATH) {
       const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const scope = npmPackageScope(name)

@@ -23,7 +23,7 @@ const socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion,
-    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0 } })),
+    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: (name, version) => { socketAsked.push(`${name}@${version}`); return Promise.resolve({ socket: answers.socket[`${name}@${version}`] ?? null }) }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmAdvisoriesColumn, npmAdvisoryStatus, npmBinaryColumn, npmCompareBadges, npmFilesRead, npmOverviewBadges, npmCompareFiles, npmDependencyTags, npmFileTags, npmFilesFilter, npmReadabilityWarning, npmFileExtension, npmProvenanceFact, npmProvenanceNamesBuilder, npmFileExtensions, npmFileTypes, npmSocketFileTags, npmTakenDown } = await import('../ui/view/npm-overview.js')
@@ -453,6 +453,9 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Quality|Maintenance)</u, 'the open one at or over their bars, its quality 90 though 1.0.0\'s was 30')
   assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
     'last month\'s downloads over the month\'s name')
+  answers.versions['@team/quiet'] = { versions: [], teamScoped: true }
+  answers.stats['@team/quiet'] = answers.stats.flagged
+  assert.doesNotMatch(await badges(side('@team/quiet', '1.0.0'), side('@team/quiet', '2.0.0')), /npm-downloads-tier/u, 'not a team\'s own')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
   answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }

