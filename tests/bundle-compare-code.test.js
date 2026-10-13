@@ -2542,6 +2542,7 @@ test('changes in types alone, as the server proves them, are hidden where asked:
   const proofs = typeProofs.length
   const shown = await paintUntil(element, markup => /aria-label=Hide type-only changes/u.test(markup))
   assert.match(shown, /aria-pressed=false aria-label=Hide type-only changes/u, 'offered, once the server proved it')
+  assert.match(shown, /aria-label=Hide type-only changes\s+data-tooltip=Hide type-only changes @click/u, 'its tooltip its name alone')
   assert.match(shown, /class=diff-row del/u, 'the change shown till it is pressed')
   element.path = 'types/run.d.ts'
   assert.doesNotMatch(renderText(element.render()), /Hide type-only changes/u, 'not where the change runs code')
