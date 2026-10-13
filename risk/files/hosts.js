@@ -67,9 +67,11 @@ export function npmHosts(path, text) {
 const NAME_CHAR = String.raw`[\p{L}\p{N}_-]`
 const host = (name, path = '') => new RegExp(String.raw`(?<!${NAME_CHAR})${name}${path}(?!\.?${NAME_CHAR})`, 'giu')
 // One so like a file's name or code (`transfer.sh`, `file.io`) only as a
-// URL's host, after its `//` (or `\/\/` as JSON can write it) and any user,
+// URL's host: after the `//` that starts its authority (or `\/\/` as JSON can
+// write it), a scheme's or a URL's own without one (`"//file.io/x"`), not one
+// in a path (`https://example.com/assets//transfer.sh`), and after any user,
 // not a user itself (`https://transfer.sh@example.com`).
-const inUrl = name => new RegExp(String.raw`(?<=\/\\?\/(?:[^\s/@'"\x60]*@)?(?:${NAME_CHAR}+\.)*)${name}(?!\.?${NAME_CHAR}|(?::[^\s/@'"\x60]*)?@)`, 'giu')
+const inUrl = name => new RegExp(String.raw`(?<=[:'"\x60(=,]\\?\/\\?\/(?:[^\s/@'"\x60]*@)?(?:${NAME_CHAR}+\.)*)${name}(?!\.?${NAME_CHAR}|(?::[^\s/@'"\x60]*)?@)`, 'giu')
 // The tags the services go under, each with its severity (stamps.js
 // SEVERITIES), as a change between versions raises it (npmHostSeverity):
 // Exfiltration, `critical` (red), where nothing but catching what is sent
