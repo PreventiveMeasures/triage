@@ -13,7 +13,7 @@ import { createBundleCache } from '../server-managed/bundle-cache.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
-import { createPrettyCache, prettyBody } from '../server-managed/pretty-print.ts'
+import { createPrettyCache, prettyBody, stalePrettyRemover } from '../server-managed/pretty-print.ts'
 import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
@@ -167,6 +167,21 @@ test('a public npm version\'s files that need it are pretty-printed in one reque
   // Kept in the public namespace, the same text once.
   assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm', 'pretty-v3')), [`${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`])
   assert.deepEqual(linesOf(await h.send(npmPretty('lib', '1.0.0'))), linesOf(first), 'and read from there')
+})
+
+test('maintenance removes the public npm copies of earlier versions, once a process, the current ones kept', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('lib', '1.0.0', { 'lib.min.js': long })])
+  assert.equal((await h.send(npmPretty('lib', '1.0.0'))).status, 200)
+  const current = await readdir(join(h.dir, 'cache', 'npm', 'pretty-v3'))
+  for (const version of [1, 2]) await h.raw.put(`cache/npm/pretty-v${version}/${'ab'.repeat(64)}.js.br`, Buffer.from('old'))
+  const removeStale = stalePrettyRemover(h.stores.npmCacheStorage)
+  await removeStale()
+  assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm')), ['pretty-v3'], 'earlier versions\' copies gone')
+  assert.deepEqual(await readdir(join(h.dir, 'cache', 'npm', 'pretty-v3')), current, 'the current version\'s kept')
+  await h.raw.put(`cache/npm/pretty-v1/${'cd'.repeat(64)}.js.br`, Buffer.from('old'))
+  await removeStale()
+  assert.deepEqual((await readdir(join(h.dir, 'cache', 'npm'))).toSorted(), ['pretty-v1', 'pretty-v3'], 'and not asked again in the same process')
 })
 
 test('npm pretty-print refuses what it cannot answer', async t => {

@@ -223,6 +223,21 @@ async function npmFiles(doc: NpmVersionDocument): Promise<Array<[string, Uint8Ar
   finally { load.release() }
 }
 
+// Removes the public npm copies of every version before PRETTY_VERSION, which
+// nothing reads any more, for maintenance: once a process, again where
+// removing them failed. A bundle's earlier copies go with the bundle.
+export function stalePrettyRemover(npm: CacheStorage): (signal?: AbortSignal) => Promise<void> {
+  let removed = false
+  return async signal => {
+    if (removed) return
+    for (let version = 1; version < PRETTY_VERSION; version++) {
+      if (signal?.aborted) return
+      await npm.delete(`pretty-v${version}`)
+    }
+    removed = true
+  }
+}
+
 export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage, db: Pick<ManagedDb, 'getBundle'>, store: BundleStore) {
   // Copies being made; readers asking for one meanwhile share it.
   const shared = sharing<Buffer>()

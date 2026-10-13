@@ -121,9 +121,9 @@ reclaims stale/orphaned staging. Managed deletes target its UUID objects or
 slash-delimited cache prefixes. Managed maintenance removes expired sessions
 and, on Vercel only, upload parts older than 24 hours; it is not a general orphan-object sweep.
 Pretty-printed copies are named by `PRETTY_VERSION` (`server-managed/pretty-print.ts`): a
-bundle's, under its cache directory, go with the bundle, but nothing deletes public npm
-copies, so a version bumped leaves the previous `cache/npm/pretty-v<N>/` behind.
-Ordinary managed requests trigger it on the first request per instance, then
+bundle's, under its cache directory, go with the bundle; maintenance removes the public npm
+copies of every earlier version, `cache/npm/pretty-v1/` up to the one before, once per process.
+Ordinary managed requests trigger maintenance on the first request per instance, then
 hourly while traffic continues (one-minute retry backoff after failures).
 The response proceeds alongside cleanup, and the triggering invocation awaits
 both; concurrent requests share the sweep. Results and failures are logged as
