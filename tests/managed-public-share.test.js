@@ -7,6 +7,7 @@ import { hashToken } from '../server-managed/crypto.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { withReap } from '../server-common/reap.ts'
 import { createHttpServer } from '../server-e2e/http.ts'
+import { OSV, osvNone } from './_managed-npm.js'
 
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
@@ -386,6 +387,7 @@ test('public repository rechecks retain skipped dependencies and enforce securit
     calls++
     assert.equal(new Headers(init.headers).get('authorization'), null, 'public shares never borrow the owner credential')
     if (url.endsWith('/advisories/bulk')) return Response.json({})
+    if (url === OSV) return osvNone(init)
     // Revoke mid-audit: the repository's listing is answered from the cache.
     if (revoke) await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
     if (url.endsWith('/dep/1.0.0')) return Response.json({ name: 'dep', version: '1.0.0', repository: 'https://github.com/org/dep' })
@@ -398,19 +400,19 @@ test('public repository rechecks retain skipped dependencies and enforce securit
   assert.equal(base.status, 200)
   assert.deepEqual(base.body.skipped, skipped)
   assert.deepEqual(base.body.advisories, [])
-  assert.equal(calls, 1)
+  assert.equal(calls, 2, 'npm\'s advisories and OSV\'s')
   const recheck = await h.request(`${path}?repoAdvisories=true&details=true`, { token })
   assert.equal(recheck.status, 200)
   assert.equal(recheck.body.advisories[0].source, 'repository')
   assert.equal(recheck.body.advisories[0].details, '# Impact\n\nFull advisory text.')
   assert.deepEqual(recheck.body.skipped, skipped)
-  assert.equal(calls, 4)
+  assert.equal(calls, 6)
   revoke = true
   const denied = await h.request(`${path}?repoAdvisories=true&details=true`, { token })
   assert.equal(denied.status, 404)
   assert.equal(denied.body.advisories, undefined)
   assert.equal(denied.body.skipped, undefined)
-  assert.equal(calls, 6, 'the cached listing is withheld without asking GitHub again')
+  assert.equal(calls, 9, 'the cached listing is withheld without asking GitHub again')
 })
 
 for (const focused of [false, true]) {

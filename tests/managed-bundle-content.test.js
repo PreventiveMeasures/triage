@@ -17,6 +17,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 import { parseBundleMetadata } from '../common/bundle-metadata.js'
+import { OSV, osvNone } from './_managed-npm.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -838,6 +839,7 @@ test('bundle advisories require security, independently of dependency findings',
   const path = `/api/bundles/${record.id}/advisories`
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url === OSV) return Promise.resolve(osvNone(init))
     calls.push({ url, init })
     return Promise.resolve(Response.json({ dep: [npmAdvisory('Published vulnerability')] }))
   })
@@ -888,7 +890,8 @@ test('advisories recheck security after cold metadata builds and upstream reques
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
     return packages
   })
-  t.mock.method(globalThis, 'fetch', async () => {
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url === OSV) return osvNone(init)
     calls++
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
     return Response.json({ dep: [npmAdvisory('Must not escape')] })
@@ -996,7 +999,8 @@ test('advisory reasons select exact package versions from persisted inventory', 
   await writeFile(join(h.cacheDir, record.id, 'v6-metadata.json.br'), 'not compressed metadata')
   await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
   const calls = []
-  t.mock.method(globalThis, 'fetch', (_url, init) => {
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url === OSV) return Promise.resolve(osvNone(init))
     const packages = JSON.parse(Buffer.from(init.body))
     calls.push(packages)
     return Promise.resolve(Response.json({ dep: [npmAdvisory(packages.dep.join(', '))] }))
@@ -1064,6 +1068,7 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   t.mock.method(globalThis, 'fetch', (url, options) => {
     calls.push({ url, body: options.body })
     if (url.includes('registry.npmjs.org')) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(options))
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
     return Promise.resolve(Response.json([]))
   })
@@ -1077,10 +1082,10 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   assert.equal(skipped.length, 1)
   assert.equal(skipped[0].version, 'dev-main')
   assert.match(skipped[0].because, /Composer dev versions/u)
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 3, 'npm\'s advisories, OSV\'s of ws, anyone may read it, and the repository\'s')
   assert.deepEqual((await h.send(`${path}?reason=browser`, 'viewer')).json(), { packages: [], skipped: [], advisories: [] })
   assert.deepEqual((await h.send(`${path}?reason=dev`, 'viewer')).json(), { packages: [], skipped, advisories: [] })
-  assert.equal(calls.length, 2, 'stub-only and skipped-only scopes never reach upstream')
+  assert.equal(calls.length, 3, 'stub-only and skipped-only scopes never reach upstream')
   assert.deepEqual((await h.send(`${path}?reason=run`, 'viewer')).json(), {
     packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [], advisories: [],
   })
@@ -1108,6 +1113,7 @@ test('cached bundle repositories bypass npm metadata discovery after upgrading o
       assert.deepEqual(JSON.parse(init.body), { dep: ['2.0.0'] })
       return Promise.resolve(Response.json({}))
     }
+    if (url === OSV) return Promise.resolve(osvNone(init))
     assert.equal(new URL(url).origin, 'https://api.github.com')
     assert.equal(new URL(url).pathname, '/repos/org/dep/security-advisories')
     return Promise.resolve(Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability',
@@ -1119,7 +1125,7 @@ test('cached bundle repositories bypass npm metadata discovery after upgrading o
     assert.deepEqual(response.json().packages, [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/dep' }])
     assert.equal(response.json().advisories[0].title, 'Maintainer vulnerability')
   }
-  assert.equal(calls.length, 3, 'only the advisory bulk API and known GitHub repo are queried, the repo once')
+  assert.equal(calls.length, 5, 'only npm\'s advisories, OSV and the known GitHub repo are queried, the repo once')
   assert.equal(reads.mock.callCount(), 1, 'the upgraded inventory is reused for the scoped request')
   const metadata = (await h.send(`/api/bundles/${record.id}/metadata`, 'viewer')).json()
   const cached = parseBundleMetadata(metadata, record.integrity)
@@ -1139,6 +1145,7 @@ test('managed repository rechecks enrich advisories and recheck security before 
     calls.push(url)
     assert.equal(new Headers(init.headers).get('authorization'), new URL(url).hostname === 'api.github.com' ? 'Bearer viewer-token' : null)
     if (url.endsWith('/advisories/bulk')) return Response.json({})
+    if (url === OSV) return osvNone(init)
     // Revoke mid-audit: the repository's listing is answered from the cache.
     if (revoke) await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
     if (url.endsWith('/dep/2.0.0')) return Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep' })
@@ -1147,19 +1154,19 @@ test('managed repository rechecks enrich advisories and recheck security before 
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<3.0.0' }] }])
   })
   assert.deepEqual((await h.send(path, 'viewer')).json().advisories, [])
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2, 'npm\'s advisories and OSV\'s')
   const recheck = `${path}?repoAdvisories=true&details=true`
   const result = await h.send(recheck, 'viewer')
   assert.equal(result.status, 200)
   assert.equal(result.json().advisories[0].title, 'Maintainer vulnerability')
   assert.equal(result.json().advisories[0].source, 'repository')
   assert.equal(result.json().advisories[0].details, '# Impact\n\nFull advisory text.')
-  assert.equal(calls.length, 4)
+  assert.equal(calls.length, 6)
   revoke = true
   const denied = await h.send(recheck, 'viewer')
   assert.equal(denied.status, 403)
   assert.deepEqual(denied.json(), { error: 'security-access-required' })
-  assert.equal(calls.length, 6, 'the cached listing is withheld without asking GitHub again')
+  assert.equal(calls.length, 9, 'the cached listing is withheld without asking GitHub again')
 })
 
 for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {

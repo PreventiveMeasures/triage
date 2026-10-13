@@ -183,10 +183,11 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
         url: `https://github.com/advisories/${ghsa}`, vulnerable_versions: '<2.0.0' }] }))
     }
     if (parsed.pathname === '/v1/querybatch') {
-      const query = JSON.parse(options.body).queries[0]
-      assert.ok(['crates.io', 'Packagist'].includes(query.package.ecosystem))
-      const id = query.package.ecosystem === 'crates.io' ? 'RUSTSEC-2026-0001' : ghsa
-      return Promise.resolve(Response.json({ results: [{ vulns: [{ id }] }] }))
+      // npm's packages anyone may read too, OSV having nothing of them here.
+      const { queries } = JSON.parse(options.body)
+      assert.ok(queries.every(query => ['crates.io', 'Packagist', 'npm'].includes(query.package.ecosystem)))
+      return Promise.resolve(Response.json({ results: queries.map(query => query.package.ecosystem === 'npm' ? {}
+        : { vulns: [{ id: query.package.ecosystem === 'crates.io' ? 'RUSTSEC-2026-0001' : ghsa }] }) }))
     }
     if (parsed.pathname.startsWith('/v1/vulns/')) {
       const id = parsed.pathname.split('/').at(-1)
@@ -224,6 +225,32 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
   ])
 })
 
+test('npm packages anyone may read are asked of OSV too, its malware with them, a private one\'s name never', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
+    const { pathname } = new URL(url)
+    if (options.method === 'HEAD') return Promise.resolve(new Response(null, { status: pathname === '/@acme/open' ? 200 : 404 }))
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (pathname === '/v1/querybatch') {
+      return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(({ package: { name } }) => name === 'nx' ? { vulns: [{ id: 'MAL-2025-41443' }] } : {}) }))
+    }
+    if (pathname === '/v1/vulns/MAL-2025-41443') return Promise.resolve(Response.json({ id: 'MAL-2025-41443', summary: 'Malicious code in nx (npm)', aliases: ['GHSA-cxm3-wv7p-598c'] }))
+    throw new Error(`unexpected ${url}`)
+  })
+  const packages = ['nx@21.5.0', '@acme/open@1.0.0', '@acme/secret@1.0.0'].map(spec => {
+    const at = spec.lastIndexOf('@')
+    return { ecosystem: 'npm', name: spec.slice(0, at), versions: [spec.slice(at + 1)] }
+  })
+  const result = await fetchBundleAdvisories(packages, signal())
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.map(({ name, source, id, versions }) => ({ name, source, id, versions })), [{ name: 'nx', source: 'osv', id: 'MAL-2025-41443', versions: ['21.5.0'] }])
+  assert.deepEqual(calls.filter(call => call.url.endsWith('/v1/querybatch')).flatMap(call => call.body.queries.map(query => query.package.name)).toSorted(), ['@acme/open', 'nx'],
+    'a private package\'s name never sent to OSV')
+  assert.deepEqual(calls.filter(call => call.method === 'HEAD').map(call => call.url).toSorted(), ['https://registry.npmjs.org/@acme/open', 'https://registry.npmjs.org/@acme/secret'],
+    'npm asked only of scoped packages whether anyone may read them, an unscoped one always public')
+})
+
 test('empty, canceled and invalid inventories never send requests', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('must not contact upstream') })
   assert.deepEqual(await fetchBundleAdvisories([], signal()), { status: 200, body: [] })
@@ -248,7 +275,7 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
       return Promise.resolve(Response.json({ log: [{ id: 1, title: 'Registry vulnerability', severity: 'high',
         url: `https://github.com/advisories/${ghsa}`, vulnerable_versions: '<2.0.0' }] }))
     }
-    if (pathname === '/v1/querybatch') return Promise.resolve(Response.json({ results: [{}] }))
+    if (pathname === '/v1/querybatch') return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/log/2.0.0', 'the newest version asked names the repository')
       return Promise.resolve(Response.json({ name: 'log', version: '2.0.0', repository: 'https://github.com/org/npm-log' }))
@@ -266,7 +293,7 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
   const normal = await fetchBundleAdvisories(packages, signal())
   assert.equal(normal.status, 200)
   assert.equal(normal.body.length, 1)
-  assert.equal(calls.length, 3, 'the default audit only asks npm and OSV')
+  assert.equal(calls.length, 4, 'the default audit only asks npm, and OSV of each ecosystem, npm\'s packages anyone may read among them')
   const rechecked = await fetchBundleAdvisories(packages, signal(), { repoAdvisories: true })
   assert.equal(rechecked.status, 200)
   assert.equal(rechecked.body.length, 4)
@@ -283,6 +310,7 @@ test('repository rechecks retry a rejected GitHub token anonymously without repe
     calls.push({ url, authorization })
     if (new URL(url).hostname !== 'api.github.com') {
       assert.equal(authorization, null)
+      if (url.endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: [{}] }))
       return Promise.resolve(Response.json(url.endsWith('/advisories/bulk') ? {} : { name: 'dep', version: '1.0.0', repository: 'https://github.com/org/dep' }))
     }
     if (authorization) return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
@@ -292,8 +320,10 @@ test('repository rechecks retry a rejected GitHub token anonymously without repe
   const result = await fetchBundleAdvisories([{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], signal(), { repoAdvisories: true, githubToken: 'revoked' })
   assert.equal(result.status, 200)
   assert.equal(result.body[0].title, 'Public advisory')
-  assert.deepEqual(calls.map(call => call.authorization), [null, null, 'Bearer revoked', null])
-  assert.equal(calls[2].url, calls[3].url, 'retry only the rejected repository lookup')
+  const github = calls.filter(call => new URL(call.url).hostname === 'api.github.com')
+  assert.deepEqual(github.map(call => call.authorization), ['Bearer revoked', null])
+  assert.equal(github[0].url, github[1].url, 'retry only the rejected repository lookup')
+  assert.equal(calls.length - github.length, 3, 'npm\'s advisories, OSV\'s and the version naming the repository, each asked once')
 })
 
 test('a rejected token is not reused for later repositories in the same audit', async t => {

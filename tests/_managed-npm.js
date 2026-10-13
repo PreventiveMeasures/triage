@@ -39,9 +39,11 @@ export function packageOf(name, version, files, extra = {}) {
 }
 
 // npm's advisories, as `npm audit` asks them, of whatever is asked; and
-// OSV's records of a version.
+// OSV's batch query of versions, which upstream asks of npm packages anyone
+// may read (bundle-advisories.ts), and OSV's answer of no records to it.
 export const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
-export const OSV = 'https://api.osv.dev/v1/query'
+export const OSV = 'https://api.osv.dev/v1/querybatch'
+export const osvNone = (init = {}) => Response.json({ results: JSON.parse(init.body).queries.map(() => ({})) })
 
 // The registry: public packages answer anyone; private ones only the token.
 // A package's `time` adds to, or replaces, what its whole document lists.
@@ -53,7 +55,8 @@ export function registry(t, packages) {
     const headers = new Headers(init.headers)
     const auth = headers.get('authorization')
     calls.push({ url, auth })
-    if (url === ADVISORIES || url === OSV) return Promise.resolve(Response.json({}))
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
     for (const { doc, tgz, private: secret, versions, time: times = {} } of packages) {
       if (secret && auth !== `Bearer ${process.env['NPM_TOKEN']}`) continue
       if (url === `${REGISTRY}/${doc.name}/${encodeURIComponent(doc.version)}` || url === `${REGISTRY}/${doc.name}/latest`) return Promise.resolve(Response.json(doc))
