@@ -494,9 +494,9 @@ export function npmFileFlags(details, path, alerts = [], base = undefined) {
 
 // The hosts each file of the open version (`other`, its details) names that
 // the one compared with's (`base`) named in none of its files, as the pair's
-// risk finds them (`new-hosts`, hostsBadge), by path, `[{ host, line }]`
-// each: null until it arrives. Kept by the risk read, so Compare's files are
-// handed the same until another arrives.
+// risk finds them (`new-hosts`, hostsBadge), by path, `[{ host, line, was }]`
+// each, `was` the version compared with: null until it arrives. Kept by the
+// risk read, so Compare's files are handed the same until another arrives.
 const newHostsRead = new WeakMap()
 function npmNewHosts(base, other) {
   const risk = base && other?.npm ? npmRisk(other.npm, base.npm?.version ?? '(empty)') : null
@@ -504,7 +504,7 @@ function npmNewHosts(base, other) {
   if (!newHostsRead.has(risk)) {
     const byPath = new Map()
     for (const { host, places } of findingsOf(risk).get('new-hosts')?.hosts ?? []) {
-      for (const { path, line } of places) byPath.set(path, [...byPath.get(path) ?? [], { host, line }])
+      for (const { path, line } of places) byPath.set(path, [...byPath.get(path) ?? [], { host, line, was: base.npm?.version ?? null }])
     }
     newHostsRead.set(risk, byPath)
   }
@@ -513,11 +513,20 @@ function npmNewHosts(base, other) {
 
 // A file's tag in Compare's tree and its head where it names hosts the one
 // compared with named in none of its files (`hosts`, npmNewHosts), in orange
-// as the New host chip, each with its line in its tooltip.
+// as the New host chip, its tooltip a list as that chip's and the file's
+// other tags' are: a row for each host, its line, and in a line under them,
+// the version none of whose files named them.
 function npmNewHostTag(hosts) {
   if (!hosts?.length) return nothing
-  const said = hosts.map(({ host, line }) => `${host} (line ${line})`).join(', ')
-  return html`<span class="npm-new-host" data-tooltip=${`${hosts.length === 1 ? 'A host' : 'Hosts'} the version compared with named in none of its files: ${said}`}>${hosts.length === 1 ? 'New host' : 'New hosts'}</span>`
+  const label = hosts.length === 1 ? 'New host' : 'New hosts'
+  const { was } = hosts[0]
+  const note = `${was ? `None of ${was}'s files` : 'No file of the version compared with'} named ${hosts.length === 1 ? 'it' : 'them'}`
+  return html`<span class="npm-new-host" data-tooltip=${`${label}: ${hosts.map(({ host, line }) => `${host}, line ${line}`).join('; ')} · ${note}`}
+    .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">${label}</div>
+      <div class="compare-tip-rows is-files">${hosts.map(({ host, line }) => html`<span class="compare-tip-path">${host}</span><span class="compare-tip-said">line ${line}</span>`)}</div>
+      <div class="compare-tip-note">${note}</div>
+    </div>`}>${label}</span>`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
