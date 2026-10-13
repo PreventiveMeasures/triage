@@ -238,16 +238,25 @@ and in the tree: run a string as code, one `eval` label for `eval`,
 `Function` (with `new` or without, but not `Function('return this')()`,
 older code's way to the global object, as lodash's and ejs's), `vm` and
 Module's `_compile` (called or hooked), its tooltip naming each; run other programs (`child_process`);
-reach for `credentials` (a path to `.npmrc`, `.ssh` or `.aws`, the name
-`NPM_TOKEN` or `GITHUB_TOKEN`); read out the `whole env`, as
+reach for `credentials` (a path to `.npmrc`, `.ssh` or `.aws`, or
+`NPM_TOKEN` or `GITHUB_TOKEN` where its value is read, as
+`process.env.GITHUB_TOKEN || null`, `process.env['NPM_TOKEN']` or a shell's or
+`.npmrc`'s `$GITHUB_TOKEN` and `${NPM_TOKEN}` do, not where its absence is
+told, `!process.env.GITHUB_TOKEN` (but for what is read of it,
+`!process.env.GITHUB_TOKEN.trim()`), it is deleted or only set
+(`process.env.NPM_TOKEN = token`), or text names it); read out
+the `whole env`, as
 `JSON.stringify(process.env)` or `Object.entries(process.env)` do, not where
 it is handed to a program, its names listed, or its entries picked among as
 they are read (`.filter(…)`, `.find(…)`, `.reduce(…)`, as npm's agent finds
 its proxy's); and `publish` to npm (`npm publish` run, the registry's
 `/-/whoami`, libnpmpublish, a PUT request in a file naming the registry's
 host). Each label is marked as an install script is, `whole env` and
-`publish` in red, worse, each with the lines it is on, one the version
-compared with didn't hold (all of an added file's) saying so. A
+`publish` in red, worse; its tooltip a list, as Compare's chips' are, of
+what it found (each way a string runs as code, a credential file or a
+token, …) with the lines it is on, and where the version compared with
+didn't hold one (all of an added file's), a line under them naming it new
+in this version. A
 quick read, not a parse: its strings, regular expressions and comments set
 aside, its strings read for the paths, names and commands they hold, a
 module (`vm`, `child_process`, libnpmpublish) told by the string naming it

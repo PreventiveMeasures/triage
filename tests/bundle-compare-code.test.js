@@ -1514,13 +1514,21 @@ test('a file is labelled with what its code can run beyond itself, in its head a
   const other = version('b', { 'index.js': 'module.exports = eval("2")\nnew Function("x")\n', 'run.js': 'require("child_process").exec("ls")\n', 'plain.js': '2\n',
     'release.js': 'execSync("npm publish")\nsend(JSON.stringify(process.env))\nreadFileSync(".npmrc")\n' }, {})
   const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
-  const tags = markup => [...markup.matchAll(/class="?npm-runs-code[^>]*? data-tooltip=([^>]*)>([^<]+)</gu)].map(([, tooltip, tag]) => [tag, tooltip])
-  assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code: eval, line 1; Function, line 2, new']],
+  // Each tag, its tooltip in text, and in its styled one a row for each kind
+  // and what is new.
+  const TAG = /class="?(npm-runs-code[^"\s]*(?: is-\w+)?)"? data-tooltip=(.*?)\s+\.tooltipContent=([^]*?<\/div>)>([^<]+)<\/span>/gu
+  const tags = markup => [...markup.matchAll(TAG)].map(([, , tooltip, , tag]) => [tag, tooltip])
+  const styled = markup => [...markup.matchAll(TAG)].map(([, , , tip]) => [...tip.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)]
+    .map(([, name, lines]) => `${name}: ${lines}`).concat([.../compare-tip-notice">([^<]+)</u.exec(tip) ?? []].slice(1)))
+  assert.deepEqual(tags(head('index.js')), [['eval', 'Runs a string as code: eval, line 1; Function, line 2 · New in this version: Function']],
     'one tag for a string run as code however, each way named, as it is now, what it held before not new')
-  assert.deepEqual([...head('release.js').matchAll(/class="?(npm-runs-code[^"]*?)"? data-tooltip=[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag}: ${mark}`),
+  assert.deepEqual(styled(head('index.js')), [['eval: line 1', 'Function: line 2', 'New in this version: Function']], 'a row each, what is new in a line of its own')
+  assert.deepEqual([...head('release.js').matchAll(TAG)].map(([, mark, , , tag]) => `${tag}: ${mark}`),
     ['credentials: npm-runs-code', 'whole env: npm-runs-code is-critical', 'publish: npm-runs-code is-critical'], 'the whole environment and publishing marked worse')
-  assert.deepEqual(tags(head('run.js')), [['child_process', 'Runs other programs (child_process): line 1, new']], 'all of an added file\'s new')
-  assert.deepEqual(tags(head('old.js')), [['child_process', 'Runs other programs (child_process): line 1']], 'a removed file as it was')
+  assert.deepEqual(tags(head('run.js')), [['child_process', 'Runs other programs: child_process, line 1 · New in this version']], 'all of an added file\'s new')
+  assert.deepEqual(styled(head('run.js')), [['child_process: line 1', 'New in this version']])
+  assert.deepEqual(tags(head('old.js')), [['child_process', 'Runs other programs: child_process, line 1']], 'a removed file as it was')
+  assert.deepEqual(styled(head('old.js')), [['child_process: line 1']], 'nothing new')
   assert.deepEqual(tags(head('plain.js')), [])
   const rows = Object.fromEntries([...render('index.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
     .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))

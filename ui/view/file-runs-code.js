@@ -34,21 +34,26 @@ export const onlyLine = lineLists => {
 // (`data-bundle-view-source`, events.js), scrolled to it: none without one.
 export const opensAt = (path, line) => line === undefined ? { path: nothing, line: nothing } : { path, line }
 
-// A file's tags, one for the kinds it holds (npmRunsCode) that share it, their
-// lines in its tooltip, each by its name where kinds share it; with `was`,
-// the kinds the file held as the version compared with has it (null for
-// none), one it didn't hold saying so; with `path`, for a list whose rows
-// open the file, a tag on one line opening it there.
+// A file's tags, one for the kinds it holds (npmRunsCode) that share it, its
+// tooltip a list as Compare's chips' are: what the tag tells, then a row for
+// each kind, its name and lines; with `was`, the kinds the file held as the
+// version compared with has it (null for none), those it didn't hold named
+// in a line under them, `New in this version`; with `path`, for a list whose
+// rows open the file, a tag on one line opening it there.
 export function npmRunsCodeTags(found, was, path) {
   if (!found) return nothing
   return [...Map.groupBy(found, ([kind]) => RUNS_CODE.get(kind).tag)].map(([tag, kinds]) => {
-    const parts = kinds.map(([kind, lines]) => {
-      const { name } = RUNS_CODE.get(kind)
-      return `${name ? `${name}, ` : ''}${linesNote(lines)}${was !== undefined && !was?.has(kind) ? ', new' : ''}`
-    })
     const { note, mark } = RUNS_CODE.get(kinds[0][0])
+    const rows = kinds.map(([kind, lines]) => [RUNS_CODE.get(kind).name, linesNote(lines)])
+    const added = was === undefined ? [] : kinds.filter(([kind]) => !was?.has(kind)).map(([kind]) => RUNS_CODE.get(kind).name)
+    const notice = added.length === 0 ? null : added.length === kinds.length ? 'New in this version' : `New in this version: ${added.join(', ')}`
     const at = opensAt(path, path === undefined ? undefined : onlyLine(kinds.map(([, lines]) => lines)))
     return html`<span data-bundle-view-source=${at.path} data-bundle-view-line=${at.line}
-      class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${`${note}: ${parts.join('; ')}`}>${tag}</span>`
+      class=${`npm-runs-code${mark ? ` is-${mark}` : ''}`} data-tooltip=${[`${note}: ${rows.map(row => row.join(', ')).join('; ')}`, notice].filter(Boolean).join(' · ')}
+      .tooltipContent=${html`<div class="compare-tip">
+        <div class="compare-tip-head">${note}</div>
+        <div class="compare-tip-rows is-files">${rows.map(([name, lines]) => html`<span class="compare-tip-path">${name}</span><span class="compare-tip-said">${lines}</span>`)}</div>
+        ${notice ? html`<div class="compare-tip-notice">${notice}</div>` : nothing}
+      </div>`}>${tag}</span>`
   })
 }
