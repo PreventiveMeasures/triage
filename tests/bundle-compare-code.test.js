@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
+import { compareTrees } from '@preventive/compare'
 import { renamedDiffs } from '@preventive/compare/names.js'
 import { needsPrettyPrint } from '../common/pretty-print.js'
 import { toldVersion } from './_npm-risk.js'
@@ -21,6 +22,10 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // copies it has, but those it leaves out (`unsent`), each comparison asked
 // for noted (`renameStreams`).
 const comparisons = [], pretty = new Map(), renameDiffs = [], renameStreams = [], unsent = new Set(), viewed = new Set()
+// Each comparison's proofs of files changed in types alone asked for, as the
+// server proves them (@preventive/compare's compareTrees `typeOnly`), of the
+// view's bundles' files paired as the view pairs them.
+const typeProofs = []
 // The rename diffs the mock server is working out at once, and the most so far;
 // `held`, while set, a promise each waits for before it answers.
 const flying = { now: 0, most: 0, held: null }
@@ -87,6 +92,22 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     }
   },
   fetchNpmRenameDiffs() {},
+  async fetchBundleTypeOnly(id, other, onLine) {
+    typeProofs.push({ id, other })
+    const [olds, news] = [id, other].map(managedId => bundleFilesAsMap([...viewed].findLast(held => held?.managedId === managedId)))
+    const { changed, onlyBase, onlyOther } = computeBundleDiff(olds, news, () => '.').files
+    const pairs = [...changed.map(({ path, basePath = path }) => [basePath, path]), ...onlyBase.map(({ path, basePath = path }) => [basePath, null]), ...onlyOther.map(({ path }) => [null, path])]
+    for (const [path, otherPath] of pairs) {
+      const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
+      if (![before, after].every(text => text === null || typeof text === 'string')) continue
+      const tree = (name, text) => (name === null ? [] : [{ name, data: text }])
+      const changes = compareTrees(tree(path, before), tree(otherPath, after), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
+      if (changes.length === 0 || !changes.every(change => change.typeOnly)) continue
+      const hash = text => (text === null ? null : computeFileHash(text))
+      await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after) })
+    }
+  },
+  fetchNpmTypeOnly() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 // Prism can't load here, so text is drawn uncolored, unless a test colors it
@@ -2509,4 +2530,52 @@ test('collapsing the review tree clears search and stays collapsed until a new f
   viewer.render()
   assert.equal(viewer._open.get('src'), true)
   assert.equal(viewer._open.get('src/features'), true)
+})
+
+test('changes in types alone, as the server proves them, are hidden where asked: told as such, `≈` in the tree, offered only where there are any', async t => {
+  t.after(() => { element._setTypes(false) })
+  const files = [{ 'types/api.d.ts': 'export interface A { a: string }\n', 'types/run.d.ts': 'export interface B {}\n', 'old/gone.d.ts': 'declare const g: number;\n' },
+    { 'types/api.d.ts': 'export interface A { a: number }\n', 'types/run.d.ts': 'export interface B {}\nconsole.log(1);\n', 'types/added.d.ts': 'export type C = string;\n' }]
+  const element = view('types/api.d.ts', files)
+  element.base.managedId = 'b71'
+  element.other.managedId = 'b72'
+  const proofs = typeProofs.length
+  const shown = await paintUntil(element, markup => /aria-label=Hide type-only changes/u.test(markup))
+  assert.match(shown, /aria-pressed=false aria-label=Hide type-only changes/u, 'offered, once the server proved it')
+  assert.match(shown, /class=diff-row del/u, 'the change shown till it is pressed')
+  element.path = 'types/run.d.ts'
+  assert.doesNotMatch(renderText(element.render()), /Hide type-only changes/u, 'not where the change runs code')
+  element.path = 'types/api.d.ts'
+  element._setTypes(true)
+  const hidden = renderText(element.render())
+  assert.match(hidden, /Only types changed in this file\./u)
+  assert.doesNotMatch(hidden, /class=diff-row del/u)
+  assert.match(hidden, /aria-pressed=true aria-label=Hide type-only changes/u, 'still there to turn off')
+  assert.doesNotMatch(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(hidden)[1], /class="add">/u, 'no lines counted in its head')
+  const counts = rowCounts(hidden)
+  for (const [path, published] of [['types/api.d.ts', '+1 −1'], ['types/added.d.ts', '+1 −0'], ['old/gone.d.ts', '+0 −1']]) {
+    assert.match(counts[path], new RegExp(`unchanged[^]*data-tooltip=No line changes with Hide type-only changes As published: \\${published}>≈`, 'u'), `${path}: ≈`)
+  }
+  assert.match(counts['types/run.d.ts'], /class=add>\+1<\/span>/u, 'the one that runs code counted')
+  element.path = 'types/run.d.ts'
+  assert.match(renderText(element.render()), /class=diff-row add/u, 'and drawn')
+  assert.equal(typeProofs.length - proofs, 1, 'asked for once, for the comparison')
+})
+
+test('the Diff view offers to hide changes in types alone where any file it shows has them', async t => {
+  t.after(() => { all._setTypes(false) })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [{ 'types/x.d.ts': 'export type X = 1;\n', 'types/y.d.ts': 'export type Y = 1;\n' }, { 'types/x.d.ts': 'export type X = 2;\n', 'types/y.d.ts': 'export type Y = 1;\nfoo();\n' }])
+  code.base.managedId = 'b73'
+  code.other.managedId = 'b74'
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'types/'
+  const offered = await paintUntil(all, markup => /aria-label=Hide type-only changes/u.test(markup))
+  assert.match(offered, /aria-pressed=false aria-label=Hide type-only changes/u)
+  all._setTypes(true)
+  const hidden = renderText(all.render())
+  assert.equal(hidden.match(/Only types changed in this file\./gu)?.length, 1, 'the one changed in types alone')
+  assert.match(hidden, /foo\(\);/u, 'the other drawn')
 })

@@ -1148,6 +1148,24 @@ not format, the server busy). Access is checked as for `pretty?other=`,
 again before each line; a pair the viewer pairs otherwise, or one the server
 was too busy for, it asks for alone.
 
+`GET /api/bundles/:id/type-only?other=` tells which TypeScript files that
+changed between the two bundles changed in types alone, for Compare's **Hide
+type-only changes**: every changed, added and removed file, paired as the
+viewer pairs them, whose change @preventive/compare's `compareTrees` stamps
+`typeOnly` -- each side there a file named as a declaration file (`.d.ts`,
+`.d.mts`, `.d.cts`, `.d.css.ts`) that its `proveTypeOnly` proves holds types
+alone, so that it runs nothing, with an `export {}` kept on both sides or
+neither -- and nothing else decides it. Proving needs Node's type stripping, so
+the viewer can't. Each pair is asked of the engine on its own, as a tree of a
+file a side; two paths it takes for no rename are types only where each of
+their changes is, which is what it stamps of them paired. Proven in a worker
+thread, off the event loop, a comparison at a time per process, up to sixteen
+more waiting (the response cut short past that, or past a minute), and
+answered as Brotli-encoded ndjson once all are proven, a line each, `{ path,
+hash, otherPath, otherHash }`, a side not there null, which the viewer checks
+name the files it shows. Access is checked as for `pretty?other=`; a public
+link answers for two of its own bundles.
+
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
 and OSV for the packages anyone may read (upstream's `osv`), for the malicious
@@ -1876,7 +1894,10 @@ version's are made for each request and never kept. `GET
 diffs one of the version's JavaScript files with one of `otherVersion`'s of
 the same package, from both pretty-printed as `pretty` has them, as a
 bundle's are (`GET /api/bundles/:id/rename-diff`), and without a file every
-pair of them, a line each, as a bundle's; a diff of two public
+pair of them, a line each, as a bundle's; `GET
+/api/npm/type-only?name=&version=&otherVersion=` tells which of their
+TypeScript files changed in types alone, as a bundle's (`GET
+/api/bundles/:id/type-only`), nothing of it kept; a diff of two public
 versions' files is kept in memory among the last few dozen, a private one's never,
 its sides, formatted again for it, read in its turn among the diffs waiting.
 Responses are `private, no-store`. Nothing else derived from a package's

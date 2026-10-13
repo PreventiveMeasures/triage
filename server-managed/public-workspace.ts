@@ -16,6 +16,7 @@ import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
 import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
+import { typeOnlyFiles } from './type-only.ts'
 import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -34,7 +35,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)\/workspace$/u.exec(url.pathname)
   const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed|annotations)$/u.exec(url.pathname)
   const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|comments|sources)$/u.exec(url.pathname)
-  const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories|pretty|rename-diff)$/u.exec(url.pathname)
+  const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories|pretty|rename-diff|type-only)$/u.exec(url.pathname)
   if (!shareRoute && !teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
   const tokenHash = hashToken(token)
   const snapshot = await deps.db.getWorkspaceShare(tokenHash)
@@ -100,7 +101,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const bundle = snapshot.bundles.find(item => item.id === bundleRoute![1])
   if (!bundle) { json(res, 404, { error: 'no-bundle' }); return }
   if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
-  if (bundleRoute![2] === 'rename-diff' || (bundleRoute![2] === 'pretty' && url.searchParams.has('other'))) {
+  if (bundleRoute![2] === 'rename-diff' || bundleRoute![2] === 'type-only' || (bundleRoute![2] === 'pretty' && url.searchParams.has('other'))) {
     if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
     await serveCompared(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), bundleRoute![2], url, recheck, stream); return
   }
@@ -109,11 +110,12 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
 
 // What a bundle is compared with `other`, another of the link's bundles, by:
 // one of their JavaScript files diffed with renamed names hidden, or the
-// files that changed between them, or the pairs of those, a line each.
+// files that changed between them, or the pairs of those, or those that
+// changed in types alone, a line each.
 function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, part: string, url: URL,
   recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
   if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
-  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : renamedPairs)
+  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs)
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of

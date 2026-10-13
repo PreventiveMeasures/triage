@@ -232,12 +232,12 @@ export class BundleCompareAll extends BundleCompareCode {
       : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
     const pretty = toggle && { ...toggle, affects: printed.map(({ path }) => path) }
     // The diff's controls, while any file shows a change or hides one they can show.
-    const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
+    const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding || file.types)
     return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.renamed), shown.some(({ file }) => file.whitespace === 'hideable'))}
+          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.renamed), shown.some(({ file }) => file.whitespace === 'hideable'), shown.some(({ file }) => file.types))}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`

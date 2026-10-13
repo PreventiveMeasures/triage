@@ -121,6 +121,14 @@ export async function fetchNpmRenameDiffs(name, version, otherVersion, onLine, o
   return (await loadManagedBundle()).fetchNpmRenameDiffs(name, version, otherVersion, onLine, options)
 }
 
+export async function fetchBundleTypeOnly(id, other, onLine, options) {
+  return (await loadManagedBundle()).fetchBundleTypeOnly(id, other, onLine, options)
+}
+
+export async function fetchNpmTypeOnly(name, version, otherVersion, onLine, options) {
+  return (await loadManagedBundle()).fetchNpmTypeOnly(name, version, otherVersion, onLine, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

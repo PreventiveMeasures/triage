@@ -246,3 +246,15 @@ export function fetchBundleRenameDiffs(id, other, onLine, { signal } = {}) {
 export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signal } = {}) {
   return requestPrettyLines(`/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
 }
+
+// The files that changed between two bundles, or two versions of a package,
+// in types alone, as the server proves them (@preventive/compare's
+// compareTrees `typeOnly`), in one request: `onLine` called with each, `{
+// path, hash, otherPath, otherHash }`, a side not there null.
+export function fetchBundleTypeOnly(id, other, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal)
+}
+
+export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
+}

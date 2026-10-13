@@ -183,6 +183,8 @@
     "server-managed/team-app.ts",
     "server-managed/team-reports.ts",
     "server-managed/triage-response.ts",
+    "server-managed/type-only.ts",
+    "server-managed/type-only-worker.js",
     "server-managed/uploads.ts",
     "server-managed/view-as.ts",
     "server-managed/upstream-cache.ts",
