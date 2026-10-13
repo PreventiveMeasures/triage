@@ -30,14 +30,22 @@ const TENURE_MS = 90 * DAY_MS
 // most downloaded packages (`known`, manifest.js `knownAccounts`), green;
 // `maintainer` where it published the package three months or more before,
 // or first, as its sole maintainer has, yellow; else `new`, as an account
-// taking the package from its maintainers is, orange.
+// taking the package from its maintainers is, orange. An account published it
+// first only where its versions tell so: the earliest npm lists a time of
+// was its, none of another's (or of none npm names, as one since removed) as
+// early, and each npm lists no time of was its too, as any could be earlier.
 export function npmAccountStanding(releases, at) {
   const since = new Map()
+  let earliest = null
   for (const { publisher, published } of releases) {
     const time = Date.parse(published)
-    if (publisher && !Number.isNaN(time) && !(since.get(publisher) <= time)) since.set(publisher, time)
+    if (Number.isNaN(time)) continue
+    if (publisher && !(since.get(publisher) <= time)) since.set(publisher, time)
+    if (earliest === null || time < earliest.time) earliest = { publisher, time }
+    else if (time === earliest.time && publisher !== earliest.publisher) earliest.publisher = null
   }
-  const first = [...since].reduce((earliest, row) => earliest && earliest[1] <= row[1] ? earliest : row, null)?.[0]
+  const first = earliest?.publisher && releases.every(({ publisher, published }) => publisher === earliest.publisher || !Number.isNaN(Date.parse(published)))
+    ? earliest.publisher : null
   return (account, known) => known ? 'known' : account && (account === first || Date.parse(at) - since.get(account) >= TENURE_MS) ? 'maintainer' : 'new'
 }
 

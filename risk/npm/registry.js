@@ -122,8 +122,9 @@ const firstPublished = doc => Object.entries(doc?.time ?? {}).filter(([key, at])
 // removed }`, its publisher's account as manifest.js reads it, and whether
 // that is known; and each it lists a time of and no document, as one since
 // removed from npm, `removed`, its time alone, as npmPackageFacts reads none
-// of it. Its times' other keys (`created`, `modified`) are no versions.
-const releasesOf = (doc, deprecated = {}) => [...new Set([...Object.keys(doc.versions ?? {}), ...Object.keys(doc.time ?? {})])].map(version => {
+// of it. Its times' other keys (`created`, `modified`) are no versions, as
+// none of a version starts with a letter.
+const releasesOf = (doc, deprecated = {}) => [...new Set([...Object.keys(doc.versions ?? {}), ...Object.keys(doc.time ?? {}).filter(key => /^\d/u.test(key))])].map(version => {
   const json = doc.versions?.[version]
   const { publisher = null, knownAccounts } = json ? npmVersionManifest(json) : {}
   return { version, published: isTime(doc.time?.[version]) ? doc.time[version] : null, publisher, known: Boolean(knownAccounts),

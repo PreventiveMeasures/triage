@@ -221,6 +221,11 @@ test('an account\'s standing on a package: known, one of its maintainers, on it 
   assert.equal(npmAccountStanding([row('solo', 20), row('solo', 5)], ago(1))('solo', false), 'maintainer', 'the sole maintainer of a package three weeks old')
   const young = npmAccountStanding([row('alice', 20), row('mallory', 1)], ago(1))
   assert.deepEqual([young('alice', false), young('mallory', false)], ['maintainer', 'new'], 'one taking it from them new to it')
+  assert.equal(npmAccountStanding([row('alice', null), row('mallory', 10), row('mallory', 1)], ago(1))('mallory', false), 'new',
+    'none first where another published one npm lists no time of, as it may be earlier')
+  assert.equal(npmAccountStanding([{ publisher: null, published: ago(30), removed: true }, row('mallory', 20), row('mallory', 1)], ago(1))('mallory', false), 'new',
+    'nor where one since removed came earlier, its publisher unknown')
+  assert.equal(npmAccountStanding([row('mallory', 20), row('alice', 20), row('mallory', 1)], ago(1))('mallory', false), 'new', 'nor where another published as early')
   assert.equal(npmAccountStanding(releases, ago(170))('alice', false), 'new', 'as the version published then finds it')
   assert.equal(npmAccountStanding([row('alice', 400), row('alice', null), row('bob', 1)], ago(1))('alice', false), 'maintainer', 'a version npm lists no time of none of its time')
   assert.equal(npmAccountStanding([row('bob', 300), row('alice', 200), row('alice', null)], ago(1))('alice', false), 'maintainer')
@@ -254,13 +259,16 @@ test('the version risk picks to compare with, by what npm\'s document keeps: non
 
 test('a publisher changed told with each account\'s standing on the package: one of its maintainers moderate, one new to it high', async t => {
   const files = { 'package.json': '{}' }
-  const by = (number, publisher, days) => version('shared', number, files, { dependencies: {}, scripts: {}, _npmUser: { name: publisher } }, ago(days))
-  const asked = npm(t, [{ name: 'shared', versions: [by('1.0.0', 'alice', 400), by('1.1.0', 'alice', 200), by('1.2.0', 'bob', 100), by('1.3.0', 'bob', 1), by('1.3.1', 'mallory', 0.5)] }])
+  const by = (name, number, publisher, days) => version(name, number, files, { dependencies: {}, scripts: {}, _npmUser: { name: publisher } }, ago(days))
+  const asked = npm(t, [{ name: 'shared', versions: [by('shared', '1.0.0', 'alice', 400), by('shared', '1.1.0', 'alice', 200), by('shared', '1.2.0', 'bob', 100),
+    by('shared', '1.3.0', 'bob', 1), by('shared', '1.3.1', 'mallory', 0.5)] }, { name: 'young', versions: [by('young', '1.0.0', 'alice', 20), by('young', '1.0.1', 'mallory', 1)] }])
   const publisher = async (number, old, options = {}) => (await assessNpm('shared', number, { oldVersion: old, now: NOW, downloads: false, ...options })).findings.find(({ id }) => id === 'publisher')
   assert.deepEqual(await publisher('1.3.0', '1.1.0'), { id: 'publisher', was: 'alice', now: 'bob', wasKnown: false, nowKnown: false, wasStanding: 'maintainer', nowStanding: 'maintainer', severity: 'moderate' },
     'alice first to publish it, bob on it three months')
   assert.equal(asked.filter(url => url === `${REGISTRY}/shared`).length, 1, 'its document read once')
   assert.deepEqual(await publisher('1.3.1', '1.3.0'), { id: 'publisher', was: 'bob', now: 'mallory', wasKnown: false, nowKnown: false, wasStanding: 'maintainer', nowStanding: 'new', severity: 'high' })
+  const young = (await assessNpm('young', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })).findings.find(({ id }) => id === 'publisher')
+  assert.deepEqual([young.wasStanding, young.nowStanding], ['maintainer', 'new'], 'the sole maintainer of a package three weeks old, npm\'s `created` no version')
   const cache = store()
   await assessNpm('shared', '1.3.0', { now: NOW, downloads: false, cache })
   await assessNpm('shared', '1.1.0', { now: NOW, downloads: false, cache })
