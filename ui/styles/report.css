@@ -1229,12 +1229,20 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-source-pretty-toggle.is-error { color: var(--critical); }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
+/* A grid of one cell, the stats over the room kept for them where the file
+   can be pretty-printed (renderBundleCodeMain): its own stats, unseen, three
+   characters wider, the shown ones right-aligned in it. */
 .bundle-code-main-stats {
   flex-shrink: 0;
+  display: inline-grid;
+  justify-items: end;
   color: var(--muted);
   font-size: .72rem;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.bundle-code-main-stats > * { grid-area: 1 / 1; }
+.bundle-code-main-stats-room { visibility: hidden; padding-inline-start: 3ch; }
 /* Keep the file identity and navigation readable in a narrow Code pane. */
 @container bundle-code (max-width: 380px) {
   .bundle-code-main-stats { display: none; }
