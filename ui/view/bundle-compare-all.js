@@ -15,6 +15,7 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
+import { paintingRenameDiffs } from './rename-diff.js'
 
 export const COMBINED_DIFF_MAX = 25_000
 // Files drawn at a time, as Review's whole diff draws them.
@@ -60,7 +61,8 @@ class BundleCompareAll extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
   // Every file's model is drawn on every render, so all are kept for the
-  // comparison, starting from those Compare found counting its rows.
+  // comparison, starting from those Compare found counting its rows, each
+  // with the texts it was found from (_model).
   constructor() {
     super()
     this.models = null
@@ -70,7 +72,14 @@ class BundleCompareAll extends BundleCompareCode {
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
+    if (changed.has('models')) {
+      for (const [path, model] of this.models ?? []) {
+        const entry = this._entries.get(path)
+        if (!entry) continue
+        const { before, after } = fileContents(this.base, this.other, path, entry)
+        this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), { model, before, after, given: null })
+      }
+    }
     // A new comparison starts from its first files, not from the file the
     // last one was scrolled to.
     if (changed.has('files')) {
@@ -171,6 +180,7 @@ class BundleCompareAll extends BundleCompareCode {
   }
 
   render() {
+    paintingRenameDiffs()
     const rail = this._railState()
     const { prefix, order } = rail
     this._order = order
@@ -199,7 +209,7 @@ class BundleCompareAll extends BundleCompareCode {
           <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
           ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
           <span class="bundle-code-main-spacer"></span>
-          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.generated), shown.some(({ file }) => file.whitespace) ? 'hideable' : null)}
+          ${this._toggles(diffable, pretty, shown.some(({ file }) => file.renamed), shown.some(({ file }) => file.whitespace === 'hideable'))}
         </header>
         <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
           ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
@@ -208,7 +218,6 @@ class BundleCompareAll extends BundleCompareCode {
                 ${this._fileName(path, entry, prefix)}
                 <span class="bundle-code-main-spacer"></span>
                 ${this._fileFigures(entry, file.model)}
-                ${file.whitespace && file.whitespace !== 'hideable' ? this._whitespaceToggle(file.whitespace) : nothing}
               </header>
               ${this._fileBody(path, entry, file)}
             </section>`)}

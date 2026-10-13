@@ -42,7 +42,7 @@ import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
-import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
+import { forgetRenameDiffs, paintingRenameDiffs, renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -106,19 +106,18 @@ const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', labe
 
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
-export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, markRenames: false }
+export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false }
 // The settings whether a diff of printed copies has rows depends on (_noteRowless).
-const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.markRenames}`
+const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}`
 // Hiding whitespace changes is diff -b, only in code whose whitespace means
 // nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with
 // blanks added to a run of them or at its end, reads as unchanged; blanks put
 // between other characters or taken from between them still show. The toggle
-// says it in a few words, and why a file whose changes it would hide shows
-// them all (_fileState).
+// says it in a few words, and a note why a file whose changes it would hide
+// shows them all as their blanks mix kinds (_fileState).
 const HIDE_WHITESPACE = 'Hide whitespace changes'
 const WHITESPACE_KEPT = {
-  mixed: 'Mixed whitespace',
-  unlisted: 'Whitespace is significant',
+  mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
 }
 // The format a stasis bundle records for one of its files, its own spelling
 // of the file's language; undefined for another kind of bundle, or a file it
@@ -191,8 +190,8 @@ const readsSaid = reads => `Renamed names are hidden, though the file reads ${re
 // its sides were pretty-printed (see _pretty).
 export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${!!settings.markRenames}\0${pretty}`
 
-// `${integrity}\0${path}` → the file's highlighted lines, or null when Prism
-// has no grammar for it or it is too large to color.
+// `${integrity}\0${path}` → the text colored and its highlighted lines, or
+// null when Prism has no grammar for it or it is too large to color.
 const highlightCache = new Map()
 const highlightPending = new Set()
 // Each line's code as _code draws it, by its side's lines (a line model's `a`
@@ -574,7 +573,18 @@ export class BundleCompareCode extends LitElement {
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
   }
 
+  // Painted again as a diff it asked for comes, fails or is dropped, while it is
+  // shown: a view gone, painted, would ask for its diffs again (rename-diff.js).
+  _repaint = () => { if (this.isConnected) this.requestUpdate() }
+
+  // The renamed names this view wants are those each paint asks for (rename-diff.js).
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    forgetRenameDiffs()
+  }
+
   render() {
+    paintingRenameDiffs()
     const rail = this._railState()
     const current = this._entries.has(this.path) ? this.path : rail.order[0] ?? null
     if (current && current !== this._current) this._reveal(current, rail.prefix)
@@ -919,17 +929,21 @@ export class BundleCompareCode extends LitElement {
 
   // `options` as lineDiff takes them: the server's blocks, with renamed names
   // hidden, or those it marks (rename-diff.js); found with whitespace changes
-  // hidden or not as `ignoreWhitespace` is.
+  // hidden or not as `ignoreWhitespace` is. Kept by `key` with the texts and
+  // the blocks or marks it was found from, and found again where any differ
+  // (a copy printed again, another diff of it): never drawn for other lines
+  // than its own.
   _model(key, before, after, options = {}, ignoreWhitespace = prefs.ignoreWhitespace) {
+    const given = options.changes?.blocks ?? options.marks ?? null
     // Re-inserted on every use, so the cache drops the least recent.
-    let model = this._models.get(key)
+    let kept = this._models.get(key)
     this._models.delete(key)
-    if (!model) {
-      model = lineDiff(before, after, { ...options, ignoreWhitespace })
+    if (!(kept?.before === before && kept.after === after && kept.given === given)) {
+      kept = { model: lineDiff(before, after, { ...options, ignoreWhitespace }), before, after, given }
     }
-    this._models.set(key, model)
+    this._models.set(key, kept)
     if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
-    return model
+    return kept.model
   }
 
   // A file's two sides, pretty-printed where the toggle has them so, and its
@@ -940,14 +954,13 @@ export class BundleCompareCode extends LitElement {
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
     const pretty = textual ? this._pretty(path, entry, contents) : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
-    // Renamed names are hidden by the server, in the copies it pretty-printed
-    // (rename-diff.js): offered while those come, hidden once they did.
-    const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && (pretty?.status === 'ready' || pretty?.status === 'loading')
+    // Renamed names are found by the server, in the copies it pretty-printed
+    // (rename-diff.js), once those came: the lines that differ in them alone
+    // marked, the diff of the files as they are drawn till then, or hidden
+    // where the viewer asks. A file whose copies failed has none found.
+    const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && ['ready', 'loading', 'error'].includes(pretty?.status)
       && this._generated(path, entry, contents)
-    const renames = generated && prefs.ignoreRenames && pretty.status === 'ready'
-    // Marked rather than hidden where the viewer asks: the diff of the files
-    // as they are, the blocks that differ in renamed names alone drawn apart.
-    const marking = renames && prefs.markRenames
+    const renames = generated && pretty.status === 'ready'
     // A hit sought here asks for a diff too large to show unasked, as "Show
     // diff" does: large as the texts it shows are, printed or as published.
     if (textual && this._sought?.path === path && !this._forced.has(path) && isLargeDiff(before, after)) this._forced.add(path)
@@ -955,21 +968,26 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const changes = renames && !large
-        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate(), pretty.hashes) : null
+        ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes) : null
       const ready = changes?.status === 'ready'
+      const hiding = ready && prefs.ignoreRenames
+      const marked = ready && !hiding
       // Where either side reads names (`f.name`, `f.toString()`), a rename may
       // change what the code does, which hiding renamed names could hide: it is
-      // said (`warned`), the renamed lines offered marked, as the viewer may
-      // ask for anywhere.
-      const marked = ready && marking
-      const hiding = ready && !marked
+      // said (`warned`), the renamed lines offered marked.
       const warned = hiding && changes.reason === null ? changes.reads : []
+      // Hide renamed names is offered where it hides any: lines that differ in
+      // renamed names alone, marked otherwise, or, while it is on, names it
+      // gave in lines that differ besides; and while it is on, in any file it
+      // is for that it hides none in yet, to be turned off: its copies or the
+      // server's diff coming or failed, or no names given, as it said why.
+      const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && generated
       const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })
       // The old side as the server diffed it, given the new side's names, where they are hidden.
       const shown = hiding ? changes.before : before
-      const model = textual && !large && (!changes || ready)
+      const model = textual && !large && (!changes || ready || !prefs.ignoreRenames)
         ? this._model(key, shown, after, hiding ? { changes: { blocks: changes.blocks } } : marked ? { marks: changes.marks } : {}, ignoreWhitespace) : null
-      return { key, changes, warned, hiding, shown, model }
+      return { key, changes, warned, renamed, hiding, shown, model }
     }
     // Whitespace changes are hidden as diff -b hides them, only in a file whose
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
@@ -979,7 +997,7 @@ export class BundleCompareCode extends LitElement {
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && hidesMixedWhitespace(found.shown, after, found.model.blocks)
     if (mixed) found = diffed(false)
-    const { key, changes, warned, hiding, shown, model } = found
+    const { key, changes, warned, renamed, hiding, shown, model } = found
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // The texts as published diffed as the search diffs them (_searchResults):
     // their blocks kept for it, not found again, however large.
@@ -989,19 +1007,20 @@ export class BundleCompareCode extends LitElement {
     }
     // What hiding them does here: hides one (`hideable`), where the diff shown
     // does or diff -b would while they show (_whitespaceHidden); or would, but
-    // may not (`mixed`, `unlisted`), said while they are to be hidden. Where it
-    // would hide none, or none it may, it is not offered.
-    const off = model && (unlisted || !prefs.ignoreWhitespace) ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
-    const whitespace = model === null ? null
+    // may not as blanks of more than one kind change (`mixed`), said while they
+    // are to be hidden. Where it would hide none, or none it may (a file whose
+    // whitespace may mean something, plain to see), it is not offered.
+    const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
+    const whitespace = model === null || unlisted ? null
       : mixed ? 'mixed'
-      : unlisted ? (prefs.ignoreWhitespace && off.hides ? 'unlisted' : null)
       : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
     // A hit sought here waits while its diff isn't drawn yet: its printed
-    // copies or renamed names still coming, or its renamed names failed to
-    // hide, until they are shown (see _scrollSought).
-    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || changes?.status === 'loading' || changes?.status === 'error'
-    return { before: shown, after, textual, large, pretty, key, generated, renames, marking, warned, hiding, changes, model, whitespace }
+    // copies still coming, or its renamed names, to be hidden, coming or
+    // failed to hide, until they are shown (see _scrollSought); marked, they
+    // leave its rows as they are.
+    if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
+    return { before: shown, after, textual, large, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace }
   }
 
   // Whether a file's whitespace may mean something on either side, so its
@@ -1012,13 +1031,15 @@ export class BundleCompareCode extends LitElement {
   }
 
   // What diff -b would hide between the texts a file shows (whitespaceHidden),
-  // `key` naming them, kept as their models are.
+  // `key` naming them, kept as their models are: with the texts, and found
+  // again for others (_model).
   _whitespaceHidden(key, before, after) {
-    const hidden = this._spaced.get(key) ?? whitespaceHidden(before, after)
+    let kept = this._spaced.get(key)
+    if (!(kept?.before === before && kept.after === after)) kept = { before, after, hidden: whitespaceHidden(before, after) }
     this._spaced.delete(key)
-    this._spaced.set(key, hidden)
+    this._spaced.set(key, kept)
     if (this._spaced.size > this._modelCap) this._spaced.delete(this._spaced.keys().next().value)
-    return hidden
+    return kept.hidden
   }
 
   // Whether a file's names are a minifier's on both sides, each minified, and
@@ -1072,8 +1093,8 @@ export class BundleCompareCode extends LitElement {
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
       </div>`
     }
-    if (changes?.status === 'loading') return html`<div class="bundle-compare-code-message" aria-busy="true">${prefs.markRenames ? 'Marking renamed lines…' : 'Hiding renamed names…'}</div>`
-    if (changes?.status === 'error') {
+    if (changes?.status === 'loading' && prefs.ignoreRenames) return html`<div class="bundle-compare-code-message" aria-busy="true">Hiding renamed names…</div>`
+    if (changes?.status === 'error' && prefs.ignoreRenames) {
       return html`<div class="bundle-compare-code-message">
         <p>Couldn't hide renamed names: ${changes.message}</p>
         <button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>
@@ -1087,7 +1108,6 @@ export class BundleCompareCode extends LitElement {
       ${warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing}
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
-      ${warned.length > 0 ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setMarks(true)}>Mark renamed lines</button>` : nothing}
     </div>`
   }
 
@@ -1216,19 +1236,22 @@ export class BundleCompareCode extends LitElement {
   // Highlighted lines of one side, or null until (or unless) Prism colors
   // it; the first ask starts the work and re-renders once it lands.
   // `copy` names a text other than the file's own: `pretty`, or the old side
-  // given another file's names (`renamed` and that file).
+  // given another file's names (`renamed` and that file). Taken only for the
+  // text it colored: another under the same name (a copy printed again,
+  // another diff's old side) is colored anew, never drawn as the one before.
   _highlighted(details, path, text, copy = '') {
     if (!text) return null
     const lang = langForPath(path, stasisFormat(details, path), text)
     if (!lang) return null
     const key = `${details.integrity}\0${path}${copy ? `\0${copy}` : ''}`
-    if (highlightCache.has(key)) return highlightCache.get(key)
+    const kept = highlightCache.get(key)
+    if (kept?.text === text) return kept.lines
     if (!highlightPending.has(key)) {
       highlightPending.add(key)
       void (async () => {
         const markup = await highlight(text, lang)
         const lines = typeof markup === 'string' ? splitHighlightedLines(markup) : null
-        highlightCache.set(key, lines?.length === text.split('\n').length ? lines : null)
+        highlightCache.set(key, { text, lines: lines?.length === text.split('\n').length ? lines : null })
         highlightPending.delete(key)
         if (this.isConnected) this.requestUpdate()
       })()
@@ -1267,7 +1290,7 @@ export class BundleCompareCode extends LitElement {
         </button>
         <span class="bundle-code-main-spacer"></span>
         ${this._fileFigures(entry, model)}
-        ${this._toggles(diffable, file.pretty, file.generated, file.whitespace)}
+        ${this._toggles(diffable, file.pretty, file.renamed, file.whitespace === 'hideable')}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${this._dependencyChanges(path)}
@@ -1276,22 +1299,22 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's whitespace, renamed names, pretty-print and layout toggles, as
-  // a file has use for them: whitespace where hiding it hides a change
-  // (`whitespace`), in JavaScript minified on both sides (`renames`,
-  // _generated) renamed names, pretty-printing a minified file (`pretty` from
-  // _pretty), after those, as pressing it can show or hide them, and a diff
-  // its layout, last. Hiding renamed names gives the old side the new side's
-  // names wherever a minifier renamed a variable alike throughout, an old one
-  // no new one stands for named apart (r_old). Lines always wrap.
-  _toggles(diffable, pretty = null, renames = false, whitespace = null) {
-    return html`${diffable ? html`${whitespace ? this._whitespaceToggle(whitespace) : nothing}
-        ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
+  // The diff's renamed names, whitespace, pretty-print and layout toggles, as
+  // the file shown, or any of those listed, has use for them: renamed names
+  // where hiding them hides any (`renamed`, see _fileState), whitespace where
+  // hiding it hides a change (`whitespace`), pretty-printing a minified file
+  // (`pretty` from _pretty), after those, as pressing it can show or hide
+  // them, and a diff its layout, last. Hiding renamed names gives the old side
+  // the new side's names wherever a minifier renamed a variable alike
+  // throughout, an old one no new one stands for named apart (r_old), rather
+  // than marking the lines that differ in them alone. Lines always wrap.
+  _toggles(diffable, pretty = null, renamed = false, whitespace = false) {
+    return html`${diffable ? html`${renamed ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
           data-tooltip="Hide renamed names"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}
-        ${renames && prefs.ignoreRenames ? this._marksToggle() : nothing}` : nothing}
+        ${whitespace ? this._whitespaceToggle() : nothing}` : nothing}
         ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
           data-tooltip=${prettyTooltip(pretty)}
@@ -1435,23 +1458,10 @@ export class BundleCompareCode extends LitElement {
   // not hide (`whitespace` other than `hideable`, see _fileState), all of
   // which show. Named for what it does in every state; where it is off, why
   // is its tooltip and accessible description.
-  _whitespaceToggle(whitespace) {
-    const kept = WHITESPACE_KEPT[whitespace]
-    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace && !kept)} aria-disabled=${kept ? 'true' : nothing}
-      aria-label=${HIDE_WHITESPACE} aria-description=${kept ?? nothing} data-tooltip=${kept ?? HIDE_WHITESPACE} @click=${() => { if (!kept) this._setWhitespace(!prefs.ignoreWhitespace) }}>
+  _whitespaceToggle() {
+    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace)}
+      aria-label=${HIDE_WHITESPACE} data-tooltip=${HIDE_WHITESPACE} @click=${() => this._setWhitespace(!prefs.ignoreWhitespace)}>
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
-    </button>`
-  }
-
-  // Marking renamed lines rather than hiding them: the diff of the files as
-  // they are, the lines that differ in renamed names alone drawn faint and
-  // counted apart. Offered, with a note, for a file that reads names (`warned`,
-  // see _fileState), as code that reads its own names can change what it does
-  // when they are renamed.
-  _marksToggle() {
-    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.markRenames)}
-      aria-label="Mark renamed lines" data-tooltip="Mark renamed lines" @click=${() => this._setMarks(!prefs.markRenames)}>
-      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3.5 3 3-6 6H3.5v-3zM2 14.5h12"/></svg>
     </button>`
   }
 
@@ -1466,12 +1476,8 @@ export class BundleCompareCode extends LitElement {
     this.requestUpdate()
   }
 
-  _setMarks(value) {
-    prefs.markRenames = value
-    this.requestUpdate()
-  }
 
-  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [] }) {
+  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [], whitespace = null }) {
     const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
     // A search hit picked in this file: its row, opened and shown, to scroll
@@ -1497,8 +1503,9 @@ export class BundleCompareCode extends LitElement {
       },
     }
     const digits = String(Math.max(model.a.length, model.b.length, 1)).length
-    return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
-      ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setMarks(true)}>Mark renamed lines</button></p>` : nothing}
+    return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
+      ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
+      ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
