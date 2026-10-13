@@ -99,7 +99,7 @@ compatible with a shared file, but the launcher requires separate files.
 | Managed avatars | `avatars/<uuid>` plus `.type` sidecar | `.managed/avatars/<uuid>` with embedded content type |
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
 | Report source cache | `cache/report-sources/<bundleUuid>/...` | `.managed/cache/report-sources/<bundleUuid>/...` |
-| Pretty-printed public npm files | `cache/npm/pretty-v1/<sha512hex>.<ext>.br` | `.managed/cache/npm/pretty-v1/<sha512hex>.<ext>.br` |
+| Pretty-printed public npm files | `cache/npm/pretty-v<N>/<sha512hex>.<ext>.br` | `.managed/cache/npm/pretty-v<N>/<sha512hex>.<ext>.br` |
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
 | Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 
@@ -120,6 +120,9 @@ characters. It collects unreferenced e2e blobs after an age grace period and
 reclaims stale/orphaned staging. Managed deletes target its UUID objects or
 slash-delimited cache prefixes. Managed maintenance removes expired sessions
 and, on Vercel only, upload parts older than 24 hours; it is not a general orphan-object sweep.
+Pretty-printed copies are named by `PRETTY_VERSION` (`server-managed/pretty-print.ts`): a
+bundle's, under its cache directory, go with the bundle, but nothing deletes public npm
+copies, so a version bumped leaves the previous `cache/npm/pretty-v<N>/` behind.
 Ordinary managed requests trigger it on the first request per instance, then
 hourly while traffic continues (one-minute retry backoff after failures).
 The response proceeds alongside cleanup, and the triggering invocation awaits
