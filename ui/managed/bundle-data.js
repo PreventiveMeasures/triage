@@ -149,9 +149,15 @@ const PRETTY_ERRORS = {
 // `{ text, source }`, `source` the hash of the file the server formatted it
 // from, as it names it.
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
-  return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS,
-    async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
+  return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS, prettyFile, signal)
 }
+
+// One of an npm version's files pretty-printed, as a bundle's is.
+export function fetchPrettyNpmFile(name, version, path, hash, { signal } = {}) {
+  return request(`/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`, { ...NPM_ERRORS, ...PRETTY_ERRORS }, prettyFile, signal)
+}
+
+const prettyFile = async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') })
 
 // A response's lines of JSON, as the server sends them (http.ts sendLines),
 // each as it comes.
@@ -178,7 +184,25 @@ export async function* responseLines(response) {
 // `{ path, source, status, message }` where it has none, `source` as above.
 // Resolves once the server sent them all; refused as the version's files are.
 export function fetchPrettyNpmFiles(name, version, onLine, { signal } = {}) {
-  return request(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, async response => {
+  return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, onLine, signal)
+}
+
+// The files that changed between two bundles, or two versions of a package,
+// both sides' pretty-printed by the server in one request, those it kept
+// first: `onLine` called with each as it comes, as above, with the `side` it
+// is of, `base` (the one asked about) or `other`.
+export function fetchPrettyBundleChanges(id, other, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal)
+}
+
+export function fetchPrettyNpmChanges(name, version, otherVersion, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/npm/pretty?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
+}
+
+// Pretty-printed files' lines, each told to `onLine` as it comes, a failed
+// one's error told as `message`; refused as `errors` name it.
+function requestPrettyLines(url, errors, onLine, signal) {
+  return request(url, errors, async response => {
     const generation = managedAppState.generation
     for await (const { error, status, ...line } of responseLines(response)) {
       if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')

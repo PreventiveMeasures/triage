@@ -3,16 +3,17 @@
 // (server-managed/pretty-print.ts), each taken where the server names the
 // file it formatted as the one shown: a managed bundle's asked for a file at
 // a time, by its path and its text's hash; an npm version's all in one
-// request, the first time one is wanted. The viewer keeps the last few
-// bundle copies it read, and the last few versions', for the session; a
-// copy's line numbers are its own, so the file's line links and marks stay
-// with the file as published.
+// request, the first time one is wanted. Compare has every file that changed
+// between its two bundles or versions, both sides', in one request too, on or
+// off. The viewer keeps the last few bundle copies it read, and the last few
+// versions' and comparisons', for the session; a copy's line numbers are its
+// own, so the file's line links and marks stay with the file as published.
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { needsPrettyPrint } from '../../common/pretty-print.js'
-import { fetchPrettyBundleFile, fetchPrettyNpmFiles } from './client-managed.js'
+import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
 
 // The pretty-print toggles' icon, for the Code tab's bar and Compare's.
@@ -28,6 +29,12 @@ export const prettyTooltip = copy => copy?.status === 'loading' ? 'Pretty-printi
 const KEPT_COPIES = 8
 // npm versions whose copies are kept, the one read last last: Compare shows two.
 const KEPT_VERSIONS = 4
+// Comparisons whose copies are kept, the one read last last, each holding
+// both sides' of every file that changed between them.
+const KEPT_COMPARISONS = 2
+// How long copies that come close together wait for each other, to be told
+// to the view that asked at once.
+const TELL_MS = 30
 // Bundle copies asked of the server at once: as many as it formats at once
 // (server-managed/pretty-print.ts). The rest wait their turn, in the order
 // asked, as a view asks for all it shows (Compare's Diff view, both sides of
@@ -41,6 +48,25 @@ const UNLISTED = "The server didn't pretty-print this file."
 
 // Whether asking again for a copy that failed with `status` may succeed.
 const retryable = status => !(status >= 400 && status < 500 && status !== 429)
+// A failure that may pass is asked again this long after it came, twice as
+// long each time it fails again, its view painted again then to ask.
+const RETRY_MS = 5_000
+const RETRY_MAX_MS = 5 * 60_000
+
+// Failures in a row, by what failed (a file's copy, or a comparison's).
+const failures = new Map()
+// A failure that may pass, of what `key` names, `drop`ped a while after,
+// where it is still what is kept, `notify` called then for its view to ask
+// again; or what came, its failures forgotten.
+function retried(key, failure, drop, notify) {
+  if (!failure?.retry) {
+    failures.delete(key)
+    return
+  }
+  const tries = failures.get(key) ?? 0
+  failures.set(key, tries + 1)
+  setTimeout(() => { if (drop()) notify()?.() }, Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS))?.unref?.()
+}
 
 // Copies by integrity and path: `{ status: 'loading' }`, `{ status: 'ready',
 // text, hash }` (`hash` the copy's own, which a diff of it names:
@@ -57,6 +83,15 @@ const copyKey = (details, path) => `${details.integrity}\0${path}`
 // came, and `notifiers` by path as above; once its request ended, `rest`,
 // the copy each file it brought none of has (an error).
 const versions = new Map()
+// Compare's copies, by both sides' integrity: the files that changed between
+// them, both sides' pretty-printed, in one request the first time one is
+// asked for, the toggle on or not (Compare tells from them where printing
+// changes a diff): `copies` by side and path as above, those that came;
+// `notify`, the view that last asked for one; `ended` once its request ended,
+// and `rest`, the copy every file has where it failed, asked for again a while
+// after where that may succeed. A file it brought none of, or couldn't make
+// as the server was busy, is asked for alone (fileCopy).
+const comparisons = new Map()
 
 // Whether each file of a bundle or npm version can be formatted, by its
 // details (needsPrettyPrint, as the server tells an npm version's).
@@ -121,7 +156,7 @@ async function load(key, copy, entry, path, content, known) {
   let next
   try {
     const hash = known ?? await computeFileHash(content)
-    const { text, source } = await inTurn(() => fetchPrettyBundleFile(entry.managedId, path, hash))
+    const { text, source } = await inTurn(() => (entry.npm ? fetchPrettyNpmFile(entry.npm.name, entry.npm.version, path, hash) : fetchPrettyBundleFile(entry.managedId, path, hash)))
     next = source === hash && typeof text === 'string' ? { status: 'ready', text, hash: await computeFileHash(text) } : { status: 'error', message: MISMATCH, retry: true }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
@@ -138,7 +173,10 @@ async function load(key, copy, entry, path, content, known) {
   copies.set(key, next)
   settled++
   const notify = notifiers.get(key)
-  notifiers.delete(key)
+  // One to be asked for again keeps the view that last asked, to be told then.
+  const retry = next.status === 'error' && next.retry
+  if (!retry) notifiers.delete(key)
+  retried(`file ${key}`, retry ? next : null, () => copies.get(key) === next && copies.delete(key), () => notifiers.get(key))
   notify?.()
   evict()
 }
@@ -215,29 +253,111 @@ function versionCopy(details, entry, path, content, notify) {
 export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
   if (entry.npm) return versionCopy(details, entry, path, content, notify)
+  return fileCopy(details, path, content, notify, entry)
+}
+
+// A file's copy asked for alone, as a bundle's is, by its path and hash: a
+// managed bundle's or, where Compare's request for the files that changed
+// brought none of it, an npm version's (`entry` as details have it).
+function fileCopy(details, path, content, notify, entry = details) {
   const key = copyKey(details, path)
   const asked = copies.get(key)
   const copy = asked ?? { status: 'loading' }
   keep(key, copy)
-  if (copy.status === 'loading') notifiers.set(key, notify)
+  if (copy.status === 'loading' || copy.retry) notifiers.set(key, notify)
   if (!asked) load(key, copy, entry, path, content, details.fileHashes?.get(path))
   return copy
 }
 
-// The copy kept for a file, as prettyCopy has it, without asking for one:
-// null where none is kept, or while the toggle is off.
-export function keptPrettyCopy(details, path) {
-  if (!state.bundleSourcePretty) return null
-  const version = versions.get(details.integrity)
-  return (version ? version.copies.get(path) ?? version.rest : copies.get(copyKey(details, path))) ?? null
+// Views to tell of copies come, each once, a little after the first of them.
+const told = new Set()
+function tell(notify) {
+  if (!notify) return
+  if (told.size === 0) {
+    setTimeout(() => {
+      const views = [...told]
+      told.clear()
+      for (const view of views) view()
+    }, TELL_MS)
+  }
+  told.add(notify)
+}
+
+// Past KEPT_COMPARISONS, the least recent whose request ended.
+function evictComparisons() {
+  for (const [key, comparison] of comparisons) {
+    if (comparisons.size <= KEPT_COMPARISONS) break
+    if (comparison.ended) comparisons.delete(key)
+  }
+}
+
+// The files that changed between a comparison's two sides, both sides', in
+// one request: each copy as it comes, checked as a bundle's is, against its
+// side's own file; where the request failed, what every file it brought none
+// of has.
+async function loadComparison(key, comparison, base, other) {
+  const sides = { base, other }
+  let rest = null
+  try {
+    const line = async ({ side, path, source, text, status, message }) => {
+      // One the server couldn't make now, as it was busy, asked for alone once this ends.
+      if (typeof text !== 'string' && retryable(status)) return
+      const details = Object.hasOwn(sides, side) ? sides[side] : null
+      const file = details && bundleFilesAsMap(details).get(path)
+      const own = typeof text === 'string' && typeof file === 'string' && source === (details.fileHashes?.get(path) ?? await computeFileHash(file))
+      comparison.copies.set(`${side}\0${path}`, own ? { status: 'ready', text, hash: await computeFileHash(text) }
+        : typeof text === 'string' ? { status: 'error', message: MISMATCH, retry: true }
+        : { status: 'error', message, retry: retryable(status) })
+      settled++
+      tell(comparison.notify)
+    }
+    await (base.npm ? fetchPrettyNpmChanges(base.npm.name, base.npm.version, other.npm.version, line)
+      : fetchPrettyBundleChanges(base.managedId, other.managedId, line))
+  } catch (err) {
+    // A session that changed asks again under the new one, on its render.
+    if (err?.name === 'AbortError') {
+      if (comparisons.get(key) === comparison) comparisons.delete(key)
+      return
+    }
+    rest = { status: 'error', message: err?.message ?? String(err), retry: retryable(err?.status) }
+  }
+  Object.assign(comparison, { ended: true, rest })
+  settled++
+  retried(`comparison ${key}`, rest, () => comparisons.get(key) === comparison && comparisons.delete(key), () => comparison.notify)
+  tell(comparison.notify)
+  evictComparisons()
+}
+
+// One side's file of a comparison of two managed bundles, or two versions of
+// a package (rename-diff.js renameDiffable), pretty-printed: `side` `base` or
+// `other`, `notify` called once it comes; the comparison's files asked for
+// the first time one is, whether or not the toggle is on, and one it brought
+// none of asked for alone once it ended. A text other than the side's file
+// has none.
+export function comparedCopy(base, other, side, path, content, notify) {
+  const key = `${base.integrity}\0${other.integrity}`
+  let comparison = comparisons.get(key)
+  comparisons.delete(key)
+  if (!comparison) {
+    comparison = { copies: new Map(), notify: null, ended: false, rest: null }
+    loadComparison(key, comparison, base, other)
+  }
+  comparisons.set(key, comparison)
+  evictComparisons()
+  const details = side === 'base' ? base : other
+  if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
+  comparison.notify = notify
+  return comparison.copies.get(`${side}\0${path}`) ?? comparison.rest ?? (comparison.ended ? fileCopy(details, path, content, notify) : { status: 'loading' })
 }
 
 // Turned back on, the toggle asks again for copies that failed for a reason
-// that may have passed: an npm version's all again, once its request ended.
+// that may have passed: an npm version's, or a comparison's, all again, once
+// its request ended.
 export function togglePrettySource() {
   state.bundleSourcePretty = !state.bundleSourcePretty
   if (!state.bundleSourcePretty) return
   const failed = copy => copy.status === 'error' && copy.retry
   for (const [key, copy] of copies) if (failed(copy)) copies.delete(key)
   for (const [key, version] of versions) if (version.rest && (failed(version.rest) || [...version.copies.values()].some(failed))) versions.delete(key)
+  for (const [key, comparison] of comparisons) if (comparison.ended && (comparison.rest ? failed(comparison.rest) : [...comparison.copies.values()].some(failed))) comparisons.delete(key)
 }

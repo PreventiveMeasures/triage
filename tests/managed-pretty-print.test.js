@@ -261,6 +261,123 @@ test('a public link reads its bundles\' files pretty-printed', async t => {
   assert.equal(refused.status, 400)
 })
 
+const bundleChanges = (id, other) => `/api/bundles/${id}/pretty?${new URLSearchParams({ other })}`
+const npmChanges = (name, version, otherVersion) => `/api/npm/pretty?${new URLSearchParams({ name, version, otherVersion })}`
+// Two builds' files: one minified and changed, its old text kept again at a
+// new path; one plain and changed; one changed into what can't be formatted;
+// and, left out, one the same, one renamed unchanged, one changed but not
+// formattable.
+const longer = long.replace('c*b', 'c*b*2')
+const comparedBuilds = [
+  { 'dist/app.min.js': long, 'bad.js': 'export const c = 1\n', 'src/edit.js': 'export const b = 1\n', 'src/same.js': 'export const s = 1\n', 'src/old.js': 'export const o = 1\n', 'README.md': '# a\n' },
+  { 'dist/app.min.js': longer, 'dist/backup.min.js': long, 'bad.js': 'function (', 'src/edit.js': 'export const b = 2\n', 'src/same.js': 'export const s = 1\n', 'src/new.js': 'export const o = 1\n', 'README.md': '# b\n' },
+]
+// The lines for those files, by side and path, as the first request has them:
+// the minified first, then the rest in path order, the base's before the other's.
+async function comparedLines() {
+  const line = async (side, path, text) => ({ side, path, source: fileHash(text), text: await formatted(text) })
+  return [await line('base', 'dist/app.min.js', long), await line('other', 'dist/app.min.js', longer), await line('other', 'dist/backup.min.js', long),
+    await line('base', 'bad.js', 'export const c = 1\n'), { side: 'other', path: 'bad.js', source: fileHash('function ('), error: 'unformattable', status: 422 },
+    await line('base', 'src/edit.js', 'export const b = 1\n'), await line('other', 'src/edit.js', 'export const b = 2\n')]
+}
+// Those lines as kept copies are read: in path order, the base's first where
+// both have one, then any formatted again, as one that failed is.
+const keptOrder = lines => [...lines.filter(line => !line.error).toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)), ...lines.filter(line => line.error)]
+
+test('the files that changed between two bundles are pretty-printed in one request, kept ones first, the minified before the rest', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(comparedBuilds[0]), await h.seed(comparedBuilds[1])]
+  const first = await h.send(bundleChanges(base, other))
+  assert.equal(first.status, 200)
+  assert.equal(first.headers['content-type'], 'application/x-ndjson')
+  assert.equal(first.headers['content-encoding'], 'br')
+  assert.equal(first.headers['cache-control'], 'private, no-store')
+  const lines = await comparedLines()
+  assert.deepEqual(linesOf(first), lines, 'each side\'s changed files that can be formatted, each naming the file it was formatted from: one whose old text the other keeps elsewhere too among them')
+  // Kept in each bundle's cache, as one file's are, and read from there.
+  assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', base, 'pretty-v3'))).length, 3)
+  assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', other, 'pretty-v3'))).length, 3)
+  const reads = t.mock.method(h.stores.bundleStore, 'get')
+  const one = await h.send(bundlePretty(other, 'src/edit.js', fileHash('export const b = 2\n')))
+  assert.equal(one.text(), await formatted('export const b = 2\n'))
+  assert.equal(reads.mock.callCount(), 0, 'a copy the comparison made, read alone without decoding the bundle')
+  assert.deepEqual(linesOf(await h.send(bundleChanges(base, other))), keptOrder(lines), 'the kept first, the one that failed formatted again after')
+})
+
+test('a comparison leaves out what moved unchanged, its text at a path its side alone has, however many copies share it', async t => {
+  const h = await setup(t)
+  // Two copies of one file, one of them moved: which pairs with which, if
+  // any, is the viewer's to say, which asks for one it pairs otherwise alone.
+  const [base, other] = [await h.seed({ 'a.min.js': long, 'b.min.js': long, 'c.js': 'export const c = 1\n' }), await h.seed({ 'd.min.js': long, 'c.js': 'export const c = 1\n' })]
+  assert.deepEqual(linesOf(await h.send(bundleChanges(base, other))), [])
+})
+
+test('an npm version\'s file is pretty-printed alone, as a bundle\'s is', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('lib', '1.0.0', { 'src/edit.js': 'export const b = 1\n' })])
+  const npmFile = (path, hash) => `/api/npm/pretty?${new URLSearchParams({ name: 'lib', version: '1.0.0', path, hash })}`
+  const res = await h.send(npmFile('src/edit.js', fileHash('export const b = 1\n')))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['x-source-hash'], fileHash('export const b = 1\n'))
+  assert.equal(res.text(), await formatted('export const b = 1\n'))
+  const cases = [
+    [npmFile('src/edit.js', 'sha512-nope'), 400, 'bad-file'],
+    [npmFile('src/missing.js', fileHash('x')), 404, 'no-file'],
+    [npmFile('src/edit.js', fileHash('else')), 409, 'hash-mismatch'],
+  ]
+  for (const [path, status, error] of cases) {
+    const reply = await h.send(path)
+    assert.equal(reply.status, status, path)
+    assert.equal(reply.json().error, error, path)
+  }
+})
+
+test('a comparison\'s pretty-printed files check access to both bundles and refuse what they cannot answer', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(comparedBuilds[0]), await h.seed(comparedBuilds[1])]
+  const cases = [
+    [bundleChanges(base, 'nope'), 'viewer', 400, 'bad-bundle'],
+    [bundleChanges(base, randomUUID()), 'viewer', 404, 'no-bundle'],
+    [bundleChanges(randomUUID(), other), 'viewer', 404, 'no-bundle'],
+    [bundleChanges(base, other), 'outsider', 404, 'no-bundle'],
+  ]
+  for (const [path, who, status, error] of cases) {
+    const res = await h.send(path, who)
+    assert.equal(res.status, status, `${who} ${path}`)
+    assert.equal(res.json().error, error, `${who} ${path}`)
+  }
+  assert.equal((await h.send(bundleChanges(base, other), null)).status, 401)
+  assert.equal((await h.send(bundleChanges(base, other), 'viewer', { method: 'HEAD' })).status, 405)
+})
+
+test('the files that changed between two npm versions are pretty-printed in one request, as two bundles\' are', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('lib', '1.0.0', comparedBuilds[0]), packageOf('lib', '1.1.0', comparedBuilds[1])])
+  const first = await h.send(npmChanges('lib', '1.0.0', '1.1.0'))
+  assert.equal(first.status, 200)
+  assert.equal(first.headers['content-type'], 'application/x-ndjson')
+  const lines = await comparedLines()
+  assert.deepEqual(linesOf(first), lines)
+  assert.equal((await readdir(join(h.dir, 'cache', 'npm', 'pretty-v3'))).length, 5, 'a public version\'s kept by their hashes')
+  assert.deepEqual(linesOf(await h.send(npmChanges('lib', '1.0.0', '1.1.0'))), keptOrder(lines))
+  const missing = await h.send(npmChanges('lib', '1.0.0', '2.0.0'))
+  assert.equal(missing.status, 404)
+  assert.equal(missing.json().error, 'package-not-found')
+  assert.equal((await h.send(npmChanges('lib', '1.0.0', '>=<'))).status, 400)
+  assert.equal((await h.send(npmChanges('lib', '1.0.0', '1.1.0'), null)).status, 401)
+})
+
+test('a public link pretty-prints the files that changed between its own bundles alone', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(comparedBuilds[0]), await h.seed(comparedBuilds[1])]
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  const res = await h.send(bundleChanges(base, other), null, { headers })
+  assert.equal(res.status, 200)
+  assert.deepEqual(linesOf(res), await comparedLines())
+  assert.equal((await h.send(bundleChanges(base, randomUUID()), null, { headers })).status, 404)
+})
+
 test('a bundle file is diffed with another bundle\'s, both pretty-printed, renamed names hidden', async t => {
   const h = await setup(t)
   const [base, other] = [await h.seed({ 'dist/app.min.js': built }), await h.seed({ 'dist/app.min.js': rebuilt })]

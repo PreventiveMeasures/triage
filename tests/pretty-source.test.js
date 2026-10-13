@@ -13,17 +13,24 @@ const answer = hash => {
   const next = answers.shift() ?? new Error('unexpected request')
   return next instanceof Error ? Promise.reject(next) : Promise.resolve(next).then(text => (typeof text === 'string' ? { text, source: hash } : text))
 }
-// An npm version's request for all its copies, its lines sent, and the
-// request ended or failed, by the test.
-const npmRequests = []
+// An npm version's request for all its copies, or a comparison's for its
+// changed files', its lines sent, and the request ended or failed, by the test.
+const changeRequests = [], npmRequests = []
+const lines = (...asked) => {
+  requests.push(asked.filter(part => typeof part === 'string'))
+  return new Promise((end, fail) => { changeRequests.push({ send: asked.find(part => typeof part === 'function'), end, fail }) })
+}
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer(args[2]) },
   fetchPrettyNpmFiles: (name, version, onLine) => {
     requests.push(['npm', name, version])
     return new Promise((end, fail) => { npmRequests.push({ send: onLine, end, fail }) })
   },
+  fetchPrettyNpmFile: (...args) => { requests.push(['npm file', ...args]); return answer(args[3]) },
+  fetchPrettyBundleChanges: (id, other, onLine) => lines('bundle changes', id, other, onLine),
+  fetchPrettyNpmChanges: (name, version, otherVersion, onLine) => lines('npm changes', name, version, otherVersion, onLine),
 } })
-const { keptPrettyCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { comparedCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
 // counts for no later test.
@@ -61,7 +68,111 @@ beforeEach(() => {
   requests.length = 0
   answers.length = 0
   npmRequests.length = 0
+  changeRequests.length = 0
   renders = []
+})
+
+// Two managed bundles of a comparison, and a side's file asked for, as
+// Compare asks whatever the toggle.
+function comparisonOf(baseFiles, otherFiles) {
+  const base = { ...bundleOf(baseFiles), managedId: 'bundle-1' }, other = { ...bundleOf(otherFiles), managedId: 'bundle-2' }
+  const painted = renders
+  const copy = (side, path, content = (side === 'base' ? baseFiles : otherFiles)[path]) => comparedCopy(base, other, side, path, content, () => painted.push(`${side} ${path}`))
+  return { base, other, copy }
+}
+
+test('a comparison\'s changed files come in one request, both sides\', whether or not the toggle is on, each checked against its side\'s file, one it brought none of asked for alone', async () => {
+  const { copy } = comparisonOf({ 'a.js': readable, 'b.min.js': minified, 'c.js': 'c' }, { 'a.js': `${readable}a`, 'b.min.js': `${minified}b`, 'c.js': 'cc' })
+  assert.equal(state.bundleSourcePretty, false)
+  assert.deepEqual(['base a.js', 'other a.js', 'base b.min.js', 'other b.min.js'].map(asked => copy(...asked.split(' ')).status), ['loading', 'loading', 'loading', 'loading'])
+  assert.deepEqual(requests, [['bundle changes', 'bundle-1', 'bundle-2']], 'one request for both sides\' files, the toggle off')
+  const [asked] = changeRequests
+  const settledBefore = prettySettled()
+  await asked.send({ side: 'base', path: 'a.js', source: hashOf(readable), text: 'export const a = 1;\n' })
+  await asked.send({ side: 'other', path: 'a.js', source: hashOf(readable), text: 'export const a = 1;\n' })
+  await asked.send({ side: 'base', path: 'b.min.js', source: hashOf(minified), status: 422, message: "This file couldn't be read as code." })
+  // A side named as neither, its copy of no file of either.
+  await asked.send({ side: '__proto__', path: 'c.js', source: hashOf('c'), text: 'c;\n' })
+  assert.deepEqual(copy('base', 'a.js'), { status: 'ready', text: 'export const a = 1;\n', hash: hashOf('export const a = 1;\n') })
+  assert.deepEqual(copy('other', 'a.js'), { status: 'error', message: MISMATCH, retry: true }, 'one naming another file than its side\'s is refused')
+  assert.deepEqual(copy('base', 'b.min.js'), { status: 'error', message: "This file couldn't be read as code.", retry: false })
+  assert.equal(copy('other', 'b.min.js').status, 'loading', 'one still coming waits')
+  assert.equal(prettySettled(), settledBefore + 4)
+  await settledUntil(() => renders.length > 0)
+  assert.deepEqual(renders, ['other b.min.js'], 'the view that asked repaints once, for copies that come close together')
+  asked.end()
+  await settledUntil(() => renders.length > 1)
+  answers.push('var b = 2;\n', 'c;\n')
+  assert.deepEqual(copy('other', 'b.min.js'), { status: 'loading' }, 'one it brought none of, asked for alone once it ended')
+  assert.deepEqual(copy('base', 'c.js'), { status: 'loading' }, 'one under a side named as neither too')
+  assert.deepEqual(requests.slice(1), [['bundle', 'bundle-2', 'b.min.js', hashOf(`${minified}b`)], ['bundle', 'bundle-1', 'c.js', hashOf('c')]])
+  await settledUntil(() => copy('other', 'b.min.js').status === 'ready')
+  assert.equal(copy('other', 'b.min.js').text, 'var b = 2;\n')
+  assert.deepEqual(copy('base', 'a.js', `${readable}x`), { status: 'error', message: MISMATCH, retry: false }, 'a text other than its side\'s file has none')
+  assert.equal(requests.length, 3)
+})
+
+test('an npm comparison\'s changed files are asked of the two versions', async () => {
+  const files = { 'a.min.js': minified }
+  const [base, other] = [npmOf(files), { ...npmOf(files), npm: { name: '@scope/lib', version: '3.0.0' } }]
+  assert.equal(comparedCopy(base, other, 'other', 'a.min.js', minified, () => {}).status, 'loading')
+  assert.deepEqual(requests, [['npm changes', '@scope/lib', '2.0.0', '3.0.0']])
+  await changeRequests[0].send({ side: 'other', path: 'a.min.js', source: hashOf(minified), text: 'var a = 1;\n' })
+  await settledUntil(() => comparedCopy(base, other, 'other', 'a.min.js', minified, () => {}).status === 'ready')
+  assert.equal(comparedCopy(base, other, 'other', 'a.min.js', minified, () => {}).text, 'var a = 1;\n', 'checked against a file it hashes itself')
+  changeRequests[0].end()
+  await settled()
+  answers.push('var a = 1;\n')
+  assert.equal(comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status, 'loading')
+  await settledUntil(() => requests.length > 1)
+  assert.deepEqual(requests[1], ['npm file', '@scope/lib', '2.0.0', 'a.min.js', hashOf(minified)], 'one it brought none of asked of its version alone')
+  await settledUntil(() => comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status === 'ready')
+})
+
+// Timers set for a failure to be asked again, kept to be fired by the test.
+function retryTimers(t) {
+  const timers = [], wait = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 5_000 ? (timers.push({ fn, ms }), {}) : wait(fn, ms, ...rest))
+  t.after(() => { globalThis.setTimeout = wait })
+  return timers
+}
+
+test('a comparison\'s request that fails fails each file, and is asked again whole a while after where that may succeed', async t => {
+  const timers = retryTimers(t)
+  const { copy } = comparisonOf({ 'a.js': readable }, { 'a.js': `${readable}a` })
+  assert.equal(copy('base', 'a.js').status, 'loading')
+  changeRequests[0].fail(Object.assign(new Error('The server is busy.'), { status: 503 }))
+  await settledUntil(() => copy('base', 'a.js').status === 'error')
+  assert.deepEqual(copy('base', 'a.js'), { status: 'error', message: 'The server is busy.', retry: true })
+  assert.equal(requests.length, 1, 'not asked again at once')
+  assert.deepEqual(timers.map(({ ms }) => ms), [5_000])
+  timers.shift().fn()
+  await settledUntil(() => renders.length > 0)
+  assert.deepEqual(renders, ['base a.js'], 'the view that last asked painted again once due')
+  assert.equal(copy('base', 'a.js').status, 'loading', 'and asked again')
+  assert.equal(requests.length, 2)
+  changeRequests[1].fail(Object.assign(new Error('The server is busy.'), { status: 503 }))
+  await settledUntil(() => timers.length > 0)
+  assert.deepEqual(timers.map(({ ms }) => ms), [10_000], 'twice as long, failed again')
+})
+
+test('a comparison\'s file the server was too busy to make is asked for alone once it ended, and asked again a while after where that fails too', async t => {
+  const timers = retryTimers(t)
+  const { copy } = comparisonOf({ 'a.js': readable }, { 'a.js': `${readable}a` })
+  assert.equal(copy('base', 'a.js').status, 'loading')
+  await changeRequests[0].send({ side: 'base', path: 'a.js', source: hashOf(readable), status: 429, message: 'Too many files are being pretty-printed.' })
+  changeRequests[0].end()
+  await settled()
+  answers.push(Object.assign(new Error('The server is busy.'), { status: 503 }))
+  assert.equal(copy('base', 'a.js').status, 'loading', 'asked for alone')
+  await settledUntil(() => copy('base', 'a.js').status === 'error')
+  assert.deepEqual(requests.slice(1), [['bundle', 'bundle-1', 'a.js', hashOf(readable)]])
+  assert.deepEqual(timers.map(({ ms }) => ms), [5_000])
+  answers.push('export const a = 1;\n')
+  timers.shift().fn()
+  assert.equal(copy('base', 'a.js').status, 'loading', 'asked again once due')
+  await settledUntil(() => copy('base', 'a.js').status === 'ready')
+  assert.equal(requests.length, 3)
 })
 
 test('only a managed bundle\'s or npm version\'s minified code is offered pretty-printed', () => {
@@ -114,8 +225,6 @@ test('an npm version\'s copies come in one request, all its files that need it, 
   assert.deepEqual(copy('a.min.js'), { status: 'ready', text: 'var a = 1;\n', hash: hashOf('var a = 1;\n') }, 'with its own hash')
   assert.equal(copy('b.min.js').status, 'loading', 'one still coming waits')
   assert.equal(prettySettled(), settledBefore + 1, 'counted as come, for a view to tell its own work stale by')
-  assert.deepEqual(keptPrettyCopy(npm, 'a.min.js'), copy('a.min.js'), 'kept, to be read without asking')
-  assert.equal(keptPrettyCopy(npm, 'b.min.js'), null, 'none kept of one still coming')
   await asked.send({ path: 'b.min.js', source: hashOf('another file'), text: 'var b = 2;\n' })
   assert.deepEqual(copy('b.min.js'), { status: 'error', message: MISMATCH, retry: true }, 'one the server names as another file\'s is refused')
   await asked.send({ path: 'c.min.js', source: hashOf(`${minified}c`), status: 422, message: "This file couldn't be read as code." })
@@ -123,7 +232,6 @@ test('an npm version\'s copies come in one request, all its files that need it, 
   asked.end()
   await settledUntil(() => renders.length === 4)
   assert.deepEqual(copy('d.min.js'), { status: 'error', message: "The server didn't pretty-print this file.", retry: false }, 'one it brought none of')
-  assert.deepEqual(keptPrettyCopy(npm, 'd.min.js'), copy('d.min.js'))
   assert.deepEqual(prettyCopy(npm, { npm: npm.npm }, 'a.min.js', `${minified}x`), { status: 'error', message: MISMATCH, retry: false },
     'a text other than the version\'s file has none')
   togglePrettySource()

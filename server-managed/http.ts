@@ -37,6 +37,8 @@
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
+//   GET  /api/bundles/<id>/pretty?other= → the files that changed between it and another bundle, both sides' pretty-printed,
+//        Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/bundles/<id>/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript file diffed
 //        with another bundle's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/504
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
@@ -62,6 +64,9 @@
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404/429/502
 //   GET  /api/npm/provenance?name=&version= → npm's provenance for a public version | 400/401/404/429/502
 //   GET  /api/npm/pretty?name=&version= → every one of its files that needs it pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/pretty?name=&version=&otherVersion= → the files that changed between it and another version, both sides'
+//        pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
@@ -72,7 +77,6 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { createBrotliCompress, constants as zlibConstants } from 'node:zlib'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -125,7 +129,7 @@ import { lookupIssueLinks } from './github-issue-links.ts'
 import { visibleManagedIssues } from './managed-issues.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
-import { attachmentDisposition, sendJson, writeResponse } from './http-response.ts'
+import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
@@ -1316,29 +1320,6 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
   try { await pipeline(blob.stream, res) } catch { res.destroy() }
 }
 
-// Lines of JSON, Brotli-encoded and sent as each is written, so the reader
-// has each while the next is made. A reader gone, or no longer `allowed`
-// before a line, has the response cut short, as is one whose lines fail: a
-// response that ends is one with every line.
-async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, allowed: () => Promise<boolean>) {
-  res.writeHead(200, { 'content-type': 'application/x-ndjson', 'content-encoding': 'br', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
-  const encoder = createBrotliCompress({ params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
-  const sent = pipeline(encoder, res).catch(() => {})
-  const closed = new Promise(resolve => { res.once('close', resolve) })
-  try {
-    for await (const line of lines) {
-      if (res.destroyed || !await allowed()) { res.destroy(); return }
-      encoder.write(`${JSON.stringify(line)}\n`)
-      await Promise.race([new Promise<void>(resolve => { encoder.flush(() => { resolve() }) }), closed])
-    }
-  } catch (err) {
-    console.warn('managed: a streamed response failed:', err)
-    res.destroy()
-    return
-  }
-  encoder.end()
-  await sent
-}
 
 // How often a scan of repositories' risk checks again that its reader is
 // still an admin, between the lines it sends; and how long its connection may
@@ -1494,6 +1475,23 @@ async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse,
   }
   if (await readable()) await sendEncoded(req, res, diff, 'application/json')
   else diff.stream.destroy()
+}
+
+// GET /api/bundles/:id/pretty?other=: the files that changed between it and
+// the `other` bundle, both sides' pretty-printed (pretty-print.ts compared), a
+// line each as it is found kept or formatted, for a reader of both, checked
+// again before each.
+async function handleBundlePrettyChanges(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string) {
+  if (!/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-bundle' }); return }
+  const access = () => Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
+  const [base, other] = await access()
+  if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let lines
+  try { lines = await deps.prettyCache.bundleChanges(base.bundle, other.bundle) }
+  catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
+  await sendLines(res, lines, async () => (await access()).every(snapshot => snapshot?.bundle))
 }
 
 // Published dependency advisories require security access, independently of access to
@@ -2595,7 +2593,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
-    || (path === NPM_RISK_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
+    || ((path === NPM_RISK_PATH || path === NPM_PRETTY_PATH) && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
@@ -2702,17 +2700,31 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
     // Every one of its files that needs it pretty-printed (pretty-print.ts
-    // npmAll), a line each as it is formatted, or found kept for a public
-    // version; its files read before anything is answered. A reader who lost
-    // their session, or their access, meanwhile has the rest cut short.
+    // npmAll), or, against another version, the files that changed between
+    // them, both sides' (npmChanges), a line each as it is formatted, or found
+    // kept for a public version; its files read before anything is answered.
+    // A reader who lost their session, or their access, meanwhile has the
+    // rest cut short.
+    if (path === NPM_PRETTY_PATH && params.has('path')) {
+      // One of its files pretty-printed, as one of a bundle's is.
+      const file = prettyRequest(params)
+      if (!file) { sendJson(res, 400, { error: 'bad-file' }); return }
+      if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+      const copy = await deps.prettyCache.npm(doc, file)
+      if (!(await recheck(doc.private))) { copy.stream.destroy(); return }
+      await sendEncoded(req, res, copy, 'text/plain; charset=utf-8', prettySource(file))
+      return
+    }
     if (path === NPM_PRETTY_PATH) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const lines = await deps.prettyCache.npmAll(doc)
-      if (!(await recheck(doc.private))) return
+      const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const lines = other ? await deps.prettyCache.npmChanges(doc, other) : await deps.prettyCache.npmAll(doc)
+      const isPrivate = doc.private || other?.private === true
+      if (!(await recheck(isPrivate))) return
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await sendLines(res, lines, async () => {
         const current = await npmReader(deps, cookie)
-        return current != null && (!doc.private || canReadPrivateNpm(current, name))
+        return current != null && (!isPrivate || canReadPrivateNpm(current, name))
       })
       return
     }
@@ -3019,6 +3031,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (part === 'rename-diff') {
         if (method !== 'GET') { send405(res, 'GET'); return }
         await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return
+      }
+      if (part === 'pretty' && url.searchParams.has('other')) {
+        if (method !== 'GET') { send405(res, 'GET'); return }
+        await handleBundlePrettyChanges(res, deps, session, id, url.searchParams.get('other')!); return
       }
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       if (part === 'download') { await handleGetBundle(req, res, deps, session, id); return }

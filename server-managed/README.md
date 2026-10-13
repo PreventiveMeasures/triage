@@ -1024,6 +1024,24 @@ endpoint supports HEAD. Each copy names the file it was formatted from, by
 that hash, in `x-source-hash`, and the viewer takes only a copy naming the
 file it asked about.
 
+`GET /api/bundles/:id/pretty?other=` pretty-prints, for Compare, the files that
+changed between the bundle and the `other` one, both sides': each side's
+formattable files the other side has another text at the path of, or, where
+it has none there, none of their text at a path of its own (a file renamed,
+or moved with its tree, unchanged, has it there; a copy at a path both have
+is not one), each formatted, checked and kept as one file's is. Those are
+both files of the pairs Compare diffs but where it pairs files otherwise
+(among copies of one text, across packages), whose copies it asks for alone,
+by `path` and `hash`, once this ends. They are sent
+as Brotli-encoded `application/x-ndjson`, a line a file, `{ side, path, source,
+text }` or `{ side, path, source, error, status }`, `side` `base` (the bundle
+asked about) or `other`, `source` its file's hash: those kept come first, at
+once, then the rest as each is formatted, one after another, the minified
+before the others, in path order otherwise. Both bundles are read before
+anything is answered, for a reader of both (401 or 404 as for one bundle, 400
+`bad-bundle` for an `other` that isn't a bundle ID), whose access is checked
+again before each line. A public link reads its own bundles' alone.
+
 `GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
 diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the
 `other` bundle's, for Compare's **Hide renamed names**, in steps each checked
@@ -1594,10 +1612,22 @@ control. A version shows in the bundle view with four tabs:
   tinted as the Dependencies section's groups are: those the open version
   adds, those whose range it changes (`~1.3.8 → ^2.0.0`) and those it drops,
   struck through, each opening as there and tagged as there, the head
-  counting those tagged by each tag (`1 non-registry`): with the pretty-print toggle
-  on, a file minified on both sides diffs as the server formatted each, and
-  a JavaScript file (`.js`, `.mjs`, `.cjs` without JSX) minified on both
-  sides, its names a minifier's, marks its renamed lines: the two sides
+  counting those tagged by each tag (`1 non-registry`). Compare asks the
+  server for every changed file's two sides pretty-printed as it opens, in one
+  request (`GET /api/bundles/:id/pretty?other=`, `GET
+  /api/npm/pretty?otherVersion=`), those the server kept coming at once, the
+  toggle on or not (one it brought none of asked for alone, and a failure
+  that may pass asked again a while after, twice as long each time), and the
+  pretty-print toggle is offered where printing
+  changes a diff, in the file shown or any file the Diff view lists: a file
+  minified on either side, as the Code tab prints one, or one whose two copies
+  diff in fewer changed lines than its texts as published, as where only its
+  formatting changed (a semicolon added to every line). With the toggle on,
+  those files diff as the server formatted each, the others as published, and
+  one whose copies are the same says there are no actual code changes in it,
+  its texts not told as the same. Printed, a JavaScript file (`.js`, `.mjs`,
+  `.cjs` without JSX) minified on both sides, its names a minifier's, marks
+  its renamed lines: the two sides
   diffed as they are, the lines that differ in names renamed alone drawn
   faint and counted apart (`≈`), the diff drawn plain till the server
   answers. Renamed names are those a minifier renamed alike throughout:
@@ -1770,7 +1800,12 @@ Brotli-encoded `application/x-ndjson`: a line a file, in path order, each sent
 as it is formatted, `{ path, source, text }`, or `{ path, source, error,
 status }` where it has no copy (`unformattable`, `pretty-mismatch`,
 `pretty-busy`, …), `source` the `sha512-<base64>` of the file's bytes it was
-formatted from, which the client checks against the text it was sent. The
+formatted from, which the client checks against the text it was sent. With
+`otherVersion=`, it returns instead the files that changed between the two
+versions, both sides', as `GET /api/bundles/:id/pretty?other=` has them for
+two bundles, each line naming its `side`, private where either version is; with
+`path=&hash=`, one of its files, as `GET /api/bundles/:id/pretty?path=&hash=`
+has one of a bundle's, for a pair a comparison brought none of. The
 files are loaded once, as for `package`, within the same four loads at once,
 before anything is answered, so a version that can't be loaded is refused as
 `package` refuses it; access is checked again before each line, and a reader

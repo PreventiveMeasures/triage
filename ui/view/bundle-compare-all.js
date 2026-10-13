@@ -14,7 +14,7 @@
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
+import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, prettyToggle } from './bundle-compare-code.js'
 import { paintingRenameDiffs } from './rename-diff.js'
 
 export const COMBINED_DIFF_MAX = 25_000
@@ -194,12 +194,13 @@ class BundleCompareAll extends BundleCompareCode {
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
-    // The toggle's state for every file, as for one file's two sides (_pretty):
-    // a failure first, with how many of them failed, then one still coming.
-    const pretties = shown.map(({ file }) => file.pretty).filter(Boolean)
+    // The toggle, where printing changes any file's diff (prettyToggle), its
+    // state for every such file as for one file's two sides (_printing): a
+    // failure first, with how many of them failed, then one still coming.
+    const pretties = shown.map(({ file }) => prettyToggle(file)).filter(Boolean)
     const failed = pretties.filter(copy => copy.status === 'error')
     const pretty = failed.length > 0 ? { ...failed[0], failed: failed.length, of: pretties.length }
-      : pretties.find(copy => copy.status === 'loading') ?? pretties[0]
+      : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
     // The diff's controls, while any file shows a change or hides one they can show.
     const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding)
     return html`<div class="bundle-code-view bundle-compare-code">

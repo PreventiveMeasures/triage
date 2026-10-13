@@ -36,7 +36,9 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, keptPrettyCopy, prettyCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, comparedCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
+import { utf8ByteLength } from '../../common/utf8.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -237,6 +239,16 @@ export function fileContents(base, other, path, { kind, basePath = path }) {
   return { before, after }
 }
 
+// Whether a text is no larger than the server formats (MAX_PRETTY_BYTES):
+// its UTF-8 counted only where its length leaves it in doubt, each of its
+// UTF-16 units one to three bytes.
+const printableSize = text => text.length * 3 <= MAX_PRETTY_BYTES || (text.length <= MAX_PRETTY_BYTES && utf8ByteLength(text) <= MAX_PRETTY_BYTES)
+
+// The pretty-print toggle a file shown has (_fileState): where printing
+// changes its diff, its copies' state while they are drawn, else off; none
+// where printing would change nothing.
+export const prettyToggle = file => (file.printing?.applies ? file.pretty ?? { status: 'off' } : null)
+
 // Lines added and removed, as a diff's head counts them.
 export const diffCounts = (additions, deletions) => html`<span class="bundle-compare-code-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
   <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
@@ -358,6 +370,8 @@ export class BundleCompareCode extends LitElement {
     this._counted = new Map()
     // What diff -b would hide in the texts a file shows (_whitespaceHidden).
     this._spaced = new Map()
+    // Whether a file's printed copies diff in fewer lines than it (_smaller).
+    this._shorter = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
@@ -376,6 +390,7 @@ export class BundleCompareCode extends LitElement {
       this._pair = pair
       this._models.clear()
       this._spaced.clear()
+      this._shorter.clear()
       this._expansions.clear()
       this._limits.clear()
       this._forced.clear()
@@ -726,14 +741,13 @@ export class BundleCompareCode extends LitElement {
     return entry.modified !== false || readsAsSource(entry)
   }
 
-  // Whether a file's diff here is of its pretty-printed copies (_pretty), the
-  // toggle on: not where a copy kept of either side failed, when the diff is
+  // Whether a file's diff here is of its pretty-printed copies (_printing),
+  // the toggle on: not where a copy of either side failed, when the diff is
   // of the file as published.
   _prettyShown(path, entry, contents) {
-    if (!state.bundleSourcePretty || !this._printable(path, entry, contents)) return false
-    const { basePath = path } = entry
-    return ![[this.base, basePath, contents.before], [this.other, path, contents.after]]
-      .some(([details, file, text]) => text !== '' && keptPrettyCopy(details, file)?.status === 'error')
+    if (!state.bundleSourcePretty) return false
+    const printing = this._printing(path, entry, contents)
+    return !!printing?.applies && printing.copies.status !== 'error'
   }
 
   // A diff of a file's printed copies drawn (_fileState), noted where it has
@@ -952,7 +966,10 @@ export class BundleCompareCode extends LitElement {
   _fileState(path, entry) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
-    const pretty = textual ? this._pretty(path, entry, contents) : null
+    // Its printed copies drawn where the toggle is on and printing changes
+    // its diff (_printing).
+    const printing = textual ? this._printing(path, entry, contents) : null
+    const pretty = state.bundleSourcePretty && printing?.applies ? printing.copies : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
     // Renamed names are found by the server, in the copies it pretty-printed
     // (rename-diff.js), once those came: the lines that differ in them alone
@@ -1020,7 +1037,7 @@ export class BundleCompareCode extends LitElement {
     // failed to hide, until they are shown (see _scrollSought); marked, they
     // leave its rows as they are.
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
-    return { before: shown, after, textual, large, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace }
+    return { before: shown, after, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace }
   }
 
   // Whether a file's whitespace may mean something on either side, so its
@@ -1049,31 +1066,48 @@ export class BundleCompareCode extends LitElement {
     return kind !== 'repointed' && renameDiffable(this.base, this.other) && minified(this.base, basePath, before) && minified(this.other, path, after)
   }
 
-  // Whether each side of a file with text can be pretty-printed.
-  _printable(path, { kind, basePath = path }, { before, after } = fileContents(this.base, this.other, path, { kind, basePath })) {
-    return kind !== 'repointed' && typeof before === 'string' && typeof after === 'string'
-      && [[this.base, basePath, before], [this.other, path, after]].every(([details, file, text]) => text === '' || prettyPrintable(details, details, file, text))
+  // A file's two sides pretty-printed, as the server prints every pair that
+  // changed between two managed bundles or two versions of a package
+  // (pretty-source.js comparedCopy), the toggle on or not, and whether
+  // printing them changes its diff (`applies`): where either side is
+  // minified, as the Code tab prints a file (`minified`), or, where both
+  // sides have text and once both copies came, where their diff has fewer
+  // changed lines than the files' (`smaller`: formatting changed, as a
+  // semicolon added to every line; an added file has nothing to compare). Its
+  // copies (`copies`): the first failure of either, else one still coming,
+  // else their texts and hashes. Null for a file whose sides can't both be
+  // printed.
+  _printing(path, entry, contents) {
+    const { kind, basePath = path, modified } = entry, { before, after } = contents
+    if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after || !renameDiffable(this.base, this.other)) return null
+    const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
+    if (!sides.every(([, , file, text]) => text === '' || (prettyExtension(file) !== null && printableSize(text)))) return null
+    const unreadable = sides.some(([, details, file, text]) => text !== '' && prettyPrintable(details, details, file, text))
+    const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
+    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading')
+      ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
+    const smaller = !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
+    return { copies, minified: unreadable, smaller, applies: unreadable || smaller }
   }
 
-  // Both sides pretty-printed (pretty-source.js), as the Code tab shows a
-  // minified file, so minified versions diff line by line: null unless each
-  // side with text can be, else the toggle's state and, once both copies
-  // came, their texts and hashes.
-  _pretty(path, entry, contents) {
-    if (!this._printable(path, entry, contents)) return null
-    const { basePath = path } = entry, { before, after } = contents
-    const sides = [[this.base, basePath, before], [this.other, path, after]]
-    const copies = sides.map(([details, file, text]) => text === '' ? { status: 'ready', text } : prettyCopy(details, details, file, text, () => this.requestUpdate()))
-    if (copies.includes(null)) return { status: 'off' }
-    const failed = copies.find(copy => copy.status === 'error')
-    if (failed) return failed
-    if (copies.some(copy => copy.status === 'loading')) return { status: 'loading' }
-    return { status: 'ready', before: copies[0].text, after: copies[1].text, hashes: copies.map(copy => copy.hash) }
+  // Whether a file's printed copies' diff has fewer changed lines than its
+  // texts' as published, whitespace changes shown: false where either is too
+  // large to diff unasked. Kept with the texts it was found for, as models
+  // are (_model).
+  _smaller(path, { before, after }, printed) {
+    const kept = this._shorter.get(path)
+    if (kept?.before === before && kept.after === after && kept.printed === printed.before && kept.printedAfter === printed.after) return kept.smaller
+    const changed = (a, b) => changeBlocks(a, b).reduce((sum, { a0, a1, b0, b1 }) => sum + a1 - a0 + b1 - b0, 0)
+    const smaller = !isLargeDiff(before, after) && !isLargeDiff(printed.before, printed.after) && changed(printed.before, printed.after) < changed(before, after)
+    this._shorter.delete(path)
+    this._shorter.set(path, { before, after, printed: printed.before, printedAfter: printed.after, smaller })
+    if (this._shorter.size > this._modelCap) this._shorter.delete(this._shorter.keys().next().value)
+    return smaller
   }
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, hiding, warned = [], changes, whitespace }) {
+  _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, pretty, hiding, warned = [], changes, whitespace }) {
     const size = value => formatBytes(value ?? 0)
     const recorded = metaSentences(meta)
     const same = `${kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}`
@@ -1101,13 +1135,19 @@ export class BundleCompareCode extends LitElement {
       </div>`
     }
     if (model.blocks.length > 0) return null
-    const spaced = prefs.ignoreWhitespace && whitespace === 'hideable'
-    const hidden = [spaced && 'whitespace', hiding && 'renamed names'].filter(Boolean)
+    // Its printed copies the same, its texts not: its layout changed alone, the
+    // copies each checked by the server to read as its text does.
+    const reformatted = pretty?.status === 'ready' && pretty.before === pretty.after
+    const spaced = !reformatted && prefs.ignoreWhitespace && whitespace === 'hideable'
+    const renamed = !reformatted && hiding
+    const hidden = [spaced && 'whitespace', renamed && 'renamed names'].filter(Boolean)
+    const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
     return html`<div class="bundle-compare-code-message">
-      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.${recorded ? ` ${recorded}` : ''}` : same}</p>
+      <p>${told ? `${told}${recorded ? ` ${recorded}` : ''}` : same}</p>
       ${warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing}
+      ${reformatted ? html`<button type="button" class="bundle-compare-code-action" @click=${() => { togglePrettySource(); this.requestUpdate() }}>Show as published</button>` : nothing}
       ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
-      ${hiding ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
+      ${renamed ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
   }
 
@@ -1290,7 +1330,7 @@ export class BundleCompareCode extends LitElement {
         </button>
         <span class="bundle-code-main-spacer"></span>
         ${this._fileFigures(entry, model)}
-        ${this._toggles(diffable, file.pretty, file.renamed, file.whitespace === 'hideable')}
+        ${this._toggles(diffable, prettyToggle(file), file.renamed, file.whitespace === 'hideable')}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${this._dependencyChanges(path)}
