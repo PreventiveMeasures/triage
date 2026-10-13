@@ -1392,7 +1392,11 @@ control. A version shows in the bundle view with four tabs:
   green to the top 200, then tinted green to the top 5,000, yellow to the top
   20,000, orange to the top 100,000 and red for the unpopular, by the most it had in
   any of its latest six weeks, so a week lower for days npm failed to count
-  (zeros it may never correct) or for a holiday doesn't move it; the tiers'
+  (zeros it may never correct) or for a holiday doesn't move it, and yellow
+  at most past the top 20,000 where the version's risk finds it known (a
+  known account published it, or it is in a known scope, a known account's
+  own among them), its tooltip saying why, as Compare's popularity chip is;
+  the tiers'
   weekly bounds, rounded estimates to be revisited, are download-counts'
   snapshot of a month (Jan 30 – Feb 28, 2026), each rank's count grown by the
   median growth of the packages ranked around it to the 30 days Sep 9 –
