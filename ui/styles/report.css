@@ -3442,7 +3442,13 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
    tarball's download at the right; under those, what calls for a look at
    the version (npm-overview.js npmOverviewBadges), as Compare's chips. */
 .npm-figures-actions { display: flex; align-items: center; gap: .75rem; margin-top: .5rem; }
-.npm-overview-badges { margin-top: .9rem; }
+.npm-overview-badges {
+  margin-top: .9rem; align-items: center;
+
+  /* Each chip centered in its row as Compare's are, Socket's, its gauge
+     first, with no baseline to sit on as the others do. */
+  & > li { display: flex; }
+}
 .npm-package-links { display: flex; flex-wrap: wrap; align-self: center; gap: .3rem .9rem; margin-right: auto; }
 .npm-package-link {
   display: inline-flex; align-items: center; gap: .25rem;
@@ -3488,8 +3494,7 @@ npm-downloads-chart {
 /* Its tier among npm's packages by downloads, beside its figures: solid
    green to the top 200, then tinted green, yellow, orange, and red for the
    unpopular, blended with the text's colors as a hint. */
-:is(.npm-stat dd, :is(.npm-compare-badges, .npm-overview-badges) span, .bundle-compare-row span,
-  .bundle-compare-code-dep span).npm-downloads-tier {
+:is(.npm-stat dd, .bundle-compare-row span, .bundle-compare-code-dep span).npm-downloads-tier {
   align-self: center; padding: 0 .4rem;
   color: color-mix(in srgb, var(--tier) 55%, var(--text));
   background: color-mix(in srgb, var(--tier) 10%, var(--bg));
@@ -3501,10 +3506,8 @@ npm-downloads-chart {
   &.is-mid { --tier: var(--yellow); }
   &.is-low { --tier: var(--high); }
   &.is-unpopular { --tier: var(--critical); }
-  /* In Compare's and the Overview's badges, as tall as the chips beside it;
-     beside a new dependency's name over package.json, as small as the tags
+  /* Beside a new dependency's name over package.json, as small as the tags
      beside it. */
-  :is(.npm-compare-badges, .npm-overview-badges) & { padding: .05rem .4rem; line-height: 1.45; }
   .bundle-compare-code-dep & { font-size: .6rem; line-height: 1.35; }
 }
 /* Under the switch, the period under the pointer's downloads, on a line
@@ -3720,12 +3723,13 @@ a.npm-compare-publisher {
   .npm-extension.npm-compare-file, .npm-compare-file .npm-extension-count) {
   color: color-mix(in srgb, var(--critical) 55%, var(--text));
 }
-/* Provenance the open version lost, a stronger warning than its deprecation;
-   and files it adds or changes that call for a look (npm-overview.js
-   fileBadges): a large code file added, a file become unreadable, one with
-   an obfuscator's fingerprint, red as provenance lost is, though their tags
-   on the files say little of one alone. */
-.npm-extension:is(.npm-compare-provenance, .npm-compare-file, .is-critical) {
+/* Provenance the open version lost, its deprecation, and files it adds or
+   changes that call for a look (npm-overview.js fileBadges): a large code
+   file added, a file become unreadable, one with an obfuscator's
+   fingerprint, red as provenance lost is, though their tags on the files
+   say little of one alone; and whatever else is critical, as Socket's poor
+   scores are. */
+.npm-extension:is(.npm-compare-provenance, .npm-compare-deprecated, .npm-compare-file, .is-critical) {
   background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
 }
 /* The hosts a version's files name (npm-overview.js hostBadges), in their
@@ -3741,10 +3745,6 @@ a.npm-compare-publisher {
   background: color-mix(in srgb, var(--yellow) 16%, var(--bg)); border-color: var(--yellow);
 
   & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
-}
-/* The open version deprecated, as an unpopular package's downloads tier reads. */
-.npm-extension.npm-compare-deprecated {
-  background: color-mix(in srgb, var(--critical) 10%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 50%, var(--border));
 }
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {

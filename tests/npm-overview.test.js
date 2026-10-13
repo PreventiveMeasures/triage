@@ -451,11 +451,11 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   'styled, a row for each version, its severities in their colors')
   assert.match(flagged, /npm-socket-score is-fair[^]*>License<[^]*>100 → 70</u, 'the open one under its bar, from the one compared with')
   assert.doesNotMatch(flagged, />(?:Supply chain|Vulnerability|Quality|Maintenance)</u, 'the open one at or over their bars, its quality 90 though 1.0.0\'s was 30')
-  assert.match(flagged, /npm-downloads-tier is-low data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
-    'last month\'s downloads over the month\'s name')
+  assert.match(flagged, /<span class=npm-extension npm-popularity is-warn data-tooltip=15,000 downloads\/month, September 2026[^>]*<div><strong>15,000<\/strong> downloads\/month<\/div><div class="compare-tip-note">September 2026<\/div>>top 100,000</u,
+    'a chip as the others, orange as a warning; last month\'s downloads over the month\'s name')
   answers.versions['@team/quiet'] = { versions: [], teamScoped: true }
   answers.stats['@team/quiet'] = answers.stats.flagged
-  assert.doesNotMatch(await badges(side('@team/quiet', '1.0.0'), side('@team/quiet', '2.0.0')), /npm-downloads-tier/u, 'not a team\'s own')
+  assert.doesNotMatch(await badges(side('@team/quiet', '1.0.0'), side('@team/quiet', '2.0.0')), /npm-popularity/u, 'not a team\'s own')
 
   answers.stats.edge = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1e6) } }
   answers.socket['edge@1.0.0'] = { scores: scores({ quality: .7, maintenance: .7 }), alerts: [] }
@@ -882,6 +882,7 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   answers.versions.held = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
   answers.advisories.held = { versions: ['1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [0] }] }
   answers.socket['held@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
+  answers.stats.held = { downloads: { start: '2026-08-01', end: '2026-09-30', days: Array.from({ length: 61 }, () => 1) } }
   const manifest = { deprecated: 'Use other instead', installScripts: { postinstall: 'node setup.js' }, dependencies: { gitdep: 'github:a/b' }, publisher: 'someone' }
   const files = { 'index.js': "module.exports = x => eval(x)\nrequire('child_process')\n", 'lib/send.js': 'post("https://webhook.site/x")\n',
     'lib/bot.js': 'bot("https://api.telegram.org/bot")\n', 'lib/geo.js': 'get("https://api.ipify.org")\n',
@@ -893,7 +894,8 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   const shown = rendered(npmOverviewBadges(entry))
   const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
   assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
-    'in Compare\'s order')
+    'in Compare\'s order; not its tier, unpopular as it is, which its downloads\' card shows')
+  assert.equal(npmRisk(entry.npm)?.findings.find(({ id }) => id === 'popularity')?.level, 'is-unpopular', 'risk finds it so')
   assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
   assert.match(shown, /npm-compare-install" data-tooltip=postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
   assert.match(shown, /npm-overview-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)

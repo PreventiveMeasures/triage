@@ -549,17 +549,17 @@ export function npmCompareBadges(base, other) {
 // risk finds of it (npm-risk.js npmRisk; risk/npm/held.js: its deprecation,
 // its install scripts, what any of its
 // files runs beyond itself, an exfiltration host one names and an
-// obfuscator's fingerprint in one, its age under the minimum release age,
-// and its tier by downloads where it is orange or red), dependencies it takes
-// from elsewhere than npm's registry or imports nothing of (npm-package.js
-// npmDependencyChecks), the advisories affecting it, and Socket's scores
-// under their bars. Each once it arrives.
+// obfuscator's fingerprint in one, and its age under the minimum release
+// age; not its tier by downloads, which its downloads' card over them
+// shows), dependencies it takes from elsewhere than npm's registry or
+// imports nothing of (npm-package.js npmDependencyChecks), the advisories
+// affecting it, and Socket's scores under their bars. Each once it arrives.
 export function npmOverviewBadges(entry) {
   const { npm } = entry
   const affecting = advisoriesAffecting([npm])
   const found = new Map((npmRisk(npm)?.findings ?? []).map(finding => [finding.id, finding]))
   const chips = [deprecatedBadge(found.get('deprecated')), heldInstallScriptsBadge(npm, found.get('held-install-scripts')), ...npmDependencyChecks(npm).map(chip => html`<li>${chip}</li>`),
-    ...heldFileBadges(found), recentBadge(found.get('too-new')), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting), popularityBadge(npm.name, found.get('popularity'))].filter(chip => chip !== nothing)
+    ...heldFileBadges(found), recentBadge(found.get('too-new')), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting)].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">${chips}</ul>`
 }
 
@@ -886,20 +886,23 @@ function socketBadges(sides, affecting) {
 // A package's tier among npm's by its downloads, as risk tells it (`{ tier,
 // level }`, its rank, Infinity past the last, and its tint), its `last`
 // complete month's downloads in its tooltip where known, over the month's
-// name (npm-downloads-chart.js npmLastMonth).
-function tierTag({ tier, level }, last = null) {
+// name (npm-downloads-chart.js npmLastMonth); a `chip` as the chips beside
+// it are, red as the others of its level or orange as a warning.
+function tierTag({ tier, level }, last = null, chip = false) {
   const total = last?.total.toLocaleString('en')
-  return html`<span class=${`npm-downloads-tier ${level}`} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
+  const kind = chip ? `npm-extension npm-popularity ${level === 'is-unpopular' ? 'is-critical' : 'is-warn'}` : `npm-downloads-tier ${level}`
+  return html`<span class=${kind} data-tooltip=${last ? `${total} downloads/month, ${last.month}` : nothing}
     .tooltipContent=${last ? html`<div><strong>${total}</strong> downloads/month</div><div class="compare-tip-note">${last.month}</div>` : null}>${npmTierName(tier ?? Infinity)}</span>`
 }
 
 // The package's tier where it is orange or red, as the server's risk finds
-// it (`popularity`), its last complete month's downloads, as its figures
-// have them, in its tooltip: those asked for alongside, so they come with it.
+// it (`popularity`), a chip as its neighbours are (tierTag), its last
+// complete month's downloads, as its figures have them, in its tooltip:
+// those asked for alongside, so they come with it.
 function popularityBadge(name, finding) {
   const stats = npmPackageStats(name)
   if (!finding) return nothing
-  return html`<li>${tierTag(finding, stats.status === 'ready' && stats.downloads ? npmLastMonth(stats.downloads) : null)}</li>`
+  return html`<li>${tierTag(finding, stats.status === 'ready' && stats.downloads ? npmLastMonth(stats.downloads) : null, true)}</li>`
 }
 
 // A new dependency's tier where npm counts none of its package's downloads:
