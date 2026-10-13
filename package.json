@@ -263,6 +263,7 @@
     "risk/files/script.js",
     "risk/files/stamps.js",
     "risk/npm/assess.js",
+    "risk/npm/combined.js",
     "risk/npm/compare.js",
     "risk/npm/dependencies.js",
     "risk/npm/diff.js",

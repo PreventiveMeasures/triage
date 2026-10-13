@@ -16,24 +16,24 @@ const fileOf = ({ stamps, readability, runsCode, exfiltration, hosts }) => ({
   readability: readability && { ...readability, controls: mapOf(readability.controls, Number) },
 })
 
-// A finding as the viewer's chips read it: what a file holds as a Map, the
-// scripts each version runs too, and a tier past the last as Infinity, as
-// JSON keeps none of them.
+// A finding as the viewer's chips read it: what a file holds, and what of it
+// is new (`added`), as Maps, and a tier past the last as Infinity, as JSON
+// keeps none of them.
 function findingOf(finding) {
   switch (finding.id) {
-    case 'held-runs-code': case 'held-exfiltration': case 'held-remote': case 'held-ip-lookup': case 'kept-runs-code':
-      return { ...finding, files: finding.files.map(row => ({ ...row, found: mapOf(row.found) })) }
-    case 'runs-code': case 'exfiltration': case 'remote': case 'ip-lookup': return { ...finding, files: finding.files.map(row => ({ ...row, added: mapOf(row.added) })) }
-    case 'install-scripts': return { ...finding, was: mapOf(finding.was), now: mapOf(finding.now) }
+    case 'held-runs-code': case 'held-exfiltration': case 'held-remote': case 'held-ip-lookup':
+      return { ...finding, files: finding.files.map(row => ({ ...row, found: mapOf(row.found), ...row.added ? { added: mapOf(row.added) } : {} })) }
     case 'popularity': return { ...finding, tier: finding.tier ?? Infinity }
     default: return finding
   }
 }
 
 // What the server's risk tells (its answer, server-managed/npm-risk.ts) as
-// the viewer reads it: `{ findings, files, dependencies }`, its files'
-// readings by path.
+// the viewer reads it: `{ oldVersion, findings, files, dependencies }`, the
+// version it was compared with (null for none), and its files' readings by
+// path.
 export const npmRiskOf = answer => ({
+  oldVersion: answer.oldVersion ?? null,
   findings: answer.findings.map(findingOf),
   files: new Map(Object.entries(answer.files).map(([path, file]) => [path, fileOf(file)])),
   dependencies: answer.dependencies,

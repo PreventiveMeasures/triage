@@ -466,10 +466,14 @@ function npmFlaggedDependencyChanges(base, other) {
 }
 
 // Each dependency of a version (`npm`) flagged where it calls for a look, as
-// the server's risk tells it of the version alone (npm-risk.js npmRisk,
-// npm-dependency-checks.js): its flags by its key (npmDependencyChanges),
-// none until it arrives.
-const dependencyFlags = npm => new Map((npmRisk(npm)?.dependencies.added ?? []).map(({ key, flags }) => [key, flags]))
+// the server's risk tells it of each the version holds, flagged against none
+// (npm-risk.js npmRisk, npm-dependency-checks.js; `held` against the version
+// it picks, else `added`): its flags by its key (npmDependencyChanges), none
+// until it arrives.
+const dependencyFlags = npm => {
+  const told = npmRisk(npm)?.dependencies
+  return new Map((told?.held ?? told?.added ?? []).map(({ key, flags }) => [key, flags]))
+}
 const keyOf = ({ kind, name }) => `${kind ?? ''}\0${name}`
 
 // The version a range names, where it names one: `1.2.3`, or the lowest it

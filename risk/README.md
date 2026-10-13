@@ -78,25 +78,28 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
 - `findings`, each `{ id, severity, … }`, in the order a reviewer reads them. First, with or without `oldVersion`:
   - `malware`, critical (`npm/malware.js`): its package taken down by npm (`takenDown`), whatever version is asked, its latest version npm's placeholder, a "security holding package" from `npm/security-holder` published by npm; and the advisories of malware naming the version (`advisories`, each `{ id, url, title }`): npm's, CWE-506 (embedded malicious code) whatever their title, or a title naming malware, as @solana/web3.js's GHSA-jcxm-7wvp-g6p5 does with CWE-200 alone; and, where `osv`, OSV's records npm's registry hasn't (upstream's `osv`), the malicious packages OpenSSF lists (`MAL-…`) among them, as nx's malicious versions have none of npm's but OSV's MAL-2025-41443; an advisory of npm's that such a record names, by id or alias, is of malware too, whatever its title and CWEs. A version npm removed, as it removes every one it finds malware in, is told of by its malware alone (`removed: true`, its `published` from npm's `time`, no files nor dependencies); one removed with no malware told of is `version-not-found`, as one npm never had.
 
-  Against `oldVersion`, what changed:
+  Then, with or without `oldVersion`, what npm says of the version and what it holds (`npm/held.js`), as the npm Overview and Compare flag it alike, as no change hides any of it:
   - `deprecated`
-  - `publisher`: each account's standing on the package (`wasStanding`, `nowStanding`, below), yellow to a known account or one of its maintainers, red from a known account to one new to it, else orange; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
-  - `provenance-lost`
-  - `install-scripts`
-  - `non-registry-deps`, `unused-deps`
-  - `runs-code`, `large-code`, `now-unreadable`, `obfuscated`, `kept-runs-code`; `now-unreadable` orange where each file's source map was rebuilt with it (its last line names its map, and the `.map` beside it is new or changed) or in a major release
-  - `exfiltration`, `remote`, `ip-lookup`: the services a file names anew under each of the hosts' tags, a level higher than the tag's own (`files/hosts.js`), so red, red and orange
-  - `new-hosts`, but for nine where packages keep their code and docs (`npm/compare.js` `ALLOWED_HOSTS`: `github.com`, `lit.dev`, MDN, …), each as written: `api.github.com` is still named, as is a repository `github.com` serves files or releases from (`github.com/owner/repo`)
+  - `held-install-scripts`
+  - `held-runs-code`, `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`
+  - its dependencies' `held-non-registry-deps` and `held-unused-deps`, flagged against none
   - `too-new`
   - `popularity`: red where unpopular, else orange; yellow at most, whatever its tier, where an account known to publish one of npm's most downloaded packages published the version (`known`), as few download a new package such an account starts, or else, as many are published by a CI that names no account, where the package is in a known scope (`known` with its `scope`): one of those packages' scopes (`@preventive/publishers/npm-scopes.js`), or a known account's own, `@` and its name (its `account` too), whose owner alone publishes in it
 
-  Without one, what the version holds, as the npm Overview flags a version on its own (`npm/held.js`): `held-install-scripts`, `held-runs-code`, `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`, its dependencies' `non-registry-deps` and `unused-deps`, and `deprecated`, `too-new` and `popularity` as above.
+  Against `oldVersion`, what changed is folded into what it holds, never lowering it (`npm/combined.js`): each held finding the more severe of its own and its change's, what the change brought marked (`added`); and what only a change tells added:
+  - `publisher`: each account's standing on the package (`wasStanding`, `nowStanding`, below), yellow to a known account or one of its maintainers, red from a known account to one new to it, else orange; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
+  - `provenance-lost`
+  - `held-install-scripts`: those added or changed (`flagged`), and what ran before (`was`)
+  - `held-non-registry-deps`, `held-unused-deps`: those new (`added`), a spec before (`was`)
+  - `held-runs-code`: red where code a file runs beyond itself is new to it; `held-exfiltration`, `held-remote`, `held-ip-lookup`: a level higher where a file names a service anew under the tag (`files/hosts.js`), so red, red and orange; `held-obfuscated`: red where a file's fingerprint is new
+  - `large-code`, `now-unreadable`; `now-unreadable` orange where each file's source map was rebuilt with it (its last line names its map, and the `.map` beside it is new or changed) or in a major release
+  - `new-hosts`, but for nine where packages keep their code and docs (`npm/compare.js` `ALLOWED_HOSTS`: `github.com`, `lit.dev`, MDN, …), each as written: `api.github.com` is still named, as is a repository `github.com` serves files or releases from (`github.com/owner/repo`)
 - `files`: each file's stamps (`{ name, severity }`, as a list of files tags and orders it), and what was read of it:
   - how it reads (binary, minified, long lines, source maps, control and invisible characters, an obfuscator's fingerprint)
   - what its code runs beyond itself (eval and its kin, child_process, credentials, the whole environment, publishing)
   - the services it names that malicious packages send what they take to, fetch what they run from or look the machine up with, under three tags: Exfiltration (request catchers and out-of-band testing hosts, `critical`), Remote (what could be fine: bot and webhook APIs, paste sites and file drops, tunnels, Bun's install script, `high`) and IP lookup (`moderate`)
   - the hosts its code calls
-- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
+- `dependencies`: those added and changed, each with its flags (from elsewhere than the registry, imported by nothing), and against `oldVersion` each it holds, flagged against none (`held`), an added one with its package's tier by downloads (its latest two weeks left out), its last whole month's downloads by what that goes by (`month`), whether npm counts none of them (`uncounted`) and, where it is new since the version compared with, when it was first published. A version alone is flagged against none.
 
 Severities, the most first: `critical` (red), `high` (orange), `moderate` (yellow), `low`, `notice`.
 
@@ -112,6 +115,7 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
 - `npm/`: a version's and a pair's.
   - `specs.js`, `dependencies.js`, `install-scripts.js`, `downloads.js`, `release.js`, `new-dependency.js`
   - `old-version.js`: the version compared with, where risk picks it.
+  - `combined.js`: what a version holds with what changed folded in.
   - `compare.js`: a pair's findings; `held.js`: a version's own.
   - `files.js`: each file read once a version.
   - `diff.js`: renames, as Compare pairs them.

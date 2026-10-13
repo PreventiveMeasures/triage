@@ -1411,7 +1411,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     // viewer keeps them: whether npm still has one, its whole document tells
     // risk.
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
-    assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
+    assess: (doc, teamScoped, signal) => npmRisk(doc, 'pick', { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal, spare: true }),
     removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal }),
@@ -2889,14 +2889,15 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_TAGS_PATH) { await reply(doc.private, { name, version: doc.version, tags: await tagsOf().catch(() => []) }); return }
     if (path === NPM_SOCKET_PATH) { await reply(doc.private, { name, version: doc.version, socket: await socketOf().catch(() => null) }); return }
     // What calls for a look at the version, as risk tells it (npm-risk.ts),
-    // against `otherVersion` where given; trusted however new and however few
-    // download it where a team lists its scope, its own packages, as a new
-    // dependency on a package of such a scope is.
+    // against `otherVersion` where given, as Compare asks, else against the
+    // one risk picks of its versions, as the Overview asks; trusted however
+    // new and however few download it where a team lists its scope, its own
+    // packages, as a new dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
       const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
-      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
+      const assessment = await npmRisk(doc, otherSpec === '' ? 'pick' : old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
         ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())

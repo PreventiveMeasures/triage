@@ -1,13 +1,15 @@
 // The managed server's risk, as the viewer's tests have it answer
 // (GET /api/npm/risk): of the versions a test holds, each as the viewer
 // holds one, what risk tells whatever the time (risk/npm/assess.js
-// npmLastingRisk) with the open version's own findings, by its package's
-// downloads (npmAssessmentOf), as the server tells them, through JSON as its
-// answer comes.
+// npmLastingRisk), against the one asked for or else the one risk picks of
+// those held (risk/npm/old-version.js npmOldVersion), with the open
+// version's own findings, by its package's downloads (npmAssessmentOf), as
+// the server tells them, through JSON as its answer comes.
 import { npmAssessmentOf, npmLastingRisk } from '../risk/npm/assess.js'
 import { npmVersionFindings } from '../risk/npm/held.js'
 import { npmKnownScope } from '../risk/npm/manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from '../risk/npm/release.js'
+import { npmOldVersion } from '../risk/npm/old-version.js'
 import { npmRiskOf } from '../ui/view/file-risk.js'
 
 const held = new Map()
@@ -40,18 +42,24 @@ function versionOf(name, version) {
 // (`at`), as the server tells it of npm's document (release.js
 // npmAccountStanding), of the versions of it held, each published as it says
 // or as `times` say.
-const standingOf = (name, at, times) => npmAccountStanding([...held.values()].filter(({ npm }) => npm.name === name)
-  .map(({ npm }) => ({ publisher: npm.manifest?.publisher ?? null, published: npm.published ?? times[npm.version] ?? null })), at)
+// The versions of a package held, as npm's document lists them to risk
+// (risk/npm/registry.js), each published as it says or as `times` say.
+const releasesOf = (name, times) => [...held.values()].filter(({ npm }) => npm.name === name).map(({ npm }) => ({ version: npm.version,
+  publisher: npm.manifest?.publisher ?? null, known: Boolean(npm.manifest?.knownAccounts), deprecated: Boolean(npm.manifest?.deprecated), removed: false,
+  published: npm.published ?? times[npm.version] ?? null }))
+const standingOf = (name, at, times) => npmAccountStanding(releasesOf(name, times), at)
 
-// What the server answers of `name@version` against `otherVersion` (null for
-// none), as it is asked with its package's `downloads`, when each version was
+// What the server answers of `name@version` against `otherVersion`, else the
+// version risk picks of those held, none where it picks none, as it is asked with its package's `downloads`, when each version was
 // published (`times`, where a version held says none), the open version's
 // minimum release age (`minimumReleaseAge`, two weeks unless given), and the
 // `malware` finding npm's takedown and advisories make of it, where they do.
 export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
-  const kept = otherVersion === null ? npmLastingRisk(other) : npmLastingRisk(other, otherVersion === '(empty)' ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : versionOf(name, otherVersion), standingOf(name, published, times))
+  const old = otherVersion ?? npmOldVersion(version, releasesOf(name, times), Date.now())
+  const base = old === '(empty)' ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : old === null ? null : versionOf(name, old)
+  const kept = base === null ? npmLastingRisk(other) : npmLastingRisk(other, base, standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
     known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name) })
-  return JSON.parse(JSON.stringify({ name, version, oldVersion: otherVersion, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
+  return JSON.parse(JSON.stringify({ name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
 }

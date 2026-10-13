@@ -127,7 +127,8 @@ export interface NpmAssessment {
   removed?: true
   findings: Finding[]
   files: Record<string, FileRisk>
-  dependencies: { added: DependencyRisk[]; changed: DependencyRisk[] }
+  // Against `oldVersion`, each it holds too, flagged against none (`held`).
+  dependencies: { added: DependencyRisk[]; changed: DependencyRisk[]; held?: DependencyRisk[] }
 }
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
