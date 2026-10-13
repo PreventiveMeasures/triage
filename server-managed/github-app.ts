@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer'
 import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
-import { GithubApiError, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
+import { GithubApiError, githubUnreachable, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
 
 export { GithubApiError } from './github-errors.ts'
 
@@ -71,6 +71,7 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 // fold into a GithubApiError (401 passes through for the caller to handle).
 export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   let res: Response
+  const started = Date.now()
   try {
     res = await fetchImpl(url, {
       method,
@@ -81,7 +82,7 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
         'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
       },
     })
-  } catch { throw new GithubApiError(502, 'github-unreachable') }
+  } catch (error) { throw githubUnreachable(error, started) }
   if (res.status === 401) discardInstallationToken(token, fetchImpl)
   if (!res.ok) await throwGithubResponseError(res)
   try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }

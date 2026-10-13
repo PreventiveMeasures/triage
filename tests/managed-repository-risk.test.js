@@ -9,7 +9,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
-import { GithubApiError } from '../server-managed/github-errors.ts'
+import { GithubApiError, githubUnreachable } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
@@ -124,15 +124,16 @@ function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false, gone
       await setImmediate()
       opened.push(repoId)
       const repo = repos[repoId]
-      if (repo.error) throw new GithubApiError(404, repo.error)
+      if (repo.error) throw repo.error instanceof Error ? repo.error : new GithubApiError(404, repo.error)
       return { commit: 'a'.repeat(40),
         file(path) { read.push(path); return Promise.resolve(repo.files[path]) },
         lockfiles() {
           listed.push(repoId)
+          if (repo.lockfilesError instanceof Error) return Promise.reject(repo.lockfilesError)
           return repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError))
             : Promise.resolve(repo.lockfiles.map(lockfile => ({ sha: `${repoId}:${lockfile.path}`, ...lockfile })))
         },
-        recheck: () => repo.revoked ? Promise.reject(new GithubApiError(404, 'no-repository')) : Promise.resolve() }
+        recheck: () => repo.revoked ? Promise.reject(repo.revoked instanceof Error ? repo.revoked : new GithubApiError(404, 'no-repository')) : Promise.resolve() }
     },
     teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
@@ -226,6 +227,18 @@ test('a repository whose lockfiles can’t be listed is told so, and the rest ar
   const lines = await Array.fromAsync(scan(source))
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(({ id, error }) => [id, error]), [[1, 'github-rate-limited'], [2, undefined]])
   assert.deepEqual(lines.at(-1), { type: 'done' })
+})
+
+test('a repository GitHub isn’t reached for is told what failed, while doing what of it', async () => {
+  const closed = () => githubUnreachable(new TypeError('fetch failed', { cause: Object.assign(new Error('other side closed'), { name: 'SocketError', code: 'UND_ERR_SOCKET' }) }), Date.now())
+  const source = sourceOf({ 1: { fullName: 'org/opened', error: closed() }, 2: { ...onePnpmRepo[1], fullName: 'org/listed', lockfilesError: closed() },
+    3: { ...onePnpmRepo[1], fullName: 'org/rechecked', revoked: closed() } }, assert.fail)
+  const told = 'TypeError: fetch failed; SocketError UND_ERR_SOCKET: other side closed, after 0.0s'
+  assert.deepEqual((await Array.fromAsync(scan(source))).filter(line => line.type === 'repo'), [
+    { type: 'repo', id: 1, error: 'github-unreachable', detail: `opening it: ${told}` },
+    { type: 'repo', id: 2, error: 'github-unreachable', detail: `listing its lockfiles: ${told}` },
+    { type: 'repo', id: 3, error: 'github-unreachable', detail: `checking access to it again: ${told}` },
+  ])
 })
 
 test('a repository whose access is gone once it is read tells nothing of it', async () => {

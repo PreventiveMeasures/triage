@@ -175,7 +175,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _reset() {
-    // By id: { id, fullName, commit, lockfiles, error }; lockfiles by path,
+    // By id: { id, fullName, commit, lockfiles, error, detail }; lockfiles by path,
     // each { path, format, packages, error, detail }.
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
@@ -244,11 +244,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _apply(line) {
     if (line.type === 'repos') {
-      for (const { id, fullName } of line.repos) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null })
+      for (const { id, fullName } of line.repos) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
-      if (line.error) { repo.error = line.error; return }
+      if (line.error) { Object.assign(repo, { error: line.error, detail: line.detail ?? null }); return }
       repo.commit = line.commit
       repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, { ...lockfile, packages: null, error: null }]))
     } else if (line.type === 'lockfile') {
@@ -386,7 +386,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // What a repository's row says in place of its lockfiles, where it has none
   // to list; null where it has.
   _repoStatus(repo) {
-    if (repo.error) return html`<span class="risk-error">${errorText(repo.error)}</span>`
+    if (repo.error) return html`<span class="risk-error" data-tooltip=${repo.detail ?? nothing}>${errorText(repo.error)}</span>`
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
     return repo.lockfiles.size === 0 ? html`<span class="risk-none">No npm lockfiles</span>` : null
   }

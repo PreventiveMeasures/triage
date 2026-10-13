@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { listInstalledRepos, listUserRepos } from '../server-managed/github-app.ts'
+import { githubJson, listInstalledRepos, listUserRepos } from '../server-managed/github-app.ts'
 import { RepositoryDiscovery } from '../server-managed/repository-discovery.ts'
 
 const config = {
@@ -252,6 +252,18 @@ test('upstream repository discovery rejects malformed pages and pagination overf
   fetch.mock.mockImplementation(() => Promise.resolve(Response.json(page)))
   await assert.rejects(listUserRepos('user-token'), /github-malformed/u)
   assert.equal(fetch.mock.callCount(), 102, 'one malformed request, then at most 101 pages including the overflow probe')
+})
+
+test('GitHub not reached is told with what failed and after how long, and an answer\'s text never is', async t => {
+  const closed = Object.assign(new Error('other side closed'), { name: 'SocketError', code: 'UND_ERR_SOCKET' })
+  const fetch = t.mock.method(globalThis, 'fetch', () => Promise.reject(new TypeError('fetch failed', { cause: closed })))
+  await assert.rejects(listUserRepos('user-token'), error => error.status === 502 && error.message === 'github-unreachable'
+    && /^TypeError: fetch failed; SocketError UND_ERR_SOCKET: other side closed, after \d+\.\ds$/u.test(error.detail))
+  const timedOut = () => Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+  await assert.rejects(githubJson('https://api.github.com/repos/org/repo', 'token', timedOut), error => error.message === 'github-unreachable'
+    && /^TimeoutError: The operation was aborted due to timeout, after \d+\.\ds$/u.test(error.detail))
+  fetch.mock.mockImplementation(() => Promise.resolve(Response.json({ message: 'GitHub\'s own text' }, { status: 500 })))
+  await assert.rejects(listUserRepos('user-token'), error => error.message === 'github-status-500' && error.detail === null)
 })
 
 test('upstream repository discovery preserves unauthorized, missing and rate-limit errors', async t => {

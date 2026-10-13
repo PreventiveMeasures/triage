@@ -906,7 +906,11 @@ lockfile's packages (`@preventive/lockfile`), and each package's risk, with
 `done` last; a response without `done` was cut short. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
-any of them is told. A package from npm's registry is assessed once a scan; one
+any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
+tells, as its line's `detail` and its row's tooltip, while doing what (opening
+it, listing its lockfiles or checking access to it again) and what failed, as
+the error and its causes tell it (a timeout, a connection closed, an answer too
+large), after how long; never GitHub's text. A package from npm's registry is assessed once a scan; one
 from another host with an integrity, such as a company's mirror, as npm's
 package of its name and version only where the lockfile's integrity is npm's;
 one from git, a tarball with no integrity or a file is listed but not assessed.
