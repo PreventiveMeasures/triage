@@ -1020,10 +1020,13 @@ file it asked about.
 
 `GET /api/bundles/:id/pretty?other=` pretty-prints, for Compare, the files that
 changed between the bundle and the `other` one, both sides': each side's
-formattable files but those the other side has the same text at the path of,
-so both files of every pair Compare diffs, however it pairs them (by path, by
-a moved root, as renamed), a file moved unchanged among them, each formatted,
-checked and kept as one file's is. They are sent
+formattable files the other side has another text at the path of, or, where
+it has none there, none of their text at a path of its own (a file renamed,
+or moved with its tree, unchanged, has it there; a copy at a path both have
+is not one), each formatted, checked and kept as one file's is. Those are
+both files of the pairs Compare diffs but where it pairs files otherwise
+(among copies of one text, across packages), whose copies it asks for alone,
+by `path` and `hash`, once this ends. They are sent
 as Brotli-encoded `application/x-ndjson`, a line a file, `{ side, path, source,
 text }` or `{ side, path, source, error, status }`, `side` `base` (the bundle
 asked about) or `other`, `source` its file's hash: those kept come first, at
@@ -1792,7 +1795,9 @@ status }` where it has no copy (`unformattable`, `pretty-mismatch`,
 formatted from, which the client checks against the text it was sent. With
 `otherVersion=`, it returns instead the files that changed between the two
 versions, both sides', as `GET /api/bundles/:id/pretty?other=` has them for
-two bundles, each line naming its `side`, private where either version is. The
+two bundles, each line naming its `side`, private where either version is; with
+`path=&hash=`, one of its files, as `GET /api/bundles/:id/pretty?path=&hash=`
+has one of a bundle's, for a pair a comparison brought none of. The
 files are loaded once, as for `package`, within the same four loads at once,
 before anything is answered, so a version that can't be loaded is refused as
 `package` refuses it; access is checked again before each line, and a reader

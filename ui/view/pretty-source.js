@@ -13,7 +13,7 @@ import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { needsPrettyPrint } from '../../common/pretty-print.js'
-import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFiles } from './client-managed.js'
+import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
 
 // The pretty-print toggles' icon, for the Code tab's bar and Compare's.
@@ -68,8 +68,9 @@ const versions = new Map()
 // them, both sides' pretty-printed, in one request the first time one is
 // asked for, the toggle on or not (Compare tells from them where printing
 // changes a diff): `copies` by side and path as above, those that came;
-// `notify`, the view that last asked for one still coming; once its request
-// ended, `rest`, as above.
+// `notify`, the view that last asked for one still coming; `ended` once its
+// request ended, and `rest`, the copy every file has where it failed. A file
+// it brought none of is asked for alone (fileCopy).
 const comparisons = new Map()
 
 // Whether each file of a bundle or npm version can be formatted, by its
@@ -135,7 +136,7 @@ async function load(key, copy, entry, path, content, known) {
   let next
   try {
     const hash = known ?? await computeFileHash(content)
-    const { text, source } = await inTurn(() => fetchPrettyBundleFile(entry.managedId, path, hash))
+    const { text, source } = await inTurn(() => (entry.npm ? fetchPrettyNpmFile(entry.npm.name, entry.npm.version, path, hash) : fetchPrettyBundleFile(entry.managedId, path, hash)))
     next = source === hash && typeof text === 'string' ? { status: 'ready', text, hash: await computeFileHash(text) } : { status: 'error', message: MISMATCH, retry: true }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
@@ -229,6 +230,13 @@ function versionCopy(details, entry, path, content, notify) {
 export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
   if (entry.npm) return versionCopy(details, entry, path, content, notify)
+  return fileCopy(details, path, content, notify, entry)
+}
+
+// A file's copy asked for alone, as a bundle's is, by its path and hash: a
+// managed bundle's or, where Compare's request for the files that changed
+// brought none of it, an npm version's (`entry` as details have it).
+function fileCopy(details, path, content, notify, entry = details) {
   const key = copyKey(details, path)
   const asked = copies.get(key)
   const copy = asked ?? { status: 'loading' }
@@ -256,17 +264,17 @@ function tell(notify) {
 function evictComparisons() {
   for (const [key, comparison] of comparisons) {
     if (comparisons.size <= KEPT_COMPARISONS) break
-    if (comparison.rest) comparisons.delete(key)
+    if (comparison.ended) comparisons.delete(key)
   }
 }
 
 // The files that changed between a comparison's two sides, both sides', in
 // one request: each copy as it comes, checked as a bundle's is, against its
-// side's own file; then, once the request ended, what the files it brought
-// none of have.
+// side's own file; where the request failed, what every file it brought none
+// of has.
 async function loadComparison(key, comparison, base, other) {
   const sides = { base, other }
-  let rest
+  let rest = null
   try {
     const line = async ({ side, path, source, text, status, message }) => {
       const details = Object.hasOwn(sides, side) ? sides[side] : null
@@ -280,7 +288,6 @@ async function loadComparison(key, comparison, base, other) {
     }
     await (base.npm ? fetchPrettyNpmChanges(base.npm.name, base.npm.version, other.npm.version, line)
       : fetchPrettyBundleChanges(base.managedId, other.managedId, line))
-    rest = { status: 'error', message: UNLISTED, retry: false }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {
@@ -289,7 +296,7 @@ async function loadComparison(key, comparison, base, other) {
     }
     rest = { status: 'error', message: err?.message ?? String(err), retry: retryable(err?.status) }
   }
-  comparison.rest = rest
+  Object.assign(comparison, { ended: true, rest })
   settled++
   tell(comparison.notify)
   evictComparisons()
@@ -298,21 +305,24 @@ async function loadComparison(key, comparison, base, other) {
 // One side's file of a comparison of two managed bundles, or two versions of
 // a package (rename-diff.js renameDiffable), pretty-printed: `side` `base` or
 // `other`, `notify` called once it comes; the comparison's files asked for
-// the first time one is, whether or not the toggle is on. A text other than
-// the side's file has none.
+// the first time one is, whether or not the toggle is on, and one it brought
+// none of asked for alone once it ended. A text other than the side's file
+// has none.
 export function comparedCopy(base, other, side, path, content, notify) {
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
   if (!comparison) {
-    comparison = { copies: new Map(), notify: null, rest: null }
+    comparison = { copies: new Map(), notify: null, ended: false, rest: null }
     loadComparison(key, comparison, base, other)
   }
   comparisons.set(key, comparison)
   evictComparisons()
-  if (content !== bundleFilesAsMap(side === 'base' ? base : other).get(path)) return { status: 'error', message: MISMATCH, retry: false }
+  const details = side === 'base' ? base : other
+  if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
   const copy = comparison.copies.get(`${side}\0${path}`) ?? comparison.rest
   if (copy) return copy
+  if (comparison.ended) return fileCopy(details, path, content, notify)
   comparison.notify = notify
   return { status: 'loading' }
 }
@@ -325,7 +335,6 @@ export function togglePrettySource() {
   if (!state.bundleSourcePretty) return
   const failed = copy => copy.status === 'error' && copy.retry
   for (const [key, copy] of copies) if (failed(copy)) copies.delete(key)
-  for (const held of [versions, comparisons]) {
-    for (const [key, kept] of held) if (kept.rest && (failed(kept.rest) || [...kept.copies.values()].some(failed))) held.delete(key)
-  }
+  for (const [key, version] of versions) if (version.rest && (failed(version.rest) || [...version.copies.values()].some(failed))) versions.delete(key)
+  for (const [key, comparison] of comparisons) if (comparison.ended && (comparison.rest ? failed(comparison.rest) : [...comparison.copies.values()].some(failed))) comparisons.delete(key)
 }

@@ -149,9 +149,15 @@ const PRETTY_ERRORS = {
 // `{ text, source }`, `source` the hash of the file the server formatted it
 // from, as it names it.
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
-  return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS,
-    async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
+  return request(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, PRETTY_ERRORS, prettyFile, signal)
 }
+
+// One of an npm version's files pretty-printed, as a bundle's is.
+export function fetchPrettyNpmFile(name, version, path, hash, { signal } = {}) {
+  return request(`/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`, { ...NPM_ERRORS, ...PRETTY_ERRORS }, prettyFile, signal)
+}
+
+const prettyFile = async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') })
 
 // A response's lines of JSON, as the server sends them (http.ts sendLines),
 // each as it comes.

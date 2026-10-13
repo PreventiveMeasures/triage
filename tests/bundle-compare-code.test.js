@@ -13,9 +13,10 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // (@preventive/compare's renamedDiff), naming the two files' hashes (each
 // asked for noted; an error in place of the base's copy fails its diff).
 // A comparison's copies are those of either bundle's files, each naming its
-// file's hash, as the view's bundles have them (`viewed`, the latest last);
+// file's hash, as the view's bundles have them (`viewed`, the latest last),
+// but those it leaves out (`unsent`, by bundle and path), asked for alone;
 // each comparison asked for noted.
-const comparisons = [], pretty = new Map(), renameDiffs = [], viewed = new Set()
+const comparisons = [], pretty = new Map(), renameDiffs = [], unsent = new Set(), viewed = new Set()
 // The rename diffs the mock server is working out at once, and the most so far;
 // `held`, while set, a promise each waits for before it answers.
 const flying = { now: 0, most: 0, held: null }
@@ -23,13 +24,14 @@ const flying = { now: 0, most: 0, held: null }
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleFile() {},
+  fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
+  fetchPrettyNpmFile() {},
   fetchPrettyNpmFiles() {},
   async fetchPrettyBundleChanges(id, other, onLine) {
     comparisons.push({ id, other })
     for (const [side, managedId] of [['base', id], ['other', other]]) {
       const bundle = [...viewed].findLast(held => held?.managedId === managedId)
-      for (const [named, copy] of [...pretty].filter(([held]) => held.startsWith(`${managedId}:`))) {
+      for (const [named, copy] of [...pretty].filter(([held]) => held.startsWith(`${managedId}:`) && !unsent.has(held))) {
         const path = named.slice(managedId.length + 1)
         const file = bundle && bundleFilesAsMap(bundle).get(path)
         if (typeof file !== 'string') continue
@@ -354,6 +356,19 @@ test('a file minified on one side alone is offered pretty-printed at once, and d
   state.bundleSourcePretty = true
   assert.equal(await untilPrinted(element, 'dist/half.js'), 'ready')
   assert.match(renderText(element.render()), /class="add">\+1<\/span><span class="del">−0/u, 'its copies diffed')
+})
+
+test('a file whose copy a comparison brought none of is asked for alone, and drawn printed', async t => {
+  t.after(() => { state.bundleSourcePretty = false; unsent.clear() })
+  const element = view('dist/apart.min.js', [{ 'dist/apart.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/apart.min.js': `var Y=1;${'q(Y);'.repeat(250)}q(2);\n` }])
+  element.base.managedId = 'b53'
+  element.other.managedId = 'b54'
+  pretty.set('b53:dist/apart.min.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b54:dist/apart.min.js', 'var Y = 1;\nq(Y);\nq(2);\n')
+  unsent.add('b53:dist/apart.min.js')
+  state.bundleSourcePretty = true
+  assert.equal(await untilPrinted(element, 'dist/apart.min.js'), 'ready')
+  assert.match(renderText(element.render()), /class="add">\+1<\/span><span class="del">−0/u, 'its base\'s copy asked for alone, then diffed')
 })
 
 test('a minified file renamed without changes is not offered pretty-printed: there is no diff to print', () => {

@@ -66,6 +66,7 @@
 //   GET  /api/npm/pretty?name=&version= → every one of its files that needs it pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/pretty?name=&version=&otherVersion= → the files that changed between it and another version, both sides'
 //        pretty-printed, Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502/503
 //   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
 //        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/503/504
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
@@ -2702,6 +2703,16 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // kept for a public version; its files read before anything is answered.
     // A reader who lost their session, or their access, meanwhile has the
     // rest cut short.
+    if (path === NPM_PRETTY_PATH && params.has('path')) {
+      // One of its files pretty-printed, as one of a bundle's is.
+      const file = prettyRequest(params)
+      if (!file) { sendJson(res, 400, { error: 'bad-file' }); return }
+      if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+      const copy = await deps.prettyCache.npm(doc, file)
+      if (!(await recheck(doc.private))) { copy.stream.destroy(); return }
+      await sendEncoded(req, res, copy, 'text/plain; charset=utf-8', prettySource(file))
+      return
+    }
     if (path === NPM_PRETTY_PATH) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
       const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))

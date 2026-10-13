@@ -93,6 +93,10 @@ export async function fetchPrettyNpmFiles(name, version, onLine, options) {
   return (await loadManagedBundle()).fetchPrettyNpmFiles(name, version, onLine, options)
 }
 
+export async function fetchPrettyNpmFile(name, version, path, hash, options) {
+  return (await loadManagedBundle()).fetchPrettyNpmFile(name, version, path, hash, options)
+}
+
 export async function fetchPrettyBundleChanges(id, other, onLine, options) {
   return (await loadManagedBundle()).fetchPrettyBundleChanges(id, other, onLine, options)
 }

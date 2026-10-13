@@ -26,6 +26,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
     requests.push(['npm', name, version])
     return new Promise((end, fail) => { npmRequests.push({ send: onLine, end, fail }) })
   },
+  fetchPrettyNpmFile: (...args) => { requests.push(['npm file', ...args]); return answer(args[3]) },
   fetchPrettyBundleChanges: (id, other, onLine) => lines('bundle changes', id, other, onLine),
   fetchPrettyNpmChanges: (name, version, otherVersion, onLine) => lines('npm changes', name, version, otherVersion, onLine),
 } })
@@ -80,7 +81,7 @@ function comparisonOf(baseFiles, otherFiles) {
   return { base, other, copy }
 }
 
-test('a comparison\'s changed files come in one request, both sides\', whether or not the toggle is on, each checked against its side\'s file', async () => {
+test('a comparison\'s changed files come in one request, both sides\', whether or not the toggle is on, each checked against its side\'s file, one it brought none of asked for alone', async () => {
   const { copy } = comparisonOf({ 'a.js': readable, 'b.min.js': minified, 'c.js': 'c' }, { 'a.js': `${readable}a`, 'b.min.js': `${minified}b`, 'c.js': 'cc' })
   assert.equal(state.bundleSourcePretty, false)
   assert.deepEqual(['base a.js', 'other a.js', 'base b.min.js', 'other b.min.js'].map(asked => copy(...asked.split(' ')).status), ['loading', 'loading', 'loading', 'loading'])
@@ -101,10 +102,14 @@ test('a comparison\'s changed files come in one request, both sides\', whether o
   assert.deepEqual(renders, ['other b.min.js'], 'the view that asked repaints once, for copies that come close together')
   asked.end()
   await settledUntil(() => renders.length > 1)
-  assert.deepEqual(copy('other', 'b.min.js'), { status: 'error', message: "The server didn't pretty-print this file.", retry: false }, 'one it brought none of')
-  assert.deepEqual(copy('base', 'c.js'), copy('other', 'c.js'), 'nor of one under a side named as neither')
+  answers.push('var b = 2;\n', 'c;\n')
+  assert.deepEqual(copy('other', 'b.min.js'), { status: 'loading' }, 'one it brought none of, asked for alone once it ended')
+  assert.deepEqual(copy('base', 'c.js'), { status: 'loading' }, 'one under a side named as neither too')
+  assert.deepEqual(requests.slice(1), [['bundle', 'bundle-2', 'b.min.js', hashOf(`${minified}b`)], ['bundle', 'bundle-1', 'c.js', hashOf('c')]])
+  await settledUntil(() => copy('other', 'b.min.js').status === 'ready')
+  assert.equal(copy('other', 'b.min.js').text, 'var b = 2;\n')
   assert.deepEqual(copy('base', 'a.js', `${readable}x`), { status: 'error', message: MISMATCH, retry: false }, 'a text other than its side\'s file has none')
-  assert.equal(requests.length, 1)
+  assert.equal(requests.length, 3)
 })
 
 test('an npm comparison\'s changed files are asked of the two versions', async () => {
@@ -115,6 +120,13 @@ test('an npm comparison\'s changed files are asked of the two versions', async (
   await changeRequests[0].send({ side: 'other', path: 'a.min.js', source: hashOf(minified), text: 'var a = 1;\n' })
   await settledUntil(() => comparedCopy(base, other, 'other', 'a.min.js', minified, () => {}).status === 'ready')
   assert.equal(comparedCopy(base, other, 'other', 'a.min.js', minified, () => {}).text, 'var a = 1;\n', 'checked against a file it hashes itself')
+  changeRequests[0].end()
+  await settled()
+  answers.push('var a = 1;\n')
+  assert.equal(comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status, 'loading')
+  await settledUntil(() => requests.length > 1)
+  assert.deepEqual(requests[1], ['npm file', '@scope/lib', '2.0.0', 'a.min.js', hashOf(minified)], 'one it brought none of asked of its version alone')
+  await settledUntil(() => comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status === 'ready')
 })
 
 test('a comparison\'s request that fails fails each file, and is asked again whole as the toggle turns on where that may succeed', async () => {

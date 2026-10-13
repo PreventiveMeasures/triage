@@ -15,7 +15,7 @@ mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} 
 // Socket's alerts on the version's files, by `name@version`.
 const socket = {}
 const managed = ['getPreviewRole', 'clearPreviewRole', 'resetManagedAppState', 'setManagedAppSession', 'setManagedReportCatalog', 'readReportSources', 'clearReportSources',
-  'fetchReportSources', 'loadManagedBundle', 'probeSession', 'probeTeams', 'fetchManagedBundleCatalog', 'fetchNpmPackage', 'fetchPrettyBundleFile', 'fetchPrettyBundleChanges', 'fetchPrettyNpmChanges',
+  'fetchReportSources', 'loadManagedBundle', 'probeSession', 'probeTeams', 'fetchManagedBundleCatalog', 'fetchNpmPackage', 'fetchPrettyBundleFile', 'fetchPrettyBundleChanges', 'fetchPrettyNpmChanges', 'fetchPrettyNpmFile',
   'fetchPrettyNpmFiles', 'fetchBundleRenameDiff', 'fetchNpmRenameDiff', 'openManagedShareDialog', 'openManagedIssueDialog', 'openFindingHistoryDialog', 'fetchReport', 'fetchReports',
   'fetchTeamAnnotations', 'fetchReportTriage', 'fetchFixes', 'fetchReportComments', 'saveReportComment', 'deleteReportComment', 'pushReportTriage', 'login', 'logout', 'stopViewing',
   'fetchBundleMetadata', 'fetchBundleContents', 'fetchTeamReports', 'watchTeamFeed', 'fetchBundleAdvisories']
