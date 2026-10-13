@@ -2761,7 +2761,13 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     const current = await npmReader(deps, cookie)
     if (!current || current.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     if ([doc, base].some(item => item?.private && !canReadPrivateNpm(current, item.name))) { sendJson(res, 404, { error: 'package-not-found' }); return }
-    if (!change) { sendJson(res, 200, { reviews: await deps.db.listDependencyReviews(context, current.userId), teams: await deps.db.listDependencyReviewTeams(current.userId) }); return }
+    if (!change) {
+      const allBases = params.get('allBases') === 'true'
+      const rows = await deps.db.listDependencyReviews(context, current.userId, allBases)
+      const reviews = allBases ? await readableNpmReviews(res, deps, cookie, current.userId, rows) : rows
+      if (reviews) sendJson(res, 200, { reviews, teams: await deps.db.listDependencyReviewTeams(current.userId) })
+      return
+    }
     const checked = await checkMutation(req, res, deps, cookie)
     if (!checked) return
     if (checked.user.id !== current.userId || !roleAtLeast(checked.user.role, 'triage')) { sendJson(res, 403, { error: 'forbidden' }); return }

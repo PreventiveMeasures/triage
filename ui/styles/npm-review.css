@@ -47,7 +47,7 @@ npm-review textarea {
 .npm-review-history-heading,
 .npm-review-coverage > div:first-child,
 .npm-review-decision > header { display: flex; align-items: center; }
-.npm-review-summary-actions { gap: 1.1rem; flex-shrink: 0; }
+.npm-review-summary-actions { gap: 1.1rem; flex-shrink: 0; flex-wrap: wrap; }
 .npm-review-progress-block { width: 8.6rem; }
 .npm-review-progress-block > span {
   display: flex; justify-content: space-between; gap: .6rem;
@@ -64,8 +64,12 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   padding: .4rem 1rem;
   border-bottom: 1px solid var(--border);
   }
-.npm-review-toolbar-group { flex-wrap: wrap; gap: .15rem; }
+.npm-review-toolbar-group { min-width: 0; gap: .15rem; color: var(--muted); }
+.npm-review-toolbar-group > :not(.npm-review-package) { flex: none; }
 .npm-review-toolbar-group .npm-review-text-button { padding: .3rem .5rem; }
+.npm-review-package { min-width: 0; }
+.npm-review-package > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.npm-review-package .npm-review-count { flex: none; }
 .npm-review-count, .npm-review-badge {
   border-radius: 3px;
   background: var(--surface-active);

@@ -28,12 +28,13 @@ export function reviewNote(comment) {
 // A list row opens that exact snapshot, even when a newer private set exists.
 // Keep this handoff inside review components, without changing app routing.
 let selection = null
-export function selectReviewOnOpen(review) { selection = review }
+export const sameReviewContext = (a, b) => ['ecosystem', 'package', 'version', 'integrity', 'basePackage', 'baseVersion', 'baseIntegrity'].every(key => a[key] === b[key])
+export function selectReviewOnOpen(review, continueReview = false) { selection = { review, continueReview } }
 export function takeReviewSelection(context) {
-  if (!selection || !['ecosystem', 'package', 'version', 'integrity', 'basePackage', 'baseVersion', 'baseIntegrity'].every(key => selection[key] === context[key])) return null
-  const { id } = selection
+  if (!selection || !sameReviewContext(selection.review, context)) return null
+  const next = selection
   selection = null
-  return id
+  return next
 }
 
 

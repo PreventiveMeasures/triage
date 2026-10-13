@@ -64,6 +64,10 @@ export async function checkDependencyReviews(db) {
   assert.equal(review.totalFiles, 4)
   assert.equal(review.comment, 'Resolve the remaining concerns.')
   assert.equal((await db.listDependencyReviews(reviewContext, users.bob.userId))[0].entries.length, 4)
+  const emptyBase = { ...reviewContext, basePackage: null, baseVersion: null, baseIntegrity: null }
+  assert.deepEqual(await db.listDependencyReviews(emptyBase, users.bob.userId), [])
+  assert.deepEqual((await db.listDependencyReviews(emptyBase, users.bob.userId, true)).map(row => row.id), [review.id], 'version lists include team publications against other bases')
+  assert.deepEqual(await db.listDependencyReviews(emptyBase, users.outsider.userId, true), [])
   assert.deepEqual(await db.listDependencyReviews(reviewContext, users.outsider.userId), [])
   await assert.rejects(change(save(review, 'index.js', 'accept', 'Edit frozen', review.entries[0].id)), /review-conflict/u)
   review = await change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one', 'two'] })

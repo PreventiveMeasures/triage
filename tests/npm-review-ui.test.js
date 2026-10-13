@@ -595,6 +595,33 @@ test('opening a specific published list row selects that snapshot even with an a
   assert.equal(page._canEdit, false)
 })
 
+test('version-wide reviews keep bases separate when opening, continuing and sharing', async () => {
+  const page = component(), published = { ...review, id: 'earlier-base', baseVersion: '0.8.0', baseIntegrity: 'sha512-earlier', publishedAt: 200 }
+  const otherPrivate = { ...review, id: 'other-private', baseVersion: '0.9.0', baseIntegrity: 'sha512-other' }
+  page._reviews = [published, otherPrivate, review]
+  assert.equal(page._activeReview, review)
+  assert.deepEqual(page._ownPublished, [], 'a review for another base does not freeze the current one')
+  navigations.length = 0
+  await page._openReview(published, true)
+  assert.equal(navigations[0].reviewSpec, '0.8.0')
+  page._context = { ...context, baseVersion: published.baseVersion, baseIntegrity: published.baseIntegrity }
+  answer = { reviews: page._reviews, teams: [] }
+  await page._refresh()
+  assert.equal(requests.at(-1)[0].allBases, true)
+  assert.equal(page._continuation.source, published)
+  assert.equal(page._activeReview.publishedAt, null, 'continue starts privately in the selected base')
+  const continuation = page._continuation
+  requests.length = 0
+  const anotherPublished = { ...review, id: 'original-base', publishedAt: 300 }
+  page._reviews.push(anotherPublished)
+  answer = { review: { ...anotherPublished, revision: 2, teams: [{ id: 'one', name: 'One' }] } }
+  await page._change({ action: 'publish', reviewId: anotherPublished.id, revision: 1, teamIds: ['one'] })
+  assert.equal(requests.length, 1, 'sharing an older review does not persist the active continuation')
+  assert.deepEqual(requests[0][0], context, 'actions use the subject review’s base')
+  assert.equal(page._continuation, continuation)
+  assert.equal(page._shownReview, continuation.review)
+})
+
 test('dense file tree counts verdicts rather than notes and bounds the initial DOM for large packages', () => {
   const entries = [file, { ...file, id: 'note', file: 'other.js', status: null }]
   const states = reviewFileStates(entries)
