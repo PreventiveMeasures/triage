@@ -2,7 +2,7 @@
 // look at it, against the version before it where one is given, each file's
 // stamps, and its dependencies', from npm's registry, kept in the caller's
 // cache (registry.js) as it goes.
-import { npmCompareFindings, npmDependencyFindings } from './compare.js'
+import { npmBaseFilesTell, npmCompareFindings, npmDependencyFindings } from './compare.js'
 import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
@@ -60,27 +60,35 @@ function filesRisk(version, what) {
 // each with its flags (dependencies.js). Its own findings are told fresh
 // (npmAssessmentOf). The managed server's assessments keep it (`lasting`),
 // and a test can tell what one says of versions it holds.
-export function npmLastingRisk(other, base = null) {
-  const what = `${other.npm.name}@${other.npm.version}`
-  // Each version's files read within bounds before the findings read them all.
-  const files = filesRisk(other, what)
-  if (base) filesRisk(base, `${base.npm.name}@${base.npm.version}`)
+export const npmLastingRisk = (other, base = null) => lastingOf(other, base, filesRisk(other, `${other.npm.name}@${other.npm.version}`))
+
+// npmLastingRisk's, the open version's files read within bounds (`files`,
+// filesRisk's), as the one compared with's are where `base` has them, before
+// the findings read them all.
+function lastingOf(other, base, files) {
+  if (base?.json) filesRisk(base, `${base.npm.name}@${base.npm.version}`)
   const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base?.npm.manifest, other.npm.manifest), base, other)
   const findings = base ? npmCompareFindings(base, other, { added, changed }) : [...npmHeldFindings(other), ...npmDependencyFindings({ added, changed }, null)]
   const kept = { findings: plain(findings), files, dependencies: plain({ added, changed }) }
-  if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(what)
+  if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(`${other.npm.name}@${other.npm.version}`)
   return kept
 }
 
 // What of an assessment holds whatever the time (npmLastingRisk), kept once a
-// reading and pair, its versions' files read from npm only where it isn't.
+// reading and pair, its versions' files read from npm only where it isn't:
+// the open version's first, then the one compared with's only where they
+// could change what is found (compare.js npmBaseFilesTell), that one else
+// told by what npm's document of it says alone.
 async function lasting(name, version, oldVersion, facts, context) {
   const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}`
   const hit = context.cache ? await context.cache.read('risk/npm/assessments', key) : null
   if (hit) return hit
-  const [other, base] = await Promise.all([npmVersionFiles(name, version, facts.versions.get(version), context),
-    oldVersion === null ? null : npmVersionFiles(name, oldVersion, facts.versions.get(oldVersion), context)])
-  const kept = npmLastingRisk(other, base)
+  const other = await npmVersionFiles(name, version, facts.versions.get(version), context)
+  const files = filesRisk(other, `${name}@${version}`)
+  const old = oldVersion === null ? null : facts.versions.get(oldVersion)
+  const base = old === null ? null : npmBaseFilesTell(other, old.manifest) ? await npmVersionFiles(name, oldVersion, old, context)
+    : { npm: { name, version: oldVersion, manifest: old.manifest, published: old.published }, json: null }
+  const kept = lastingOf(other, base, files)
   if (context.cache) await context.cache.write('risk/npm/assessments', key, kept)
   return kept
 }
