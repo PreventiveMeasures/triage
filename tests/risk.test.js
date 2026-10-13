@@ -9,6 +9,7 @@ import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
+import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
@@ -112,6 +113,14 @@ test('a package few download is flagged as unpopular, but where its popularity i
   asked.length = 0
   assert.ok(!ids(await assessNpm('own', '1.0.0', { now: NOW, popularity: false })).includes('popularity'))
   assert.ok(!asked.some(url => url.startsWith('https://api.npmjs.org/downloads/')), 'nor its downloads asked')
+})
+
+test('a host where packages keep their code and docs, named anew, calls for no look; a host under it does', () => {
+  const side = files => ({ kind: 'sourcemap', npm: { manifest: {} }, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const base = side({ 'index.js': 'module.exports = 1\n' })
+  const other = side({ 'index.js': 'module.exports = 1\n', 'lib/links.js': 'warn("https://github.com/lit/lit/issues")\nwarn("https://lit.dev/msg/dev-mode")\nget("https://api.github.com/repos")\n' })
+  const hosts = npmCompareFindings(base, other, { added: [], changed: [] }).find(({ id }) => id === 'new-hosts')?.hosts.map(({ host }) => host)
+  assert.deepEqual(hosts, ['api.github.com'], 'github.com and lit.dev allowed; api.github.com, a host under one, named')
 })
 
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
