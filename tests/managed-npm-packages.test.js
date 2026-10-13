@@ -725,7 +725,7 @@ test('a store removes its rows kept longer than they count as it writes, at most
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const store = npmVersionStore(db)
-  const now = Date.now(), day = 24 * 60 * 60_000
+  const day = 24 * 60 * 60_000, now = Date.now()
   await db.setUpstreamCacheEntry('npm/version-documents/stale', '{}', now - day - 1)
   await db.setUpstreamCacheEntry('npm/version-documents/fresh', '{}', now - 1)
   await db.setUpstreamCacheEntry('repository-risk/lines/other', '{}', now - day - 1)
