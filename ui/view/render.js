@@ -1660,6 +1660,7 @@ const ADMIN_VIEWS = {
   manage:           { slot: 'manage-slot',          tag: 'managed-admin-home',    title: 'DeepView — manage' },
   'admin-users':    { slot: 'admin-users-slot',    tag: 'managed-admin-users',   title: 'DeepView — users' },
   'manage-repos':   { slot: 'manage-repos-slot',   tag: 'managed-admin-repos',   title: 'DeepView — repositories' },
+  'manage-repo-risk': { slot: 'manage-repo-risk-slot', tag: 'managed-admin-repo-risk', title: 'DeepView — repository risk' },
   'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
   'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },

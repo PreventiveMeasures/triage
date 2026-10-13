@@ -882,6 +882,20 @@ that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
 1,000 entries, and the page displays a notice when that limit is reached.
 
+`GET /api/admin/repositories/risk` (admin only) scans every active repository's
+npm lockfiles at its default branch's head and assesses each package they lock
+as `GET /api/npm/risk` assesses a version on its own. It answers Brotli-encoded
+ndjson as it goes (`repository-risk.ts` names each line): the repositories, then
+each repository's lockfiles (`findRepoLockfiles`), each npm, pnpm or Yarn 1
+lockfile's packages (`@preventive/lockfile`), and each package's risk, with
+`done` last; a response without `done` was cut short. Repositories are read one
+at a time with the admin's own GitHub access, through the same gate as browsing
+them. A package from npm's registry is assessed once a scan, two at a time; one
+from a mirror by npm's paths only where the lockfile's integrity is npm's; one
+from git, another tarball or a file is listed but not assessed. Closing the
+response stops the scan. The page is `/manage/repositories/risk`, not yet linked
+from the Manage navigation.
+
 # Bundle commits and tags
 
 Bundle catalogs (`GET /api/teams` and `GET /api/admin/bundles`) send each

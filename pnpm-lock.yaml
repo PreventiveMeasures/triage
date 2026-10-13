@@ -20,6 +20,9 @@ importers:
       '@preventive/diff':
         specifier: ^1.0.2
         version: 1.0.2
+      '@preventive/lockfile':
+        specifier: 1.0.0-alpha.7
+        version: 1.0.0-alpha.7
       '@preventive/publishers':
         specifier: ^1.0.0
         version: 1.0.0
@@ -54,9 +57,6 @@ importers:
       '@noble/ciphers':
         specifier: ^2.4.0
         version: 2.4.0
-      '@preventive/lockfile':
-        specifier: 1.0.0-alpha.7
-        version: 1.0.0-alpha.7
       '@preventive/terminal':
         specifier: 2.0.0-beta.2
         version: 2.0.0-beta.2
