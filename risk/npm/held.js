@@ -8,17 +8,16 @@ import { npmInstallScripts } from './install-scripts.js'
 import { npmTooNew } from './release.js'
 import { npmVersionFileRisk } from './files.js'
 
-// What npm says of a version (`version.npm`) and of its package: deprecated
-// (`deprecated`, red); younger than `minimumReleaseAge` at `now`, published
-// at `published` (its `npm.published` unless given; release.js npmTooNew,
-// `too-new`, orange); and its package past the top 20,000 by `downloads`
-// (downloads.js, `popularity`, red where unpopular, else orange), `tier` its
-// rank (Infinity past the last).
-export function npmVersionFindings(version, { minimumReleaseAge, now = Date.now(), downloads = null, published = version.npm.published } = {}) {
-  const { manifest } = version.npm
+// What npm says of a version and of its package, told fresh as it changes in
+// time: deprecated, `deprecated` its message (`deprecated`, red); younger
+// than `minimumReleaseAge` at `now`, published at `published` (release.js
+// npmTooNew, `too-new`, orange); and its package past the top 20,000 by
+// `downloads` (downloads.js, `popularity`, red where unpopular, else orange),
+// `tier` its rank (Infinity past the last).
+export function npmVersionFindings({ deprecated, published, minimumReleaseAge, now, downloads }) {
   const tier = downloads ? npmDownloadTier(downloads) : null
   return [
-    ...manifest?.deprecated ? [{ id: 'deprecated', severity: 'critical', message: manifest.deprecated }] : [],
+    ...deprecated ? [{ id: 'deprecated', severity: 'critical', message: deprecated }] : [],
     ...published && npmTooNew(published, { minimumReleaseAge, now }) ? [{ id: 'too-new', severity: 'high', published }] : [],
     ...tier !== null && npmTierLow(tier) ? [{ id: 'popularity', severity: npmTierLevel(tier) === 'is-unpopular' ? 'critical' : 'high', tier }] : [],
   ]

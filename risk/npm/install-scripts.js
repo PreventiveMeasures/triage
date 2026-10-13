@@ -4,7 +4,7 @@
 
 // The scripts npm runs installing a package from the registry, in the order
 // it runs them; not `prepare`, which runs only for a local or git install.
-const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall']
+export const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall']
 
 // A package's install scripts, `[script, command]`, in the order npm runs
 // them: those `scripts` names, and `node-gyp rebuild` where the package has

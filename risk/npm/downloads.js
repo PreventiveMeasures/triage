@@ -4,7 +4,8 @@
 // dependency's to the day before its latest two weeks.
 
 export const DAY_MS = 24 * 60 * 60_000
-const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)
+// The date `offset` days past a count's first day (`start`).
+export const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)
 
 // The downloads in 7-day weeks ending on the last day, oldest first, a
 // partial oldest week left out: `{ from, to, total }`, dates as `Date`s.

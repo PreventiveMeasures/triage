@@ -86,4 +86,4 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `diff.js`: renames, as Compare pairs them.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
 
-Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`).
+Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`), but `held.js` `npmVersionFindings`, which takes what npm says of it now: its deprecation, when it was published, and its package's downloads.

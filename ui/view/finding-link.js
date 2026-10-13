@@ -154,7 +154,7 @@ export function unhideFinding(group, id) {
     state.shownTriage = bucket
   }
   // A fifth: the upstream lens, which unlike every filter above reaches
-  // INSIDE the group (group.js onlyUpstream) — so it can hide the
+  // INSIDE the group (workspace-groups.js mergeReportGroups) — so it can hide the
   // target while still drawing its group, under a gid built from the
   // members it kept. Off it comes, unless every member is upstream:
   // there the lens hands the group back whole, the gid below is the one

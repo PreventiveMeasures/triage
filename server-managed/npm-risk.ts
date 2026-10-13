@@ -11,12 +11,12 @@
 //   cache table, shared by every instance; a private one's in memory.
 // - `risk/npm/packages`, `risk/npm/public` and `risk/npm/downloads`, kept an
 //   hour or a day by risk itself: in memory.
-//
-// What memory keeps is held to 2,000 records and 64 MiB as JSON, the first
-// kept going first.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
 //   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
 //   an assessment kept needs none.
+//
+// What memory keeps is held to 2,000 records and 64 MiB as JSON, the first
+// kept going first.
 //
 // A cache failure is a miss, never a failed assessment. Packages' documents
 // are read as every other npm document here is, within their bounds and

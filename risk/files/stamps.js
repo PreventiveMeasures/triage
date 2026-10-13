@@ -10,32 +10,28 @@ import { npmRunsCode, npmRunsCodeFlags } from './runs-code.js'
 // a low one.
 export const SEVERITIES = ['critical', 'high', 'moderate', 'low', 'notice']
 
-// A label's mark (readability.js READABILITY) as a severity.
-const MARK_SEVERITIES = { warn: 'high', notice: 'notice' }
-
-// What a file is flagged with in a list of files, as its tags there show it
-// (npmFileFlagTags, npmListedReadabilityTag): `{ name, mark }` each, its
-// tag's text and mark; none for what reads as most files do (UTF-8, ASCII).
-function npmListedFlags(path, readability, bytes) {
-  const category = readability && npmTaggedCategory(readability)
-  const listed = category && category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
-  return [
-    ...npmLargeCode(path, bytes) ? [{ name: 'Large', mark: 'notice' }] : [],
-    ...readability?.obfuscation ? [{ name: 'Obfuscated', mark: 'warn' }] : [],
-    ...readability ? npmReadabilityLabels(readability).filter(label => label === 'controls' || label === 'long')
-      .map(label => ({ name: READABILITY.get(label).tag, mark: npmLabelMark(readability, label) })) : [],
-    ...listed ? [{ name: READABILITY.get(category).tag, mark: listed }] : [],
-  ]
-}
+// A label's mark (readability.js READABILITY) as a severity: a warning's
+// orange, or a notice.
+const severityOf = mark => mark === 'warn' ? 'high' : 'notice'
 
 // A file's stamps, from what was read of it: what its code does beyond
 // itself (runs-code.js npmRunsCodeFlags), a warning's or, for the whole
 // environment read out and publishing, critical; an exfiltration host it
-// names (hosts.js), a warning's; and its flags and how it reads
-// (npmListedFlags), a warning's or a notice, by their marks.
-const npmStampsOf = ({ path, bytes, readability, runsCode, exfiltration }) => [...npmRunsCodeFlags(runsCode),
-  ...exfiltration ? [{ name: 'Exfiltration', severity: 'high' }] : [],
-  ...npmListedFlags(path, readability, bytes).map(({ name, mark }) => ({ name, severity: MARK_SEVERITIES[mark] }))]
+// names (hosts.js), a warning's; a large code file, a notice; an
+// obfuscator's fingerprint, a warning's; and its control characters, long
+// lines and category, by their marks, but for what reads as most files do
+// (UTF-8, ASCII) and a source map.
+function npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) {
+  const category = npmTaggedCategory(readability)
+  const listed = category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
+  return [...npmRunsCodeFlags(runsCode),
+    ...exfiltration ? [{ name: 'Exfiltration', severity: 'high' }] : [],
+    ...npmLargeCode(path, bytes) ? [{ name: 'Large', severity: 'notice' }] : [],
+    ...readability.obfuscation ? [{ name: 'Obfuscated', severity: 'high' }] : [],
+    ...npmReadabilityLabels(readability).filter(label => label === 'controls' || label === 'long')
+      .map(label => ({ name: READABILITY.get(label).tag, severity: severityOf(npmLabelMark(readability, label)) })),
+    ...listed ? [{ name: READABILITY.get(category).tag, severity: severityOf(listed) }] : []]
+}
 
 // Everything risk reads of a file (`path`, its `text`, null for one that
 // isn't, and its size in `bytes`): how it reads (npmFileReadability), what

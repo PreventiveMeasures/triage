@@ -160,7 +160,7 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
   const side = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const text = 'module.exports = function long() { return 42 }\n'.repeat(20)
   assert.deepEqual(npmFilesDiff(side({ 'old.js': text, 'same.js': 'x', 'edit.js': '1' }), side({ 'new.js': text, 'same.js': 'x', 'edit.js': '2', 'add.js': 'y' })),
-    { onlyOther: [{ path: 'add.js' }], changed: [{ path: 'edit.js', modified: true }, { path: 'new.js', basePath: 'old.js', renamedFrom: 'old.js', modified: false }] })
+    { onlyOther: [{ path: 'add.js' }], changed: [{ path: 'edit.js', modified: true }, { path: 'new.js', renamedFrom: 'old.js', modified: false }] })
 })
 
 test('a file that isn\'t text compared by its digest: one added large is large code, one kept unchanged', async t => {

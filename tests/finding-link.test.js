@@ -897,7 +897,7 @@ describe('finding deep links — locating a linked finding', () => {
   })
 
   it('finds an app-side finding while the upstream lens is on', () => {
-    // The lens narrows the list the view draws (group.js onlyUpstream)
+    // The lens narrows the list the view draws (workspace-groups.js mergeReportGroups)
     // — it does not decide what is LOADED. Answered through the
     // narrowed list, a link to an app-side finding in an open report
     // comes back null and the router reports it as gone.

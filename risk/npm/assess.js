@@ -10,7 +10,6 @@ import { npmDownloadMonths, npmSettledDownloads, npmTierLevel } from './download
 import { NpmRiskError, npmDownloads, npmPackageFacts, npmPublicFacts, npmVersionFiles } from './registry.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
-import { npmFilesDiff } from './diff.js'
 
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
@@ -51,30 +50,23 @@ function filesRisk(version, what) {
   }))
 }
 
-// A version's own findings, told fresh on each assessment, as what npm says
-// of it and its package changes in time (held.js npmVersionFindings).
-const OWN = new Set(['deprecated', 'too-new', 'popularity'])
-
 // What of an assessment holds whatever the time, of the open version
 // (`other`) against the one compared with (`base`), or alone without one,
 // each as compare.js takes a version, as JSON holds it: what its files,
 // dependencies, install scripts, publisher and provenance call for
 // (compare.js npmCompareFindings), or alone, what it holds (held.js
-// npmHeldFindings) and its dependencies against none, its own findings left
-// out (OWN, npmAssessmentOf); each file's stamps and
+// npmHeldFindings) and its dependencies against none; each file's stamps and
 // what risk read of it (filesRisk); and its dependencies added and changed,
-// each with its flags (dependencies.js). The managed server's assessments
-// keep it (`lasting`), and a test can tell what one says of versions it
-// holds.
+// each with its flags (dependencies.js). Its own findings are told fresh
+// (npmAssessmentOf). The managed server's assessments keep it (`lasting`),
+// and a test can tell what one says of versions it holds.
 export function npmLastingRisk(other, base = null) {
   const what = `${other.npm.name}@${other.npm.version}`
-  const before = base ?? { kind: 'sourcemap', npm: { name: other.npm.name, version: null, manifest: {} }, json: { version: 3, sources: [], sourcesContent: [] } }
   // Each version's files read within bounds before the findings read them all.
   const files = filesRisk(other, what)
   if (base) filesRisk(base, `${base.npm.name}@${base.npm.version}`)
-  const findings = (base ? npmCompareFindings(base, other, npmFilesDiff(base, other)) : [...npmHeldFindings(other), ...npmDependencyFindings(before, other)])
-    .filter(({ id }) => !OWN.has(id))
-  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(before.npm.manifest, other.npm.manifest), base, other)
+  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base?.npm.manifest, other.npm.manifest), base, other)
+  const findings = base ? npmCompareFindings(base, other, { added, changed }) : [...npmHeldFindings(other), ...npmDependencyFindings({ added, changed }, null)]
   const kept = { findings: plain(findings), files, dependencies: plain({ added, changed }) }
   if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(what)
   return kept
@@ -150,8 +142,8 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
   const facts = await npmPackageFacts(name, oldVersion === null ? [version] : [version, oldVersion], context)
   const { published } = facts.versions.get(version)
   const kept = await lasting(name, version, oldVersion, facts, context)
-  const own = npmVersionFindings({ npm: { manifest: { deprecated: facts.deprecated[version] }, published } },
-    { minimumReleaseAge, now, downloads: downloads ? await npmDownloads(name, context) : null })
+  const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
+    downloads: downloads ? await npmDownloads(name, context) : null })
   const was = oldVersion === null ? null : facts.versions.get(oldVersion).published
   const added = downloads ? await addedDependencies(kept.dependencies.added, [was, published], context) : kept.dependencies.added
   return { name, version, oldVersion, published, ...npmAssessmentOf(kept, own, added) }
