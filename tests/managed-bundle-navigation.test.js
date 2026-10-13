@@ -247,3 +247,30 @@ test('Compare and Review keep the selected base until a review has started on an
   assert.deepEqual(state.npmReview, { bundle: 'npm', resume: true }, 'Review clicks from any tab look up the saved review')
   assert.deepEqual(managedTabLocation(state, 'review'), {}, 'the resume hint never leaks into the URL')
 })
+
+test('a Compare click starts from the version Compare or Review chose, else the one risk picked where it picked one; a Review click never from that', () => {
+  const picked = npm => npm.name === '@scope/pkg' && npm.version === '3.0.0' ? '2.5.0' : null
+  const at = (tab, fields = {}) => ({ selectedBundle: 'npm', bundleDetailsTab: tab, managedSession: { id: 'alice' },
+    bundles: [{ integrity: 'npm', npm: { name: '@scope/pkg', version: '3.0.0' } }], bundleCompare: null, npmReview: null, ...fields })
+  const compared = (state, chosen = picked) => { prepareNpmReviewTab(state, 'compare', chosen); return state.bundleCompare }
+  const fresh = at('overview')
+  assert.deepEqual(compared(fresh), { bundle: 'npm', target: '2.5.0', mode: 'overview' }, 'the version risk compares the open one with')
+  assert.deepEqual(managedTabLocation({ ...fresh, bundleDetailsTab: 'compare' }), { compareSpec: '2.5.0' }, 'in its URL')
+  assert.equal(compared(at('code'), () => null), null, 'none where risk picked none, or hasn\'t arrived')
+  assert.equal(compared(at('code')).target, '2.5.0', 'from any tab')
+  assert.deepEqual(compared(at('code', { bundleCompare: { bundle: 'npm', target: '1.0.0', mode: 'code' } })), { bundle: 'npm', target: '1.0.0', mode: 'code' },
+    'what Compare compared with kept')
+  assert.equal(compared(at('overview', { bundleCompare: { bundle: 'other', target: '1.0.0', mode: 'code' } })).target, '2.5.0', 'not another version\'s')
+  // A base picked in Review, of the same package, over what Compare had.
+  const reviewed = { bundle: 'npm', reviewPackage: '@scope/pkg', reviewSpec: '1.2.0' }
+  assert.equal(compared(at('review', { npmReview: reviewed, bundleCompare: { bundle: 'npm', target: '2.5.0', mode: 'overview' } })).target, '1.2.0', 'switching from Review')
+  assert.equal(compared(at('overview', { npmReview: reviewed })).target, '1.2.0', 'or from another tab, Compare having none')
+  assert.equal(compared(at('overview', { npmReview: { ...reviewed, bundle: 'other' } })).target, '2.5.0', 'not another version\'s review')
+  assert.equal(compared(at('review', { npmReview: { bundle: 'npm', reviewPackage: 'other-pkg', reviewSpec: '1.0.0' } })).target, '2.5.0', 'not another package\'s')
+  assert.equal(compared(at('review', { npmReview: { bundle: 'npm' } })).target, '2.5.0', 'nor a review from no package')
+  const review = at('overview')
+  prepareNpmReviewTab(review, 'review', picked)
+  assert.deepEqual(review.npmReview, { bundle: 'npm', resume: true }, 'Review looks up the saved review alone')
+  assert.equal(review.bundleCompare, null)
+  assert.equal(compared(at('overview', { bundles: [{ integrity: 'npm' }] }), () => { throw new Error('asked') }), null, 'a bundle not npm\'s')
+})

@@ -88,15 +88,24 @@ export function managedTabLocation(state, tab = state.bundleDetailsTab) {
 
 // Tab clicks change state before persisting their route. Carry the comparison
 // across that boundary, keeping an already-started review's original base.
-export function prepareNpmReviewTab(state, tab) {
-  if (!state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm || tab === state.bundleDetailsTab) return
+// Compare with nothing to compare with yet starts from the version Review
+// compares with, one of the same package, or failing that, from `picked(npm)`'s:
+// the version the package's risk compared the open one with, where it picked
+// one (npm-risk.js npmRisk `oldVersion`), null where it didn't or hasn't
+// arrived. Review starts from none it doesn't resume.
+export function prepareNpmReviewTab(state, tab, picked = () => null) {
+  const npm = state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm
+  if (!npm || tab === state.bundleDetailsTab) return
   const location = managedTabLocation(state, tab)
   if (tab === 'review') {
     const kept = state.npmReview?.bundle === state.selectedBundle && state.npmReview.started && state.npmReview.user === state.managedSession?.id
     state.npmReview = { ...(kept ? state.npmReview : { bundle: state.selectedBundle, ...location }), resume: true }
   }
-  if (tab === 'compare' && state.bundleDetailsTab === 'review' && location?.compareSpec) {
-    state.bundleCompare = { bundle: state.selectedBundle, target: location.compareSpec, mode: location.compareMode ?? 'overview' }
+  if (tab !== 'compare') return
+  const review = state.npmReview?.bundle === state.selectedBundle && state.npmReview.reviewPackage === npm.name ? state.npmReview : null
+  const target = location?.compareSpec ?? review?.reviewSpec ?? picked(npm)
+  if (target && (state.bundleDetailsTab === 'review' || !location?.compareSpec)) {
+    state.bundleCompare = { bundle: state.selectedBundle, target, mode: location?.compareMode ?? 'overview' }
   }
 }
 
