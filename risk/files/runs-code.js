@@ -119,12 +119,14 @@ const KEY_SET = new RegExp(String.raw`^\s{0,4}\]${SET}`, 'u')
 const KEY_ENDS = new RegExp(String.raw`^\s{0,4}\]${ABSENT_ENDS}`, 'mu')
 const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 // A string's text as JavaScript reads it, its escapes decoded (`\x2f`,
-// `\u002f`, `\u{2f}`, `\/`, `\\`), a control's (`\n`, `\r`) a blank: what a
-// URL in it spells, however its separators are escaped.
-const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|(.))/giu
+// `\u002f`, `\u{2f}`, `\/`, `\\`), a control's (`\n`, `\r`) a blank, a line
+// continued (a backslash before a line's end) joined: what a URL in it
+// spells, however its separators are escaped or its lines broken.
+const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|(\r\n|[^]))/giu
 const CONTROLS = new Set(['n', 'r', 't', 'b', 'f', 'v', '0'])
+const LINE_ENDS = new Set(['\n', '\r', '\r\n', '\u2028', '\u2029'])
 const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, char) => {
-  if (char !== undefined) return CONTROLS.has(char) ? ' ' : char
+  if (char !== undefined) return LINE_ENDS.has(char) ? '' : CONTROLS.has(char) ? ' ' : char
   const code = Number.parseInt(hex ?? unit ?? point, 16)
   return code <= 0x10_FFFF ? String.fromCodePoint(code) : escape
 })

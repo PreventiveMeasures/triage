@@ -117,8 +117,10 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     '\'https:\\/\\/registry.npmjs.org/pkg\'', '\'https:\\x2f\\x2fregistry.npmjs.org/pkg\'', '\'https:\\u002F\\u002Fregistry.npmjs.org\'', '\'https:\\u{2f}\\u{2f}registry.npmjs.org\'',
     '\'https://token\\x40registry.npmjs.org/pkg\'', '\'https://token\\u0040registry.npmjs.org\'', '\'https://t\\u{40}registry.npmjs.org\'',
     '\'https:\\\\\\\\registry.npmjs.org/pkg\'', '\'https:\\\\/registry.npmjs.org\'', '\'https:\\x5c\\x5cregistry.npmjs.org/pkg\'',
-    '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'']) {
-    assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [1] }, `a token before its host, or its slashes escaped: ${url}`)
+    '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'',
+    '\'https://\\\nregistry.npmjs.org/pkg\'', '"https://\\\r\nregistry.npmjs.org"', '\'https://\\\u2028registry.npmjs.org\'']) {
+    assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [url.split(/\r\n|[\n\r]/u).length] },
+      `a token before its host, its separators escaped or its line continued: ${url}`)
   }
   assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
   assert.deepEqual(found('a.js', 'const registry = \'https://\' + \'registry.npmjs.org/\'; fetch(registry + name, { method: \'PUT\' })\nconst port = \'registry.npmjs.org:443\'\n'),
