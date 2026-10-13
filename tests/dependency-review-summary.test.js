@@ -101,11 +101,12 @@ test('audit notes split star lists, repeat the file prefix, and omit prefixes fo
     + '* In crc.js: Can we make it faster?\n* In crc.js: Keep the current behavior.\n'
     + '* Ready to update.\n* Follow up next week.')
 })
-test('audit notes preserve multiline text and escaping while splitting indented CRLF lists', () => {
+test('audit notes preserve Markdown and multiline lists while escaping file names', () => {
   const output = auditMarkdown({ ...review, entries: [
     { file: 'a[1].js', status: 'accept-with-nits', comment: 'Context with a * b.\r\n  * First note\r\ncontinued.\r\n\t* Second `note`.\r\n*   ' },
-  ], comment: '   ' })
+  ], comment: '* Function `foo()` needs a fix\n* **Keep** [compatibility](https://example.com).' })
   assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
-    + '* In a\\[1\\].js: Context with a \\* b.\n* In a\\[1\\].js: First note\n  continued.\n* In a\\[1\\].js: Second \\`note\\`.')
+    + '* In a\\[1\\].js: Context with a * b.\n* In a\\[1\\].js: First note\n  continued.\n* In a\\[1\\].js: Second `note`.\n'
+    + '* Function `foo()` needs a fix\n* **Keep** [compatibility](https://example.com).')
   assert.equal(auditMarkdown({ ...review, entries: [{ file: 'crc.js', status: 'accept-with-nits', comment: '*  \n*  ' }] }), auditMarkdown(review))
 })
