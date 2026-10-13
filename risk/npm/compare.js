@@ -11,10 +11,11 @@ import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.j
 import { npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
-import { npmBecameUnreadable, npmLargeCode } from '../files/readability.js'
+import { npmBecameUnreadable, npmLargeCode, npmUnreadable } from '../files/readability.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
 import { npmFilesDiff } from './diff.js'
+import { npmInstallScripts } from './install-scripts.js'
 import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
 
 // What the open version does to its files that calls for a look, as red
@@ -89,6 +90,29 @@ function npmNewHosts(base, other, files) {
   return [...found.values()]
 }
 
+// Whether the files of the version compared with could change what
+// npmCompareFindings finds of the open version (`other`), told before they
+// are read, by the open version's files and the manifest npm's document of
+// the one compared with gives (`manifest`): what its files call for
+// (npmFileFindings, npmNewHosts) is only ever what the open version's own
+// files hold that the one compared with's didn't, so where none of them runs
+// code beyond itself, names a service under one of the hosts' tags or a host
+// past ALLOWED_HOSTS, bears an obfuscator's fingerprint, has a line no one
+// writes (npmUnreadable) or is large code, nothing is found of them whatever
+// the one compared with holds. Nor do the one compared with's install scripts
+// differ by a binding.gyp among its files, but where its manifest names
+// neither `preinstall` nor `install`, and the open version has some.
+export function npmBaseFilesTell(other, manifest) {
+  if (npmInstallScripts(other.npm.manifest, other.json.sources).length > 0
+    && npmInstallScripts(manifest).length !== npmInstallScripts(manifest, ['binding.gyp']).length) return true
+  const sizes = bundleFileSizes(other)
+  return [...bundleFilesAsMap(other).keys()].some(path => {
+    const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
+    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability) || npmLargeCode(path, sizes.get(path))
+      || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
+  })
+}
+
 // Of the dependencies the open version adds and changes against `base`, or
 // alone, none given, each with its flags (dependencies.js
 // npmFlagDependencyChanges): those it takes from elsewhere than npm's
@@ -115,18 +139,20 @@ export function npmDependencyFindings({ added, changed }, base) {
 // changed (`install-scripts`); its `dependencies` added and changed, as
 // flagged (npmDependencyFindings); its files, by how they differ (diff.js
 // npmFilesDiff, npmFileFindings); and the hosts its code names anew
-// (npmNewHosts, `new-hosts`).
+// (npmNewHosts, `new-hosts`). A `base` without its files (`json` null),
+// where npmBaseFilesTell says they would change nothing, is found nothing of
+// by them.
 export function npmCompareFindings(base, other, dependencies) {
   const publisher = npmPublisherChange(base.npm.manifest, other.npm.manifest)
-  const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json.sources })))
-  const files = npmFilesDiff(base, other)
-  const hosts = npmNewHosts(base, other, files)
+  const scripts = npmInstallScriptsChange(...[base, other].map(version => ({ manifest: version.npm.manifest, paths: version.json?.sources })))
+  const files = base.json ? npmFilesDiff(base, other) : null
+  const hosts = files ? npmNewHosts(base, other, files) : []
   return [
     ...publisher ? [{ id: 'publisher', ...publisher }] : [],
     ...npmProvenanceLost(base.npm.manifest, other.npm.manifest) ? [{ id: 'provenance-lost', severity: 'critical' }] : [],
     ...scripts ? [{ id: 'install-scripts', severity: 'high', ...scripts }] : [],
     ...npmDependencyFindings(dependencies, base),
-    ...npmFileFindings(base, other, files),
+    ...files ? npmFileFindings(base, other, files) : [],
     ...hosts.length > 0 ? [{ id: 'new-hosts', severity: 'high', hosts }] : [],
   ]
 }

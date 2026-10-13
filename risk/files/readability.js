@@ -51,18 +51,17 @@ const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/iu
 const DECLARATION = /\.d\.[cm]?ts$/iu
 export const npmLargeCode = (path, bytes) => typeof bytes === 'number' && bytes >= NPM_LARGE_CODE && CODE.test(path) && !DECLARATION.test(path)
 
-// A file that had no line over SHORT_LINES characters and now has one over
-// UNREADABLE_LINE, by how it reads on each side (`was` and `now`,
-// npmFileReadability's), `path` its path now: an inline source map's line
-// counts for neither, and prose and source maps, whose long lines the Long
-// lines tag passes over, never become so, nor does a file that isn't text on
-// either side.
+// A file with a line over UNREADABLE_LINE characters, by how it reads
+// (`now`, npmFileReadability's), `path` its path: an inline source map's line
+// counts for none, and prose and source maps, whose long lines the Long lines
+// tag passes over, never are, nor is a file that isn't text. Then one that
+// had no line over SHORT_LINES characters (`was`) and now has one over
+// UNREADABLE_LINE, by how it reads on each side.
 const SHORT_LINES = 200
 const UNREADABLE_LINE = 2000
-export function npmBecameUnreadable(path, was, now) {
-  if (!was || !now || was.category === 'binary' || now.category === 'binary' || NPM_PROSE.test(path) || SOURCE_MAP.test(path)) return false
-  return was.longest <= SHORT_LINES && now.longest > UNREADABLE_LINE
-}
+export const npmUnreadable = (path, now) => Boolean(now) && now.category !== 'binary' && !NPM_PROSE.test(path) && !SOURCE_MAP.test(path)
+  && now.longest > UNREADABLE_LINE
+export const npmBecameUnreadable = (path, was, now) => Boolean(was) && was.category !== 'binary' && was.longest <= SHORT_LINES && npmUnreadable(path, now)
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
 // binary (no text), map (a source map), long (code with some lines
