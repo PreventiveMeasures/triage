@@ -1,9 +1,15 @@
 // What a file's code can do beyond itself, for a reviewer: run a string as
 // code (eval, Function with new or without, node:vm, Module's _compile) or
 // other programs (child_process), reach for credentials (a credential file's
-// path, a token's name) or the whole environment, and publish to npm (`npm
-// publish`, `/-/whoami`, a registry PUT), as a file's stamps say
-// (stamps.js) and a version's findings name what is new to a file.
+// path, a token's name) or the whole environment, publish to npm (`npm
+// publish`, `/-/whoami`, a registry PUT), run a shell command fetching or
+// handing off code (`curl … https://…`, `| sh`, `powershell -…`, rundll32,
+// osascript, `/dev/tcp/`), and name a place code runs from again later (a
+// shell's rc file, LaunchAgents, systemd's user units,
+// `.claude/settings.json`, `.vscode/tasks.json`), as a file's stamps say
+// (stamps.js) and a version's findings name what is new to a file. A shell
+// script (`.sh`, `.bat`, `.ps1` …, or a shell's hashbang) is read whole for
+// the last two, its text its commands.
 // A quick read, not a parse: a script's code with its strings, regular
 // expressions and comments set aside as script.js tells them, its
 // strings read for the paths, names and commands they hold, a module by the
@@ -52,8 +58,21 @@ const PICKED = String.raw`${GAP}\)${GAP}\??\.${GAP}(?:filter|find|findLast|some|
 const COPY = String.raw`(?:\{${GAP}\.\.\.${GAP})?`
 const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${COPY}${ENV}`
   + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${COPY}${ENV}(?!${PICKED})`
-// Any of RUNS_CODE, as a text may say it.
-const SAYS_ANY = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
+// What a shell command, and a place code runs from again later, may say
+// (SHELL, PERSISTENCE).
+// A shell, as a hashbang or a pipe names it (`#!/bin/ksh`, `| fish`,
+// BusyBox's `ash`, `| powershell`); after a pipe, by its path or env's too (`| /bin/sh`,
+// `| /usr/bin/env bash`), env's options, their values, and settings before
+// it on its line (`env -S`, `env -u NAME`, `env MODE=x`).
+const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
+const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
+const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
+  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
+// Any of RUNS_CODE, as a text may say it: a shell command or a place in any
+// case, as Windows' are written (`PowerShell`, `RUNDLL32`).
+const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
+const SAYS_CODE = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
+const SAYS_ANY = { test: text => SAYS_CODE.test(text) || SAYS_SHELL_OR_PLACE.test(text) }
 
 // A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
 // `...eval` aside) or part of another's (`evaluate`), or as the global
@@ -108,7 +127,8 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // or the registry's who-am-I, a publisher's first step with a token. And the
 // registry, where a PUT request is one publishing (REGISTRY_URL).
 // Told first of a string by what any of them says.
-const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
+const HOLDS_CODE = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
+const HOLDS_ANY = { test: text => HOLDS_CODE.test(text) || SAYS_SHELL_OR_PLACE.test(text) }
 // Before a token's name as a key, its absence told or the token dropped, as
 // TOKEN_NAME tells of one as a name (`!process.env['GITHUB_TOKEN']`,
 // `delete process.env['NPM_TOKEN']`): a few names and dots at most, and
@@ -147,11 +167,102 @@ const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, octal,
 const REGISTRY_HOST = String.raw`registry\.(?:npmjs\.org|yarnpkg\.com)`
 const REGISTRY_URL = new RegExp(String.raw`(?:[/\\]{2}|\bhttps?:[/\\]?)(?:[^/\\?#]{0,256}@)?${REGISTRY_HOST}|^(["'\u0060])${REGISTRY_HOST}(?=\1$|[/:?#])`, 'iu')
 const URL_STRIPPED = /[\t\n\r]/gu
+// A shell command fetching or handing off code: curl or wget given a URL
+// (`curl -fsSL https://…`, `ftp://`, `https:\/\/` as a string may escape
+// it), long options before it too (`-H "Authorization: …"`), a quoted
+// argument's `;`, `|` and `&` no command's end (`-d "a=1&b=2"`), its line
+// continued too (`curl -fsSL \⏎ https://…`, `curl\⏎`, cmd's `^`,
+// PowerShell's backtick), not the next line's, the next command's (`curl
+// --version; echo https://…`) nor the next curl's, a download piped to a
+// shell (`… | sh`, `payload|sudo -E -- bash`, `| ksh`, `| /bin/sh`, `cat
+// hash | sh`, not a list of shells, `bash|zsh|sh`, a regular expression's
+// alternatives, `(x|ss|sh)$`, nor `|| sh`, nor an escaped pipe, grep's
+// `'bash\|zsh'`), PowerShell given options (`powershell -nop -enc …`),
+// rundll32, osascript and mshta, certutil fetching (`certutil -urlcache -f
+// http://…`) and bitsadmin's `/transfer`, and bash's network redirection
+// (`/dev/tcp/host/port`), and PowerShell running what it fetches (`iex (iwr
+// https://…).Content`, `irm https://… | iex`, long options before the pipe
+// too, `iwr … -Headers @{…} | iex`, `IEX (New-Object
+// Net.WebClient).DownloadString(…)`), its line continued by a backtick too,
+// not the next pipeline's, `iex $x && iwr …`); in any case, as Windows' are
+// written, and by its path (`/usr/bin/curl`).
+const CONTINUED = String.raw`[\\^\u0060]\r?\n`
+const ON_ITS_LINE = String.raw`(?:[^\n;|&]|${CONTINUED})`
+// PowerShell's own, its backtick alone (not `\⏎`, a new statement there).
+const POWERSHELL_CONTINUED = String.raw`\u0060\r?\n`
+// A command's text up to its end, its arguments' quotes kept, a quote left
+// open (`it's`) as any other character.
+const ARGUMENTS = String.raw`(?:[^\n;|&"']|${CONTINUED}|"[^"\n]*"|'[^'\n]*'|"(?![^"\n]*")|'(?![^'\n]*'))`
+const APART = String.raw`(?:[^\S\n]|${CONTINUED})`
+// A command's options, a few, and their values (`-E`, `-u root`, `--now`),
+// on its line or one continued.
+const OPTIONS = String.raw`(?:${APART}+--?\w[\w-]*(?:=\S*|${APART}+(?!-)\S+)?){0,6}?`
+const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl|wget)(?![\w-]))${ARGUMENTS}){0,2000}?["']?(?:https?|s?ftps?|scp):\\?\/\\?\/|(?<![|\\]|(?<![\w.\/-])${SHELLS}\s*)\|\s*(?:sudo${OPTIONS}(?:${APART}+--)?${APART}+)?${SHELL_PATH}${SHELLS}(?![\w)|$-])`
+  + String.raw`|(?<![\w.-])(?:powershell|pwsh)(?:\.exe)?[^\S\n]+-\w|(?<![\w.-])(?:rundll32|osascript|mshta)(?:\.exe)?(?![\w-])`
+  + String.raw`|(?<![\w.-])certutil(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?-urlcache|(?<![\w.-])bitsadmin(?:\.exe)?${APART}${ON_ITS_LINE}{0,100}?\/transfer|\/dev\/(?:tcp|udp)\/`
+  + String.raw`|(?<![\w$.-])(?:iex|invoke-expression)(?![\w-])(?:[^\n;|&]|${POWERSHELL_CONTINUED}){0,200}?(?:(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])|\.downloadstring\s*\()`
+  + String.raw`|(?<![\w$.-])(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])(?:(?!(?:iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-]))(?:[^\n;|&]|${POWERSHELL_CONTINUED})){0,2000}\|\s*(?:iex|invoke-expression)(?![\w-])`
+// A place code runs from again later: a shell's rc file (`~/.bashrc`,
+// `.zshrc`, `.zshenv`, `.zlogin`, `.bash_profile`, `.bash_login`,
+// `.zprofile`, and `.profile` in a path, `~/.profile`, not a selector's
+// class, nor one after another, `.nav`), PowerShell's profile (`$PROFILE`,
+// `Microsoft.PowerShell_profile.ps1`, all hosts' `PowerShell\Profile.ps1`,
+// `$PSHOME\Profile.ps1`, not another folder's), macOS's LaunchAgents and
+// LaunchDaemons, fish's (`~/.config/fish/config.fish`, `conf.d`), systemd's
+// user units (`~/.config/systemd/user`, `systemctl --user enable`, other
+// options before it, `--now`, or `--user` after it in its command,
+// `systemctl enable --user`; not `start`, which runs a unit once), and the
+// settings an AI agent or an editor runs commands from on its own
+// (`.claude/settings.json`, `.vscode/tasks.json`); in any case, as Windows'
+// and macOS's paths are, a path's separator a slash or a backslash, escaped
+// in a string as code writes it (`"\\.claude\\settings.json"`, `\/`).
+const SEPARATOR = String.raw`(?:\\?\/|\\{1,2})`
+const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])|fish${SEPARATOR}(?:config\.fish|conf\.d)(?![\w-])`
+  + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|(?:PowerShell|\$pshome)${SEPARATOR}profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
+  ['shell', new RegExp(SHELL, 'giu')],
+  ['persistence', new RegExp(PERSISTENCE, 'giu')],
 ]
+// What a shell script holds, read whole: its commands, and the places they
+// write to.
+const SHELL_HOLDS = HOLDS.filter(([kind]) => kind === 'shell' || kind === 'persistence')
+// A shell script, by its extension, its name a shell's startup file's
+// (`.bashrc`, `.profile`), or its hashbang: a shell's, by its path or env's,
+// env's options and settings before it (`#!/bin/ksh`, `#!/usr/bin/env -S
+// bash -e`, `#!/usr/bin/env -S MODE=x bash`, `#!/usr/bin/env pwsh`), past a
+// byte order mark.
+const SHELL_SCRIPT = /(?:\.(?:sh|bash|zsh|ksh|mksh|dash|ash|csh|tcsh|fish|command|bat|cmd|ps1|psm1)|(?:^|[\\/])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|profile))$/iu
+// A shell script's comment, a line's whole (`# curl … | sh`) or its end
+// after a command (`echo ok # don't curl …`, `echo ok;# …`) where the quotes
+// before it are closed, escapes read (`"a \" b"`, PowerShell's by a
+// backtick), not in one (`"a # b"`), and no other `#` (`$#`, `<#`) is;
+// PowerShell's, by its extension or hashbang, its blocks too (`<# … #>`,
+// opened where a command or value may start, `$x=<# … #>1`, not in a
+// string, `"<#"`, `"a <#"`, to the end where none closes); a batch file's, cmd's `::`
+// and `REM` (`@REM`, and `REM` after `&` or `||`, `echo ok & REM …`); as
+// none of its commands.
+const SHELL_COMMENT = /^[ \t]*#.*$|^((?:[^'"\n#\\]|\\.|'[^'\n]*'|"(?:[^"\n\\]|\\.)*")*?[ \t;&|])#.*$/gmu
+const POWERSHELL = /\.psm?1$/iu
+const POWERSHELL_HASHBANG = /^\uFEFF?#!\s*\S*\/(?:env\s+(?:(?:-\S+|\w+=\S*)\s+)*)?pwsh(?![\w-])/u
+const POWERSHELL_COMMENT = /^((?:[^'"\n#\u0060]|\u0060.|'[^'\n]*'|"(?:[^"\n\u0060]|\u0060.)*")*?)(?:(?<=^|[\s;({=,])<#[\s\S]*?(?:#>|(?![\s\S]))|(?<=^|[ \t;&|])#.*$)/gmu
+const BATCH = /\.(?:bat|cmd)$/iu
+const BATCH_COMMENT = /^[ \t]*@?(?:::|rem(?![\w-])).*$|(?<=&|\|\|)[ \t]*@?rem(?![\w-]).*$/gimu
+const SHELL_HASHBANG = new RegExp(String.raw`^\uFEFF?#!\s*\S*\/(?:env\s+(?:(?:-\S+|\w+=\S*)\s+)*)?${SHELLS}(?![\w-])`, 'u')
+// A directory and a file in it named apart, as path.join takes them
+// (`join(home, '.claude', 'settings.json')`): a place code runs from again
+// later where a file names both.
+const PARTS = [
+  ['claude', /^(["'\u0060])\.claude\1$/iu, /^(["'\u0060])settings(?:\.local)?\.json\1$/iu],
+  ['vscode', /^(["'\u0060])\.vscode\1$/iu, /^(["'\u0060])tasks\.json\1$/iu],
+]
+// `.profile` named apart where the home directory is the part before it
+// (`join(os.homedir(), '.profile')`, `resolve(process.env.HOME, …)`, `'~'`),
+// not a selector's class alone.
+const PROFILE = /^(["'\u0060])\.profile\1$/iu
+const HOME_BEFORE = /(?:homedir\s*\(\s*\)|\b(?:HOME|USERPROFILE)|(["'\u0060])~\1)\s*,\s*$/u
 // A module a kind loads: vm, child_process, and libnpmpublish, npm's own
 // publishing.
 const MODULES = [
@@ -169,6 +280,20 @@ const OPTION = /^(["'\u0060])-/u
 const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
 const PUT = /^(["'\u0060])put\1$/iu
 const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
+// A program run with its arguments apart, by its path too (`spawn('curl',
+// ['-fsSL', 'https://…'])`, `execFile('powershell.exe', ['-NoP', '-enc',
+// …])`, `spawn('systemctl', ['--user', 'enable', …])`): its command line,
+// its arguments' strings after its name, read as a shell command is, a
+// variable's or a property's value between (`['-o', output, 'https://…']`,
+// `outputs[i]`, `options?.out`), its first 20 arguments, however long.
+const COMMAND = /^(["'\u0060])(?:\S*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl)(?:\.exe)?\1$/iu
+// An argument a shell would need quoted, its separators no command's end
+// (`'Cookie: a=b; c=d'`), its own double quotes single then.
+const SEPARATES = /[;|&]/u
+const VALUES_BETWEEN = new RegExp(String.raw`^(?:[\s,[\]\w$.?]|${COMMENT})*$`, 'u')
+// A place named by its parts one after the other, as path.join takes them
+// (`join(home, '.config', 'systemd', 'user')`), read as a path is.
+const PLACE = new RegExp(PERSISTENCE, 'iu')
 // What comes before a module's name where code loads it: `require(` (or
 // `require?.(`), a bundler's `__require(` or `__non_webpack_require__(`,
 // `import(`, `import` and `from`, comments allowed between
@@ -184,7 +309,7 @@ const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}
 // the tag's tooltip, a row of its own where kinds share the tag (a string run
 // as code by any way, `eval`'s; a credential file or token, `credentials`'),
 // and for one marked as worse than the others' warning, `critical`: the whole
-// environment read out, and publishing.
+// environment read out, publishing, and a place code runs from again later.
 const AS_CODE = { tag: 'eval', note: 'Runs a string as code' }
 const CREDENTIALS = { tag: 'credentials', note: 'Reaches for credentials' }
 export const RUNS_CODE = new Map([
@@ -197,22 +322,37 @@ export const RUNS_CODE = new Map([
   ['tokens', { ...CREDENTIALS, name: 'NPM_TOKEN or GITHUB_TOKEN' }],
   ['env', { tag: 'whole env', note: 'Reads out the whole environment', name: 'process.env, by JSON.stringify, Object.entries or values, URLSearchParams', mark: 'critical' }],
   ['publish', { tag: 'publish', note: 'Publishes to npm', name: 'npm publish, /-/whoami or a registry PUT', mark: 'critical' }],
+  ['shell', { tag: 'shell', note: 'Runs shell commands fetching or handing off code', name: 'curl or wget a URL, | sh, powershell -…, iex, rundll32, osascript, /dev/tcp' }],
+  ['persistence', { tag: 'persistence', note: 'Names a place code runs from again later', name: '.bashrc, .zshrc, $PROFILE, LaunchAgents, systemd user units, .claude/settings.json, .vscode/tasks.json', mark: 'critical' }],
 ])
 
 // The kinds a file's code holds, each with the lines it is on, of the first
 // NPM_MAX_FOUND places it does each, in RUNS_CODE's order; null for none, or
-// for a file that is no script.
+// for a file that is no script. A shell script's, read whole, are its shell
+// commands and the places it names; one with a shell's hashbang is one
+// whatever its extension, and read as JavaScript too where it is that, as
+// a launcher (`#!/bin/sh` then `exec node "$0"`) is both.
 export function npmRunsCode(path, text) {
-  if (!npmIsScript(path, text)) return null
+  const script = npmIsScript(path, text)
+  const shell = typeof text === 'string' && (SHELL_SCRIPT.test(path) || SHELL_HASHBANG.test(text))
+  if (!script && !shell) return null
   const found = new Map()
   const at = (kind, offset) => {
     const offsets = found.get(kind)
     if (!offsets) found.set(kind, [offset])
     else if (offsets.length < NPM_MAX_FOUND) offsets.push(offset)
   }
-  read(text, 0, at)
-  // A PUT request publishing where the file names the registry.
+  if (script) read(text, 0, at)
+  if (shell && SAYS_ANY.test(text)) {
+    // Its comments blanked, its lines where they were.
+    const comments = BATCH.test(path) ? BATCH_COMMENT : POWERSHELL.test(path) || POWERSHELL_HASHBANG.test(text) ? POWERSHELL_COMMENT : SHELL_COMMENT
+    const commands = text.replace(comments, (comment, command = '') => command + comment.slice(command.length).replaceAll(/[^\n]/gu, ' '))
+    for (const [kind, holds] of SHELL_HOLDS) for (const { index } of commands.matchAll(holds)) at(kind, index)
+  }
+  // A PUT request publishing where the file names the registry; a place
+  // named by its directory and its file apart.
   if (found.has('registry')) for (const offset of found.get('put') ?? []) at('publish', offset)
+  for (const [part] of PARTS) if (found.has(`${part}-file`)) for (const offset of found.get(`${part}-dir`) ?? []) at('persistence', offset)
   if (![...RUNS_CODE.keys()].some(kind => found.has(kind))) return null
   const line = lineOf(text)
   return new Map([...RUNS_CODE.keys()].filter(kind => found.has(kind)).map(kind => [kind, [...new Set(found.get(kind).map(line))].toSorted((a, b) => a - b)]))
@@ -227,10 +367,11 @@ export function npmRunsCode(path, text) {
 // anything is read.
 function read(code, base, at) {
   if (!SAYS_ANY.test(code)) return
-  // Where the string before ends; whether the strings since a program's name
-  // are its arguments, an option or its value each, and whether the last is
-  // an option.
-  let end = 0, option = false, program = false
+  // The string before, and where, a place's part maybe; the command line
+  // since a program's name, and where it is named; where the string before
+  // ends; whether the strings since a program's name are its arguments, an
+  // option or its value each, and whether the last is an option.
+  let before = null, command = null, end = 0, option = false, program = false
   for (const { 0: token, 1: string, groups, index } of code.matchAll(READS)) {
     if (string === undefined) {
       for (const kind of CODE_KINDS) if (groups[kind]) at(kind, base + index)
@@ -252,12 +393,34 @@ function read(code, base, at) {
     for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
     if (text.includes('registry.') && REGISTRY_URL.test(unescaped(text).replace(URL_STRIPPED, ''))) at('registry', base + index)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
+    if (PROFILE.test(string) && HOME_BEFORE.test(code.slice(Math.max(0, index - 100), index))) at('persistence', base + index)
+    for (const [part, dir, file] of PARTS) {
+      if (dir.test(string)) at(`${part}-dir`, base + index)
+      if (file.test(string)) at(`${part}-file`, base + index)
+    }
     if (program && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
       if (PUBLISH.test(string)) at('publish', base + index)
       program = OPTION.test(string) || option
       option = OPTION.test(string)
     } else program = false
     if (PROGRAM.test(string)) [program, option] = [true, false]
+    if (command && command.arguments < 20 && VALUES_BETWEEN.test(code.slice(end, index))) {
+      const argument = text.slice(1, -1)
+      command.line += ` ${SEPARATES.test(argument) ? `"${argument.replaceAll('"', "'")}"` : argument}`
+      command.arguments++
+      const { line } = command
+      const hit = SHELL_HOLDS.find(([, holds]) => line.search(holds) !== -1)
+      if (hit) {
+        at(hit[0], command.at)
+        command = null
+      }
+    } else command = null
+    if (COMMAND.test(string)) command = { arguments: 0, at: base + index, line: string.slice(1, -1) }
+    if (before && before.text.length + text.length < 200 && ARGUMENTS_BETWEEN.test(code.slice(end, index))) {
+      const [first, second] = [before.text.slice(1, -1), text.slice(1, -1)]
+      if (!PLACE.test(first) && !PLACE.test(second) && PLACE.test(`${first}/${second}`)) at('persistence', before.at)
+    }
+    before = { text, at: base + index }
     if (PUT.test(string) && METHOD.test(code.slice(Math.max(0, index - 300), index))) at('put', base + index)
     end = index + token.length
   }
