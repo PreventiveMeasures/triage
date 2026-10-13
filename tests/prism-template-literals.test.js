@@ -125,14 +125,39 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(typesAt('`\\\\${a}`', 'a}'), ['template-string', 'interpolation'])
   })
 
-  it('runs a template the text never closes to its end', () => {
-    assert.deepEqual(templates('a = `b ${c({ d })} e\nlet f = 1'), ['`b ${c({ d })} e\nlet f = 1'])
+  it('reads a regex compared, and a JSX tag\'s </ as no regex', () => {
+    const code = 'a = `${/`/ < b}` + `${/`/ > c}`; let h = 1'
+    assert.deepEqual(templates(code), ['`${/`/ < b}`', '`${/`/ > c}`'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
+    const jsx = 'const e = <p>{`a`}</p>; const g = <div><br/>{`b ${c}`}<i>x</i></div>; let s = `d`'
+    assert.deepEqual(templates(jsx, 'jsx'), ['`a`', '`b ${c}`', '`d`'])
+  })
+
+  it('ends a line comment at every line terminator', () => {
+    for (const end of ['\n', '\r', ' ', ' ']) {
+      const code = `a = \`\${b // c${end}}\`; let h = \`\${1}\``
+      assert.deepEqual(templates(code), [`\`\${b // c${end}}\``, '`${1}`'], JSON.stringify(end))
+    }
+  })
+
+  it('leaves a template it can\'t close to Prism\'s pattern, rather than running it to the end', () => {
+    // A text that doesn't parse, and one whose `{} / 2` the scan misreads:
+    // its slash taken for a regex's, the regex runs on to the `/` past `}`.
+    assert.deepEqual(templates('a = `b ${c({ d })} e\nlet f = 1'), [])
+    const code = 'a = `x${{} / 2}/-text`; let h = 1'
+    assert.deepEqual(templates(code), ['`x${{} / 2}/-text`'])
+    assert.deepEqual(typesAt(code, 'x$'), ['template-string', 'string'])
+    assert.deepEqual(typesAt(code, '${'), ['template-string', 'interpolation', 'interpolation-punctuation'])
+    assert.deepEqual(typesAt(code, '2}'), ['template-string', 'interpolation', 'number'])
+    assert.deepEqual(typesAt(code, '/-text'), ['template-string', 'string'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
   })
 
   it('does the same in TypeScript, JSX, TSX and a markup <script>', () => {
     for (const lang of ['typescript', 'jsx', 'tsx']) {
       assert.deepEqual(templates(nav, lang)[0], header, lang)
       assert.deepEqual(typesAt(nav, 'var mn', lang), ['keyword'], lang)
+      assert.deepEqual(templates('a = `${{} / 2}/-text`', lang), ['`${{} / 2}/-text`'], lang)
     }
     assert.deepEqual(templates(`<script>${nav}</script>`, 'markup')[0], header)
   })
