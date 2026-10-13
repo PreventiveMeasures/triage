@@ -225,6 +225,7 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 }
 .dependency-review-list > p { color: var(--muted); margin: .4rem 0 1.6rem; }
 .dependency-review-section { margin-top: 1.2rem; }
+.dependency-review-section + .dependency-review-section { margin-top: .6rem; }
 .dependency-review-section h2 {
   display: flex;
   align-items: center;
@@ -236,6 +237,7 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   border-bottom: 1px solid var(--border);
   }
 .dependency-review-section ol { list-style: none; }
+.dependency-review-section > .npm-review-muted { margin: 0; padding: .4rem .5rem .25rem; line-height: 1.5; }
 .dependency-review-row { border-bottom: 1px solid var(--border); font-size: .78rem; }
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {
