@@ -34,6 +34,7 @@ import { parseStorageKey } from '../server-common/storage-crypto.ts'
 let sharedPg
 let schemaChanged = true
 let initialTables
+let initialSequences
 let migratedSchema
 after(async () => { await (await sharedPg)?.close() })
 
@@ -63,7 +64,12 @@ async function database(t, options = {}) {
   if (schemaChanged && migratedSchema && await schemaHash(pg) === migratedSchema) schemaChanged = false
   if (schemaChanged) await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   else {
-    await pg.exec(`TRUNCATE ${initialTables.map(table => table.name).join(', ')} RESTART IDENTITY`)
+    // TRUNCATE takes PGlite ~50ms; deleting the rows takes ~5ms, with triggers
+    // and foreign keys off as TRUNCATE leaves them, until this one implicit
+    // transaction ends, and each sequence restarted.
+    await pg.exec(`SET LOCAL session_replication_role = replica;
+      ${initialTables.map(({ name }) => `DELETE FROM ${name};`).join(' ')}
+      ${initialSequences.map(({ name, start }) => `SELECT setval('${name}', ${start}, false);`).join(' ')}`)
     for (const { name, rows } of initialTables) {
       if (rows.length > 0) await pg.query(`INSERT INTO ${name} SELECT * FROM json_populate_recordset(NULL::${name}, $1)`, [JSON.stringify(rows)])
     }
@@ -118,6 +124,7 @@ async function database(t, options = {}) {
       const { rows } = await pg.query(`SELECT * FROM ${name}`)
       initialTables.push({ name, rows })
     }
+    initialSequences = (await pg.query("SELECT quote_ident(sequencename) AS name, start_value AS start FROM pg_sequences WHERE schemaname = 'public'")).rows
     migratedSchema = await schemaHash(pg)
     schemaChanged = false
   }
