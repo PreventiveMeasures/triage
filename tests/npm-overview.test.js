@@ -699,10 +699,10 @@ test('Compare flags in red the files the open version adds or changes that call 
   // file and writes its map together, or in a major release, saying which;
   // red where its map is as it was, as an attack editing a built file leaves it.
   const built = (ver, line, map) => version(ver, { 'lib/a.js': `${code}\n${line}\n//# sourceMappingURL=a.js.map\n`, 'lib/a.js.map': map })
-  const rebuilt = await badges(built('3.0.0', 'export {}', '{"version":3}'), built('3.0.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3,"names":[]}'))
+  const rebuilt = await badges(built('3.0.0', 'export {}', '{"version":3,"mappings":"A"}'), built('3.0.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3,"mappings":"B"}'))
   assert.match(rebuilt, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?<span>Now unreadable<\/span>/u, 'orange, its map rebuilt')
   assert.match(rebuilt, /compare-tip-path">lib\/a\.js<\/span><span class="compare-tip-said">[^]*?its source map rebuilt with it/u)
-  const edited = await badges(built('3.1.0', 'export {}', '{"version":3}'), built('3.1.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3}'))
+  const edited = await badges(built('3.1.0', 'export {}', '{"version":3,"mappings":"A"}'), built('3.1.1', `const x = '${'z'.repeat(2001)}'`, '{"version":3,"mappings":"A"}'))
   assert.match(edited, /<li><span class=npm-extension npm-compare-file npm-compare-unreadable/u, 'red, its map as it was')
   const major = await badges(many('4.2.0', 'export {}'), many('5.0.0', `const x = '${'z'.repeat(2001)}'`))
   assert.match(major, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?in a major release/u, 'orange in a major release')

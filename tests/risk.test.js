@@ -199,21 +199,27 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const long = name => `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}.map\n`
   const found = (base, other) => Object.fromEntries(npmCompareFindings(base, other, { added: [], changed: [] })
     .filter(({ id }) => id === 'now-unreadable' || id === 'publisher').map(({ id, ...finding }) => [id, finding]))
-  const edited = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{}' }))
+  const map = mappings => JSON.stringify({ version: 3, mappings })
+  const edited = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('A') }))
   assert.equal(edited['now-unreadable'].severity, 'critical', 'its map as it was')
-  const rebuilt = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}' }))
+  const rebuilt = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('B') }))
   assert.equal(rebuilt['now-unreadable'].severity, 'high')
   assert.deepEqual(rebuilt['now-unreadable'].files.map(row => row.rebuilt), [true])
-  const elsewhere = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': '{}', 'maps/a.map': '{}' }),
-    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'lib/a.js.map': '{"version":3}', 'maps/a.map': '{}' }))
+  const elsewhere = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'maps/a.map': map('A') }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'lib/a.js.map': map('B'), 'maps/a.map': map('A') }))
   assert.equal(elsewhere['now-unreadable'].severity, 'critical', 'the map it names as it was, whatever map beside it changed')
-  const named = found(side('1.0.0', { 'lib/a.js': short, 'maps/a.map': '{}' }),
-    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'maps/a.map': '{"version":3}' }))
+  const named = found(side('1.0.0', { 'lib/a.js': short, 'maps/a.map': map('A') }),
+    side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'maps/a.map': map('B') }))
   assert.equal(named['now-unreadable'].severity, 'high', 'the map it names, by a path from its own, rebuilt')
-  const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}' }),
-    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': '{"version":3}' }))
+  const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }),
+    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': map('B') }))
   assert.equal(inline['now-unreadable'].severity, 'critical', 'a map inline is no map rebuilt beside it')
-  const mixed = found(side('1.0.0', { 'a.js': short, 'a.js.map': '{}', 'b.js': short }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3}', 'b.js': long('b.js') }))
+  const manifest = found(side('1.0.0', { 'a.js': short, 'package.json': '{"version":"1.0.0"}' }),
+    side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=package.json\n`, 'package.json': '{"version":"1.0.1"}' }))
+  assert.equal(manifest['now-unreadable'].severity, 'critical', 'a file it names that is no source map, changed as it may be')
+  const fake = found(side('1.0.0', { 'a.js': short, 'a.js.map': 'x' }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': 'y' }))
+  assert.equal(fake['now-unreadable'].severity, 'critical', 'a .map that is no source map')
+  const mixed = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A'), 'b.js': short }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': map('B'), 'b.js': long('b.js') }))
   assert.equal(mixed['now-unreadable'].severity, 'critical', 'one file of them unexplained')
   const major = found(side('1.4.1', { 'a.js': short }, { publisher: 'known', knownAccounts: ['known'] }), side('2.0.0', { 'a.js': long('a.js') }, { publisher: 'new' }))
   assert.deepEqual([major['now-unreadable'].severity, major['now-unreadable'].major, major.publisher.severity, major.publisher.major], ['high', true, 'high', true])
