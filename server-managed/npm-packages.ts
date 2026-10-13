@@ -14,11 +14,13 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import publishers from '@preventive/publishers/npm.js'
-import { getRepo } from '@preventive/upstream/package.js'
+import { isExactVersion } from '@preventive/upstream/semver.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
+import { npmManifest, npmVersionFields, plainObject, stringRecord } from './npm-manifest.ts'
 import { keepJson, readKeptJson, upstreamCachePath } from './upstream-cache.ts'
+
+export { npmManifest, plainObject }
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
@@ -167,115 +169,46 @@ export interface NpmVersionDocument {
   manifest: Record<string, unknown>
 }
 
-export const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-const stringRecord = (value: unknown) => plainObject(value)
-  ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string> : undefined
-
-interface NpmPerson { name: string | null; email: string | null }
-const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
-// The npm accounts known to publish: those with standing on one of npm's
-// most downloaded packages (@preventive/publishers).
-const KNOWN_PUBLISHERS = new Set(publishers.map(name => name.toLowerCase()))
-
-// One of package.json's people: `{ name, email, url }`, or `Name <email>
-// (url)` in one string.
-function npmPerson(value: unknown): NpmPerson | null {
-  const text = (part: unknown) => typeof part === 'string' && part.trim() !== '' ? part.trim() : null
-  if (plainObject(value)) return { name: text(value['name']), email: text(value['email']) }
-  if (typeof value !== 'string') return null
-  const parts = /^([^<(]*)(?:<([^>]*)>)?\s*(?:\([^)]*\))?\s*$/u.exec(value)
-  return parts ? { name: text(parts[1]), email: text(parts[2]) } : { name: text(value), email: null }
-}
-
-// The GitLab project (`group/project`, subgroups and all) a package names as
-// its repository, in any of the forms npm takes (`gitlab:group/project`,
-// `git@gitlab.com:…`, `git+https://gitlab.com/….git`); null for another.
-// GitLab's are only on gitlab.com, as npm's provenance has them.
-function gitlabProject(repository: unknown): string | null {
-  const url = typeof repository === 'string' ? repository : plainObject(repository) && typeof repository['url'] === 'string' ? repository['url'] : ''
-  if (url.length > 2048) return null
-  const project = /^(?:gitlab:|git@gitlab\.com:|(?:git\+)?(?:https|ssh|git):\/\/(?:git@)?gitlab\.com\/)([\w.-]+(?:\/[\w.-]+)+)\/?$/u
-    .exec(url.split('/-/')[0]!)?.[1]?.replace(/\.git$/u, '')
-  return project && !project.split('/').some(part => /^\.+$/u.test(part)) ? project : null
-}
-
-// The fields the Overview shows, in the shapes package.json gives them; each
-// left out where the document has none, or has another shape. A homepage that
-// leads only where its repository does (the repository, its directory there,
-// or its readme, npm's homepage where the package names none) is left out.
-export function npmManifest(json: Record<string, unknown>): Record<string, unknown> {
-  const pick: Record<string, unknown> = {}
-  for (const key of ['description', 'license', 'homepage', 'main', 'module', 'types', 'type', 'deprecated', 'gitHead']) {
-    if (typeof json[key] === 'string') pick[key] = json[key]
-  }
-  // Its author's name, and their npm account where it can be told: the
-  // publisher's or a maintainer's whose email or name is the author's. Emails
-  // only match people up; none is kept.
-  const author = npmPerson(json['author'])
-  if (author?.name) pick['author'] = author.name
-  const accounts = [json['_npmUser'], ...Array.isArray(json['maintainers']) ? json['maintainers'] : []].map(npmPerson)
-    .filter((person): person is NpmPerson & { name: string } => person?.name != null && NPM_ACCOUNT.test(person.name))
-  // The npm account that published it, for its profile; or, published by
-  // a CI npm trusts (npm's trusted publishing), the CI, as npm names it
-  // (`GitHub Actions`).
-  const publisher = npmPerson(json['_npmUser'])?.name
-  if (publisher && NPM_ACCOUNT.test(publisher)) pick['publisher'] = publisher
-  else if (publisher && publisher.length <= 64 && plainObject(json['_npmUser']) && plainObject(json['_npmUser']['trustedPublisher'])) pick['trustedPublisher'] = publisher
-  const same = (a: string | null, b: string | null) => a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
-  const account = author && accounts.find(person => same(person.email, author.email) || same(person.name, author.name))
-  if (account) pick['authorAccount'] = account.name
-  // Which of those accounts are known to publish, for the Overview to tell
-  // them from the rest.
-  const known = [...new Set([publisher, account?.name])].filter(name => name && KNOWN_PUBLISHERS.has(name.toLowerCase()))
-  if (known.length > 0) pick['knownAccounts'] = known
-  if (Array.isArray(json['keywords'])) pick['keywords'] = json['keywords'].filter(item => typeof item === 'string').slice(0, 50)
-  if (typeof json['bin'] === 'string') pick['bin'] = { [String(json['name'])]: json['bin'] }
-  else if (stringRecord(json['bin'])) pick['bin'] = stringRecord(json['bin'])
-  for (const key of ['dependencies', 'peerDependencies', 'optionalDependencies', 'engines']) {
-    const record = stringRecord(json[key])
-    if (record && Object.keys(record).length > 0) pick[key] = record
-  }
-  if (json['hasInstallScript'] === true) pick['hasInstallScript'] = true
-  // Whether npm keeps a provenance statement for it (npm-provenance.ts).
-  if (plainObject(json['dist']) && plainObject(json['dist']['attestations']) && plainObject(json['dist']['attestations']['provenance'])) pick['provenance'] = true
-  // The scripts npm runs installing it from the registry; not `prepare`,
-  // which runs only for a local or git install.
-  const scripts = stringRecord(json['scripts'])
-  const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
-  if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
-  // A GitLab project it names, as its provenance's source is matched with
-  // the repository it names, GitHub's below.
-  const gitlab = gitlabProject(json['repository'])
-  if (gitlab) pick['gitlab'] = gitlab
-  try {
-    const repo = getRepo(json)
-    if (repo.github) {
-      pick['github'] = { github: repo.github, ...(repo.directory === undefined ? {} : { directory: repo.directory }) }
-      const home = typeof pick['homepage'] === 'string' ? getRepo({ homepage: pick['homepage'] }) : {}
-      if (home.github?.toLowerCase() === repo.github.toLowerCase() && (home.directory ?? '') === (repo.directory ?? '')) delete pick['homepage']
-    }
-  } catch {}
-  return pick
-}
-
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null
 
+// The version `json`, a document of package `name`, tells of.
+function versionDocument(name: string, json: Record<string, unknown>, isPrivate: boolean): NpmVersionDocument {
+  const dist = json['dist']
+  if (json['name'] !== name || typeof json['version'] !== 'string' || !isNpmPackageSpec(json['version']) || !plainObject(dist)
+      || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string') throw new NpmPackageError(502, 'upstream-invalid')
+  return {
+    name, version: json['version'], private: isPrivate,
+    dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
+    manifest: npmManifest(json),
+  }
+}
+
+// Where public versions' documents are kept, of the fields read of them
+// (npm-manifest.ts npmVersionFields), as the database keeps them (npm-kept.ts).
+export interface NpmVersionStore {
+  read(name: string, version: string): Promise<{ at: number; json: Record<string, unknown> } | null>
+  write(name: string, version: string, json: Record<string, unknown>): Promise<void>
+}
+
 // The version a spec names, a dist-tag resolved by the registry, with its
-// dist. Null where the registry has none for this reader.
-export function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal): Promise<NpmVersionDocument | null> {
+// dist. Null where the registry has none for this reader. With `store`, an
+// exact version kept there for less than a day (VERSION_KEPT_MS) is read from
+// it, not asked of npm, and a public one npm answers is kept. npm never
+// changes a version's files, but its document can change: a deprecation, the
+// package made private (a scoped one can be), the version removed (which whoever
+// reads it from a store learns elsewhere too: risk does). A day bounds each.
+export const VERSION_KEPT_MS = 24 * 60 * 60_000
+export function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
   if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
+  // A kept one is read within the same budget as npm's answer.
   return withDocumentBudget(VERSION_DOCUMENT_BYTES, async () => {
+    const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
+    if (kept && Date.now() - kept.at < VERSION_KEPT_MS) try { return versionDocument(name, kept.json, false) } catch {}
     const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
     if (!found) return null
-    const { json } = found
-    const dist = json['dist']
-    if (json['name'] !== name || typeof json['version'] !== 'string' || !isNpmPackageSpec(json['version']) || !plainObject(dist)
-        || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string') throw new NpmPackageError(502, 'upstream-invalid')
-    return {
-      name, version: json['version'], private: found.private,
-      dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
-      manifest: npmManifest(json),
-    }
+    const doc = versionDocument(name, found.json, found.private)
+    if (store && !found.private) await store.write(name, doc.version, npmVersionFields(found.json))
+    return doc
   })
 }
 

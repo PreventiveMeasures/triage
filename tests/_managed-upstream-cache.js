@@ -15,5 +15,11 @@ export async function checkUpstreamCacheStore(db) {
   assert.deepEqual(await db.getUpstreamCacheEntries([key, 'github/advisories/org/other', 'github/advisories/org/missing', 'github/advisories/ORG/DEP']),
     new Map([[key, '{"v":2}'], ['github/advisories/org/other', '[]']]), 'one read answers every key kept')
   assert.deepEqual(await db.getUpstreamCacheEntries([]), new Map())
+  await db.setUpstreamCacheEntry('repository-risk/lines/old', '{}', 1)
+  await db.setUpstreamCacheEntry('repository-risk/lines/new', '{}', 5)
+  await db.setUpstreamCacheEntry('repository-risk/linesake', '{}', 1)
+  assert.equal(await db.deleteUpstreamCacheEntries('repository-risk/lines/', 3), 1, 'those under the prefix kept before then')
+  assert.deepEqual(await db.getUpstreamCacheEntries(['repository-risk/lines/old', 'repository-risk/lines/new', 'repository-risk/linesake', key]),
+    new Map([['repository-risk/lines/new', '{}'], ['repository-risk/linesake', '{}'], [key, '{"v":2}']]))
   return { key, value: '{"v":2}' }
 }

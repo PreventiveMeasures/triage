@@ -324,6 +324,41 @@ test('a version npm has no document of is told as risk tells one it removed: mal
   ])
 })
 
+test('a version whose document was kept, but that risk finds npm since removed, is told as one npm removed', async () => {
+  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] }
+  const source = sourceOf(onePnpmRepo, ({ name, version }) => name === 'left-pad'
+    ? Promise.reject(new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)) : Promise.resolve({ published: null, findings: [] }))
+  source.removed = (name, version) => Promise.resolve({ ...takenDown, name, version })
+  assert.deepEqual(risksOf(await Array.fromAsync(scan(source))).map(line => [line.name, line.error ?? line.severity]), [['is-number', null], ['left-pad', 'critical']])
+})
+
+// Where risk lines are kept beyond an instance (npm-kept.ts riskLineStore),
+// in memory.
+function lineStore() {
+  const rows = new Map(), writes = []
+  return { rows, writes,
+    read: key => Promise.resolve(rows.get(key) ?? null),
+    write(key, value, at) { writes.push(key); rows.set(key, { at, value: structuredClone(value) }); return Promise.resolve() } }
+}
+
+test('risk lines are kept where the source keeps them, beyond an instance, for as long as a scan keeps them', async t => {
+  const risks = lineStore()
+  const assessed = []
+  const assess = ({ name }) => { assessed.push(name); return Promise.resolve({ published: null, findings: [] }) }
+  const first = risksOf(await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks }))))
+  assert.deepEqual(assessed.toSorted(), ['is-number', 'left-pad'])
+  assert.equal(risks.writes.length, 2)
+  // Another instance, or this one restarted: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), { risks })
+  assert.deepEqual(risksOf(await Array.fromAsync(scan(again))), first)
+  assert.deepEqual(again.versions, [], 'npm asked nothing')
+  assert.equal(assessed.length, 2)
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 61 * 60_000 })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess), { risks })
+  await Array.fromAsync(scan(later))
+  assert.equal(assessed.length, 4, 'an hour on, assessed again')
+})
+
 test('a lockfile’s packages of npm’s registry or a mirror are asked of npm’s advisories at once, malware’s flagged', async () => {
   const source = sourceOf({
     1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }],

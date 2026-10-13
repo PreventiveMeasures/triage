@@ -934,7 +934,14 @@ its code, and, where risk failed, risk's `detail` of what it asked of npm and
 how that failed. Scans keep in the instance's memory a repository's lockfiles as listed
 at a commit, a lockfile's packages by its blob, and a package's risk line for an
 hour, so a scan again asks GitHub only for each repository's head and access,
-and npm for nothing it told within the hour; what risk keeps of each package
+and npm for nothing it told within the hour. The database keeps risk lines for
+that hour too, and public versions'
+documents for a day, of only the fields `readNpmVersion` reads of them
+(`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
+on another instance, asks npm for none of them again: where npm removed a
+version since, as it removes malware, risk finds it missing from the package's
+whole document and the scan tells it as one npm removed. Rows kept longer
+than they count are removed as new ones are written, at most once an hour. What risk keeps of each package
 (`npm-risk.ts`) is beneath that. Closing the response, or leaving it idle for
 five minutes, stops the scan. The page is `/manage/repositories/risk`, not yet
 linked from the Manage navigation.
@@ -1851,10 +1858,18 @@ Changes are recorded in the activity history, and scopes are removed with
 their team.
 
 For everyone else, a version is public only when the registry answers for it
-without credentials. That request is made on every read and never answered
-from a cache: documents and tarballs that a bundle build fetched with the token
-can remain in upstream's caches, readable without one, so leaving the token out
-is not enough. Tarballs are read from there all the same, as the answer names the sha512 the
+without credentials. That answer alone is kept, never one read with the token:
+documents and tarballs that a bundle build fetched with the token can remain in
+upstream's caches, readable without one, so leaving the token out is not
+enough. An exact version's document npm answered anonymously is kept in the
+database (`npm-kept.ts`, of only the fields read of it), and the viewer,
+dependency reviews and repository risk scans read it from there for a day
+rather than ask npm on every read, then ask again: npm never changes a version's files, but its document can
+change within that day, as its owner deprecates it or makes a scoped package
+private (a private answer is never kept), or npm removes it. A dist-tag such as
+`latest` is asked each time. A version npm removed stays readable for that day
+where its document is kept (its tarball where that is kept too); risk tells it
+as removed, from the package's whole document. Tarballs are read from there all the same, as the answer names the sha512 the
 tarball must have: one kept in upstream's cache directory (`npm/tarballs`,
 where bundle builds keep theirs), or in npm's own cache, is served only when it
 matches. Otherwise the tarball comes from the registry, at the package's own
