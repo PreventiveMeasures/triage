@@ -25,6 +25,8 @@
 //   GET /api/admin/repositories/impact → admin attached data summary
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
+//   GET  /api/admin/repositories/risk → admin: each connected repo's npm lockfiles, their packages and what risk tells of each,
+//        Brotli-encoded ndjson as each is found; the reader leaving stops it | 401/403
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
@@ -104,9 +106,12 @@ import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/manag
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { upstreamGithub } from './github-errors.ts'
+import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
+import { repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -155,6 +160,7 @@ const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
 const REMOVE_REPO_PATH = '/api/admin/repositories/remove'
+const REPO_RISK_PATH = '/api/admin/repositories/risk'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
 const REPORT_SET_REPO_PATH = '/api/admin/reports/set-repo'
 const REPORT_SET_VISIBLE_PATH = '/api/admin/reports/set-visible'
@@ -1332,6 +1338,60 @@ async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, all
   }
   encoder.end()
   await sent
+}
+
+// How often a scan of repositories' risk checks again that its reader is
+// still an admin, between the lines it sends; and how long its connection may
+// go idle, unread or with no line to send, before the scan is stopped.
+const REPO_RISK_RECHECK_MS = 10_000
+const REPO_RISK_IDLE_MS = 5 * 60_000
+
+// GET /api/admin/repositories/risk: every connected repository's npm
+// packages, as its lockfiles lock them at its default branch's head, each
+// assessed by risk (repository-risk.ts), a line as each is found. A
+// repository is read with the admin's own GitHub access, as browsing it is
+// (repository-browser.ts), and that access checked again once it is read,
+// before any of it is told; packages as the npm viewer's admins read them, in
+// spare assessments (npm-risk.ts), trusted however new where a team lists
+// their scope. The reader leaving, losing their admin role or the server
+// shutting down stops it.
+async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readAdminSession(res, deps, cookie)
+  if (!s) return
+  const controller = new AbortController()
+  res.on('close', () => { controller.abort() })
+  res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
+  const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
+  const teamScoped = new Map<string, Promise<boolean>>()
+  const lines = repositoryRiskLines({
+    repos: () => deps.db.listSelectedRepos(),
+    async open(repo) {
+      const reader = await browser.reader(repo)
+      const commit = await reader.commit('')
+      const client = createClient({ token: reader.readToken() })
+      return {
+        commit,
+        lockfiles: async () => (await upstreamGithub(() => client.findRepoLockfiles({ repo: repo.fullName, sha: commit }))).lockfiles,
+        file: path => upstreamGithub(() => client.getRepoFile({ repo: repo.fullName, path, ref: commit })),
+        recheck: async () => { await reader.recheckAccess() },
+      }
+    },
+    version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
+    async assess(doc, signal) {
+      const scope = npmPackageScope(doc.name)
+      if (scope !== null && !teamScoped.has(scope)) teamScoped.set(scope, deps.db.hasTeamNpmScope(scope))
+      return npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
+        teamScoped: scope !== null && await teamScoped.get(scope)!, privileged: true, signal, spare: true })
+    },
+  }, controller.signal)
+  let checked = Date.now()
+  await sendLines(res, lines, async () => {
+    if (deps.isShuttingDown()) return false
+    if (Date.now() - checked < REPO_RISK_RECHECK_MS) return true
+    if ((await readSession(deps.config, deps.db, cookie, Date.now()))?.user.role !== 'admin') return false
+    checked = Date.now()
+    return true
+  })
 }
 
 // A pretty-printed copy names the file it was formatted from, by the hash it
@@ -2843,6 +2903,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REMOVE_REPO_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleRemoveRepository(req, res, deps, cookie); return
+    }
+    if (path === REPO_RISK_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryRisk(res, deps, cookie); return
     }
     if (path === BROWSABLE_REPOS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }

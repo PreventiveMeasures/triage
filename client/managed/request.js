@@ -36,8 +36,12 @@ function previewResponse(url, options) {
   if (path.startsWith('/api/admin/') && !roleAtLeast(preview.user.role, 'manage')) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
-  if (['/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/repositories/aliases'].includes(path) && preview.user.role !== 'admin') {
+  if (['/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/repositories/aliases', '/api/admin/repositories/risk'].includes(path) && preview.user.role !== 'admin') {
     return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
+  // A scan of no repositories, as its lines come.
+  if (path === '/api/admin/repositories/risk') {
+    return new Response('{"type":"repos","repos":[]}\n{"type":"done"}\n', { headers: { 'content-type': 'application/x-ndjson' } })
   }
   const data = {
     '/api/admin/users': { users: [preview.user] },

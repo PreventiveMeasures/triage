@@ -4,6 +4,7 @@
 import './managed/pages.js'
 import './managed/links.js'
 import './managed/deduplication.js'
+import './managed/repository-risk.js'
 import { ManagedPage } from './managed/page.js'
 import { managedFetch } from '../client/managed/request.js'
 import { managedAppState } from './managed/state.js'

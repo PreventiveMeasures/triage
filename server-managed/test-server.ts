@@ -456,6 +456,45 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
   return true
 }
 
+// A scan of the connected repositories' npm lockfiles (repository-risk.ts),
+// its lines a little apart as the server's come, and stopped with its reader.
+function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolean {
+  if (url.pathname !== '/api/admin/repositories/risk' || method !== 'GET') return false
+  const selected = repositories.filter(repo => repo.selected)
+  const [first, second, ...rest] = selected
+  const commit = 'f'.repeat(40)
+  const chalk = { name: 'chalk', version: '5.3.0', integrity: 'sha512-fixture' }
+  const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
+    severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
+  const lines = [
+    { type: 'repos', repos: selected.map(repo => ({ id: repo.id, fullName: repo.fullName })) },
+    { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
+    { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
+      { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
+      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
+    ] },
+    { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
+    risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
+    { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
+    risk('lodash', '4.17.21', []),
+    { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [
+      { name: 'lodash', version: '4.17.21', source: 'registry' }, { ...chalk, source: 'mirror', from: 'https://npm.example.com/api/npm/remote/chalk/-/chalk-5.3.0.tgz' },
+    ] },
+    risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
+    ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
+    { type: 'risk', ...chalk, error: 'integrity-mismatch' },
+    { type: 'done' },
+  ]
+  res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
+  let at = 0
+  const timer = setInterval(() => {
+    if (at < lines.length) res.write(`${JSON.stringify(lines[at++])}\n`)
+    else { clearInterval(timer); res.end() }
+  }, 400)
+  res.on('close', () => { clearInterval(timer) })
+  return true
+}
+
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
@@ -470,7 +509,7 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
     await setFixtureVisible(req, res, url.pathname.includes('/bundles/'))
     return
   }
-  if (serveReportLocation(url, res)) return
+  if (serveReportLocation(url, res) || serveRiskFixture(url, method, res)) return
   if (url.pathname.startsWith('/api/admin/reports/')) {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     const id = decodeURIComponent(url.pathname.slice('/api/admin/reports/'.length))

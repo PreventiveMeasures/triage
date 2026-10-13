@@ -2191,9 +2191,9 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
 
 // Manage pages are the MANAGED_PAGES routes; each key is also the
 // `state.currentView` render() paints as its `<managed-admin-*>` element.
-// Users, repositories, teams, import and deduplication are admin-only;
-// the rest are also open to managers.
-const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams', 'manage-import', 'manage-deduplication'])
+// Users, repositories (and their risk), teams, import and deduplication are
+// admin-only; the rest are also open to managers.
+const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-repo-risk', 'manage-teams', 'manage-import', 'manage-deduplication'])
 let readyManagedView = null
 
 function canAccessManagedPage(view) {

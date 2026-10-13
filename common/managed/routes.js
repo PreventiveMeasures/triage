@@ -19,6 +19,7 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-scans': '/manage/scans',
   'manage-reports': '/manage/report',
   'manage-repos': '/manage/repositories',
+  'manage-repo-risk': '/manage/repositories/risk',
   'admin-users': '/manage/users',
   'manage-teams': '/manage/team',
   'manage-import': '/manage/import',

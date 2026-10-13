@@ -158,6 +158,7 @@
     "server-managed/repository-aliases.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
+    "server-managed/repository-risk.ts",
     "server-managed/session.ts",
     "server-managed/slugs.ts",
     "server-managed/solidity-entry-points.ts",
@@ -307,7 +308,6 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@noble/ciphers": "^2.4.0",
-    "@preventive/lockfile": "1.0.0-alpha.7",
     "@preventive/terminal": "2.0.0-beta.2",
     "@rray/frontend": "^1.0.0",
     "@stylistic/stylelint-plugin": "^5.3.1",
@@ -329,6 +329,7 @@
     "@exodus/stasis-core": "1.0.0-beta.9",
     "@preventive/compare": "^1.0.2",
     "@preventive/diff": "^1.0.2",
+    "@preventive/lockfile": "1.0.0-alpha.7",
     "@preventive/publishers": "^1.0.0",
     "@preventive/report": "1.0.0-alpha.9",
     "@preventive/sourcemap": "1.0.0-alpha.1",

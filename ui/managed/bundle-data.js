@@ -79,7 +79,7 @@ const NPM_ERRORS = {
 
 // A read that a session change aborts, its failures named by `errors`, by
 // their error code or else their status.
-async function request(url, errors, read, signal) {
+export async function request(url, errors, read, signal) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const generation = managedAppState.generation
   const response = await managedFetch(url, { credentials: 'same-origin', signal })
@@ -153,6 +153,25 @@ export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
     async response => ({ text: await response.text(), source: response.headers.get('x-source-hash') }), signal)
 }
 
+// A response's lines of JSON, as the server sends them (http.ts sendLines),
+// each as it comes.
+export async function* responseLines(response) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+  // The line being read, in the chunks it came in.
+  let parts = []
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) return
+    let start = 0
+    for (let end = value.indexOf('\n'); end !== -1; start = end + 1, end = value.indexOf('\n', start)) {
+      parts.push(value.slice(start, end))
+      yield JSON.parse(parts.join(''))
+      parts = []
+    }
+    parts.push(value.slice(start))
+  }
+}
+
 // Every file of an npm version that needs pretty-printing, pretty-printed by
 // the server in one request, which keeps the copies of a public one: `onLine`
 // called with each as it comes, in path order, `{ path, source, text }`, or
@@ -161,21 +180,9 @@ export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
 export function fetchPrettyNpmFiles(name, version, onLine, { signal } = {}) {
   return request(`/api/npm/pretty?${new URLSearchParams({ name, version })}`, NPM_ERRORS, async response => {
     const generation = managedAppState.generation
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
-    // The line being read, in the chunks it came in.
-    let parts = []
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      let start = 0
-      for (let end = value.indexOf('\n'); end !== -1; start = end + 1, end = value.indexOf('\n', start)) {
-        parts.push(value.slice(start, end))
-        const { error, status, ...line } = JSON.parse(parts.join(''))
-        parts = []
-        if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
-        await onLine(error ? { ...line, status, message: PRETTY_ERRORS[error] ?? PRETTY_ERRORS[status] ?? `Request failed (${status})` } : line)
-      }
-      parts.push(value.slice(start))
+    for await (const { error, status, ...line } of responseLines(response)) {
+      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+      await onLine(error ? { ...line, status, message: PRETTY_ERRORS[error] ?? PRETTY_ERRORS[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)
 }
