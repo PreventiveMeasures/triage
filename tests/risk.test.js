@@ -11,6 +11,7 @@ import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
 import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
+import { npmOldVersion } from '../risk/npm/old-version.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
@@ -125,6 +126,79 @@ test('against the version before, its tarball read only where its files could ch
   const read = npm(t, [{ name: 'built', versions: [built, rebuilt] }])
   assert.deepEqual(ids(await assessNpm('built', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })), [], 'node-gyp ran for 1.0.0\'s binding.gyp all the same')
   assert.deepEqual(read.filter(url => url.endsWith('.tgz')), [rebuilt.doc.dist.tarball, built.doc.dist.tarball], 'install scripts, and 1.0.0\'s naming none: its files read')
+})
+
+test('the version risk picks to compare with: below the open one, the highest most likely free of what an attack injects', () => {
+  const at = (number, days, publisher = 'maintainer', extra = {}) => ({ version: number, published: ago(days), publisher, known: false, deprecated: false, ...extra })
+  const pick = (number, releases) => npmOldVersion(number, releases, NOW)
+  const line = [at('1.0.0', 400), at('1.1.0', 90), at('1.2.0', 40), at('1.2.1', 10), at('1.3.0', 2), at('2.0.0', 1)]
+  assert.equal(pick('1.3.0', line), '1.2.0', 'on npm a month or more; 2.0.0 above it')
+  assert.equal(pick('1.0.0', line), null, 'none below')
+  assert.equal(pick('latest', [at('latest', 1)]), null, 'no version')
+  assert.equal(pick('1000000000000000.0.1', [at('1000000000000000.0.0', 60), at('1000000000000000.0.1', 1)]), '1000000000000000.0.0', 'a part of 16 digits, as semver takes it')
+  assert.equal(pick('9007199254740992.0.1', [at('9007199254740992.0.0', 60), at('9007199254740992.0.1', 1)]), null, 'one past a safe integer, as semver takes none')
+  assert.equal(pick('2.0.0', [at('1.9.5', 60), at('1.10.0', 50), at('2.0.0', 1)]), '1.10.0', 'in the closest branch below, by semver')
+  assert.equal(pick('3.0.0', [at('2.9.8', 250), at('2.9.9', 100), at('3.0.0', 200)]), '2.9.8', 'one published before it, not a backport since')
+  assert.equal(pick('3.0.0', [at('2.9.9', 100), at('3.0.0', 200)]), '2.9.9', 'a backport where none is before it')
+  assert.equal(pick('3.0.0', [at('2.9.7', 250), at('2.9.8', 200.5), at('3.0.0', 200)]), '2.9.7', 'none published within a week before it')
+  assert.equal(pick('0.1.2', [at('0.1.0', 20), at('0.1.1', 12), at('0.1.2', 10)]), '0.1.0', 'none a month old: one a week apart')
+  assert.equal(pick('0.1.1', [at('0.1.0', 12.5), at('0.1.1', 12)]), '0.1.0', 'nor that: the highest')
+  assert.equal(pick('1.3.0', [at('1.1.0', 90), at('1.2.0', 60, 'maintainer', { deprecated: true }), at('1.3.0', 1)]), '1.1.0', 'one deprecated passed over')
+  const pre = [at('1.9.0', 90), at('2.0.0-rc.2', 90), at('2.0.0-rc.9', 60), at('2.0.0-rc.10', 1), at('2.0.0', 1)]
+  assert.equal(pick('2.0.0', pre), '1.9.0', 'a release where it is one')
+  assert.equal(pick('2.0.0-rc.10', pre), '2.0.0-rc.9', 'a prerelease where it is one, by its identifiers')
+  assert.equal(pick('1.0.0', [at('1.0.0-beta.1', 60), at('1.0.0', 1)]), '1.0.0-beta.1', 'a prerelease where no release is below')
+})
+
+test('the version risk picks to compare with, by who published it: a known account\'s where it was taken from one, else none of an unknown one\'s own', () => {
+  const at = (number, days, publisher, extra = {}) => ({ version: number, published: ago(days), publisher, known: false, deprecated: false, ...extra })
+  const pick = (number, releases) => npmOldVersion(number, releases, NOW)
+  const known = publishers[0]
+  const taken = [at('1.13.0', 60, known, { known: true }), at('1.14.0', 5, known, { known: true }), at('1.14.1', 1, 'someone-new'), at('1.14.2', 0.5, 'someone-new')]
+  assert.equal(pick('1.14.2', taken), '1.14.0', 'its maintainers\' latest, trusted however new; none the new account published')
+  assert.equal(pick('2.0.0', [at('1.9.8', 30, known, { known: true }), at('1.9.9', 0.2, known, { known: true }), at('2.0.0', 1, 'someone-new')]), '1.9.8',
+    'theirs published before it, not a backport since')
+  assert.equal(pick('1.5.1', [at('1.4.0', 90, known, { known: true }), at('1.4.9', 60, 'bob'), at('1.5.0', 5, known, { known: true, deprecated: true }), at('1.5.1', 1, 'someone-new')]),
+    '1.4.0', 'a known account\'s still where theirs is deprecated, as whoever took it can deprecate one')
+  const handed = [at('1.0.0', 300, 'alice'), at('1.1.0', 100, 'alice'), at('1.2.0', 60, 'mallory'), at('1.2.1', 20, 'alice'), at('1.3.0', 1, 'mallory')]
+  assert.equal(pick('1.3.0', handed), '1.1.0', 'another unknown account\'s, held to a month as any')
+  assert.equal(pick('1.0.2', [at('1.0.0', 90, 'solo'), at('1.0.1', 60, 'solo'), at('1.0.2', 1, 'solo')]), '1.0.1', 'one account\'s all: its own')
+  assert.equal(pick('2.0.1', [at('1.0.0', 90, known, { known: true }), at('2.0.0', 60, 'someone'), at('2.0.1', 1, known, { known: true })]), '2.0.0',
+    'a known account publishing it: whoever published the one before')
+  const other = publishers[1]
+  assert.equal(pick('2.0.1', [at('1.9.0', 60, known, { known: true }), at('2.0.0', 3, known, { known: true }), at('2.0.1', 1, known, { known: true })]), '1.9.0',
+    'its own known account\'s held to a month, as it may be the one taken')
+  assert.equal(pick('2.0.1', [at('1.9.0', 60, known, { known: true }), at('2.0.0', 3, other, { known: true }), at('2.0.1', 1, known, { known: true })]), '2.0.0',
+    'another known account\'s trusted however new')
+})
+
+test('against the version risk picks: an attack\'s own earlier version passed over for its maintainers\', picked by npm\'s document and kept an hour', async t => {
+  const known = publishers[0]
+  const files = { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }
+  const theirs = { dependencies: {}, scripts: {}, _npmUser: { name: known } }
+  const taken = { dependencies: {}, scripts: { postinstall: 'node setup.js' }, _npmUser: { name: 'someone-new' } }
+  const versions = [version('handed', '1.0.0', files, theirs, ago(90)), version('handed', '1.1.0', files, theirs, ago(5)),
+    version('handed', '1.1.1', { ...files, 'setup.js': '' }, taken, ago(2)), version('handed', '1.1.2', { ...files, 'setup.js': '' }, taken, ago(1))]
+  const asked = npm(t, [{ name: 'handed', versions }])
+  const cache = store()
+  const picked = await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache })
+  assert.equal(picked.oldVersion, '1.1.0')
+  assert.deepEqual(ids(picked), ['publisher', 'install-scripts', 'too-new'])
+  assert.ok(!asked.includes(versions[2].doc.dist.tarball), 'no tarball read for the pick')
+  assert.deepEqual(ids(await assessNpm('handed', '1.1.2', { oldVersion: '1.1.1', now: NOW, downloads: false })), ['too-new'], 'against the attack\'s own, nothing of it')
+  asked.length = 0
+  assert.deepEqual(await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache }), picked)
+  assert.deepEqual(asked, [], 'the pick kept: npm isn\'t asked')
+  await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW + 2 * 60 * 60_000, downloads: false, cache })
+  assert.deepEqual(asked, [`${REGISTRY}/handed`], 'picked again after an hour, by its document alone')
+  const alone = await assessNpm('handed', '1.0.0', { oldVersion: true, now: NOW, downloads: false })
+  assert.equal(alone.oldVersion, null, 'none below it')
+  assert.deepEqual(alone, await assessNpm('handed', '1.0.0', { now: NOW, downloads: false }), 'assessed alone')
+  const listed = documentOf({ name: 'handed', versions })
+  listed.versions['1.1.1'] = null
+  listed.time['1.1.1'] = ago(40)
+  assert.equal((await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, packument: () => Promise.resolve(listed) })).oldVersion, '1.1.0',
+    'none npm lists no document of')
 })
 
 test('a package few download is flagged as unpopular, but where its popularity isn\'t asked, as own scopes take', async t => {
