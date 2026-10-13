@@ -198,11 +198,12 @@ export interface NpmVersionStore {
 // package made private (a scoped one can be), the version removed (which whoever
 // reads it from a store learns elsewhere too: risk does). A day bounds each.
 export const VERSION_KEPT_MS = 24 * 60 * 60_000
-export async function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
-  if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) throw new NpmPackageError(400, 'bad-package')
-  const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
-  if (kept && Date.now() - kept.at < VERSION_KEPT_MS) try { return versionDocument(name, kept.json, false) } catch {}
+export function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
+  if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
+  // A kept one is read within the same budget as npm's answer.
   return withDocumentBudget(VERSION_DOCUMENT_BYTES, async () => {
+    const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
+    if (kept && Date.now() - kept.at < VERSION_KEPT_MS) try { return versionDocument(name, kept.json, false) } catch {}
     const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
     if (!found) return null
     const doc = versionDocument(name, found.json, found.private)
