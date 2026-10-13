@@ -721,6 +721,25 @@ test('an unscoped version deprecated after it was kept shows its deprecation a d
   assert.equal((await readNpmVersion('deprecated-later', '1.0.0', false, signal, store)).manifest.deprecated, 'use deprecated-now')
 })
 
+test('a store removes its rows kept longer than they count as it writes, at most once an hour', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  const now = Date.now(), day = 24 * 60 * 60_000
+  await db.setUpstreamCacheEntry('npm/version-documents/stale', '{}', now - day - 1)
+  await db.setUpstreamCacheEntry('npm/version-documents/fresh', '{}', now - 1)
+  await db.setUpstreamCacheEntry('repository-risk/lines/other', '{}', now - day - 1)
+  const left = () => db.getUpstreamCacheEntries(['npm/version-documents/stale', 'npm/version-documents/fresh', 'repository-risk/lines/other']).then(rows => [...rows.keys()].toSorted())
+  await store.write('pruning', '1.0.0', { name: 'pruning', version: '1.0.0' })
+  assert.deepEqual(await left(), ['npm/version-documents/fresh', 'repository-risk/lines/other'], 'its own kind\'s, older than a day')
+  await db.setUpstreamCacheEntry('npm/version-documents/stale', '{}', now - day - 1)
+  await store.write('pruning', '1.0.1', { name: 'pruning', version: '1.0.1' })
+  assert.ok((await left()).includes('npm/version-documents/stale'), 'not again within the hour')
+  t.mock.timers.enable({ apis: ['Date'], now: now + 61 * 60_000 })
+  await npmVersionStore(db).write('pruning', '1.0.2', { name: 'pruning', version: '1.0.2' })
+  assert.ok(!(await left()).includes('npm/version-documents/stale'), 'again an hour on, whatever store of the database writes')
+})
+
 test('a private package\'s whole document, read with the server\'s token, is never kept', async t => {
   withToken(t)
   const dir = await documentCache(t)

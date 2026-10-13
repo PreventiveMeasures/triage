@@ -932,12 +932,13 @@ how that failed. Scans keep in the instance's memory a repository's lockfiles as
 at a commit, a lockfile's packages by its blob, and a package's risk line for an
 hour, so a scan again asks GitHub only for each repository's head and access,
 and npm for nothing it told within the hour. The database keeps risk lines for
-that hour too, older ones removed as a scan starts, and public versions'
+that hour too, and public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
 on another instance, asks npm for none of them again: where npm removed a
 version since, as it removes malware, risk finds it missing from the package's
-whole document and the scan tells it as one npm removed. What risk keeps of each package
+whole document and the scan tells it as one npm removed. Rows kept longer
+than they count are removed as new ones are written, at most once an hour. What risk keeps of each package
 (`npm-risk.ts`) is beneath that. Closing the response, or leaving it idle for
 five minutes, stops the scan. The page is `/manage/repositories/risk`, not yet
 linked from the Manage navigation.

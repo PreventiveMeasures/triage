@@ -81,7 +81,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, pruneRiskLines, riskLineStore } from './npm-kept.ts'
+import { npmVersionStore, riskLineStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -1388,7 +1388,6 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
   const scopes = new Map<string, Promise<boolean>>()
   const versions = npmVersionStore(deps.db, deps.config.debug)
-  await pruneRiskLines(deps.db, RISK_KEPT_MS, deps.config.debug)
   const lines = repositoryRiskLines({
     repos: () => Promise.resolve(repos),
     async open(repo) {
@@ -1416,7 +1415,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
       teamScoped, privileged: true, signal, spare: true }),
     removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
       teamScoped, privileged: true, signal }),
-    risks: riskLineStore(deps.db, deps.config.debug),
+    risks: riskLineStore(deps.db, RISK_KEPT_MS, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // alone: no repository's. Each lockfile's audit is bounded on its own, for
     // one npm doesn't answer to fail alone and the scan to carry on.

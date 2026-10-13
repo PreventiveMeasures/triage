@@ -197,7 +197,7 @@ export interface NpmVersionStore {
 // changes a version's files, but its document can change: a deprecation, the
 // package made private (a scoped one can be), the version removed (which whoever
 // reads it from a store learns elsewhere too: risk does). A day bounds each.
-const VERSION_KEPT_MS = 24 * 60 * 60_000
+export const VERSION_KEPT_MS = 24 * 60 * 60_000
 export async function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
   if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) throw new NpmPackageError(400, 'bad-package')
   const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
