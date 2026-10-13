@@ -14,8 +14,8 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
-import { PrettyError, prettyRequest, prettyText } from './pretty-print.ts'
-import { renameDiffOf, renameDiffRequest } from './rename-diff.ts'
+import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
+import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
 import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -102,10 +102,18 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
   if (bundleRoute![2] === 'rename-diff' || (bundleRoute![2] === 'pretty' && url.searchParams.has('other'))) {
     if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
-    const other = snapshot.bundles.find(item => item.id === url.searchParams.get('other'))
-    await (bundleRoute![2] === 'rename-diff' ? serveRenameDiff(res, deps, bundle, other, url, stream) : servePrettyChanges(res, deps, bundle, other, recheck)); return
+    await serveCompared(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), bundleRoute![2], url, recheck, stream); return
   }
   await serveBundle(res, deps, bundle, bundleRoute![2]!, url, recheck, stream)
+}
+
+// What a bundle is compared with `other`, another of the link's bundles, by:
+// one of their JavaScript files diffed with renamed names hidden, or the
+// files that changed between them, or the pairs of those, a line each.
+function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, part: string, url: URL,
+  recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
+  if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
+  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : renamedPairs)
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of
@@ -129,13 +137,15 @@ async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundl
 }
 
 // The files that changed between a bundle and `other`, another of the link's
-// bundles, both sides' pretty-printed (pretty-print.ts compared), the link
-// checked again before each line.
-async function servePrettyChanges(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, recheck: () => Promise<void>) {
+// bundles, both sides' pretty-printed (pretty-print.ts compared), or the pairs
+// of them its viewer diffs with renamed names hidden (rename-diff.ts
+// renamedPairs), the link checked again before each line.
+async function serveChanges(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, recheck: () => Promise<void>,
+  linesOf: (sides: [ComparedSide, ComparedSide]) => AsyncIterable<unknown>) {
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
   if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
   let lines
-  try { lines = await deps.prettyCache.bundleChanges(bundle, other) }
+  try { lines = linesOf(await deps.prettyCache.bundleSides(bundle, other)) }
   catch (err) {
     if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
     throw err

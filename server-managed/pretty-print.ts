@@ -57,7 +57,7 @@ export type ComparedLine = PrettyLine & { side: Side }
 // A side of a comparison: its files that can be formatted, with their texts,
 // and every one of its files' hashes, by path; the copy kept for one, or null;
 // and one made, kept where the side keeps copies.
-interface ComparedSide {
+export interface ComparedSide {
   side: Side
   files: Array<PrettyRequest & { text: string }>
   hashes: Map<string, string>
@@ -149,7 +149,7 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
 // iterated, in path order, the base's first where both have one: those kept,
 // at once; then the rest, formatted one after another, the minified before
 // the others (needsPrettyPrint), as the viewer prints those unasked.
-function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
+export function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
   // Each side's texts at the paths the other hasn't: where a file moved has its own.
   const moved = sides.map((own, i) => new Set([...own.hashes].filter(([path]) => !sides[1 - i]!.hashes.has(path)).map(([, hash]) => hash)))
   const changed = sides.flatMap((own, i) => {
@@ -318,19 +318,21 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
         for (const { text, ...request } of files) yield await prettyLine(request, () => npmCopy(doc, request, () => Promise.resolve(text)))
       })()
     },
-    // The files that changed between two bundles, or two versions, both
-    // sides' pretty-printed (compared), the sides read before this resolves.
-    async bundleChanges(base: ManagedBundle, other: ManagedBundle): Promise<AsyncGenerator<ComparedLine>> {
+    // Two bundles' sides, or two versions', as a comparison reads them, read
+    // before this resolves: for the files that changed between them
+    // pretty-printed (compared), and their diffs with renamed names hidden
+    // (rename-diff.ts renamedPairs).
+    async bundleSides(base: ManagedBundle, other: ManagedBundle): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await bundleSources(record)),
         kept: request => kept(() => bundles.open(record.id, prettyFile(request))),
         made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
-      return compared([await sideOf(base, 'base'), await sideOf(other, 'other')])
+      return [await sideOf(base, 'base'), await sideOf(other, 'other')]
     },
-    async npmChanges(base: NpmVersionDocument, other: NpmVersionDocument): Promise<AsyncGenerator<ComparedLine>> {
+    async npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc)),
         kept: request => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request)))),
         made: (request, text) => npmCopy(doc, request, () => Promise.resolve(text)) })
-      return compared([await sideOf(base, 'base'), await sideOf(other, 'other')])
+      return [await sideOf(base, 'base'), await sideOf(other, 'other')]
     },
   }
 }

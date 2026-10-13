@@ -1,25 +1,31 @@
 // Compare's diff of a JavaScript file minified on both sides with the names a
 // minifier renamed alike hidden (GET /api/bundles/:id/rename-diff, GET
 // /api/npm/rename-diff): both sides pretty-printed, as the pretty-print toggle
-// has them (pretty-print.ts), then diffed by @preventive/compare's renamedDiff
-// in a worker, off the event loop and two at a time per process. Answered as
-// Brotli-encoded JSON, `{ before, blocks, reason, reads, marks }`
+// has them (pretty-print.ts), then diffed by @preventive/compare's
+// renamedDiffs in a worker, off the event loop and two at a time per process,
+// with whitespace changes shown and hidden both. Answered as Brotli-encoded
+// JSON, `{ before, blocks, reason, reads, marks, ignoringWhitespace }`
 // (rename-diff-worker.js), the two files' hashes, `hash` and `otherHash`, and
 // those of the two copies diffed, `prettyHash` and `otherPrettyHash`, which
-// the viewer checks are those it asked about and draws. The last few answers are
-// kept in memory by both files' hashes, a private npm version's never, each
-// side read again through the pretty-print cache first, which checks that its
-// source holds a file of that hash. Access is the caller's to check.
+// the viewer checks are those it asked about and draws: one file's asked for
+// by both its sides' paths and hashes, or every pair a comparison's viewer
+// diffs so, a line each (renamedPairs). The last few answers are kept in
+// memory by both files' hashes, a private npm version's never, each side read
+// again through the pretty-print cache first, which checks that its source
+// holds a file of that hash. Access is the caller's to check.
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
+import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
+import { brotliDecompress } from 'node:zlib'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH } from '../common/bundle-metadata.js'
-import { prettyExtension } from '../common/pretty-print.js'
+import { computeBundleDiff } from '../common/bundle-compare-diff.js'
+import { needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
-import { PrettyError, type PrettyRequest } from './pretty-print.ts'
+import { type ComparedSide, PrettyError, type PrettyRequest, prettyText } from './pretty-print.ts'
 
 // What a minifier renames: JavaScript, as the viewer offers it for.
 const RENAMABLE = new Set(['js', 'mjs', 'cjs'])
@@ -34,11 +40,18 @@ const MAX_WAITING_DIFFS = 16
 const DIFF_TIMEOUT_MS = 60_000
 const MAX_DIFF_CHARS = 64 * 1024 * 1024
 // Answers kept, the one read last last: each holds the old side as diffed.
-const KEPT_DIFFS = 8
+// As many as a comparison's viewer may ask for beside the pairs it has come
+// (renamedPairs), so that neither is worked out twice.
+const KEPT_DIFFS = 32
 
-export interface RenameDiff { before: string; blocks: ChangeBlock[]; reason: string | null; reads: string[]; marks: ChangeBlock[] }
+// `blocks` and `marks` with whitespace changes shown, `ignoringWhitespace`'s
+// hidden as diff -b hides them.
+export interface RenameDiff {
+  before: string; blocks: ChangeBlock[]; reason: string | null; reads: string[]; marks: ChangeBlock[]
+  ignoringWhitespace: { blocks: ChangeBlock[]; marks: ChangeBlock[] }
+}
 
-export interface RenameDiffRequest { base: PrettyRequest; other: PrettyRequest; ignoreWhitespace: boolean }
+export interface RenameDiffRequest { base: PrettyRequest; other: PrettyRequest }
 
 // The two files a request names, a base's `path` and `hash` and the other
 // side's `otherPath` and `otherHash`, or null where either is no JavaScript
@@ -49,7 +62,7 @@ export function renameDiffRequest(params: URLSearchParams): RenameDiffRequest | 
     return extension !== null && RENAMABLE.has(extension) && FILE_HASH.test(hash) ? { path, hash, extension } : null
   }
   const base = side(params.get('path') ?? '', params.get('hash') ?? ''), other = side(params.get('otherPath') ?? '', params.get('otherHash') ?? '')
-  return base && other ? { base, other, ignoreWhitespace: params.get('ignoreWhitespace') === 'true' } : null
+  return base && other ? { base, other } : null
 }
 
 let activeDiffs = 0
@@ -82,13 +95,14 @@ async function inTurn<T>(deadline: number, work: () => Promise<T>): Promise<T> {
 }
 
 // Whether a worker's answer is one as rename-diff-worker.js gives it, its
-// blocks taking the old side it answered to the new one asked of: checked
-// again here, apart from the worker, as an answer that is not would hide a
-// change.
-function answers(diff: unknown, original: string, after: string, ignoreWhitespace: boolean): diff is RenameDiff {
-  const { before, blocks, reason, reads, marks } = (diff ?? {}) as Partial<RenameDiff>
-  return typeof before === 'string' && (reason === null || typeof reason === 'string') && blocksHold(before, after, blocks, ignoreWhitespace)
-    && Array.isArray(reads) && reads.every(read => typeof read === 'string') && marksFit(original, after, marks)
+// blocks taking the old side it answered to the new one asked of, whitespace
+// changes shown and hidden: checked again here, apart from the worker, as an
+// answer that is not would hide a change.
+function answers(diff: unknown, original: string, after: string): diff is RenameDiff {
+  const { before, blocks, reason, reads, marks, ignoringWhitespace } = (diff ?? {}) as Partial<RenameDiff>
+  return typeof before === 'string' && (reason === null || typeof reason === 'string') && Array.isArray(reads) && reads.every(read => typeof read === 'string')
+    && blocksHold(before, after, blocks, false) && marksFit(original, after, marks)
+    && blocksHold(before, after, ignoringWhitespace?.blocks, true) && marksFit(original, after, ignoringWhitespace?.marks)
 }
 
 // Whether marked blocks (rename-diff-worker.js) are blocks of the diff of the
@@ -110,12 +124,12 @@ function marksFit(before: string, after: string, marks: unknown): boolean {
 }
 
 // Settled once the worker is gone, so that its turn is given up only then.
-function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
+function inWorker(before: string, after: string, { base, other }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
   let worker: Worker
   try {
     worker = new Worker(new URL('./rename-diff-worker.js', import.meta.url), {
-      workerData: { before, after, extension: base.extension, otherExtension: other.extension, ignoreWhitespace }, execArgv: [],
+      workerData: { before, after, extension: base.extension, otherExtension: other.extension }, execArgv: [],
       resourceLimits: { maxOldGenerationSizeMb: 1024 },
     })
   } catch (err) {
@@ -126,7 +140,7 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
     let diff: RenameDiff | null = null, failure = new PrettyError(422, 'undiffable')
     const timer = setTimeout(() => { failure = new PrettyError(504, 'diff-timeout'); void worker.terminate() }, deadline - Date.now())
     worker.once('message', (answer: unknown) => {
-      if (answers(answer, before, after, ignoreWhitespace)) diff = answer
+      if (answers(answer, before, after)) diff = answer
       else console.warn('managed: a rename diff answered what does not take its old side to the new')
       void worker.terminate()
     })
@@ -160,6 +174,10 @@ const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: R
 // kept by their hashes where `keep`, readers asking for one meanwhile sharing
 // it. A minute for it, its wait for a worker included.
 export async function renameDiffOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep = true): Promise<OpenedBlob> {
+  return opened(await answerOf(request, texts, keep))
+}
+
+async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep: boolean): Promise<Buffer> {
   // Sides not kept are formatted again for each diff (pretty-print.ts), so
   // they are read in its turn: the files a Diff view asks for at once wait
   // here rather than being refused by the formats running. Within its minute
@@ -171,16 +189,16 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
       sides = await byDeadline(texts(), deadline)
       return inWorker(sides[0], sides[1], request, deadline)
     })
-    return opened(await encoded(diff, request, sides))
+    return encoded(diff, request, sides)
   }
   const [before, after] = await texts()
   // A file's type is part of how it is read: the same text as a script and as a module differ.
-  const key = `${request.base.hash}\0${request.base.extension}\0${request.other.hash}\0${request.other.extension}\0${request.ignoreWhitespace}`
+  const key = `${request.base.hash}\0${request.base.extension}\0${request.other.hash}\0${request.other.extension}`
   const found = kept.get(key)
   if (found) {
     kept.delete(key)
     kept.set(key, found)
-    return opened(found)
+    return found
   }
   let job = pending.get(key)
   if (!job) {
@@ -190,5 +208,50 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
   const body = await job
   kept.set(key, body)
   if (kept.size > KEPT_DIFFS) kept.delete(kept.keys().next().value!)
-  return opened(body)
+  return body
+}
+
+const decompress = promisify(brotliDecompress)
+
+// What a minifier renames, by its path's extension.
+const renamable = ({ extension }: PrettyRequest) => RENAMABLE.has(extension)
+
+// One of a comparison's pairs of files (renamedPairs), its sides named as a
+// request names them, with its answer as renameDiffOf sends it, or why it has
+// none, as a PrettyError tells it.
+export type RenamedLine = { path: string; hash: string; otherPath: string; otherHash: string } & (Partial<RenameDiff> | { error: string; status: number })
+
+// The pairs of JavaScript files minified on both sides that changed between a
+// comparison's two sides, paired as its viewer pairs them (computeBundleDiff:
+// at one path, or renamed, every file as of one package), each diffed as
+// renameDiffOf diffs it, from both sides' copies, kept or made, as they are
+// iterated: in path order, one after another, leaving a worker to the files a
+// viewer asks for alone (a pair it reads otherwise, one it shows first).
+export function renamedPairs([base, other]: readonly [ComparedSide, ComparedSide], keep = true): AsyncGenerator<RenamedLine> {
+  // Every file, those that can be formatted by their texts and the rest by their hashes.
+  const contents = ({ files, hashes }: ComparedSide) => {
+    const texts = new Map(files.map(file => [file.path, file.text]))
+    return new Map<string, unknown>([...hashes].map(([path, hash]) => [path, texts.get(path) ?? { format: 'digest', digest: hash }]))
+  }
+  const formattable = ({ files }: ComparedSide) => new Map(files.map(file => [file.path, file]))
+  const [olds, news] = [formattable(base), formattable(other)]
+  const pairs = computeBundleDiff(contents(base), contents(other), () => '.').files.changed.flatMap(({ path, basePath = path }) => {
+    const [from, to] = [olds.get(basePath), news.get(path)]
+    return from && to && from.hash !== to.hash && [from, to].every(file => renamable(file) && needsPrettyPrint(file.path, file.text)) ? [[from, to] as const] : []
+  }).toSorted(([, a], [, b]) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  return (async function* () {
+    for (const [from, to] of pairs) {
+      const request = { base: { path: from.path, hash: from.hash, extension: from.extension }, other: { path: to.path, hash: to.hash, extension: to.extension } }
+      const named = { path: from.path, hash: from.hash, otherPath: to.path, otherHash: to.hash }
+      const copy = async (side: ComparedSide, { text, ...file }: typeof from) => prettyText(await side.kept(file) ?? await side.made(file, text))
+      let body
+      try { body = await answerOf(request, async () => [await copy(base, from), await copy(other, to)], keep) }
+      catch (err) {
+        if (!(err instanceof PrettyError)) throw err
+        yield { ...named, error: err.message, status: err.status }
+        continue
+      }
+      yield { ...JSON.parse((await decompress(body)).toString('utf8')) as Partial<RenameDiff>, ...named }
+    }
+  })()
 }

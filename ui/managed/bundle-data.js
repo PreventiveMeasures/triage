@@ -200,13 +200,13 @@ export function fetchPrettyNpmChanges(name, version, otherVersion, onLine, { sig
 }
 
 // Pretty-printed files' lines, each told to `onLine` as it comes, a failed
-// one's error told as `message`; refused as `errors` name it.
-function requestPrettyLines(url, errors, onLine, signal) {
+// one's error told as `message`, as `told` names it; refused as `errors` name it.
+function requestPrettyLines(url, errors, onLine, signal, told = PRETTY_ERRORS) {
   return request(url, errors, async response => {
     const generation = managedAppState.generation
     for await (const { error, status, ...line } of responseLines(response)) {
       if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
-      await onLine(error ? { ...line, status, message: PRETTY_ERRORS[error] ?? PRETTY_ERRORS[status] ?? `Request failed (${status})` } : line)
+      await onLine(error ? { ...line, status, message: told[error] ?? told[status] ?? `Request failed (${status})` } : line)
     }
   }, signal)
 }
@@ -220,17 +220,29 @@ const RENAME_DIFF_ERRORS = {
 }
 
 // A JavaScript file diffed by the server with one of another bundle or
-// version, both pretty-printed, renamed names hidden: its change blocks and
-// the removed lines left out as renamed (rename-diff.js). `params` name both
-// files, a base's `path` and `hash`, the other's `otherPath` and `otherHash`.
+// version, both pretty-printed, renamed names hidden, whitespace changes shown
+// and hidden: its change blocks and the removed lines left out as renamed
+// (rename-diff.js). `params` name both files, a base's `path` and `hash`, the
+// other's `otherPath` and `otherHash`.
 const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, response => response.json(), signal)
 
-export function fetchBundleRenameDiff(id, other, { path, hash, otherPath, otherHash, ignoreWhitespace }, { signal } = {}) {
-  const params = new URLSearchParams({ path, hash, other, otherPath, otherHash, ignoreWhitespace: String(ignoreWhitespace) })
-  return requestRenameDiff(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${params}`, signal)
+export function fetchBundleRenameDiff(id, other, { path, hash, otherPath, otherHash }, { signal } = {}) {
+  return requestRenameDiff(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${new URLSearchParams({ path, hash, other, otherPath, otherHash })}`, signal)
 }
 
-export function fetchNpmRenameDiff(name, version, otherVersion, { path, hash, otherPath, otherHash, ignoreWhitespace }, { signal } = {}) {
-  const params = new URLSearchParams({ name, version, path, hash, otherVersion, otherPath, otherHash, ignoreWhitespace: String(ignoreWhitespace) })
-  return requestRenameDiff(`/api/npm/rename-diff?${params}`, signal)
+export function fetchNpmRenameDiff(name, version, otherVersion, { path, hash, otherPath, otherHash }, { signal } = {}) {
+  return requestRenameDiff(`/api/npm/rename-diff?${new URLSearchParams({ name, version, path, hash, otherVersion, otherPath, otherHash })}`, signal)
+}
+
+// Every pair of JavaScript files two bundles, or two versions of a package,
+// are diffed by so, in one request: `onLine` called with each as it is worked
+// out, in path order, the answer for one asked about alone with both files'
+// paths, or `{ path, hash, otherPath, otherHash, status, message }` where it
+// has none.
+export function fetchBundleRenameDiffs(id, other, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
+}
+
+export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signal } = {}) {
+  return requestPrettyLines(`/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
 }

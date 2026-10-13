@@ -33,7 +33,7 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markedCounts, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
@@ -46,7 +46,7 @@ import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
-import { forgetRenameDiffs, paintingRenameDiffs, renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
+import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -567,22 +567,22 @@ export class BundleCompareCode extends LitElement {
   // What came for the view (printed copies, the server's diffs), counted, so
   // the tree counts its files again (_shownCounts).
   _arrived = 0
+  // Whether the file drawn asks for its diff with renamed names hidden alone,
+  // while its comparison's come (rename-diff.js): the one this view shows.
+  _renamesAlone = true
   _repaint = () => {
     this._arrived++
     if (this.isConnected) this.requestUpdate()
   }
 
-  // The renamed names this view wants are those each paint asks for (rename-diff.js).
   disconnectedCallback() {
     super.disconnectedCallback()
-    forgetRenameDiffs()
     clearTimeout(this._countLater)
     clearTimeout(this._searchLater)
     this._countLater = this._searchLater = null
   }
 
   render() {
-    paintingRenameDiffs()
     const rail = this._railState()
     const current = this._entries.has(this.path) ? this.path : rail.order[0] ?? null
     if (current && current !== this._current) this._reveal(current, rail.prefix)
@@ -903,7 +903,8 @@ export class BundleCompareCode extends LitElement {
   // A file's lines added and removed as its diff draws them (_shownCounts),
   // else as published: `=` for one renamed, or recorded otherwise, as it was,
   // and `≈` for one whose changes the settings drawing it set aside, all of
-  // them; the counts as published told where they differ.
+  // them, or marked as differing in renamed names alone; the counts as
+  // published told where they differ, and the lines marked.
   _treeCounts(path, entry) {
     if (entry.kind === 'repointed') return nothing
     const published = this._lineCounts(path, entry)
@@ -911,7 +912,8 @@ export class BundleCompareCode extends LitElement {
     if (!published || shown === undefined) return nothing
     const { additions, deletions } = shown ?? published
     const changed = published.additions > 0 || published.deletions > 0, renamed = entry.kind === 'renamed'
-    const aside = shown ? `${shown.aside.join(', ')}\nAs published: +${published.additions.toLocaleString()} −${published.deletions.toLocaleString()}` : null
+    const marked = shown?.renamed > 0 ? `\n≈${shown.renamed.toLocaleString()} lines differing in renamed names alone, marked` : ''
+    const aside = shown ? `${shown.aside.join(', ')}${marked}\nAs published: +${published.additions.toLocaleString()} −${published.deletions.toLocaleString()}` : null
     if (additions === 0 && deletions === 0) {
       if ((renamed || entry.modified === false) && !changed) return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
       if (shown && changed) {
@@ -934,33 +936,27 @@ export class BundleCompareCode extends LitElement {
   // A file's lines added and removed as its diff draws them where a setting
   // draws it otherwise than as published (_fileState counting): printed where
   // the toggle prints it, its whitespace or renamed names hidden, with those
-  // settings (`aside`). Null where none does, or till its copies or the
-  // server's diff come, or where it is too large to diff unasked: counted as
-  // published then. Kept for the settings and what came for the view since
-  // (`_arrived`); undefined where the tree's budget is spent (_lineCounts),
-  // to be counted on a later render.
+  // settings (`aside`), and lines differing in renamed names alone marked,
+  // counted apart (`renamed`), as its head counts them (_fileFigures). Null
+  // where none does, or till its copies come, or where it is too large to
+  // diff unasked: counted as published then. Kept for the settings and what
+  // came for the view since (`_arrived`); undefined where the tree's budget
+  // is spent (_lineCounts), to be counted on a later render.
   _shownCounts(path, entry) {
     if (!(state.bundleSourcePretty || prefs.ignoreWhitespace || prefs.ignoreRenames)) return null
     const settings = `${!!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${this._arrived}\0${this._forced.size}`
     const kept = this._drawnCounts.get(path)
-    // The server's diff it was counted from asked for again on every paint, as
-    // a file drawn asks for its own, so none the tree counts is dropped
-    // (rename-diff.js) and asked for anew.
-    if (kept?.settings === settings) {
-      kept.ask?.()
-      return kept.counts
-    }
+    if (kept?.settings === settings) return kept.counts
     const now = performance.now()
     this._countUntil ??= now + COUNT_BUDGET_MS
     if (now > this._countUntil) {
       this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
       return undefined
     }
-    const { pretty, hiding, model, spacesHidden, ask = null } = this._countingState(path, entry)
+    const { pretty, hiding, model, spacesHidden } = this._countingState(path, entry)
     const aside = [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES].filter(Boolean)
-    const counts = model && aside.length > 0 ? model.blocks.reduce((sum, { a0, a1, b0, b1 }) => ({ ...sum, additions: sum.additions + b1 - b0, deletions: sum.deletions + a1 - a0 }),
-      { additions: 0, deletions: 0, aside }) : null
-    this._drawnCounts.set(path, { settings, counts, ask })
+    const counts = model && aside.length > 0 ? { additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside } : null
+    this._drawnCounts.set(path, { settings, counts })
     return counts
   }
 
@@ -1011,7 +1007,8 @@ export class BundleCompareCode extends LitElement {
     const given = options.changes?.blocks ?? options.marks ?? null
     const kept = this._countModels.get(key)
     if (kept?.before === before && kept.after === after && kept.given === given) return kept.model
-    const model = { blocks: options.changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace) }
+    const blocks = options.changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
+    const model = { blocks, ...markedCounts(blocks, options.marks) }
     this._countModels.set(key, { model, before, after, given })
     return model
   }
@@ -1019,10 +1016,11 @@ export class BundleCompareCode extends LitElement {
   // A file's two sides, pretty-printed where the toggle has them so, and its
   // line model where it has one to draw: none for a file that is not text,
   // nor for one too large to diff unasked. `counting`, for the tree's counts
-  // (_shownCounts), finds its change blocks alone, kept apart from the models
-  // drawn (_counts), asks for renamed names only where they are hidden, and
-  // leaves alone what a file drawn sets: a hit sought, the search's blocks,
-  // whether hiding whitespace would hide any.
+  // (_shownCounts), finds its change blocks alone, and those marked, kept
+  // apart from the models drawn (_counts), and leaves alone what a file drawn
+  // sets: a hit sought, the search's blocks, whether hiding whitespace would
+  // hide any. A file drawn first asks for its renamed names alone while its
+  // comparison's come (_renamesAlone).
   _fileState(path, entry, counting = false) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
@@ -1044,8 +1042,9 @@ export class BundleCompareCode extends LitElement {
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
-      const ask = () => renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes)
-      const changes = renames && !large && (!counting || prefs.ignoreRenames) ? ask() : null
+      const ask = () => renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes,
+        !counting && this._renamesAlone)
+      const changes = renames && !large ? ask() : null
       const ready = changes?.status === 'ready'
       const hiding = ready && prefs.ignoreRenames
       const marked = ready && !hiding
@@ -1065,7 +1064,7 @@ export class BundleCompareCode extends LitElement {
       const options = hiding ? { changes: { blocks: changes.blocks } } : marked ? { marks: changes.marks } : {}
       const model = textual && !large && (!changes || ready || !prefs.ignoreRenames)
         ? (counting ? this._counts(key, shown, after, options, ignoreWhitespace) : this._model(key, shown, after, options, ignoreWhitespace)) : null
-      return { key, changes, warned, renamed, hiding, shown, model, ignoreWhitespace, ask: changes ? ask : null }
+      return { key, changes, warned, renamed, hiding, shown, model, ignoreWhitespace }
     }
     // Whitespace changes are hidden as diff -b hides them, only in a file whose
     // whitespace means nothing, on both sides (whitespaceInsensitive), and not
@@ -1076,7 +1075,7 @@ export class BundleCompareCode extends LitElement {
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
     if (mixed) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
-    if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace, ask: found.ask }
+    if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace }
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // The texts as published diffed as the search diffs them (_searchResults):
     // their blocks kept for it, not found again, however large.
