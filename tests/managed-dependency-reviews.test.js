@@ -38,6 +38,10 @@ test('legacy notes become one editable note when continuing, without rewriting f
     .run('whole-note', review.id, null, null, 'Only the final comment is supported.', 200), /NOT NULL/u)
   raw.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, status, comment, time) VALUES (?, ?, ?, ?, ?, ?)')
     .run('legacy-note', review.id, 'index.js', 'accept-with-nits', 'Second concern.', 200)
+  for (const file of ['index.js', 'unchecked.js']) {
+    raw.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, status, comment, time) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(`unchecked-${file}`, review.id, file, null, 'Hidden unchecked note.', 200)
+  }
   const db = openSqliteManagedDb(path)
   t.after(() => db.close())
   const frozen = (await db.listDependencyReviews(reviewContext, session.userId))[0]
@@ -51,11 +55,15 @@ test('legacy notes become one editable note when continuing, without rewriting f
   assert.equal(continued.entries.length, 1)
   assert.equal(continued.verdictLimit, 'accept')
   assert.equal(continued.entries[0].comment, 'Both resolved.')
-  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 4)
   assert.deepEqual((await db.listDependencyReviews(reviewContext, session.userId)).find(row => row.id === review.id).entries, frozen.entries)
+  continued = await db.changeDependencyReview(reviewContext, sid, { action: 'save', reviewId: continued.id, revision: continued.revision,
+    entryId: continued.entries[0].id, entry: { file: 'index.js', status: null, comment: 'Do not retain this note.' } }, 600)
+  assert.deepEqual(continued.entries, [])
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(continued.id).n, 0)
   await db.discardDependencyReview(sid, continued.id, continued.revision)
   assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(continued.id).n, 0)
-  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 4)
   raw.prepare('UPDATE managed_dependency_review SET files = ? WHERE id = ?').run(JSON.stringify(['index.js']), review.id)
   const legacy = (await db.listOwnDependencyReviews(session.userId, null)).reviews.find(row => row.id === review.id)
   assert.equal(legacy.coverage, 'partial', 'a historical snapshot without file type evidence cannot certify a full review')

@@ -61,11 +61,12 @@ export class DependencyReviewList extends LitElement {
     this._expanded = expanded
   }
   _details(review) {
+    const entries = review.entries.filter(entry => entry.status)
     return html`<section id=${`review-details-${review.id}`} class="dependency-review-details" aria-label=${`Details for ${reviewTitle(review)}`}>
       ${review.comment ? html`<div class="dependency-review-final-note" role="note" aria-label="Final note">${reviewNote(review.comment)}</div>` : nothing}
-      ${review.entries.length > 0 ? html`<ul class="dependency-review-entries">${review.entries.map(entry => html`<li>
+      ${entries.length > 0 ? html`<ul class="dependency-review-entries">${entries.map(entry => html`<li>
         <span class="dependency-review-entry-file">${sourceFileIcon(entry.file)}<span>${entry.file}</span></span>
-        ${entry.status ? verdictLabel(entry.status) : html`<span></span>`}
+        ${verdictLabel(entry.status)}
         <div>${reviewNote(entry.comment)}</div></li>`)}</ul>` : html`<p class="npm-review-muted">No file reviews yet.</p>`}
     </section>`
   }
@@ -73,7 +74,7 @@ export class DependencyReviewList extends LitElement {
     const route = dependencyReviewRoute(review)
     const expanded = this._expanded.has(review.id), published = review.publishedAt !== null
     const checked = new Set(review.entries.filter(entry => entry.status).map(entry => entry.file)).size
-    const notes = review.entries.filter(entry => entry.comment.trim()).length + Number(Boolean(review.comment.trim()))
+    const notes = review.entries.filter(entry => entry.status && entry.comment.trim()).length + Number(Boolean(review.comment.trim()))
     const open = event => {
         if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {
           event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
@@ -117,10 +118,10 @@ export class DependencyReviewList extends LitElement {
       <p>Your private work and the reviews you’ve shared with teams.</p>
       ${this._error ? html`<p role="alert">${this._error}</p>` : nothing}
       ${!this._loading && !this._error && this._reviews.length === 0 ? html`<p>No reviews yet. Open a package’s Review tab to begin.</p>` : nothing}
-      ${[['In progress', false], ['Published reviews', true]].map(([label, published]) => {
+      ${[['Drafts', false], ['Published reviews', true]].map(([label, published]) => {
         const reviews = this._reviews.filter(review => (review.publishedAt !== null) === published)
         return html`<section class="dependency-review-section"><h2>${label}<span class="npm-review-count">${reviews.length}</span></h2>
-          <ol>${reviews.map(review => this._row(review))}</ol>${reviews.length === 0 && !this._loading ? html`<p class="npm-review-muted">${published ? 'No published reviews yet.' : 'No reviews in progress.'}</p>` : nothing}</section>`
+          <ol>${reviews.map(review => this._row(review))}</ol>${reviews.length === 0 && !this._loading ? html`<p class="npm-review-muted">${published ? 'No published reviews yet.' : 'No drafts.'}</p>` : nothing}</section>`
       })}
       ${this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading || Boolean(this._discarding)} @click=${() => this._load(true)}>Load more</button>` : nothing}
     </section>`

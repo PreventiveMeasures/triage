@@ -870,7 +870,7 @@ export class BundleCompareCode extends LitElement {
           this._open.set(child.path, expanded)
           if (this.extensions?.treePageSize) this.requestUpdate()
         }}>
-          <summary aria-label=${this.extensions?.directoryLabel?.(compact.node) ?? nothing} @click=${e => { this._open.set(child.path, !e.currentTarget.parentElement.open); this.requestUpdate() }}>
+          <summary aria-label=${this.extensions?.directoryLabel?.(compact.node) ?? nothing}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
             ${pkg ? sourcePackageIcon(pkg.ecosystem) : nothing}
             <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored, 'bundle-compare-code-name': true, removed: dirKind === 'removed' })}

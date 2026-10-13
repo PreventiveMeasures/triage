@@ -88,12 +88,14 @@ test('only non-revoked full published accepting reviews have an audit export, in
   for (const patch of [{ publishedAt: null }, { revokedAt: 200 }, { coverage: 'partial' }, { status: 'request-changes' }, { status: 'reject' }]) {
     assert.equal(auditMarkdown({ ...review, ...patch }), null)
   }
-  assert.equal(auditMarkdown({ ...review, status: 'accept-with-nits', entries: [{ file: 'src/a.js', comment: 'Keep compatibility.' }], comment: 'Ready to update.' }),
+  assert.equal(auditMarkdown({ ...review, status: 'accept-with-nits', entries: [{ file: 'src/a.js', status: 'accept-with-nits', comment: 'Keep compatibility.' }], comment: 'Ready to update.' }),
     'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n* In src/a.js: Keep compatibility.\n* Ready to update.')
 })
 test('audit notes split star lists, repeat the file prefix, and omit prefixes for the final note', () => {
   const output = auditMarkdown({ ...review, entries: [
-    { file: 'crc.js', comment: '* Can we make it faster?\n* Keep the current behavior.' },
+    { file: 'crc.js', status: 'accept-with-nits', comment: '* Can we make it faster?\n* Keep the current behavior.' },
+    { file: 'unchecked.js', status: null, comment: 'Hidden legacy note.' },
+    { file: 'empty.js', status: 'accept', comment: '   ' },
   ], comment: '* Ready to update.\n* Follow up next week.' })
   assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
     + '* In crc.js: Can we make it faster?\n* In crc.js: Keep the current behavior.\n'
@@ -101,9 +103,9 @@ test('audit notes split star lists, repeat the file prefix, and omit prefixes fo
 })
 test('audit notes preserve multiline text and escaping while splitting indented CRLF lists', () => {
   const output = auditMarkdown({ ...review, entries: [
-    { file: 'a[1].js', comment: 'Context with a * b.\r\n  * First note\r\ncontinued.\r\n\t* Second `note`.\r\n*   ' },
+    { file: 'a[1].js', status: 'accept-with-nits', comment: 'Context with a * b.\r\n  * First note\r\ncontinued.\r\n\t* Second `note`.\r\n*   ' },
   ], comment: '   ' })
   assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
     + '* In a\\[1\\].js: Context with a \\* b.\n* In a\\[1\\].js: First note\n  continued.\n* In a\\[1\\].js: Second \\`note\\`.')
-  assert.equal(auditMarkdown({ ...review, entries: [{ file: 'crc.js', comment: '*  \n*  ' }] }), auditMarkdown(review))
+  assert.equal(auditMarkdown({ ...review, entries: [{ file: 'crc.js', status: 'accept-with-nits', comment: '*  \n*  ' }] }), auditMarkdown(review))
 })

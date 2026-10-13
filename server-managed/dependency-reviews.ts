@@ -76,6 +76,7 @@ const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') 
 function fileEntries(entries: ReviewEntry[]): ReviewEntry[] {
   const files = new Map<string, ReviewEntry>(), verdicts = Object.keys(REVIEW_VERDICTS)
   for (const entry of entries) {
+    if (entry.status === null) continue
     const current = files.get(entry.file)
     if (!current) { files.set(entry.file, { ...entry }); continue }
     current.comment = [current.comment, entry.comment].filter(Boolean).join('\n\n')
@@ -150,7 +151,9 @@ async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, re
   const existing = await db.prepare(`SELECT id FROM managed_dependency_file_review
     WHERE review_id = ? AND file = ? ORDER BY time, id`).all(reviewId, entry.file) as { id: string }[]
   if (requestedId && !existing.some(row => row.id === requestedId)) return conflict()
-  if (existing.length > 0) {
+  if (entry.status === null) {
+    await db.prepare('DELETE FROM managed_dependency_file_review WHERE review_id = ? AND file = ?').run(reviewId, entry.file)
+  } else if (existing.length > 0) {
     const entryId = existing[0]!.id
     await db.prepare('UPDATE managed_dependency_file_review SET comment = ?, status = ?, time = ? WHERE id = ?')
       .run(entry.comment, entry.status, now, entryId)
@@ -234,6 +237,7 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         await publish(db, current, user.id, change, now)
       } else {
         if (current?.publishedAt != null) return conflict()
+        if (change.entry.status === null && !change.entryId) throw new ManagedMutationError(400, 'bad-review')
         if (id) await db.prepare('UPDATE managed_dependency_review SET time = ?, revision = revision + 1 WHERE id = ?').run(now, id)
         else { if (change.entryId) return conflict(); id = await create() }
         await saveFile(db, id, change.entry, change.entryId, now)

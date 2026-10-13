@@ -76,7 +76,7 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   font-size: .68rem;
   }
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
-.npm-review-badge { display: inline-flex; padding: .1rem .4rem; }
+.npm-review-badge { display: inline-flex; padding: .1rem .4rem; cursor: default; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
 npm-review .npm-review-filters button {
   padding: 0; border: 0; background: transparent; min-height: 1.4rem; color: var(--muted); font-size: .68rem;
@@ -170,6 +170,11 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .npm-review-dialog-body .npm-review-help { display: block; font-weight: 400; margin-top: .4rem; }
 .npm-review-dialog-body .npm-review-error { padding: 0; }
 .npm-review-publish-form { display: flex; flex: 1; flex-direction: column; }
+.npm-review-publish-notes {
+  list-style: none; margin-top: .5rem; max-height: min(30dvh, 16rem); overflow: auto; overscroll-behavior: contain;
+  }
+.npm-review-publish-notes > li + li { margin-top: .65rem; }
+.npm-review-publish-notes .npm-review-note { margin-block: .2rem 0; }
 .npm-review-coverage { padding: .8rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--surface); }
 .npm-review-coverage > div:first-child { justify-content: space-between; align-items: baseline; gap: .5rem; }
 .npm-review-coverage > div:first-child > span { color: var(--muted); font-size: .7rem; }

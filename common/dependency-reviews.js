@@ -76,6 +76,6 @@ export function auditMarkdown(review) {
   const dependency = review.basePackage === null ? target
     : review.basePackage === review.package ? `${review.package} ${review.baseVersion} -> ${review.version} ${review.integrity}`
     : `${review.basePackage} ${review.baseVersion} -> ${target}`
-  const notes = [...review.entries.flatMap(entry => auditNotes(entry.comment, `In ${markdownText(entry.file)}: `)), ...auditNotes(review.comment)]
+  const notes = [...review.entries.filter(entry => entry.status).flatMap(entry => auditNotes(entry.comment, `In ${markdownText(entry.file)}: `)), ...auditNotes(review.comment)]
   return `Audited:\n\`\`\`\n${dependency}\n\`\`\`${notes.length > 0 ? `\n\nNotes:\n${notes.join('\n')}` : ''}`
 }
