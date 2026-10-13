@@ -3,7 +3,8 @@ import { langForPath } from '../../common/code-language.js'
 
 const pythonMark = svg`<path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#3776ab"/><path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#ffd43b" transform="rotate(180 8 8)"/><circle cx="6" cy="2.8" r=".65" fill="#fff"/><circle cx="10" cy="13.2" r=".65" fill="#fff"/>`
 
-const rustMark = svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 1.6.4v2l-1.6.4-.5 1.3.9 1.4-1.4 1.4-1.4-.9-1.3.5-.4 1.6H7l-.4-1.6-1.3-.5-1.4.9-1.4-1.4.9-1.4-.5-1.3L1.3 9V7l1.6-.4.5-1.3-.9-1.4 1.4-1.4 1.4.9 1.3-.5Z" fill="#c97d5d"/><circle cx="8" cy="8" r="4.4" fill="var(--surface, #fff)"/><text x="8" y="10.8" text-anchor="middle" fill="currentColor" font-family="serif" font-size="8" font-weight="700">R</text>`
+// Rust's: an R in a gear, the gear's middle cut through to whatever it sits on.
+const rustMark = svg`<path d="M6.42 2.11 6.81 .49 9.19 .49 9.58 2.11 11.05 2.72 12.47 1.85 14.15 3.53 13.28 4.95 13.89 6.42 15.51 6.81 15.51 9.19 13.89 9.58 13.28 11.05 14.15 12.47 12.47 14.15 11.05 13.28 9.58 13.89 9.19 15.51 6.81 15.51 6.42 13.89 4.95 13.28 3.53 14.15 1.85 12.47 2.72 11.05 2.11 9.58 .49 9.19 .49 6.81 2.11 6.42 2.72 4.95 1.85 3.53 3.53 1.85 4.95 2.72ZM8 3.7a4.3 4.3 0 1 0 0 8.6 4.3 4.3 0 1 0 0 -8.6Z" fill="#c97d5d" fill-rule="evenodd"/><text x="8" y="10.8" text-anchor="middle" fill="currentColor" font-family="serif" font-size="8" font-weight="700">R</text>`
 /*!
  * PHP elephant adapted from Material Icon Theme:
  * https://github.com/material-extensions/vscode-material-icon-theme/blob/main/icons/php_elephant.svg
