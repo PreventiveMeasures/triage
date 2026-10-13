@@ -643,9 +643,9 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
 
 // Pretty-print toggle for a source viewer's bar, on a minified file the
 // server can format (pretty-source.js): busy while its copy is asked for, and
-// saying why where it failed. Last in the bar, after the wrap toggle, as
-// pressing it can hide that toggle and changes the lines, size and findings
-// shown before them, so it stays where it was pressed.
+// saying why where it failed. After the wrap toggle, which pressing it can
+// hide; in the Code tab's bar, before the file's stats, which keep room for
+// its copy's (renderBundleCodeMain).
 function renderPrettyToggle(copy) {
   const status = copy?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
@@ -1571,18 +1571,26 @@ function renderBundleCodeFileNav(history) {
   </span>`
 }
 
+// A text's lines and size, as the Code tab's bar tells a file's.
+function textStats(text) {
+  const lines = text.split('\n').length
+  return `${lines.toLocaleString()} ${lines === 1 ? 'line' : 'lines'} · ${formatBytes(utf8ByteLength(text))}`
+}
+
 // Main pane of the Code slide — header bar (path + copy button + GitHub
-// link where the file's location is known + pretty-print toggle on a
-// minified file + file stats + issue stepper) over the shared source-viewer body.
-// The stepper cycles the side panel through the open file's
-// findings in line order; its (idx, line) pairs ride in a JSON
-// attribute so the events.js delegate steps without re-deriving
-// the per-file findings. A pretty-printed copy (viewedSource) has its own stats.
+// link where the file's location is known + issue stepper + wrap toggle +
+// pretty-print toggle on a minified file + file stats) over the shared
+// source-viewer body. The stepper cycles the side panel through the open
+// file's findings in line order; its (idx, line) pairs ride in a JSON
+// attribute so the events.js delegate steps without re-deriving the
+// per-file findings. A pretty-printed copy (viewedSource) has its own stats;
+// where the file can be pretty-printed, the stats keep room for the file's
+// own and three characters more (`.bundle-code-main-stats-room`), right-
+// aligned, so pressing the toggle, whose copy has more lines and bytes,
+// moves neither toggle. The stepper comes first, as a copy has no findings.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
   const { pretty, toggle, content, fileFindings, lineFindings } = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
-  const lineCount = typeof content === 'string' ? content.split('\n').length : 0
-  const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1600,9 +1608,6 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${typeof content === 'string'
-        ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
-        : nothing}
       ${fileFindings.length > 0 ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
@@ -1626,6 +1631,8 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       </span>` : nothing}
       ${renderSourceWrapToggle()}
       ${toggle}
+      ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
+        : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
       ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,

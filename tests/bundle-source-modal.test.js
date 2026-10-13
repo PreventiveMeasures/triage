@@ -480,7 +480,7 @@ test('Code file header links a file to GitHub after copy where its package or bu
   assert.ok(!header('node_modules/no-repo/index.js').includes('bundle-code-github-link'), 'no repository shows no link')
 })
 
-test('Code offers a managed bundle\'s minified code pretty-printed, last in its bar, after its lines, size and wrap toggle', () => {
+test('Code offers a managed bundle\'s minified code pretty-printed, after the wrap toggle, before the stats, which keep room for its copy\'s', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }
   const header = (entry, file) => {
@@ -492,9 +492,12 @@ test('Code offers a managed bundle\'s minified code pretty-printed, last in its 
   const managed = { name: 'app.map', integrity: 'sha512-pretty-managed', managedId: 'b1' }
   const offered = header(managed, 'dist/app.min.js')
   assert.match(offered, /data-bundle-source-pretty[^>]*aria-pressed=false[^>]*aria-label="Pretty-print"/su)
-  assert.match(offered, /bundle-code-main-stats.*data-bundle-source-wrap.*data-bundle-source-pretty[^<]*<svg[^]*?<\/svg><\/button>\s*$/su,
-    'last, after what pressing it can hide or change: the lines and size, and the wrap toggle')
-  assert.ok(!header(managed, 'src/index.js').includes('data-bundle-source-pretty'), 'readable code is not offered it')
+  assert.match(offered, /data-bundle-source-wrap.*data-bundle-source-pretty.*bundle-code-main-stats/su, 'wrap, pretty-print, then the lines and size')
+  assert.match(offered, /<span class="bundle-code-main-stats"><span class="bundle-code-main-stats-room" aria-hidden="true">2 lines · 1\.6 KiB<\/span><span>2 lines · 1\.6 KiB<\/span><\/span>/u,
+    'room kept for the stats as the file has them, which a copy\'s are shown in')
+  const readable = header(managed, 'src/index.js')
+  assert.ok(!readable.includes('data-bundle-source-pretty'), 'readable code is not offered it')
+  assert.match(readable, /<span class="bundle-code-main-stats"><span>2 lines · 19 B<\/span><\/span>/u, 'nor room kept')
 })
 
 test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, after the wrap toggle', () => {
