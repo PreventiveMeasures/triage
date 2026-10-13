@@ -483,13 +483,19 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
     { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
       { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
-      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
+      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'minimist', version: '0.0.8', source: 'registry' },
+      { name: 'minimist', version: '1.2.5', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
     ] },
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
     { type: 'advisories', repo: first!.id, path: 'package-lock.json', advisories: [
       advisory('event-stream', 'GHSA-mh6f-8j2x-4483', 'Critical severity vulnerability that affects event-stream and flatmap-stream', 'critical', ['CWE-506'], '=3.3.6', ['3.3.6']),
       advisory('lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', ['CWE-77', 'CWE-94'], '<4.17.21', []),
+      // npm answers an advisory once a range it covers.
+      advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '<0.2.4', ['0.0.8']),
+      advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '>=1.0.0 <1.2.6', ['1.2.5']),
     ].filter(row => row.versions.length > 0) },
+    risk('minimist', '0.0.8', []),
+    risk('minimist', '1.2.5', []),
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
     { type: 'repo', id: second!.id, commit, lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }] },
     { type: 'lockfile', repo: second!.id, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [

@@ -247,23 +247,27 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // A lockfile's advisories, each kept once by its id and package, and of
-  // malware, marked on the packages of the versions it names.
+  // A lockfile's advisories, each kept once by its id and package: npm
+  // answers one a range it covers, here its ranges and versions together,
+  // and malware if any says so (npm-insights.ts merges them alike). Malware's
+  // marked on the packages of the versions it names.
   _applyAdvisories(line) {
     const repo = this._repos.get(line.repo)
     const lockfile = repo?.lockfiles?.get(line.path)
     if (!lockfile) return
     if (line.error) { lockfile.advisoriesError = line.error; return }
     const usedIn = `${repo.fullName}/${line.path}`
-    for (const advisory of line.advisories) {
+    for (const { range, versions, ...advisory } of line.advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
-      if (!row) this._advisories.set(key, row = { ...advisory, versions: new Set(), usedIn: new Set() })
-      for (const version of advisory.versions) row.versions.add(version)
+      if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set() })
+      if (range) row.ranges.add(range)
+      for (const version of versions) row.versions.add(version)
+      row.malware ||= advisory.malware
       row.usedIn.add(usedIn)
-      if (!advisory.malware) continue
+      if (!row.malware) continue
       for (const pkg of this._packages.values()) {
-        if (assessable(pkg.source) && pkg.name === advisory.name && advisory.versions.includes(pkg.version)) (pkg.malware ??= new Set()).add(advisory.id)
+        if (assessable(pkg.source) && pkg.name === row.name && row.versions.has(pkg.version)) (pkg.malware ??= new Set()).add(row.id)
       }
     }
   }
@@ -452,7 +456,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         : severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : nothing}</td>
       <td class="mono">${isHttpUrl(row.url) ? html`<a href=${row.url} target="_blank" rel="noopener noreferrer">${row.id}</a>` : row.id}</td>
       <td><span class="risk-clip" data-tooltip-truncated data-tooltip=${row.title ?? nothing}>${row.title ?? ''}</span></td>
-      <td class="mono">${row.range ?? ''}</td>
+      <td class="mono">${[...row.ranges].join(' || ')}</td>
       <td>${usedInCell(row.usedIn)}</td>
     </tr>`
   }
