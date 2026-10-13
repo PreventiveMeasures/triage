@@ -1062,6 +1062,18 @@ test('however long the search\'s scan takes, each render diffs a file more, and 
   clearTimeout(element._searchLater)
 })
 
+test('the Diff view draws the models Compare found counting its rows, not found again', async () => {
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const code = view()
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'resolutions', 'baseName', 'otherName']) all[name] = code[name]
+  const { models } = combinedDiffRows(code.base, code.other, code.files)
+  assert.ok(models.size > 0)
+  all.models = models
+  all.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions'], ['models']]))
+  for (const [path, model] of models) assert.equal(all._fileState(path, all._entries.get(path)).model, model, path)
+})
+
 test('the one list\'s search leaves out a file it shows only the imports of: its source isn\'t there to open at', async () => {
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const code = view()
@@ -1931,6 +1943,21 @@ test('a rename diff that failed for a reason that may pass paints the view opene
   for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(shown.render())); i++) await new Promise(resolve => { wait(resolve, 5) })
   assert.equal(renameDiffs.length, asked + 1, 'asked again then')
   assert.match(renderText(shown.render()), /diff-row del renamed/u, 'and marked')
+})
+
+test('a file\'s line model is found again where its texts, or the blocks or marks the server gave, differ: never drawn for other lines', () => {
+  const element = view()
+  const first = element._model('k', 'a\nb\n', 'a\nc\n')
+  assert.equal(element._model('k', 'a\nb\n', 'a\nc\n'), first, 'kept for the same texts')
+  // A copy printed again: its own lines drawn, not those of the copy before.
+  const reprinted = element._model('k', 'a\nb\n', 'a\nd\n')
+  assert.deepEqual(reprinted.b, ['a', 'd'])
+  // Another diff of the same texts: its own marks drawn.
+  const marks = [{ a0: 1, a1: 2, b0: 1, b1: 2 }]
+  const marked = element._model('k', 'a\nb\n', 'a\nd\n', { marks })
+  assert.notEqual(marked, reprinted, 'found again with the marks given')
+  assert.equal(element._model('k', 'a\nb\n', 'a\nd\n', { marks }), marked, 'kept for the same marks')
+  assert.notEqual(element._model('k', 'a\nb\n', 'a\nd\n', { marks: [...marks] }), marked, 'found again for another diff\'s')
 })
 
 test('a view gone is not painted again as a rename diff it asked for comes, so asks for none again', async t => {

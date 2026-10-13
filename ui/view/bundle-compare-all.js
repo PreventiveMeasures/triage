@@ -61,7 +61,8 @@ class BundleCompareAll extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
   // Every file's model is drawn on every render, so all are kept for the
-  // comparison, starting from those Compare found counting its rows.
+  // comparison, starting from those Compare found counting its rows, each
+  // with the texts it was found from (_model).
   constructor() {
     super()
     this.models = null
@@ -71,7 +72,14 @@ class BundleCompareAll extends BundleCompareCode {
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
+    if (changed.has('models')) {
+      for (const [path, model] of this.models ?? []) {
+        const entry = this._entries.get(path)
+        if (!entry) continue
+        const { before, after } = fileContents(this.base, this.other, path, entry)
+        this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), { model, before, after, given: null })
+      }
+    }
     // A new comparison starts from its first files, not from the file the
     // last one was scrolled to.
     if (changed.has('files')) {

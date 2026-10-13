@@ -929,17 +929,21 @@ export class BundleCompareCode extends LitElement {
 
   // `options` as lineDiff takes them: the server's blocks, with renamed names
   // hidden, or those it marks (rename-diff.js); found with whitespace changes
-  // hidden or not as `ignoreWhitespace` is.
+  // hidden or not as `ignoreWhitespace` is. Kept by `key` with the texts and
+  // the blocks or marks it was found from, and found again where any differ
+  // (a copy printed again, another diff of it): never drawn for other lines
+  // than its own.
   _model(key, before, after, options = {}, ignoreWhitespace = prefs.ignoreWhitespace) {
+    const given = options.changes?.blocks ?? options.marks ?? null
     // Re-inserted on every use, so the cache drops the least recent.
-    let model = this._models.get(key)
+    let kept = this._models.get(key)
     this._models.delete(key)
-    if (!model) {
-      model = lineDiff(before, after, { ...options, ignoreWhitespace })
+    if (!(kept?.before === before && kept.after === after && kept.given === given)) {
+      kept = { model: lineDiff(before, after, { ...options, ignoreWhitespace }), before, after, given }
     }
-    this._models.set(key, model)
+    this._models.set(key, kept)
     if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
-    return model
+    return kept.model
   }
 
   // A file's two sides, pretty-printed where the toggle has them so, and its
