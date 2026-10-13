@@ -387,8 +387,6 @@ export class BundleCompareCode extends LitElement {
     }
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); clearTimeout(this._countLater); this._countLater = null }
-
   updated() {
     // A newly shown file starts at its top, with its tree row in view.
     if (this._current !== this._shownPath) {
@@ -498,7 +496,7 @@ export class BundleCompareCode extends LitElement {
     this._countUntil = null
     this._treeRemaining = this.extensions?.treePageSize ? this._treeLimit : Infinity
     this._treeTruncated = false
-    const treeContent = filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
+    const treeContent = this._mode === 'code' ? nothing : filtered ? this._renderTree(filtered, current, 0, !!this._query || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'repointed') counts[entry.kind]++
@@ -552,6 +550,9 @@ export class BundleCompareCode extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback()
     forgetRenameDiffs()
+    clearTimeout(this._countLater)
+    clearTimeout(this._searchLater)
+    this._countLater = this._searchLater = null
   }
 
   render() {

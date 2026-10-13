@@ -96,6 +96,10 @@ test('publication enforces detected malware and critical vulnerabilities using s
   const h = await fixture(t)
   const cases = [
     { name: 'review-malware', alert: 'malware', allowed: ['reject'], error: 'review-malware' },
+    { name: 'review-malware-cwe', range: '*', cwe: ['CWE-506'], allowed: ['reject'], error: 'review-malware' },
+    { name: 'review-malware-title', range: '*', title: 'Version contains malware', cwe: ['CWE-200'], allowed: ['reject'], error: 'review-malware' },
+    { name: 'review-malware-takedown', takenDown: true, allowed: ['reject'], error: 'review-malware' },
+    { name: 'review-fixed-malware', range: '<2.0.0', cwe: ['CWE-506'], allowed: ['accept', 'accept-with-nits', 'request-changes', 'reject'] },
     { name: 'review-critical-socket', alert: 'criticalCVE', allowed: ['request-changes', 'reject'], error: 'review-critical-vulnerability' },
     { name: 'review-critical-advisory', range: '*', allowed: ['request-changes', 'reject'], error: 'review-critical-vulnerability' },
     { name: 'review-fixed-advisory', range: '<2.0.0', allowed: ['accept', 'accept-with-nits', 'request-changes', 'reject'] },
@@ -105,6 +109,13 @@ test('publication enforces detected malware and critical vulnerabilities using s
   const registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const address = String(input)
+    const takenDown = cases.find(row => row.takenDown && address === `https://registry.npmjs.org/${row.name}`)
+    if (takenDown) {return registryFetch(input, init).then(async response => {
+      const doc = await response.json()
+      doc['dist-tags'].latest = '0.0.1-security'
+      doc.versions['0.0.1-security'] = { description: 'security holding package', _npmUser: { name: 'npm' } }
+      return Response.json(doc)
+    })}
     const socket = /^https:\/\/firewall-api\.socket\.dev\/purl\/(.+)$/u.exec(address)
     if (socket) {
       const name = decodeURIComponent(socket[1]).slice('pkg:npm/'.length).split('@')[0]
@@ -115,7 +126,7 @@ test('publication enforces detected malware and critical vulnerabilities using s
       const queried = JSON.parse(init.body)
       return Promise.resolve(Response.json(Object.fromEntries(Object.keys(queried).map(name => {
         const found = cases.find(row => row.name === name)
-        return [name, found?.range ? [{ id: 901, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Critical example', severity: 'critical', vulnerable_versions: found.range, cwe: [] }] : []]
+        return [name, found?.range ? [{ id: 901, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: found.title ?? 'Critical example', severity: 'critical', vulnerable_versions: found.range, cwe: found.cwe ?? [] }] : []]
       }))))
     }
     return registryFetch(input, init)

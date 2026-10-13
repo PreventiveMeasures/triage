@@ -23,13 +23,14 @@ export function comparePickerStyle(source) {
 
 // Both pages use this picker and header. The page owns navigation and supplies
 // labels and actions; all selector markup, sizing and chrome live here.
-export function renderComparisonPicker({ source, label = 'Compare', from, to, clear, swap, extras = nothing, comparison = null, disabled = false }) {
+export function renderComparisonPicker({ source, label = 'Compare', from, to, clear, swap, extras = nothing, comparison = null, disabled = false, openLine }) {
   const noun = source?.noun ?? 'bundle'
   const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
   const select = (side, fallback) => html`<bundle-selector .bundles=${side.options} .value=${side.value} .noun=${noun} .versions=${Boolean(source)}
     label=${side.label ?? fallback} placeholder=${side.placeholder ?? `Choose a ${noun}…`} ?disabled=${disabled}
     @bundle-change=${event => { event.stopPropagation(); side.pick(event.detail.value) }}></bundle-selector>`
-  return html`<div class=${source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${comparePickerStyle(source)}>
+  return html`<div class=${source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${comparePickerStyle(source)}
+    @compare-open-line=${event => openLine?.(event.detail)}>
     <div class="bundle-compare-select-wrap"><span class="bundle-compare-select-hint">${label}</span>
       ${select(from, `${Noun} to compare with`)}
       ${clear ? html`<button type="button" class="bundle-compare-clear" aria-label=${clear.label ?? 'Clear comparison'} ?disabled=${disabled} @click=${clear.run}>×</button>` : nothing}</div>

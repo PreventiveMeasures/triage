@@ -22,7 +22,7 @@ mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
 } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchPrettyBundleFile() {}, fetchPrettyNpmFile() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {},
+  fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {},
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
@@ -143,6 +143,13 @@ test('Review uses the current comparison source for badges, dependency chips, an
   page.source = { ...page.source, badges: (...sides) => { called.push(sides); return 'Loaded comparison chips' } }
   assert.match(text(renderReview(page)), /Loaded comparison chips/u)
   assert.deepEqual(called.at(-1), [base, page.details, page._diff.files])
+  page._files = ['index.js']
+  page._openLine({ path: 'index.js', line: 1, query: 'value' })
+  assert.deepEqual(page._seek, { path: 'index.js', line: 0, query: 'value' })
+  assert.match(text(renderReview(page)), /<bundle-compare-all[^>]*\.seek=\[object Object\]/u)
+  page._saveBlocked = true
+  page._openLine({ path: 'index.js', line: 2, query: 'blocked' })
+  assert.equal(page._seek.query, 'value', 'chip navigation respects the review save guard')
 })
 
 test('review selectors preserve the shared version dates and recent-release warnings', () => {
@@ -595,6 +602,8 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
   assert.match(text(extensions.filters), /All 10002/u)
   assert.match(text(extensions.filters), /Unchecked 10001/u)
   const treeView = new BundleCompareCode()
+  treeView.base = EMPTY_REVIEW_BASE
+  treeView.other = { kind: 'sourcemap', json: { sources: files.map(row => row.path), sourcesContent: files.map(() => '') } }
   treeView.files = { onlyBase: [], onlyOther: files, changed: [] }; treeView.extensions = extensions
   treeView.path = files[0].path
   treeView.willUpdate(new Map([['files']]))

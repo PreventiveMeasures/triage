@@ -1,3 +1,5 @@
+import { npmMalwareAdvisory } from '../risk/npm/malware.js'
+
 export const REVIEW_VERDICTS = {
   accept: 'Accept',
   'accept-with-nits': 'Accept with nits (non-blocking)',
@@ -39,13 +41,13 @@ export function npmTakenDown({ npm: { version, manifest = {} } }) {
 // Only findings affecting the version being reviewed constrain its verdict.
 // Socket's aggregate scores also fall for other reasons; use explicit alerts.
 // Alert identifiers: https://docs.socket.dev/docs/rule-conditions
-export function npmReviewVerdictLimit(npm, advisoryList, socket) {
+export function npmReviewVerdictLimit(npm, advisoryList, socket, risk) {
   if (!npm) return 'accept'
   const index = advisoryList?.versions?.indexOf(npm.version) ?? -1
   const advisories = index < 0 ? [] : advisoryList.advisories.filter(advisory => advisory.affected.includes(index))
   const alerts = npm.private ? [] : socket?.alerts ?? []
-  if (npmTakenDown({ npm }) || alerts.some(alert => alert.type === 'malware')
-    || advisories.some(advisory => advisory.id?.startsWith('MAL-') || /^Malicious package\b/iu.test(advisory.title ?? ''))) return 'reject'
+  if (risk?.findings?.some(finding => finding.id === 'malware') || npmTakenDown({ npm }) || alerts.some(alert => alert.type === 'malware')
+    || advisories.some(advisory => npmMalwareAdvisory(advisory) || advisory.id?.startsWith('MAL-') || /^Malicious package\b/iu.test(advisory.title ?? ''))) return 'reject'
   if (advisories.some(advisory => advisory.severity === 'critical') || alerts.some(alert => alert.type === 'criticalCVE')) return 'request-changes'
   return 'accept'
 }

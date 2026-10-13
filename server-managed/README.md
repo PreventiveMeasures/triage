@@ -1711,6 +1711,8 @@ earliest time the document lists, which npm's own `created` can postdate, as
 a placeholder's does for a package npm took down),
 `teamScoped` whether any visible team lists its scope, whatever teams the
 reader is in, and `GET /api/npm/download?name=&version=` the tarball.
+`otherVersion=(empty)` compares every file against an empty package for initial dependency reviews, using the same risk findings and chips.
+
 `GET /api/npm/risk?name=&version=&otherVersion=` returns what calls for a
 look at a version, as risk tells it (risk/README.md, `assessNpm`), against
 `otherVersion` where given: `{ name, version, oldVersion, published, findings,

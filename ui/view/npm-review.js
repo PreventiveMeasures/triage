@@ -24,7 +24,7 @@ export class NpmReview extends LitElement {
     entry: { attribute: false }, details: { attribute: false }, request: { attribute: false }, session: { attribute: false }, source: { attribute: false },
     _teams: { state: true }, _selectedTeams: { state: true }, _additionalTeams: { state: true },
     _reviews: { state: true }, _loading: { state: true }, _error: { state: true }, _saving: { state: true }, _saveBlocked: { state: true },
-    _file: { state: true },
+    _file: { state: true }, _seek: { state: true },
     _finalStatus: { state: true }, _finalComment: { state: true },
     _base: { state: true }, _baseError: { state: true }, _panel: { state: true }, _path: { state: true },
     _selectedReview: { state: true }, _unchecked: { state: true }, _notice: { state: true }, _continuation: { state: true },
@@ -62,7 +62,7 @@ export class NpmReview extends LitElement {
   get _blocked() { return this._saving || this._saveBlocked }
   get _unsaved() { return this._pendingSaves.length > 0 || this._dirtyFiles.length > 0 }
   get _summary() { return summarizeReview(this._shownReview?.entries ?? [], this._files, this._nonTextFiles) }
-  get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry) ?? 'accept' }
+  get _securityLimit() { return this.source?.reviewVerdictLimit?.(this.entry, this._base) ?? 'accept' }
   get _allowedVerdicts() {
     const entries = new Map((this._shownReview?.entries ?? []).map(entry => [entry.file, entry]))
     if (this._canEdit) {
@@ -179,6 +179,11 @@ export class NpmReview extends LitElement {
   _selectFile(path) {
     if (this._blocked || !this._files.includes(path)) return
     this._path = path; this._resetEditor(path)
+  }
+  _openLine({ path, line, query }) {
+    if (this._blocked || !this._files.includes(path)) return
+    this._seek = { path, line: line - 1, query }
+    this._selectFile(path)
   }
   _open(file = null) {
     if (this._blocked) return

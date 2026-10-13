@@ -120,7 +120,6 @@ export class BundleCompareAll extends BundleCompareCode {
   _select(path, scroll = true) {
     if (!path || this.extensions?.canSelect?.() === false) return
     this._current = this._picked = path
-    this._goTo = path
     this.requestUpdate()
     if (scroll) void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))

@@ -90,16 +90,16 @@ function lastingOf(other, base, files, standing) {
 // removes a version, its publisher then unknown, and never else, so such a
 // pair is kept by how many npm has removed (`~<removals>`), read anew as it
 // removes another.
-async function lasting(name, version, oldVersion, facts, context) {
+async function lasting(name, version, oldVersion, facts, context, fromEmpty) {
   const old = oldVersion === null ? null : facts.versions.get(oldVersion)
   const publishers = [old, facts.versions.get(version)].map(fact => fact?.manifest.publisher)
   const changed = publishers.every(Boolean) && publishers[0] !== publishers[1]
-  const key = `${RISK_VERSION}/${name}@${version}${oldVersion === null ? '' : `..${oldVersion}`}${changed ? `~${facts.removals}` : ''}`
+  const key = `${RISK_VERSION}/${name}@${version}${fromEmpty ? '..(empty)' : oldVersion === null ? '' : `..${oldVersion}`}${changed ? `~${facts.removals}` : ''}`
   const hit = context.cache ? await context.cache.read('risk/npm/assessments', key) : null
   if (hit) return hit
   const other = await npmVersionFiles(name, version, facts.versions.get(version), context)
   const files = filesRisk(other, `${name}@${version}`)
-  const base = old === null ? null : npmBaseFilesTell(other, old.manifest) ? await npmVersionFiles(name, oldVersion, old, context)
+  const base = fromEmpty ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : old === null ? null : npmBaseFilesTell(other, old.manifest) ? await npmVersionFiles(name, oldVersion, old, context)
     : { npm: { name, version: oldVersion, manifest: old.manifest, published: old.published }, json: null }
   const standing = changed ? npmAccountStanding(facts.releases ?? await npmPackageReleases(name, context), other.npm.published) : null
   const kept = lastingOf(other, base, files, standing)
@@ -179,7 +179,7 @@ async function addedDependencies(added, published, context, owned) {
 // to read. Throws an NpmRiskError (registry.js), its `code` saying why, where
 // npm has no such package or version (nor malware explaining one removed),
 // answers past risk's bounds, or can't be asked.
-export async function assessNpm(name, version, { oldVersion = null, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, advisories = true, osv = true, owned = () => false } = {}) {
+export async function assessNpm(name, version, { oldVersion = null, fromEmpty = false, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, popularity = true, cache, packument, tarball, now = Date.now(), signal, downloads = true, dependencies = true, advisories = true, osv = true, owned = () => false } = {}) {
   const context = { cache, packument, tarball, now, signal }
   const facts = await npmPackageFacts(name, version, oldVersion, context)
   const old = facts.oldVersion
@@ -190,7 +190,7 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
     return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
   }
   const { published, manifest } = facts.versions.get(version)
-  const kept = await lasting(name, version, old, facts, context)
+  const kept = await lasting(name, version, old, facts, context, fromEmpty)
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = old === null ? null : facts.versions.get(old).published

@@ -137,8 +137,8 @@ export const npmSocketFileTags = (alerts = []) => alerts.map(alert => {
     data-tooltip=${`Socket: ${socketAlertName(alert.type)}, ${severity}${alert.note ? ` · ${alert.note}` : ''}`}>${socketAlertName(alert.type)}</span>`
 })
 
-export function npmReviewLimit(entry) {
-  return npmReviewVerdictLimit(entry.npm, npmPackageAdvisories(entry.npm.name), npmSocketReport(entry))
+export function npmReviewLimit(entry, base) {
+  return npmReviewVerdictLimit(entry.npm, npmPackageAdvisories(entry.npm.name), npmSocketReport(entry), npmRisk(entry.npm, base ? base.npm?.version ?? '(empty)' : null))
 }
 
 // Over the summary: where npm took the package down, saying so, its readme
@@ -529,14 +529,13 @@ export const npmCompareFiles = {
 // Socket's scores either has under its bar (SOCKET_SCORES; maintenance, for
 // a deprecated open version, only under DEPRECATED_MAINTENANCE). Each once
 // it arrives.
-export function npmCompareBadges(base, other, files = null) {
+export function npmCompareBadges(base, other) {
   if (!base || !other?.npm) return nothing
   // A review may start from no package. Its display-only baseline has no
   // advisories or Socket report; never request an invented version upstream.
-  if (!base.npm) base = { ...base, npm: { name: other.npm.name, version: 'Empty package', private: true } }
-  const sides = [base.npm, other.npm]
+  const sides = [base.npm ?? { name: other.npm.name, version: 'Empty package', private: true }, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const found = new Map((npmRisk(other.npm, base.npm?.version ?? null)?.findings ?? []).map(finding => [finding.id, finding]))
+  const found = new Map((npmRisk(other.npm, base.npm?.version ?? '(empty)')?.findings ?? []).map(finding => [finding.id, finding]))
   const chips = [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')), provenanceBadge(sides, found.get('provenance-lost')),
     installScriptsBadge(sides, found.get('install-scripts')), ...dependencyBadges(sides, found), ...fileBadges(found), hostsBadge(found.get('new-hosts')),
     recentBadge(found.get('too-new')), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting, found.get('malware')), popularityBadge(other.npm.name, found.get('popularity'))]

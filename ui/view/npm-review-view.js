@@ -46,6 +46,7 @@ function reviewHeader(page) {
       view: 'npm', packageName: page.entry.npm.name, packageSpec: value, bundleTab: 'review', ...page._location(page._target),
     }) },
     clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
+    openLine: detail => page._openLine(detail),
     comparison: { base: page._base, other: page.details, files: page._diff.files },
   }), renderComparisonSummary(page._diff))
 }
@@ -201,7 +202,7 @@ export function renderReview(page) {
   if (!page._base) {return html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
     ${page._baseError ? html`<button type="button" class="npm-review-button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`}
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
-    ${renderComparisonViewer({ base: page._base, other: page.details, diff: page._diff, source: page.source, path: page._path,
+    ${renderComparisonViewer({ base: page._base, other: page.details, diff: page._diff, source: page.source, path: page._path, seek: page._seek,
       baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package', otherName: `${page.entry.npm.name}@${page.entry.npm.version}`,
       select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode,
     })}

@@ -2652,8 +2652,9 @@ async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReade
       () => ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
       () => readNpmVersion(doc.name, 'latest', privileged, signal)))
   }
-  const [list, socket] = await Promise.all([advisories().catch(() => null), doc.private ? null : npmSocketReport(doc.name, doc.version).catch(() => null)])
-  return npmReviewVerdictLimit(doc, list, socket)
+  const [list, socket, risk] = await Promise.all([advisories().catch(() => null), doc.private ? null : npmSocketReport(doc.name, doc.version).catch(() => null),
+    npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped: true, privileged, signal })])
+  return npmReviewVerdictLimit(doc, list, socket, risk)
 }
 
 // Reviews are scoped to the bytes actually displayed, including the base.
@@ -2772,6 +2773,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
+    if (err instanceof NpmRiskError) { sendJson(res, NPM_RISK_STATUS[err.code] ?? 502, { error: err.code }); return }
     throw err
   } finally { res.off('close', onClose) }
 }
@@ -2787,7 +2789,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
-    || ((path === NPM_RISK_PATH || path === NPM_PRETTY_PATH) && otherSpec !== '' && !isNpmPackageSpec(otherSpec))) {
+    || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
+    || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
@@ -2875,10 +2878,10 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // download it where a team lists its scope, its own packages, as a new
     // dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
-      const old = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
+      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal))
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
-      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped,
+      const assessment = await npmRisk(doc, old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
         ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())

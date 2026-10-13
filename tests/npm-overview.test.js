@@ -456,7 +456,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['flagged@1.0.0'] = { scores: scores({ quality: .3 }), alerts: [] }
   answers.socket['flagged@2.0.0'] = { scores: scores({ supplyChain: .85, quality: .9, license: .7 }), alerts: [] }
   const side = (name, version, extra = {}) => ({ npm: { name, version, ...extra } })
-  const badges = async (...sides) => { sides.forEach(held); npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(...sides)) }
+  const badges = async (...sides) => { sides.filter(entry => entry.npm).forEach(held); npmCompareBadges(...sides); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(...sides)) }
 
   const flagged = await badges(side('flagged', '1.0.0'), side('flagged', '2.0.0'))
   assert.match(flagged, /<button type="button" class=npm-extension npm-compare-advisories sev-moderate[^]*>2 → 1</u)
@@ -936,12 +936,15 @@ test('malware told of a version is its first chip, in solid red, Socket\'s score
   const side = (name, version) => ({ npm: { name, version, manifest: {} } })
   const settled = async render => { render(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(render()) }
   const overview = entry => { held(entry); return settled(() => npmOverviewBadges(entry)) }
-  const compare = (...sides) => { sides.forEach(held); return settled(() => npmCompareBadges(...sides)) }
+  const compare = (...sides) => { sides.filter(entry => entry.npm).forEach(held); return settled(() => npmCompareBadges(...sides)) }
   const first = /^<ul [^>]*><li><span class="npm-extension npm-malware" data-tooltip=Taken down by npm\nGHSA-c2m4-w5hm-vqjw: taken is malware>Malware<\/span><\/li>/u
   for (const [where, shown] of [['Overview', await overview(side('taken', '2.0.0'))], ['Compare', await compare(side('taken', '1.0.0'), side('taken', '2.0.0'))]]) {
     assert.match(shown, first, `${where}: first, each of what tells of it a line`)
     assert.doesNotMatch(shown, /npm-socket-score/u, `${where}: none of Socket's scores beside it, supply chain, quality or any`)
   }
+  assert.equal(npmReviewLimit(side('taken', '2.0.0')), 'reject', 'the malware chip also forbids approval in Review')
+  assert.equal(npmReviewLimit(side('taken', '1.0.0')), 'accept', 'a finding for another version does not restrict the reviewed one')
+  assert.match(await compare({ integrity: '(empty)' }, side('taken', '2.0.0')), first, 'blank-base reviews use the shared malware chip too')
   for (const shown of [await overview(side('scored', '2.0.0')), await compare(side('scored', '1.0.0'), side('scored', '2.0.0'))]) {
     assert.doesNotMatch(shown, /npm-malware/u)
     assert.match(shown, />Supply chain<[^]*>Quality</u, 'Socket\'s scores as before, where no malware is told of')

@@ -12,8 +12,8 @@ export function allowedReviewVerdicts(entries: { file: string | null; status: Re
 interface ReviewNpmVersion { version: string; private?: boolean; manifest?: Record<string, unknown> }
 export function npmTakenDown(entry: { npm: ReviewNpmVersion }): boolean
 export function npmReviewVerdictLimit(npm: ReviewNpmVersion | null | undefined,
-  advisoryList?: { versions: string[]; advisories: { id?: string; title?: string; severity?: string; affected: number[] }[] } | null,
-  socket?: { alerts: { type: string }[] } | null): ReviewVerdict
+  advisoryList?: { versions: string[]; advisories: { id?: string; title?: string; severity?: string; cwe?: string[]; affected: number[] }[] } | null,
+  socket?: { alerts: { type: string }[] } | null, risk?: { findings: { id: string }[] } | null): ReviewVerdict
 export function needsPackageJsonReview(entries: { file: string | null; status: ReviewVerdict | null }[], files: string[], nonTextFiles?: string[] | null): boolean
 export function parseReviewNotes(comment: string): { text: string; bullet: boolean }[]
 export function auditMarkdown(review: ReviewSummary & {

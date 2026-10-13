@@ -15,6 +15,7 @@ import { assessNpm } from './risk/index.js'
 
 const assessment = await assessNpm('axios', '1.14.1', {
   oldVersion: '1.14.0', // compared with; true for one risk picks (below); without one, everything of the version is new
+  fromEmpty: false, // true for an initial dependency review: compare every file with an empty package
   minimumReleaseAge: 14 * 24 * 60 * 60_000, // the default, two weeks; 0 for none, as a caller's own scopes take
   popularity: true, // the default; false for none, as a caller's own scopes take
   advisories: true, // the default; false to ask none of npm's advisories, as a scan asking them of a lockfile at once does

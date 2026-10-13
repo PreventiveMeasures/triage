@@ -28,6 +28,8 @@ export interface AssessNpmOptions {
   // document (risk/npm/old-version.js), none where none is below it; without
   // one, everything of the version is new.
   oldVersion?: string | true | null
+  // Compare all files with an empty package, for an initial dependency review.
+  fromEmpty?: boolean
   // Younger than this, in ms, a version is `too-new`; 0 for none, as a
   // caller's own scopes take. Two weeks unless given.
   minimumReleaseAge?: number
