@@ -2,7 +2,8 @@
 // look at it, against the version before it where one is given or risk picks
 // one (old-version.js), each file's stamps, and its dependencies', from npm's
 // registry, kept in the caller's cache (registry.js) as it goes.
-import { npmBaseFilesTell, npmCompareFindings, npmDependencyFindings } from './compare.js'
+import { npmBaseFilesTell, npmCompareFindings } from './compare.js'
+import { npmCombinedFindings, npmHeldDependencyFindings } from './combined.js'
 import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
@@ -16,7 +17,7 @@ import { npmAddedDependency } from './new-dependency.js'
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-const RISK_VERSION = 8
+const RISK_VERSION = 9
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or
@@ -54,12 +55,14 @@ function filesRisk(version, what) {
 
 // What of an assessment holds whatever the time, of the open version
 // (`other`) against the one compared with (`base`), or alone without one,
-// each as compare.js takes a version, as JSON holds it: what its files,
-// dependencies, install scripts, publisher and provenance call for
-// (compare.js npmCompareFindings), or alone, what it holds (held.js
-// npmHeldFindings) and its dependencies against none; each file's stamps and
-// what risk read of it (filesRisk); and its dependencies added and changed,
-// each with its flags (dependencies.js). Its own findings are told fresh
+// each as compare.js takes a version, as JSON holds it: what it holds,
+// always (held.js npmHeldFindings, and its dependencies against none,
+// combined.js npmHeldDependencyFindings), and against `base` what its files,
+// dependencies, install scripts, publisher and provenance call for anew
+// (compare.js npmCompareFindings), folded into what it holds, never lowering
+// it (combined.js npmCombinedFindings); each file's stamps and what risk read
+// of it (filesRisk); and its dependencies added and changed, each with its
+// flags (dependencies.js), against `base` each it holds too (`held`). Its own findings are told fresh
 // (npmAssessmentOf). The managed server's assessments keep it (`lasting`),
 // and a test can tell what one says of versions it holds. Each publisher's
 // standing on the package is told where `standing` is given (release.js
@@ -71,10 +74,11 @@ export const npmLastingRisk = (other, base = null, standing = null) => lastingOf
 // the findings read them all.
 function lastingOf(other, base, files, standing) {
   if (base?.json) filesRisk(base, `${base.npm.name}@${base.npm.version}`)
-  const { added, changed } = npmFlagDependencyChanges(npmDependencyChanges(base?.npm.manifest, other.npm.manifest), base, other)
-  const findings = base ? npmCompareFindings(base, other, { added, changed }, standing)
-    : [...npmHeldFindings(other), ...npmDependencyFindings({ added, changed }, null)]
-  const kept = { findings: plain(findings), files, dependencies: plain({ added, changed }) }
+  const all = npmFlagDependencyChanges(npmDependencyChanges(undefined, other.npm.manifest), null, other)
+  const held = [...npmHeldFindings(other), ...npmHeldDependencyFindings(all)]
+  const { added, changed } = base ? npmFlagDependencyChanges(npmDependencyChanges(base.npm.manifest, other.npm.manifest), base, other) : all
+  const findings = base ? npmCombinedFindings(held, npmCompareFindings(base, other, { added, changed }, standing)) : held
+  const kept = { findings: plain(findings), files, dependencies: plain({ added, changed, ...base ? { held: all.added } : {} }) }
   if (JSON.stringify(kept).length > MAX_ASSESSMENT_LENGTH) throw tooLarge(`${other.npm.name}@${other.npm.version}`)
   return kept
 }
@@ -210,6 +214,6 @@ export function npmAssessmentOf(kept, own, added = kept.dependencies.added) {
     findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings,
       ...own.filter(({ id }) => !FIRST.has(id)).map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
     files: kept.files,
-    dependencies: { added, changed: kept.dependencies.changed },
+    dependencies: { ...kept.dependencies, added },
   }
 }

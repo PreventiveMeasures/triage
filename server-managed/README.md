@@ -888,7 +888,7 @@ The GitHub Contents API limits directory listings to
 `GET /api/admin/repositories/risk` (admin only) scans every active repository's
 npm lockfiles at its default branch's head, or a team's (`?team=<id>`) or one
 (`?repo=<id>`), and assesses each package they lock as `GET /api/npm/risk`
-assesses a version on its own. A team's repository is read for the lockfiles in
+assesses a version without `otherVersion`, against the version risk picks. A team's repository is read for the lockfiles in
 the team's directories of it and those above them, as a workspace's root
 lockfile locks them too. It answers Brotli-encoded ndjson as it goes
 (`repository-risk.ts` names each line): the repositories, then each
@@ -1729,10 +1729,15 @@ reader is in, and `GET /api/npm/download?name=&version=` the tarball.
 
 `GET /api/npm/risk?name=&version=&otherVersion=` returns what calls for a
 look at a version, as risk tells it (risk/README.md, `assessNpm`), against
-`otherVersion` where given: `{ name, version, oldVersion, published, findings,
-files, dependencies }`. Risk is told on this server alone, and the npm viewer
-shows it as told, computing none of it: the Overview a version's own, Compare
-the pair's and each side's files'. A team's own scopes
+`otherVersion` where given, as Compare asks, else against the version of the
+package most likely free of what an attack injects, as risk picks it
+(`oldVersion: true`), as the Overview asks: `{ name, version, oldVersion,
+published, findings, files, dependencies }`, `oldVersion` the one compared
+with, or null for none. What the version holds is told either way, what
+changed folded into it, never lowering it. Risk is told on this server
+alone, and the npm viewer shows it as told, computing none of it: the
+Overview and Compare alike, and each side's files'. The version risk picks
+has its document read as the open version's is, for its tarball. A team's own scopes
 are trusted however new (a minimum release age of 0), any other version held
 to two weeks, and however few download them: a version of one is not flagged
 `popularity`, and a new dependency on a package of one is told no tier nor

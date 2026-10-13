@@ -189,11 +189,12 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   assert.equal(res.status, 200)
   const body = res.json()
   assert.deepEqual([body.name, body.version, body.oldVersion, body.published], ['@pub/pkg', '1.2.3', null, '2025-01-01T00:00:00.000Z'])
-  assert.deepEqual(body.findings.map(({ id }) => id), ['held-install-scripts', 'held-runs-code', 'unused-deps'], 'what it holds: its postinstall, child_process, and a dependency nothing imports')
+  assert.deepEqual(body.findings.map(({ id }) => id), ['held-install-scripts', 'held-runs-code', 'held-unused-deps'], 'what it holds: its postinstall, child_process, and a dependency nothing imports')
   assert.deepEqual(body.files['lib/index.js'].stamps, [{ name: 'child_process', severity: 'high' }])
   const fromEmpty = await h.send(riskPath({ version: '1.2.3', otherVersion: '(empty)' }))
   assert.equal(fromEmpty.status, 200)
-  assert.ok(fromEmpty.json().findings.some(finding => finding.id === 'runs-code'), 'blank-base reviews assess all files as added')
+  assert.ok(fromEmpty.json().findings.some(finding => finding.id === 'held-runs-code' && finding.severity === 'critical' && finding.files.every(row => row.added)),
+    'blank-base reviews assess all files as added: what runs code red, each file new')
   assert.deepEqual((await h.send(riskPath({ version: '1.2.3' }))).json().findings, body.findings, 'the empty comparison has its own cache entry')
   assert.deepEqual(body.dependencies.added.map(({ name, flags }) => [name, flags.map(({ check }) => check)]), [['dep', ['unimported']]])
   assert.equal((await h.send(riskPath({ version: '1.2.3' }), 'nobody')).status, 401)
@@ -205,6 +206,35 @@ test('a version\'s risk is told on the server, as risk tells it, for whoever can
   const refused = await h.send(`/api/npm/risk?${new URLSearchParams({ name: '@pub/huge', version: '1.0.0' })}`)
   assert.deepEqual([refused.status, refused.json()], [413, { error: 'package-too-large' }], 'its tarball read as the viewer loads one, refused as it would be')
   assert.ok(!calls.some(call => call.url === huge.doc.dist.tarball))
+})
+
+test('a version\'s risk asked alone is told against the version risk picks, its document read for its tarball; Compare\'s against the one it names', async t => {
+  const h = await setup(t)
+  const old = packageOf('picked', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, { scripts: {}, dependencies: {} })
+  const open = packageOf('picked', '1.1.0', { 'package.json': '{}', 'index.js': 'require("child_process").exec(x)\n' }, { scripts: {}, dependencies: {} })
+  const asked = []
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    const url = String(input)
+    asked.push(url)
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
+    for (const { doc, tgz } of [old, open]) {
+      if (url === `${REGISTRY}/picked/${doc.version}`) return Promise.resolve(Response.json(doc))
+      if (url === doc.dist.tarball) return Promise.resolve(new Response(tgz))
+    }
+    if (url === `${REGISTRY}/picked`) {
+      return Promise.resolve(Response.json({ name: 'picked', 'dist-tags': { latest: '1.1.0' }, versions: { '1.0.0': old.doc, '1.1.0': open.doc },
+        time: { created: '2025-01-01T00:00:00.000Z', '1.0.0': '2025-01-01T00:00:00.000Z', '1.1.0': '2025-06-01T00:00:00.000Z' } }))
+    }
+    return Promise.resolve(Response.json({ error: 'Not found' }, { status: 404 }))
+  })
+  const alone = (await h.send('/api/npm/risk?name=picked&version=1.1.0')).json()
+  assert.equal(alone.oldVersion, '1.0.0', 'the version risk picks, said')
+  assert.deepEqual(alone.findings.filter(({ id }) => id === 'held-runs-code').map(({ severity, files }) => [severity, files.map(({ path, added }) => [path, Object.keys(added)])]),
+    [['critical', [['index.js', ['child-process']]]]], 'what it holds, red where it is new since')
+  assert.ok(asked.includes(`${REGISTRY}/picked/1.0.0`) && asked.includes(old.doc.dist.tarball), 'its document read, then its tarball')
+  const named = (await h.send('/api/npm/risk?name=picked&version=1.1.0&otherVersion=1.0.0')).json()
+  assert.deepEqual([named.oldVersion, named.findings], ['1.0.0', alone.findings], 'Compare\'s, against the one it names')
 })
 
 test('a team\'s own package isn\'t flagged as few download it, as it isn\'t as just published', async t => {

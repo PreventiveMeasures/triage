@@ -603,42 +603,50 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.socket['abandoned@1.1.0'] = { scores: scores({ maintenance: .3 }), alerts: [] }
   assert.match(await badges(side('abandoned', '1.0.0'), side('abandoned', '1.1.0', deprecated('Unmaintained'))), />Maintenance<[^]*>– → 30</u, 'lower, as it says more')
 
-  // Install scripts the open version adds or changes, node-gyp's for a
-  // binding.gyp among them; not one it drops.
+  // The install scripts the open version runs, those it adds or changes said
+  // so, node-gyp's for a binding.gyp among them; not one it drops.
   const scripted = (name, version, installScripts, sources = []) => ({ npm: { name, version, manifest: { installScripts } }, json: { sources } })
   const added = await badges(scripted('scripted', '1.0.0', undefined), scripted('scripted', '1.1.0', { postinstall: 'node steal.js' }))
   assert.match(added, /<li><span class="npm-extension is-warn npm-compare-install"\s+data-tooltip=1\.0\.0: none · 1\.1\.0: postinstall: node steal\.js[^]*compare-tip-head">Install scripts<[^]*compare-tip-none">None<[^]*class=is-flagged>postinstall: <code>node steal\.js<\/code>[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall added<\/span>/u)
   const changed = await badges(scripted('rescripted', '1.0.0', { install: 'node-gyp rebuild', postinstall: 'node a.js' }), scripted('rescripted', '1.1.0', { install: 'node-gyp rebuild', postinstall: 'node b.js' }))
-  assert.match(changed, />Install script<\/span><span class="npm-extension-count">postinstall changed</u, 'one changed, not one kept')
+  assert.match(changed, />Install scripts<\/span><span class="npm-extension-count">install, postinstall changed</u, 'every one it runs, the one changed said so')
   assert.match(changed, /<span class=>install: <code>node-gyp rebuild<\/code>/u, 'each version\'s, the kept one plain')
   assert.match(await badges(scripted('gyp', '1.0.0', undefined), scripted('gyp', '1.1.0', undefined, ['binding.gyp', 'index.js'])), /npm-extension-count">install added</u, 'node-gyp\'s, for a binding.gyp it adds')
   assert.match(await badges(scripted('both', '1.0.0', { install: 'a' }), scripted('both', '1.1.0', { preinstall: 'x', install: 'b' })), />Install scripts<\/span><span class="npm-extension-count">preinstall added, install changed</u)
   assert.doesNotMatch(await badges(scripted('dropped', '1.0.0', { postinstall: 'node a.js' }), scripted('dropped', '1.1.0', undefined)), /npm-compare-install/u, 'not one it drops')
-  assert.doesNotMatch(await badges(scripted('kept', '1.0.0', { postinstall: 'node a.js' }), scripted('kept', '1.1.0', { postinstall: 'node a.js' })), /npm-compare-install/u)
+  const keptScript = await badges(scripted('same-script', '1.0.0', { postinstall: 'node a.js' }), scripted('same-script', '1.1.0', { postinstall: 'node a.js' }))
+  assert.match(keptScript, /<li><span class="npm-extension is-warn npm-compare-install"\s+data-tooltip=1\.1\.0: postinstall: node a\.js\s[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall<\/span>/u,
+    'one kept, what it runs alone, nothing flagged')
 
-  // Dependencies the open version takes from elsewhere than the registry
-  // anew, each version's spec in the tooltip; new ones nothing of it
-  // imports, as axios 1.14.1's plain-crypto-js, which ran its own
-  // postinstall; after install scripts.
+  // The dependencies the open version takes from elsewhere than the
+  // registry, and those nothing of it imports, as axios 1.14.1's
+  // plain-crypto-js, which ran its own postinstall: each counted, its spec in
+  // the tooltip, those new since the one compared with in bold, the spec one
+  // from elsewhere had before in a note; after install scripts.
   const depending = (name, version, dependencies, files = {}) => ({ npm: { name, version, manifest: { dependencies } },
     json: { sources: Object.keys(files), sourcesContent: Object.values(files) } })
-  const fetched = await badges(depending('fetched', '1.2.0', { websocket: '^1.0.29' }),
-    depending('fetched', '1.2.1', { websocket: 'github:web3-js/WebSocket-Node#polyfill/globalThis' }, { 'src/index.js': 'require("websocket")' }))
-  assert.match(fetched, /<li><span class="npm-extension is-warn npm-compare-registry"\s+data-tooltip=1\.2\.0: websocket \^1\.0\.29 · 1\.2\.1: websocket github:web3-js\/WebSocket-Node#polyfill\/globalThis[^]*compare-tip-head">From elsewhere than npm's registry<[^]*compare-tip-version">1\.2\.0<[^]*<span class=>websocket: <code>\^1\.0\.29<\/code>[^]*compare-tip-version">1\.2\.1<[^]*class=is-flagged>websocket: <code>github:web3-js\/WebSocket-Node#polyfill\/globalThis<\/code><[^]*>\s*Non-registry deps<\/span><\/li><\/ul>$/u)
-  assert.doesNotMatch(fetched, /npm-compare-unimported/u, 'imported')
-  const compromised = await badges(depending('compromised', '1.14.0', { 'follow-redirects': '^1.15.6' }, { 'lib/axios.js': 'require("follow-redirects")' }),
-    depending('compromised', '1.14.1', { 'follow-redirects': '^1.15.6', 'plain-crypto-js': '^4.2.1' }, { 'lib/axios.js': 'require("follow-redirects")' }))
-  assert.match(compromised, /<li><span class="npm-extension is-warn npm-compare-unimported"\s+data-tooltip=New in 1\.14\.1, imported by nothing of it: plain-crypto-js \^4\.2\.1[^]*compare-tip-head">New, and nothing imports it<[^]*compare-tip-version">1\.14\.1<[^]*class=is-flagged>plain-crypto-js: <code>\^4\.2\.1<\/code><[^]*compare-tip-note">No code file of 1\.14\.1 names it as an import would, nor does an install script; npm installs it all the same, running its install scripts<[^]*>\s*Unused deps<\/span><\/li>/u)
-  assert.doesNotMatch(compromised, /npm-compare-registry/u)
-  const many = await badges(depending('many', '1.0.0', { kept: 'github:a/kept' }),
-    depending('many', '1.1.0', { kept: 'github:a/kept', a: '1', b: '1', c: 'https://example.com/c.tgz', d: 'git+ssh://git@example.com:d.git' }))
-  assert.match(many, /data-tooltip=1\.0\.0: c none; d none · 1\.1\.0: c https:\/\/example\.com\/c\.tgz; d git\+ssh:\/\/git@example\.com:d\.git\s[^]*>\s*Non-registry deps<\/span><\/li>[^]*>\s*Unused deps<\/span><\/li>/u,
-    'each named in its tooltip; not one fetched from elsewhere by the same spec before')
-  assert.match(many, /data-tooltip=New in 1\.1\.0, imported by nothing of it: a 1, b 1, c https:\/\/example\.com\/c\.tgz, d git\+ssh:\/\/git@example\.com:d\.git[^]*compare-tip-head">New, and nothing imports them</u,
-    'the unused ones named in its tooltip alone')
+  const depChips = shown => [...shown.matchAll(/<li><span class="npm-extension is-warn (npm-compare-(?:registry|unimported))"\s+data-tooltip=([^\n]*)[^]*?<\/li>/gu)]
+    .map(([chip, classes, tip]) => `${classes} | ${tip} | ${[...chip.matchAll(/<span class=(is-flagged)?>([^<]+)<code>([^<]+)</gu)].map(([, bold, name, spec]) => `${bold ? '*' : ''}${name}${spec}`).join('; ')} | ${
+      /compare-tip-note">([^<]+)</u.exec(chip)?.[1]} | ${/npm-extension-count">([^<]+)</u.exec(chip)?.[1]}`)
+  assert.deepEqual(depChips(await badges(depending('fetched', '1.2.0', { websocket: '^1.0.29' }),
+    depending('fetched', '1.2.1', { websocket: 'github:web3-js/WebSocket-Node#polyfill/globalThis' }, { 'src/index.js': 'require("websocket")' }))),
+  ['npm-compare-registry | From elsewhere than npm\'s registry: websocket github:web3-js/WebSocket-Node#polyfill/globalThis; new since 1.2.0: websocket | '
+    + '*websocket: github:web3-js/WebSocket-Node#polyfill/globalThis | New since 1.2.0: websocket was ^1.0.29 | 1'], 'taken from GitHub anew, its spec before in a note; imported')
+  assert.deepEqual(depChips(await badges(depending('compromised', '1.14.0', { 'follow-redirects': '^1.15.6' }, { 'lib/axios.js': 'require("follow-redirects")' }),
+    depending('compromised', '1.14.1', { 'follow-redirects': '^1.15.6', 'plain-crypto-js': '^4.2.1' }, { 'lib/axios.js': 'require("follow-redirects")' }))),
+  ['npm-compare-unimported | Imported by nothing of 1.14.1: plain-crypto-js ^4.2.1; new since 1.14.0: plain-crypto-js | *plain-crypto-js: ^4.2.1 | '
+    + 'No code file of 1.14.1 names it as an import would, nor does an install script; npm installs it all the same, running its install scripts | 1'])
+  assert.deepEqual(depChips(await badges(depending('many', '1.0.0', { kept: 'github:a/kept' }),
+    depending('many', '1.1.0', { kept: 'github:a/kept', a: '1', b: '1', c: 'https://example.com/c.tgz', d: 'git+ssh://git@example.com:d.git' }))),
+  ['npm-compare-registry | From elsewhere than npm\'s registry: c https://example.com/c.tgz, d git+ssh://git@example.com:d.git, kept github:a/kept; new since 1.0.0: c, d | '
+    + '*c: https://example.com/c.tgz; *d: git+ssh://git@example.com:d.git; kept: github:a/kept | New since 1.0.0: c was none, d was none | 3',
+  'npm-compare-unimported | Imported by nothing of 1.1.0: a 1, b 1, c https://example.com/c.tgz, d git+ssh://git@example.com:d.git, kept github:a/kept; new since 1.0.0: a, b, c, d | '
+    + '*a: 1; *b: 1; *c: https://example.com/c.tgz; *d: git+ssh://git@example.com:d.git; kept: github:a/kept | '
+    + 'No code file of 1.1.0 names them as an import would, nor does an install script; npm installs them all the same, running their install scripts | 5'],
+  'every one it holds, counted; one kept from elsewhere by the same spec plain')
   assert.match(await badges(scripted('first', '1.0.0', undefined), { ...scripted('first', '1.1.0', { postinstall: 'node x.js' }), npm: { name: 'first', version: '1.1.0', manifest: { installScripts: { postinstall: 'node x.js' }, dependencies: { y: '1' } } } }),
     /npm-compare-install[^]*npm-compare-unimported/u, 'after install scripts')
-  assert.doesNotMatch(await badges(depending('dropping', '1.0.0', { gone: 'github:a/gone' }), depending('dropping', '1.1.0', {})), /npm-compare-(?:registry|unimported)/u, 'not one it drops')
+  assert.deepEqual(depChips(await badges(depending('dropping', '1.0.0', { gone: 'github:a/gone' }), depending('dropping', '1.1.0', {}))), [], 'not one it drops')
 
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
@@ -695,7 +703,7 @@ test('a dependency Compare lists new is tagged as the server\'s risk tells of it
   assert.equal(tags({ name: 'b', opens: null, flags: [source] }, 'changed'), '<span class=npm-dependency-flag is-source data-tooltip=From GitHub, not npm\'s registry: github:a/b>non-registry</span>')
 })
 
-test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, one newly obfuscated', async () => {
+test('Compare flags in red the files the open version adds or changes that call for a look: a large code file added, one become unreadable, obfuscation new to a file', async () => {
   const version = (ver, files) => held({ integrity: `files@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'files', version: ver } })
   const compared = (base, other) => computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
@@ -712,15 +720,16 @@ test('Compare flags in red the files the open version adds or changes that call 
   const empty = { kind: 'sourcemap', integrity: '(empty)', json: { sources: [], sourcesContent: [] } }
   const blank = await badges(empty, other)
   assert.match(blank, /npm-compare-large/u, 'blank-base reviews flag large new code too')
-  assert.match(blank, /npm-compare-obfuscated/u, 'blank-base reviews flag obfuscated code too')
+  assert.match(blank, /is-critical npm-held-file npm-files-obfuscated/u, 'blank-base reviews flag obfuscated code too, red as new')
   const files = compared(base, other)
   assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]).toSorted(),
     [['lib/big.js', 'lib/big-moved.js', false], ['lib/util.js', 'lib/helpers.js', true]], 'renames paired, one as it was, one modified')
   const flagged = await badges(base, other)
   const chips = [...flagged.matchAll(/<li><span class=npm-extension npm-compare-file (npm-compare-\w+)[^]*?>\s*<span>([^<]+)<\/span>(?:<span class="npm-extension-count">([^<]+)<\/span>)?<\/span><\/li>/gu)]
     .map(([, kind, label, count]) => [kind, label, count ?? null])
-  assert.deepEqual(chips, [['npm-compare-large', 'Large new code', null], ['npm-compare-unreadable', 'Now unreadable', null],
-    ['npm-compare-obfuscated', 'Obfuscated', '2']], 'a large code file added, not one moved; a file become unreadable; files newly obfuscated, one renamed, not one obfuscated before; counted where several, no file named')
+  assert.deepEqual(chips, [['npm-compare-large', 'Large new code', null], ['npm-compare-unreadable', 'Now unreadable', null]], 'a large code file added, not one moved; a file become unreadable')
+  assert.match(flagged, /<li><span class=npm-extension is-critical npm-held-file npm-files-obfuscated[^]*?<span>Obfuscated<\/span><span class="npm-extension-count">3<\/span><\/span><\/li>/u,
+    'every file obfuscated, red as two are anew, one renamed; counted, no file named')
   const outside = flagged.replaceAll(/data-tooltip=[^\n]*|\.tooltipContent=[^]*?<\/div>\s*<\/div>>/gu, '')
   assert.match(outside, /<span>Large new code<[^]*<span>Now unreadable<[^]*<span>Obfuscated</u)
   assert.doesNotMatch(outside, /payload\.js|index\.js|helpers\.js/u, 'the files in their tooltips alone')
@@ -728,11 +737,15 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.match(flagged, new RegExp(`data-tooltip=Large new code: dist/payload\\.js \\(${size}\\)\\s`, 'u'), 'in text, where it can\'t be styled')
   assert.match(flagged, new RegExp(`compare-tip-head">Large new code<[^]*compare-tip-rows is-files"><span class="compare-tip-path">dist/payload\\.js</span><span class="compare-tip-said">${size}</span></div>\\s*</div>>`, 'u'),
     'styled, a row for each file, and nothing more')
-  assert.doesNotMatch(flagged.replaceAll(/<li><span class="?npm-extension (?!npm-compare-file|is-warn npm-compare-(?:hosts|kept-runs))[^]*?<\/li>/gu, ''), /compare-tip-note/u, 'no note under the files')
+  assert.doesNotMatch(flagged.replaceAll(/<li><span class="?npm-extension (?!npm-compare-file|is-\w+ npm-held-file)[^]*?<\/li>/gu, ''), /compare-tip-note/u, 'no note under the files')
   assert.match(flagged, /compare-tip-path">index\.js<\/span><span class="compare-tip-said">25 → 2,019 characters</u, 'its longest line before and now')
-  assert.match(flagged, /compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b<[^]*compare-tip-path">lib\/helpers\.js</u)
-  assert.doesNotMatch(flagged, /compare-tip-path">lib\/(?:vendor|big-moved)\.js</u)
-  assert.doesNotMatch(await badges(other, base), /npm-compare-file/u, 'none the other way: a file dropped, one readable again, obfuscation gone')
+  assert.match(flagged, /compare-tip-path">lib\/helpers\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b, new since 1\.0\.0<[^]*compare-tip-path">dist\/payload\.js<\/span><span class="compare-tip-said">25 names such as _0x1a2b, new since 1\.0\.0</u,
+    'those new to a file so said')
+  assert.match(flagged, /compare-tip-path">lib\/vendor\.js<\/span><span class="compare-tip-said">30 names such as _0x1a2b</u, 'one obfuscated before too, not new')
+  assert.doesNotMatch(flagged, /compare-tip-path">lib\/big-moved\.js</u)
+  const reverse = await badges(other, base)
+  assert.doesNotMatch(reverse, /npm-compare-file/u, 'none in red the other way: a file dropped, one readable again')
+  assert.match(reverse, /<li><span class=npm-extension is-warn npm-held-file npm-files-obfuscated[^]*?compare-tip-path">lib\/vendor\.js</u, 'what it holds, in orange')
 
   // Their tags on the files, as in the Files list: what each is now, whatever
   // it was before.
@@ -763,38 +776,33 @@ test('Compare flags in red the files the open version adds or changes that call 
   assert.match(major, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?in a major release/u, 'orange in a major release')
 })
 
-test('Compare flags in red code that runs beyond itself new to a file the open version adds or changes, naming the kinds', async () => {
+test('Compare flags what code any file of the open version runs beyond itself, in red where a file runs a kind anew, those new so said', async () => {
   const version = (ver, files) => held({ integrity: `runs@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'runs', version: ver } })
   const badges = async (base, other) => {
     npmCompareBadges(base, other); other.risk(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other))
   }
+  const runs = shown => [...shown.matchAll(/<li><span class=npm-extension ([^\n]*?npm-files-runs)[^]*?<\/li>/gu)].map(([chip, classes]) => `${classes} | ${
+    [...chip.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`).join('; ')} | ${
+    /npm-extension-count">([^<]+)</u.exec(chip)?.[1]}`)
   const code = Array.from({ length: 30 }, (_, i) => `export const value${i} = ${i}`).join('\n')
   const base = version('1.0.0', { 'lib/a.js': 'module.exports = 1\n', 'lib/b.js': 'module.exports = x => eval(x)\n', 'lib/old.js': `${code}\n`, 'lib/same.js': 'eval(y)\n' })
   const other = version('1.1.0', { 'lib/a.js': "module.exports = x => require('child_process').exec(x)\n", 'lib/b.js': 'module.exports = x => eval(x) + eval(x)\n',
     'lib/new.js': "module.exports = new Function('return 1')\n", 'lib/moved.js': `${code}\nmodule.exports = s => eval(s)\n`, 'lib/same.js': 'eval(y)\n' })
-  const flagged = await badges(base, other)
-  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval, child_process<\/span><\/span><\/li>/u,
-    'red, every kind new to a file named, in their order')
-  const rows = [...flagged.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`)
-  assert.deepEqual(rows.filter(row => /\((?:line|lines) /u.test(row)), ['lib/new.js: Function (line 1)', 'lib/a.js: child_process (line 1)', 'lib/moved.js: eval (line 31)'],
-    'an added file\'s, a changed one\'s, a renamed one\'s new to it; not eval kept in lib/b.js, nor lib/same.js unchanged')
-  assert.doesNotMatch(flagged, /npm-compare-kept-runs/u, 'nothing in orange the red chip names')
-  const reverse = await badges(other, base)
-  assert.doesNotMatch(reverse, /npm-compare-runs/u, 'none the other way: run code dropped')
-  assert.match(reverse, /<li><span class=npm-extension is-warn npm-compare-kept-runs[^]*?compare-tip-path">lib\/b\.js<\/span><span class="compare-tip-said">eval \(line 1\)<[^]*?compare-tip-path">lib\/same\.js<[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span><\/span><\/li>/u,
-    'but in orange what any file of it runs, kept')
+  assert.deepEqual(runs(await badges(base, other)), ['is-critical npm-held-file npm-files-runs | lib/a.js: child_process (line 1, new); lib/b.js: eval (line 1); '
+    + 'lib/new.js: Function (line 1, new); lib/moved.js: eval (line 31, new); lib/same.js: eval (line 1) | eval, child_process'],
+    'one chip, red: every file that runs code, what an added, changed or renamed file runs anew said so; eval kept in lib/b.js and lib/same.js as they are')
+  assert.deepEqual(runs(await badges(other, base)), ['is-warn npm-held-file npm-files-runs | lib/b.js: eval (line 1); lib/same.js: eval (line 1) | eval'],
+    'the other way, nothing run anew: what it runs, in orange')
   const files = Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]]))
-  const kept = await badges(base, version('1.0.1', { ...files, 'lib/b.js': 'module.exports = x => eval(x) // more\n' }))
-  assert.doesNotMatch(kept, /npm-compare-runs/u, 'nor in red for eval a file already held')
-  assert.match(kept, /npm-compare-kept-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u, 'in orange')
-  const both = await badges(base, version('1.0.2', { ...files, 'lib/b.js': "module.exports = x => eval(x)\nrequire('child_process')\n" }))
-  assert.match(both, /npm-compare-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">child_process<\/span>[^]*?npm-compare-kept-runs[^]*?<span>Runs code<\/span><span class="npm-extension-count">eval<\/span>/u,
-    'what is new in red, what is kept in orange')
-  assert.match(both, /npm-compare-kept-runs[^]*?compare-tip-path">lib\/b\.js<\/span><span class="compare-tip-said">eval \(line 1\)</u, 'a file\'s kept kinds alone in orange, what is new to it in red')
+  assert.deepEqual(runs(await badges(base, version('1.0.1', { ...files, 'lib/b.js': 'module.exports = x => eval(x) // more\n' }))),
+    ['is-warn npm-held-file npm-files-runs | lib/b.js: eval (line 1); lib/same.js: eval (line 1) | eval'], 'eval a file already ran, in orange')
+  assert.deepEqual(runs(await badges(base, version('1.0.2', { ...files, 'lib/b.js': "module.exports = x => eval(x)\nrequire('child_process')\n" }))),
+    ['is-critical npm-held-file npm-files-runs | lib/b.js: eval (line 1), child_process (line 2, new); lib/same.js: eval (line 1) | eval, child_process'],
+    'red for child_process new to lib/b.js, the eval it kept beside it')
 })
 
-test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and an exfiltration host new to a file a level higher than its tag', async () => {
+test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and the services a file names, a level higher where new to it', async () => {
   const version = (ver, files) => held({ integrity: `hosts@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'hosts', version: ver } })
   const badges = async (base, other) => {
@@ -812,14 +820,17 @@ test('Compare flags the hosts the open version\'s code names that the one compar
   assert.deepEqual([...hostRows.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, name, at]) => `${name}: ${at}`),
     ['api.telegram.org: lib/new.js, line 2', 'api.ipify.org: lib/new.js, line 3', 'webhook.site: lib/api.js, line 2', 'docs.new.dev: lib/old.js, line 2'],
     'each with where it is first named; not one the version compared with\'s code named, in another file too, nor one in a comment, nor its readme\'s')
-  assert.match(flagged, /<li><span class=npm-extension is-critical npm-held-file npm-compare-exfiltration[^]*?<span>Exfiltration<\/span><span class="npm-extension-count">webhook\.site<\/span><\/span><\/li>/u,
-    'in red, the services named')
-  assert.match(flagged, /<li><span class=npm-extension is-critical npm-held-file npm-compare-remote[^]*?compare-tip-path">lib\/new\.js<\/span><span class="compare-tip-said">Telegram \(line 2\)<[^]*?<span>Remote<\/span><span class="npm-extension-count">Telegram</u,
-    'one that could be fine, new, in red too')
-  assert.match(flagged, /<li><span class=npm-extension is-warn npm-held-file npm-compare-ip-lookup[^]*?<span>IP lookup<\/span><span class="npm-extension-count">ipify<\/span><\/span><\/li>/u,
-    'a new IP lookup in orange; not ipinfo, which lib/geo.js named already')
-  assert.doesNotMatch(flagged, /ipinfo/u)
-  assert.doesNotMatch(await badges(other, base), /npm-compare-(?:hosts|exfiltration|remote|ip-lookup)/u, 'none the other way: hosts dropped, and a readme\'s no code')
+  const tagChips = shown => [...shown.matchAll(/<li><span class=npm-extension ([^\n]*?npm-files-[\w-]+)[^]*?<\/li>/gu)].map(([chip, classes]) => `${classes} | ${
+    [...chip.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`).join('; ')} | ${
+    /npm-extension-count">([^<]+)</u.exec(chip)?.[1]}`)
+  assert.deepEqual(tagChips(flagged), ['is-critical npm-held-file npm-files-exfiltration | lib/api.js: webhook.site (line 2, new) | webhook.site',
+    'is-critical npm-held-file npm-files-remote | lib/new.js: Telegram (line 2, new) | Telegram',
+    'is-warn npm-held-file npm-files-ip-lookup | lib/new.js: ipify (line 3, new); lib/geo.js: ipinfo (line 1) | ipinfo, ipify'],
+    'a tag a level higher where a file names one of its services anew, those new so said: the request catcher red, Telegram red too, '
+    + 'an IP lookup orange; ipinfo, which lib/geo.js named already, as it is')
+  const reverse = await badges(other, base)
+  assert.doesNotMatch(reverse, /npm-compare-hosts/u, 'no host new the other way: hosts dropped, and a readme\'s no code')
+  assert.deepEqual(tagChips(reverse), ['is-moderate npm-held-file npm-files-ip-lookup | lib/geo.js: ipinfo (line 1) | ipinfo'], 'what it holds, at its tag\'s own level')
   const files = Object.fromEntries(base.json.sources.map((path, i) => [path, base.json.sourcesContent[i]]))
   const oneVersion = version('1.0.1', { ...files, 'lib/api.js': `${files['lib/api.js']}get("https://one.new.dev")\n` })
   const one = await badges(base, oneVersion)
@@ -955,7 +966,7 @@ test('malware told of a version is its first chip, in solid red, Socket\'s score
   }
 })
 
-test('the Overview flags what calls for a look at the version on its own, as Compare\'s chips do, but for what only a change tells', async () => {
+test('the Overview flags what the version holds with Compare\'s chips, none only a change tells where risk picks no version to compare it with', async () => {
   const scores = changed => ({ overall: 1, supplyChain: 1, vulnerability: 1, quality: 1, maintenance: 1, license: 1, ...changed })
   answers.versions.held = { versions: ['1.0.0'], times: { '1.0.0': '2020-01-01T00:00:00.000Z' } }
   answers.advisories.held = { versions: ['1.0.0'], advisories: [{ id: 'a', severity: 'high', affected: [0] }] }
@@ -971,19 +982,19 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   npmOverviewBadges(entry); await new Promise(resolve => { setImmediate(resolve) })
   const shown = rendered(npmOverviewBadges(entry))
   const chips = [...shown.matchAll(/<li>[^]*?<\/li>/gu)].map(([chip]) => /<span>([^<]+)<\/span>/u.exec(chip)?.[1] ?? /class="?npm-extension[^>]*>\s*([^<\s][^<]*)</u.exec(chip)?.[1]?.trim())
-  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry', 'Unimported', 'Runs code', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
+  assert.deepEqual(chips, ['Deprecated', 'Install script', 'Non-registry deps', 'Unused deps', 'Runs code', 'Exfiltration', 'Remote', 'IP lookup', 'Obfuscated', 'Advisories', 'Quality'],
     'in Compare\'s order; not its tier, unpopular as it is, which its downloads\' card shows')
   assert.equal(npmRisk(entry.npm)?.findings.find(({ id }) => id === 'popularity')?.level, 'is-unpopular', 'risk finds it so')
   assert.match(shown, /<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">/u)
-  assert.match(shown, /npm-compare-install" data-tooltip=postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
-  assert.match(shown, /npm-overview-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)
-  assert.match(shown, /<li><span class=npm-extension is-critical npm-held-file npm-overview-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u,
+  assert.match(shown, /npm-compare-install"\s+data-tooltip=1\.0\.0: postinstall: node setup\.js[^]*<span>Install script<\/span><span class="npm-extension-count">postinstall</u, 'what npm runs installing it alone')
+  assert.match(shown, /npm-files-runs[^]*?compare-tip-path">index\.js<\/span><span class="compare-tip-said">eval \(line 1\), child_process \(line 2\)<[^]*?<span class="npm-extension-count">eval, child_process</u)
+  assert.match(shown, /<li><span class=npm-extension is-critical npm-held-file npm-files-exfiltration[^]*?compare-tip-path">lib\/send\.js<[^]*?<span class="npm-extension-count">webhook\.site</u,
     'a host that catches what is sent to it in red')
-  assert.match(shown, /<li><span class=npm-extension is-warn npm-held-file npm-overview-remote[^]*?compare-tip-path">lib\/bot\.js<[^]*?<span class="npm-extension-count">Telegram</u,
+  assert.match(shown, /<li><span class=npm-extension is-warn npm-held-file npm-files-remote[^]*?compare-tip-path">lib\/bot\.js<[^]*?<span class="npm-extension-count">Telegram</u,
     'one that could be fine in orange')
-  assert.match(shown, /<li><span class=npm-extension is-moderate npm-held-file npm-overview-ip-lookup[^]*?compare-tip-path">lib\/geo\.js<[^]*?<span class="npm-extension-count">ipify</u,
+  assert.match(shown, /<li><span class=npm-extension is-moderate npm-held-file npm-files-ip-lookup[^]*?compare-tip-path">lib\/geo\.js<[^]*?<span class="npm-extension-count">ipify</u,
     'an IP lookup in yellow')
-  assert.match(shown, /npm-overview-obfuscated[^]*?compare-tip-path">dist\/o\.js</u)
+  assert.match(shown, /npm-files-obfuscated[^]*?compare-tip-path">dist\/o\.js</u)
   const heldChips = shown.match(/<li><span class=npm-extension is-\w+ npm-held-file[^]*?<\/li>/gu)
   assert.equal(heldChips.length, 5)
   for (const chip of heldChips) assert.doesNotMatch(chip, /compare-tip-note/u, 'what each file holds and where, nothing more')
@@ -997,6 +1008,28 @@ test('the Overview flags what calls for a look at the version on its own, as Com
   held(plain)
   npmOverviewBadges(clean); await new Promise(resolve => { setImmediate(resolve) })
   assert.equal(npmOverviewBadges(clean), nothing, 'none for a version that calls for no look')
+})
+
+test('the Overview flags against the version risk picks what Compare would: what it holds, raised and marked where it changed, and what only a change tells', async () => {
+  const { npmDependencyChecks } = await import('../ui/view/npm-package.js')
+  const at = days => new Date(Date.now() - days * 24 * 60 * 60_000).toISOString()
+  const sourcemap = (ver, files) => ({ kind: 'sourcemap', integrity: `overviewed@${ver}`, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  held({ ...sourcemap('1.0.0', { 'index.js': 'module.exports = x => eval(x)\n' }),
+    npm: { name: 'overviewed', version: '1.0.0', published: at(200), manifest: { publisher: 'alice', dependencies: { gitdep: 'github:a/b' } } } })
+  const entry = { npm: { name: 'overviewed', version: '1.1.0', published: at(1), manifest: { publisher: 'mallory', dependencies: { gitdep: 'github:a/b', fresh: '1' } } } }
+  held({ ...sourcemap('1.1.0', { 'index.js': "module.exports = x => eval(x)\nrequire('child_process')\n" }), npm: entry.npm })
+  npmOverviewBadges(entry); await new Promise(resolve => { setImmediate(resolve) })
+  const shown = rendered(npmOverviewBadges(entry))
+  assert.equal(npmRisk(entry.npm)?.oldVersion, '1.0.0', 'the version risk picks, its first maintainer\'s')
+  assert.match(shown, /<li><a class=npm-extension npm-compare-publisher is-to-unknown [^]*?data-tooltip=Published by ~alice \(1\.0\.0\), then ~mallory \(1\.1\.0\)/u, 'a publisher changed, against it')
+  assert.match(shown, /<li><span class=npm-extension is-critical npm-held-file npm-files-runs[^]*?compare-tip-said">eval \(line 1\), child_process \(line 2, new\)</u,
+    'what it runs, red for child_process new since, eval kept beside it')
+  assert.match(shown, /<span>Non-registry deps<\/span><span class="npm-extension-count">1<\/span>[^]*<span>Unused deps<\/span><span class="npm-extension-count">2<\/span>/u,
+    'every dependency it holds that calls for a look, counted')
+  assert.match(shown, /data-tooltip=Imported by nothing of 1\.1\.0: fresh 1, gitdep github:a\/b; new since 1\.0\.0: fresh\s/u, 'the one new since said so')
+  const checks = rendered(npmDependencyChecks(entry.npm))
+  assert.match(checks, /<span>Non-registry<\/span><span class="npm-extension-count">1<[^]*<span>Unimported<\/span><span class="npm-extension-count">2</u,
+    'its dependencies\' fact flags each it holds, not those new alone')
 })
 
 test('a file the server found binary wears no license icon, whatever its name', () => {
