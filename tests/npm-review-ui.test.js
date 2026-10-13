@@ -202,7 +202,8 @@ test('Finalize tint follows allowed verdicts, including edits awaiting save and 
 })
 
 test('review URLs round trip scoped dependencies and version-only shorthand, ignoring the obsolete mode', () => {
-  assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/reviews'))), '/reviews')
+  assert.equal(managedRoutePath(parseManagedRoute(new URL('https://test/my/reviews'))), '/my/reviews')
+  assert.equal(parseManagedRoute(new URL('https://test/reviews'))?.view === 'reviews', false, 'renamed, not kept at its old path')
   for (const path of ['/npm/lib@2.0.0/review', '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0',
     '/npm/@scope/lib/review/@other/base@next']) {
     const parsed = parseManagedRoute(new URL(path, 'https://test'))

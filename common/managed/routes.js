@@ -37,7 +37,7 @@ function findingPath(id) {
 export function managedRoutePath(route) {
   if (!route) return null
   if (route.view === 'home') return '/'
-  if (route.view === 'reviews') return '/reviews'
+  if (route.view === 'reviews') return '/my/reviews'
   if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
     return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
@@ -143,7 +143,7 @@ function codeLines(hash) {
 export function parseManagedRoute(url) {
   const path = url.pathname.replace(/\/$/u, '') || '/'
   if (path === '/' || path === '/index.html') return { view: 'home' }
-  if (path === '/reviews') return { view: 'reviews' }
+  if (path === '/my/reviews') return { view: 'reviews' }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) {
     const createRepoId = Number(url.searchParams.get('createRepo'))
