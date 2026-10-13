@@ -35,7 +35,7 @@ async function fixture(t) {
 }
 const url = context => `/api/npm/reviews?${new URLSearchParams(Object.entries(context).filter(([, value]) => value !== null))}`
 
-test('non-text verdicts are disabled, notes remain writable, and binaries keep published coverage partial', async t => {
+test('non-text verdicts and notes are disabled, and binaries keep published coverage partial', async t => {
   const h = await fixture(t)
   const binary = Buffer.from([0, 1, 255]), changedBinary = Buffer.from([0, 2, 255])
   const before = packageOf('review-binary', '1.0.0', { 'package.json': '{}', 'removed.bin': Buffer.from([0, 4, 254]),
@@ -59,11 +59,11 @@ test('non-text verdicts are disabled, notes remain writable, and binaries keep p
       }
     }
     const note = '* Inspect this externally.\n* Keep the original bytes.'
-    let review = (await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'added.bin', status: null, comment: note } })).body.review
-    assert.equal(review.entries[0].comment, note)
+    assert.equal((await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'added.bin', status: null, comment: note } })).status, 400)
+    let review
     const texts = base.basePackage ? ['package.json', 'empty.txt'] : ['package.json', 'empty.txt', 'to-text.js']
     for (const file of texts) {
-      const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: review.id, revision: review.revision, file, status: 'accept', comment: '' } })
+      const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: review?.id, revision: review?.revision, file, status: 'accept', comment: '' } })
       assert.equal(saved.status, 200, JSON.stringify(saved.body))
       review = saved.body.review
     }
@@ -276,8 +276,8 @@ test('a saved verdict can be cleared without adding a note, leaving publication 
   const cleared = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'index.js', status: null, comment: '',
     reviewId: review.id, revision: review.revision, entryId: review.entries[0].id } })
   assert.equal(cleared.status, 200)
-  assert.equal(cleared.body.review.entries[0].status, null)
-  assert.equal(cleared.body.review.entries[0].comment, '')
+  assert.deepEqual(cleared.body.review.entries, [])
+  assert.deepEqual((await h.send('/api/npm/reviews/mine')).body.reviews[0].entries, [])
 })
 
 test('discard requires author, CSRF and current revision, without fetching package contents', async t => {
@@ -350,12 +350,12 @@ test('review saves use displayed paths after root moves and retain non-text rest
   assert.equal(binary.body.error, 'non-text-review-file')
   const note = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: saved.body.review.id,
     revision: saved.body.review.revision, file: 'src/old.bin', status: null, comment: 'Removed binary' } })
-  assert.equal(note.status, 200)
+  assert.equal(note.status, 400)
   await h.db.createTeam('team', 'Team', Date.now())
   await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: true })
   await h.send('/api/admin/teams/set-dependency-review', { who: 'admin', body: { teamId: 'team', enabled: true } })
-  const manifest = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: note.body.review.id,
-    revision: note.body.review.revision, file: 'package.json', status: 'accept', comment: '' } })
+  const manifest = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', reviewId: saved.body.review.id,
+    revision: saved.body.review.revision, file: 'package.json', status: 'accept', comment: '' } })
   assert.equal(manifest.status, 200)
   const published = await h.send('/api/npm/reviews', { body: { ...context, action: 'publish', reviewId: manifest.body.review.id,
     revision: manifest.body.review.revision, finalStatus: 'reject', teamIds: ['team'] } })

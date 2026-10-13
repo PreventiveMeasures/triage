@@ -13,8 +13,8 @@ export const reviewProgress = (checked, total) => html`<div class="npm-review-pr
 
 export function reviewFileStates(entries = [], nonTextFiles = []) {
   const nonText = new Set(nonTextFiles)
-  return new Map(entries.map(entry =>
-    [entry.file, { status: nonText.has(entry.file) ? null : entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
+  return new Map(entries.filter(entry => entry.status && !nonText.has(entry.file)).map(entry =>
+    [entry.file, { status: entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
 }
 
 export function reviewNote(comment) {

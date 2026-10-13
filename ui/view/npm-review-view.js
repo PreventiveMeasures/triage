@@ -1,8 +1,11 @@
 import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
+import { DELETE_ICON_SVG } from './icons.js'
+import { sourceFileIcon } from './source-file-icon.js'
 import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
 import { reviewBadge, reviewDate, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
@@ -25,12 +28,12 @@ function reviewActions(page) {
   const action = page._canEdit ? { label: 'Finalize review', run: () => page._beginPublish(), disabled: !summary.checkedFiles }
     : !frozen || !page._writable ? null
     : page._activeReview || page._ownPublished.length === 0 ? { label: 'Resume your review', run: () => page._resume() }
-    : review.user === page.session?.id ? { label: 'Continue review', run: () => page._change({ action: 'continue', reviewId: review.id, revision: review.revision }) } : null
-  return html`<div class="npm-review-summary-actions">${frozen ? reviewBadge(review) : nothing}<div class="npm-review-progress-block"><span>${page._unsaved && (page._saveBlocked || page._error)
+    : review.user === page.session?.id ? { label: 'Revise review', run: () => page._change({ action: 'continue', reviewId: review.id, revision: review.revision }) } : null
+  return html`<div class="npm-review-summary-actions">${frozen || page._draftStarted ? reviewBadge(review ?? { publishedAt: null, revokedAt: null }) : nothing}<div class="npm-review-progress-block"><span>${page._unsaved && (page._saveBlocked || page._error)
     ? html`<button type="button" class="npm-review-button npm-review-text-button" @click=${() => page._openPanel('unsaved')}>Unsaved changes</button>`
     : html`<strong>${summary.checkedFiles} of ${summary.totalFiles}</strong> files checked`}</span>
     ${reviewProgress(summary.checkedFiles, summary.totalFiles)}</div>
-    ${action ? html`<button type="button" class=${page._canEdit ? finalizeClass(page) : 'npm-review-button npm-review-primary'}
+    ${action ? html`<button type="button" class=${page._canEdit ? finalizeClass(page) : 'npm-review-button'}
       ?disabled=${busy(page) || action.disabled} @click=${action.run}>${action.label} ${NEXT_ICON}</button>` : nothing}
   </div>`
 }
@@ -65,7 +68,7 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
   const editor = page._editorState(file)
   const saved = page._shownReview?.entries.find(row => row.file === file)
   const nonText = page._nonTextFiles.includes(file)
-  const showNotes = nonText || ['accept-with-nits', 'request-changes', 'reject'].includes(editor.status)
+  const showNotes = !nonText && ['accept-with-nits', 'request-changes', 'reject'].includes(editor.status)
   return html`<section class=${`npm-review-decision${inline ? ' npm-review-inline-decision' : ''}`} aria-label="File decision">
     ${page._canEdit ? html`
       ${verdictChoices(`file:${file}`, nonText ? '' : editor.status,
@@ -75,7 +78,7 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
         .value=${live(editor.comment)} ?disabled=${busy(page)} @input=${event => page._editFile(file, { comment: event.target.value })}
         @blur=${() => void page._saveFile(file)}></textarea>` : nothing}`
       : html`${inline ? nothing : html`<header><strong>File review</strong><span class="npm-review-muted">${isFrozen(page) ? 'Frozen' : 'Read only'}</span></header>`}
-        ${saved ? html`${saved.status ? verdictLabel(saved.status) : nothing}${reviewNote(saved.comment)}`
+        ${saved?.status && !nonText ? html`${verdictLabel(saved.status)}${reviewNote(saved.comment)}`
           : html`<p class="npm-review-muted">This file was not reviewed.</p>`}
         ${page._writable ? nothing : html`<p class="npm-review-help">Triage access is required to add a review.</p>`}`}
   </section>`
@@ -93,6 +96,7 @@ function teamOptions(page, title, teams, selected, change, footer) {
 
 export function renderReviewConfirmation(page, review) {
   const allowed = page._allowedVerdicts, summary = summarizeReview(review.entries, page._files, page._nonTextFiles)
+  const notes = review.entries.filter(entry => entry.status && entry.comment.trim() && !page._nonTextFiles.includes(entry.file))
   return html`<form class="npm-review-publish-form" @submit=${event => { event.preventDefault(); void page._publish() }}>
     <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${coverage(summary)} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}<p>${summary.totalFiles > summary.checkedFiles ? html`${summary.totalFiles - summary.checkedFiles} files not checked.
@@ -100,6 +104,10 @@ export function renderReviewConfirmation(page, review) {
       ${page._needsPackageJson ? html`<p class="npm-review-error">Review ${page._files.includes('package.json')
         ? html`<button type="button" class="npm-review-button npm-review-text-button" @click=${() => { page._closePanel(); page._selectFile('package.json') }}>package.json</button>`
         : 'package.json'} before publishing a partial review.</p>` : nothing}</section>
+      ${notes.length > 0 ? html`<section aria-label="File notes"><strong>File notes</strong>
+        <ul class="npm-review-publish-notes" tabindex="0" aria-label="Saved file notes">${notes.map(entry => html`<li>
+          <span class="dependency-review-entry-file">${sourceFileIcon(entry.file)}<span>${entry.file}</span></span>
+          ${reviewNote(entry.comment)}</li>`)}</ul></section>` : nothing}
       <div><strong>Final verdict</strong>${verdictChoices('final-verdict', page._finalStatus, status => { page._finalStatus = status }, busy(page), allowed)}</div>
       ${page._securityLimit === 'reject' ? html`<p class="npm-review-help">Malware detected. Only Reject is available.</p>`
         : page._securityLimit === 'request-changes' ? html`<p class="npm-review-help">Critical vulnerabilities detected.</p>` : nothing}
@@ -132,11 +140,13 @@ export function renderReviewEntry(page, review) {
     <p class="npm-review-help">${review.teams.length > 0 ? `${review.teams.map(team => team.name).join(', ')} · ` : ''}${reviewDate(review.publishedAt ?? review.time)}</p>${reviewNote(review.comment)}
     <div class="npm-review-entry-actions">
       <button type="button" class="npm-review-button" ?disabled=${busy(page)} @click=${() => void page._openReview(review)}>Open ${NEXT_ICON}</button>
-      ${published && own && !hasPrivate && page._writable ? html`<button type="button" class="npm-review-button" aria-label="Continue in a new review" ?disabled=${busy(page)}
-        @click=${() => void page._openReview(review, true)}>Continue</button>` : nothing}
+      ${published && own && !hasPrivate && page._writable ? html`<button type="button" class="npm-review-button" aria-label="Revise in a new draft" ?disabled=${busy(page)}
+        @click=${() => void page._openReview(review, true)}>Revise</button>` : nothing}
       ${published && own && page._writable && review.revokedAt === null ? html`<button type="button" class="npm-review-button npm-review-danger" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button>` : nothing}
       <review-audit-copy .review=${review}></review-audit-copy>
+      ${!published && own && page._writable ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${busy(page)}
+        @click=${() => void page._discard(review)}>${unsafeHTML(DELETE_ICON_SVG)}</button>` : nothing}
     </div>
     ${published && own && page._writable && review.revokedAt === null && remaining.length > 0 ? html`
       <details class="npm-review-share"><summary>Publish to more teams</summary>${teamOptions(page, 'Teams', remaining, selected,

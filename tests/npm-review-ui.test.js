@@ -74,7 +74,7 @@ function component() {
   return page
 }
 
-test('non-text files stay visible and unchecked in both review modes, with disabled verdicts and editable notes', async () => {
+test('non-text files stay visible and unchecked in both review modes, with disabled verdicts and no notes', async () => {
   const page = component()
   page.details = { ...entry, kind: 'sourcemap', json: { sources: ['package.json', 'index.js'], sourcesContent: ['{}', 'new text'] },
     npmBinaries: new Map([['asset.bin', { size: 24, digest: 'sha256-new' }]]) }
@@ -96,19 +96,12 @@ test('non-text files stay visible and unchecked in both review modes, with disab
     const editor = text(renderReviewEditor(page, 'asset.bin', mode === 'diff'))
     assert.equal((editor.match(/\?disabled=true/gu) ?? []).length, 5, 'all verdict controls, including Not checked, are disabled')
     assert.match(editor, /Non-text file.*remains unchecked/u)
-    assert.match(editor, /aria-label="File note"/u)
+    assert.doesNotMatch(editor, /aria-label="File note"/u)
     requests.length = 0
     for (const status of ['accept', 'accept-with-nits', 'request-changes', 'reject']) await page._setFileStatus('asset.bin', status)
     assert.equal(requests.length, 0)
     assert.equal(page._editorState(page._file).status, '')
   }
-  const comment = '* Still visible\n* External inspection needed'
-  answer = { review: { ...saved, revision: 2, entries: saved.entries.map(row => row.file === 'asset.bin' ? { ...row, comment, status: null } : row) } }
-  page._editFile('asset.bin', { comment: comment })
-  await page._saveFile('asset.bin')
-  assert.equal(requests.at(-1)[1].status, null)
-  assert.equal(requests.at(-1)[1].comment, comment)
-  assert.equal(page._unsaved, false)
   assert.equal(page._summary.coverage, 'partial')
   assert.match(text(renderReviewConfirmation(page, page._activeReview)), /1 of 3 files checked/u)
 })
@@ -249,52 +242,125 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   assert.equal(text(copy.render()), '')
 })
 
-test('My reviews discards only unpublished reviews after confirmation and keeps rows on failure', async () => {
-  const page = new DependencyReviewList()
-  page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
-  page._key = 'alice'
-  const published = { ...review, id: 'published', publishedAt: 200 }
-  page._reviews = [review, published]
-  assert.match(text(page._row(review)), /aria-label="Discard review"/u)
-  assert.doesNotMatch(text(page._row(published)), /aria-label="Discard review"/u)
-  requests.length = 0
-  confirmations.length = 0
-  discardConfirmation = { confirmed: false }
-  await page._discard(review)
-  assert.equal(requests.length, 0)
-  assert.equal(page._reviews.length, 2)
-  assert.equal(confirmations[0].reviewTitle, '@scope/lib 1.0.0 -> 2.0.0')
-  discardConfirmation = { confirmed: true }
-  answer = new Error('This review changed or was published in another tab.')
-  await page._discard(review)
-  assert.match(page._error, /changed or was published/u)
-  assert.equal(page._reviews.length, 2)
-  assert.equal(page._discarding, null)
-  answer = { ok: true }
-  await page._discard(review)
-  assert.deepEqual(requests.at(-1).slice(0, 3), ['review', 1, 'csrf'])
-  assert.deepEqual(page._reviews, [published])
-  const count = requests.length, prompts = confirmations.length
-  for (const row of [published, { ...published, revokedAt: 300 }, { ...review, user: 'bob' }]) await page._discard(row)
-  page.session.role = 'view'
-  await page._discard(review)
-  assert.equal(requests.length, count)
-  assert.equal(confirmations.length, prompts)
+test('review lists discard only drafts after confirmation and keep rows on failure', async () => {
+  for (const Component of [DependencyReviewList, NpmReview]) {
+    const page = Component === NpmReview ? component() : new Component()
+    page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
+    page._key = 'alice'
+    const published = { ...review, id: 'published', publishedAt: 200 }
+    page._reviews = [review, published]
+    const markup = value => text(page._row ? page._row(value) : renderReviewEntry(page, value))
+    assert.match(markup(review), /aria-label="Discard review"/u)
+    assert.doesNotMatch(markup(published), /aria-label="Discard review"/u)
+    requests.length = 0
+    confirmations.length = 0
+    discardConfirmation = { confirmed: false }
+    await page._discard(review)
+    assert.equal(requests.length, 0)
+    assert.equal(page._reviews.length, 2)
+    assert.equal(confirmations[0].reviewTitle, '@scope/lib 1.0.0 -> 2.0.0')
+    discardConfirmation = { confirmed: true }
+    answer = new Error('This review changed or was published in another tab.')
+    await page._discard(review)
+    assert.match(page._error, /changed or was published/u)
+    assert.equal(page._reviews.length, 2)
+    assert.ok(!page._discarding && !page._saving)
+    answer = { ok: true }
+    await page._discard(review)
+    assert.deepEqual(requests.at(-1).slice(0, 3), ['review', 1, 'csrf'])
+    assert.deepEqual(page._reviews, [published])
+    if (page instanceof NpmReview) assert.equal(page._shownReview, published, 'discard returns to the last published review')
+    const count = requests.length, prompts = confirmations.length
+    for (const row of [published, { ...published, revokedAt: 300 }, { ...review, user: 'bob' }]) await page._discard(row)
+    page.session.role = 'view'
+    await page._discard(review)
+    assert.equal(requests.length, count)
+    assert.equal(confirmations.length, prompts)
+  }
 })
 
-test('discard confirmation cannot delete a review after leaving My reviews', async () => {
-  const page = new DependencyReviewList()
-  page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
-  page._reviews = [review]
-  let resolve
-  discardConfirmation = new Promise(done => { resolve = done })
-  requests.length = 0
-  const pending = page._discard(review)
-  page.disconnectedCallback()
-  resolve({ confirmed: true })
-  await pending
-  assert.equal(requests.length, 0)
-  assert.deepEqual(page._reviews, [review])
+test('review lists cancel discard when leaving the page', async () => {
+  for (const Component of [DependencyReviewList, NpmReview]) {
+    const page = Component === NpmReview ? component() : new Component()
+    page.session = { id: 'alice', role: 'triage', csrfToken: 'csrf' }
+    page._reviews = [review]
+    let resolve
+    discardConfirmation = new Promise(done => { resolve = done })
+    requests.length = 0
+    const pending = page._discard(review)
+    page.disconnectedCallback()
+    resolve({ confirmed: true })
+    await pending
+    assert.equal(requests.length, 0)
+    assert.deepEqual(page._reviews, [review])
+  }
+})
+
+test('discard resets the current draft or local revision without changing another comparison or its published source', async () => {
+  const other = { ...review, id: 'other', baseVersion: '0.5.0' }, page = component()
+  page._reviews.push(other); page._path = 'index.js'
+  page._resetEditor(page._path); page._editFile(page._path, { comment: 'Unsaved note' })
+  discardConfirmation = { confirmed: true }; answer = { ok: true }; requests.length = 0
+  await page._discard(other)
+  assert.equal(page._shownReview, review)
+  assert.equal(page._editorState(page._path).comment, 'Unsaved note')
+  await page._discard(review)
+  assert.equal(page._shownReview, null, 'no remaining review opens an empty review')
+  assert.equal(page._canEdit, true)
+  assert.equal(page._unsaved, false)
+  assert.equal(page._editorState(page._path).comment, '')
+  assert.equal(requests.length, 2, 'discard does not save dirty notes or create an empty draft')
+  const published = { ...review, publishedAt: 200 }
+  page._reviews = [published]; page._continue(published.id, published.revision)
+  await page._discard(page._activeReview)
+  assert.equal(requests.length, 2, 'discarding a local revision must not delete its published source')
+  assert.equal(page._shownReview, published)
+  assert.deepEqual(page._reviews, [published])
+})
+
+test('discard waits for autosave and deletes its latest revision without recreating the draft', async () => {
+  const page = component(), pending = Promise.withResolvers()
+  page._path = 'index.js'; page._resetEditor(page._path)
+  page._editFile(page._path, { comment: 'Saving note' })
+  requests.length = 0; answer = pending.promise; discardConfirmation = { confirmed: true }
+  const saving = page._saveFile(page._path)
+  const discarding = page._discard(review)
+  await Promise.resolve()
+  assert.equal(requests.length, 1)
+  answer = { ok: true }
+  pending.resolve({ review: { ...review, revision: 2, entries: [{ ...file, comment: 'Saving note' }] } })
+  await Promise.all([saving, discarding])
+  assert.deepEqual(requests.at(-1).slice(0, 3), ['review', 2, 'csrf'])
+  assert.equal(page._shownReview, null)
+  assert.equal(page._unsaved, false)
+})
+
+test('the toolbar labels changed drafts, leaves untouched revisions unmarked and keeps Revise secondary', async () => {
+  const page = component(), published = { ...review, publishedAt: 200, status: 'request-changes' }
+  page.details = { ...entry, kind: 'sourcemap', json: { sources: ['index.js'], sourcesContent: ['new\n'] } }
+  page._base = base; page._files = ['index.js']; page._path = 'index.js'
+  page._diff = computeBundleDiff(bundleCompareFiles(page._base), bundleCompareFiles(page.details), () => '.')
+  const draftBadge = () => /npm-review-summary-actions[^]*?npm-review-badge[^>]*>Draft</u.test(text(renderReview(page)))
+  assert.equal(draftBadge(), true, 'saved draft')
+  page._reviews = []; page._resetEditor(page._path)
+  assert.equal(draftBadge(), false, 'empty review')
+  page._editFile(page._path, { status: 'accept' })
+  assert.equal(draftBadge(), true, 'edited before its first save')
+  page._editFile(page._path, { status: '' })
+  assert.equal(draftBadge(), false, 'returned to empty')
+  page._reviews = [published]
+  assert.match(text(renderReview(page)), /class=npm-review-button[^>]*>Revise review/u)
+  assert.doesNotMatch(text(renderReview(page)), /npm-review-primary/u)
+  page._continue(published.id, published.revision)
+  assert.equal(draftBadge(), false, 'unchanged revision copy')
+  page._editFile(page._path, { comment: 'A revised note' })
+  assert.equal(draftBadge(), true)
+  page._editFile(page._path, { comment: file.comment })
+  assert.equal(draftBadge(), false, 'returned to the published file note')
+  await page._beginPublish()
+  assert.equal(draftBadge(), false)
+  page._finalComment = 'A revised final comment'
+  assert.equal(draftBadge(), true, 'only the final comment changed')
 })
 
 test('only a sole eligible team is selected initially; Publish requires at least one and saved changes', async () => {
@@ -334,7 +400,7 @@ test('only a sole eligible team is selected initially; Publish requires at least
   await page._publish()
   assert.deepEqual(requests[0][1], { action: 'publish', reviewId: 'review', revision: 1, teamIds: ['two'], finalStatus: 'request-changes', finalComment: 'Check the second file too.' })
   assert.equal(page._canEdit, false)
-  assert.match(text(renderReviewEntry(page, published)), /Continue in a new review/u)
+  assert.match(text(renderReviewEntry(page, published)), /Revise in a new draft/u)
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u, 'no editor for a published set')
   assert.match(text(renderReviewEntry(page, published)), /Publish to more teams/u)
   assert.match(text(renderReviewEntry(page, published)), /Revoke/u)
@@ -583,7 +649,7 @@ test('viewing a frozen set never loads or overwrites private unsaved buffers', (
   assert.doesNotMatch(text(renderReviewEditor(page)), /<textarea/u)
   assert.match(text(renderReviewEntry(page, published)), /aria-current=true/u)
   assert.match(text(renderReviewEntry(page, review)), /aria-current=false/u)
-  assert.doesNotMatch(text(renderReviewEntry(page, review)), />Revoke<|>Continue<|Publish to more teams/u, 'private reviews only expose Open')
+  assert.doesNotMatch(text(renderReviewEntry(page, review)), />Revoke<|>Revise<|Publish to more teams/u, 'drafts only expose Open and Discard')
   page._resume()
   assert.equal(page._editorState(page._file).comment, 'Private pending note')
   assert.equal(page._canEdit, true)
@@ -631,7 +697,7 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
   const entries = [file, { ...file, id: 'note', file: 'other.js', status: null }]
   const states = reviewFileStates(entries)
   assert.equal(states.get('index.js').status, 'request-changes')
-  assert.equal(states.get('other.js').status, null)
+  assert.equal(states.has('other.js'), false)
   const files = Array.from({ length: 10000 }, (_, i) => ({ path: `src/file-${String(i).padStart(5, '0')}.js`, kind: 'added' }))
   const page = component()
   page._files = [...files.map(row => row.path), 'index.js', 'other.js']; page._reviews = [{ ...review, entries }]
@@ -695,7 +761,7 @@ test('autosaves allow editing and file navigation, preserving newer notes after 
 })
 
 test('rapid verdict changes save serially with updated revisions, including reverting to Not checked', async () => {
-  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers()
+  const first = Promise.withResolvers(), page = component(), second = Promise.withResolvers(), third = Promise.withResolvers()
   page._reviews = []; page._resetEditor('other.js'); requests.length = 0
   answer = first.promise
   const accepting = page._setFileStatus('other.js', 'accept')
@@ -709,10 +775,16 @@ test('rapid verdict changes save serially with updated revisions, including reve
   assert.equal(page._editorState(page._file).status, '', 'the earlier save does not revert the latest selection')
   assert.equal(requests.length, 2)
   assert.deepEqual(requests[1][1], { action: 'save', reviewId: 'review', revision: 1, entryId: 'other', file: 'other.js', comment: '', status: null })
-  second.resolve({ review: { ...created, revision: 2, entries: [{ ...created.entries[0], status: null }] } })
+  const restoring = page._setFileStatus('other.js', 'accept')
+  answer = third.promise
+  second.resolve({ review: { ...created, revision: 2, entries: [] } })
   await clearing
+  assert.equal(requests[2][1].entryId, null, 'restoring a deleted file review inserts a new row')
+  assert.equal(requests[2][1].revision, 2)
+  third.resolve({ review: { ...created, revision: 3, entries: [{ ...created.entries[0], id: 'replacement' }] } })
+  await restoring
   assert.equal(page._unsaved, false)
-  assert.equal(page._editorState(page._file).status, '')
+  assert.equal(page._editorState(page._file).status, 'accept')
 })
 
 test('cycling back to a queued verdict retains the latest selection through every save', async () => {
@@ -931,6 +1003,33 @@ test('displayed notes render star lists as bullets while the editor keeps the ty
   assert.equal(page._editorState('index.js').comment, comment)
 })
 
+test('only saved nonempty notes on checked files appear in publication and review summaries', async () => {
+  const list = new DependencyReviewList(), page = component()
+  const saved = { ...review, entries: [
+    { ...file, comment: '* First concern\n* Second concern' },
+    { ...file, file: 'empty.js', comment: '   ' },
+    { ...file, file: 'unchecked.js', status: null, comment: 'Hidden note' },
+  ] }
+  page._reviews = [saved]; page._files = saved.entries.map(row => row.file)
+  page._resetEditor('index.js'); page._editFile('index.js', { comment: 'Unsaved edit' })
+  const confirmation = text(renderReviewConfirmation(page, saved))
+  assert.match(confirmation, /<li>First concern<\/li><li>Second concern<\/li>/u)
+  assert.ok(confirmation.indexOf('Saved file notes') < confirmation.indexOf('Final verdict'))
+  assert.doesNotMatch(confirmation, /empty\.js|unchecked\.js|Hidden note|Unsaved edit/u)
+  assert.match(text(list._row(saved)), />1 note</u)
+  assert.doesNotMatch(text(list._details(saved)), /unchecked\.js|Hidden note/u)
+  assert.equal(page._editorState('unchecked.js').comment, '')
+  page._selectedReview = saved.id
+  assert.doesNotMatch(text(renderReviewEditor(page, 'unchecked.js')), /Hidden note/u)
+  page._selectedReview = null
+  answer = { review: { ...saved, revision: 2, entries: saved.entries.slice(1) } }
+  await page._setFileStatus('index.js', '')
+  assert.equal(page._editorState('index.js').comment, '')
+  assert.equal(page._unsaved, false)
+  assert.doesNotMatch(text(renderReviewConfirmation(page, page._activeReview)), /Saved file notes/u)
+  assert.match(text(list._row(page._activeReview)), /No notes/u)
+})
+
 test('leaving a note saves its file without changing the active editor, and unchanged notes need no save', async () => {
   const page = component()
   page._files = ['index.js', 'other.js']; page._resetEditor('index.js')
@@ -1041,7 +1140,8 @@ test('the shared tree keeps review decorations, progress and unchecked filtering
   const extras = reviewExtensions(page)
   assert.equal(extras.directorySummary({ sourcePath: 'src' }), '1/2')
   assert.match(text(extras.filePrefix('src/a.js')), /accept/u)
-  assert.match(text(extras.fileSuffix('src/b.js')), /Has notes/u)
+  assert.equal(text(extras.fileSuffix('src/b.js')), '')
+  assert.match(text(extras.fileSuffix('src/a.js')), /Has notes/u)
   assert.equal(extras.fileLabel('src/a.js'), 'src/a.js, Accept')
   assert.match(text(extras.filters), /Unchecked 2/u)
   page._unchecked = true
