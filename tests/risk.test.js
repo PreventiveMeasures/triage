@@ -60,12 +60,29 @@ test('a version alone: what it holds, its files stamped, too new under the minim
   assert.deepEqual(ids(assessment), ['held-install-scripts', 'held-runs-code', 'held-exfiltration', 'too-new'], 'as the Overview flags a version on its own')
   assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code'), { id: 'held-runs-code', severity: 'high', files: [{ path: 'index.js', found: { 'child-process': [1] } }] })
   assert.deepEqual(assessment.findings[0], { id: 'held-install-scripts', severity: 'high', scripts: [['postinstall', 'node setup.js']] })
-  assert.deepEqual(assessment.files['index.js'].stamps, [{ name: 'child_process', severity: 'high' }, { name: 'Exfiltration', severity: 'high' }])
+  assert.equal(assessment.findings.find(({ id }) => id === 'held-exfiltration').severity, 'critical', 'a host that catches what is sent to it')
+  assert.deepEqual(assessment.files['index.js'].stamps, [{ name: 'child_process', severity: 'high' }, { name: 'Exfiltration', severity: 'critical' }])
   assert.deepEqual(assessment.files['index.js'].exfiltration, { 'webhook-site': [1] })
   assert.deepEqual(assessment.files['README.md'].stamps, [])
   assert.equal(DEFAULT_MINIMUM_RELEASE_AGE, 14 * DAY)
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW, downloads: false, minimumReleaseAge: 0 })).includes('too-new'), 'none under a minimum of 0, as own scopes take')
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW + 14 * DAY, downloads: false })).includes('too-new'), 'none once old enough')
+})
+
+test('the services a version\'s files name, a finding a hosts\' tag at its severity; against the version before, those new to a file a level higher', async t => {
+  const before = version('hosted', '1.0.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\n' }, { dependencies: {} }, ago(30))
+  const after = version('hosted', '1.1.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\npost("https://webhook.site/x")\n',
+    'lib/b.js': 'bot("https://api.telegram.org/bot")\nget("https://ifconfig.me")\n' }, { dependencies: {} }, ago(20))
+  npm(t, [{ name: 'hosted', versions: [before, after] }])
+  const hosts = (assessment, prefix) => assessment.findings.filter(({ id }) => ['exfiltration', 'remote', 'ip-lookup'].some(tag => id === `${prefix}${tag}`))
+    .map(({ id, severity, files }) => `${id} ${severity}: ${files.map(row => `${row.path} ${Object.keys(row.found ?? row.added).join(',')}`).join('; ')}`)
+  const alone = await assessNpm('hosted', '1.1.0', { now: NOW, downloads: false })
+  assert.deepEqual(hosts(alone, 'held-'), ['held-exfiltration critical: lib/a.js webhook-site', 'held-remote high: lib/b.js telegram',
+    'held-ip-lookup moderate: lib/a.js ipify; lib/b.js ifconfig-me'], 'red, orange and yellow')
+  assert.deepEqual(alone.files['lib/b.js'].stamps, [{ name: 'Remote', severity: 'high' }, { name: 'IP lookup', severity: 'moderate' }])
+  const compared = await assessNpm('hosted', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(hosts(compared, ''), ['exfiltration critical: lib/a.js webhook-site', 'remote critical: lib/b.js telegram', 'ip-lookup high: lib/b.js ifconfig-me'],
+    'never past red; ipify, named already, none')
 })
 
 test('against the version before: what it adds and changes, its publisher and provenance, and a new dependency\'s package', async t => {

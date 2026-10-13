@@ -9,6 +9,8 @@
 // renamedFrom?, modified? }`, by its path in the open version.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { npmVersionFileRisk, npmVersionHosts } from './files.js'
+import { npmHostFinding } from './held.js'
+import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmLargeCode } from '../files/readability.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
@@ -17,16 +19,18 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 
 // What the open version does to its files that calls for a look, as red
 // findings: code that runs beyond itself (runs-code.js), new to a file it
-// adds or changes, the kinds with their lines (`runs-code`); a host malicious
-// packages send what they take to, new to a file it adds or changes
-// (hosts.js npmExfiltration, `exfiltration`); a code file of 256 KiB or more
-// it adds (npmLargeCode, `large-code`); a file it changes that had no line
-// over 200 characters and now has one over 2,000 (npmBecameUnreadable,
-// `now-unreadable`); and a file it adds or changes with an obfuscator's
-// fingerprint where the one compared with had none (`obfuscated`). Then in
-// orange what any of its files runs beyond itself that `runs-code` doesn't
-// name, kept from the version compared with (`kept-runs-code`). A renamed
-// file by its old path; one renamed alone, unchanged, holds what it held.
+// adds or changes, the kinds with their lines (`runs-code`); a service under
+// one of the hosts' tags new to a file it adds or changes (hosts.js
+// npmExfiltration), a finding a tag a level higher than its own
+// (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
+// code file of 256 KiB or more it adds (npmLargeCode, `large-code`); a file
+// it changes that had no line over 200 characters and now has one over 2,000
+// (npmBecameUnreadable, `now-unreadable`); and a file it adds or changes with
+// an obfuscator's fingerprint where the one compared with had none
+// (`obfuscated`). Then in orange what any of its files runs beyond itself that
+// `runs-code` doesn't name, kept from the version compared with
+// (`kept-runs-code`). A renamed file by its old path; one renamed alone,
+// unchanged, holds what it held.
 function npmFileFindings(base, other, files) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
@@ -41,7 +45,10 @@ function npmFileFindings(base, other, files) {
   const kept = [...bundleFilesAsMap(other).keys()].map(path => ({ path, found: npmRunsCodeWithout(npmVersionFileRisk(other, path).runsCode, flagged) })).filter(row => row.found)
   return [
     { id: 'runs-code', severity: 'critical', files: runsCode },
-    { id: 'exfiltration', severity: 'critical', files: exfiltration },
+    ...[...HOST_TAGS.keys()].map(tag => {
+      const rows = exfiltration.map(row => ({ path: row.path, added: npmHostsTagged(row.added, tag) })).filter(row => row.added)
+      return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
+    }),
     { id: 'large-code', severity: 'critical', files: files.onlyOther.filter(row => npmLargeCode(row.path, sizes.get(row.path))).map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
     { id: 'now-unreadable', severity: 'critical', files: changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability))
       .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest })) },

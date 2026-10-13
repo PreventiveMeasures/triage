@@ -79,7 +79,7 @@ test('a file\'s flags are what its tags show, alerts by their severity, warnings
   assert.deepEqual(npmFileFlags(details, 'run.js'), [{ name: 'eval', severity: 'high' }, { name: 'child_process', severity: 'high' }])
   assert.deepEqual(npmFileFlags(details, 'ctl.js').map(({ name, severity }) => `${name}:${severity}`), ['Controls:high'])
   assert.deepEqual(npmFileFlags(details, 'logo.png'), [{ name: 'Binary', severity: 'high' }])
-  assert.deepEqual(npmFileFlags(details, 'send.js'), [{ name: 'eval', severity: 'high' }, { name: 'Exfiltration', severity: 'high' }], 'an exfiltration host, as a warning')
+  assert.deepEqual(npmFileFlags(details, 'send.js'), [{ name: 'eval', severity: 'high' }, { name: 'Exfiltration', severity: 'critical' }], 'a host that catches what is sent to it, critical')
   assert.deepEqual(npmFileFlags(details, 'dist/a.min.js').map(({ name, severity }) => `${name}:${severity}`), ['Long lines:notice', 'Minified:notice'])
   assert.deepEqual(npmFileFlags(details, 'index.js', [{ type: 'networkAccess', severity: 'middle' }]), [{ name: 'Network access', severity: 'moderate' }], 'Socket\'s, where the list draws them')
   // What a stasis bundle records of a file, but what it no longer is.

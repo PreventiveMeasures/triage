@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { npmExfiltrationNames, npmExfiltrationSaid } from '../ui/view/file-hosts.js'
-import { npmExfiltration, npmHosts } from '../risk/files/hosts.js'
+import { npmExfiltration, npmHostSeverity, npmHostTags, npmHosts } from '../risk/files/hosts.js'
 import { npmFoundAdded } from '../risk/files/runs-code.js'
 
 const hosts = (path, text) => {
@@ -57,6 +57,39 @@ test('a file names the hosts malicious packages send what they take to, wherever
   }
   for (const path of ['README.md', 'docs/exfil.md', 'CHANGELOG', 'dist/a.js.map']) assert.equal(exfiltration(path, text), null, path)
   assert.equal(exfiltration('lib/a.png', null), null)
+})
+
+test('request catchers and out-of-band hosts, services that could be fine, and IP lookups, each under its tag', () => {
+  const text = ['post("https://eo2xk.m.pipedream.net")', 'get("https://requestb.in/x"); get("https://abc.requestcatcher.com"); get("https://x.requestrepo.com")',
+    'get("https://mock.free.beeceptor.com"); get("http://canarytokens.com/x"); dns(`${d}.dnslog.cn`); dns("abc.ceye.io")',
+    'up("https://paste.ee/r/x"); up("https://transfer.sh/x"); up("https:\\/\\/file.io\\/x"); up("https://0x0.st")',
+    'tunnel("https://x.ngrok-free.app"); tunnel("https://abc.loca.lt"); tunnel("https://x.trycloudflare.com"); tunnel("serveo.net")',
+    'api("https://api.pipedream.com/v1")', 'get("https://api.ipify.org"); get("https://ifconfig.me"); get("https://icanhazip.com")',
+    'get("http://ip-api.com/json"); get("https://ipapi.co/json"); get("https://checkip.amazonaws.com")'].join('\n')
+  const found = npmExfiltration('lib/x.js', text)
+  assert.deepEqual(npmHostTags(found).map(([tag, services]) => [tag, [...services.keys()]]), [
+    ['Exfiltration', ['pipedream', 'requestbin', 'requestcatcher', 'requestrepo', 'beeceptor', 'canarytokens', 'dnslog', 'ceye']],
+    ['Remote', ['paste-ee', 'transfer-sh', 'file-io', '0x0', 'ngrok', 'localtunnel', 'cloudflare-tunnel', 'serveo', 'pipedream-api']],
+    ['IP lookup', ['ipify', 'ifconfig-me', 'icanhazip', 'ip-api', 'ipapi', 'checkip']],
+  ], 'Pipedream\'s endpoints catch what is sent; its own API could be fine')
+  assert.deepEqual(exfiltration('lib/u.js', 'up("https://me@transfer.sh/x")\nup("https://file.io:443/x")\nup("//transfer.sh/y")\ncurl -T f https://file.io\nhttps://transfer.sh/z\n'),
+    { 'transfer-sh': [1, 3, 5], 'file-io': [2, 4] }, 'the host after a user, or before a port, of a URL without a scheme, or after a blank or the text\'s start')
+  for (const lookalike of ['scripts/transfer.sh', 'run("./transfer.sh")', 'this.file.io = io', 'up("https://transfer.sh@example.com/upload")', 'up("https://file.io:x@example.com")',
+    'get("https://example.com/assets//transfer.sh/readme")', 'get("https:\\/\\/example.com\\/a\\/\\/file.io")', '//transfer.sh for uploads',
+    'get("https://example.com/path://transfer.sh/readme")', 'get("https://example.com/xhttps://file.io")', 'get("https://example.com/http://transfer.sh/readme")',
+    'get("https:\\/\\/example.com\\/https:\\/\\/file.io")', 'go("https://ngrok.com/docs")', 'go("https://notpaste.ee")',
+    'go("https://ipify.organic")', 'go("https://myipapi.co")', 'go("https://ngrok.io.evil.example/x")']) {
+    assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
+  }
+})
+
+test('a tag\'s level: red, orange or yellow, a level higher where a service under it is new to the file, never past red', () => {
+  const found = npmExfiltration('a.js', 'post("https://webhook.site/x")\nbot("https://api.telegram.org/bot")\nget("https://api.ipify.org")\n')
+  const levels = was => npmHostTags(found).map(([tag, services]) => `${tag}:${npmHostSeverity(tag, services, was)}`)
+  assert.deepEqual(levels(), ['Exfiltration:critical', 'Remote:high', 'IP lookup:moderate'], 'as they are')
+  assert.deepEqual(levels(null), ['Exfiltration:critical', 'Remote:critical', 'IP lookup:high'], 'all new: red stays red')
+  assert.deepEqual(levels(found), ['Exfiltration:critical', 'Remote:high', 'IP lookup:moderate'], 'none new')
+  assert.deepEqual(levels(npmExfiltration('a.js', 'bot("https://api.telegram.org/bot")\n')), ['Exfiltration:critical', 'Remote:high', 'IP lookup:high'], 'only the lookup new')
 })
 
 test('the services new to a file, named in their order, each with its lines', () => {

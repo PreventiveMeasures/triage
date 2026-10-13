@@ -1,7 +1,9 @@
 // The hosts a version's code names, and the services malicious packages send
-// what they take to, for a reviewer: the hosts a version's scripts name that
-// the version compared with's named in none of theirs, and an exfiltration
-// host a file names, as a file's stamps say (stamps.js).
+// what they take to, fetch what they run from or look the machine up with,
+// for a reviewer: the hosts a version's scripts name that the version
+// compared with's named in none of theirs, and the services a file names,
+// under a tag for how much they call for (HOST_TAGS: Exfiltration, Remote,
+// IP lookup), as a file's stamps say (stamps.js).
 //
 // A quick read, not a parse, as runs-code.js reads: a host is a URL's in a
 // script's strings, regular expressions and template literals
@@ -64,28 +66,67 @@ export function npmHosts(path, text) {
 // may end after it. Its name first, so a text is searched for that alone.
 const NAME_CHAR = String.raw`[\p{L}\p{N}_-]`
 const host = (name, path = '') => new RegExp(String.raw`(?<!${NAME_CHAR})${name}${path}(?!\.?${NAME_CHAR})`, 'giu')
-// Services malicious packages send what they take to, or fetch what they run
-// from: request catchers, out-of-band testing hosts (interactsh's, Burp
-// Collaborator's), bot and webhook APIs, a paste site, an IP lookup, and the
-// install script of Bun (`bun.sh/install`, now `bun.com/install`), which a
-// worm ran its payload with.
+// One so like a file's name or code (`transfer.sh`, `file.io`) only as a
+// URL's host: after the `//` that starts its authority (or `\/\/` as JSON can
+// write it), where the URL starts, its scheme as URL_HOST takes one after the
+// text's start, a blank, a quote, `(`, `=`, `,`, `<` or `>`, or without one
+// after a quote, `(`, `=` or `,` (`"//file.io/x"`): not a URL's path, whatever
+// it holds (`https://example.com/a//transfer.sh`, `/http://transfer.sh`); and
+// after any user, not a user itself (`https://transfer.sh@example.com`).
+const inUrl = name => new RegExp(String.raw`(?<=(?:(?:^|[\s'"\x60(=,<>])(?:https?|wss?|ftp)\??:|['"\x60(=,])\\?\/\\?\/(?:[^\s/@'"\x60]*@)?(?:${NAME_CHAR}+\.)*)${name}(?!\.?${NAME_CHAR}|(?::[^\s/@'"\x60]*)?@)`, 'giu')
+// The tags the services go under, each with its severity (stamps.js
+// SEVERITIES), as a change between versions raises it (npmHostSeverity):
+// Exfiltration, `critical` (red), where nothing but catching what is sent
+// has a use for it in a package's code; Remote, `high` (orange), where it
+// could be fine; and IP lookup, `moderate` (yellow), where it usually is.
+export const HOST_TAGS = new Map([['Exfiltration', 'critical'], ['Remote', 'high'], ['IP lookup', 'moderate']])
+const [CATCHER, REMOTE, IP_LOOKUP] = [...HOST_TAGS.keys()].map(tag => ({ tag }))
+// Services malicious packages send what they take to, fetch what they run
+// from, or look the machine up with, each under its tag. Exfiltration's:
+// request catchers, and out-of-band testing hosts (interactsh's, Burp
+// Collaborator's, Canarytokens', DNS logs). Remote's: bot and webhook APIs,
+// paste sites and file drops, tunnels, Pipedream's own API (its endpoints
+// are `pipedream.net`), and the install script of Bun (`bun.sh/install`, now
+// `bun.com/install`), which a worm ran its payload with. And IP lookups.
 export const EXFILTRATION = new Map([
-  ['webhook-site', { name: 'webhook.site', pattern: host(String.raw`webhook\.site`) }],
-  ['pipedream', { name: 'Pipedream', pattern: host(String.raw`pipedream\.(?:net|com)`) }],
-  ['oast', { name: 'OAST', pattern: host(String.raw`(?:interact\.sh|interactsh\.com|oast\.(?:pro|live|site|online|fun|me)|oastify\.com|burpcollaborator\.net)`) }],
-  ['telegram', { name: 'Telegram', pattern: host(String.raw`api\.telegram\.org`) }],
-  ['discord', { name: 'Discord webhook', pattern: host(String.raw`discord(?:app)?\.com`, String.raw`/api(?:/v\d+)?/webhooks`) }],
-  ['slack', { name: 'Slack webhook', pattern: host(String.raw`hooks\.slack\.com`, '/(?:services|workflows|triggers)') }],
-  ['pastebin', { name: 'Pastebin', pattern: host(String.raw`pastebin\.com`) }],
-  ['ipinfo', { name: 'ipinfo', pattern: host(String.raw`ipinfo\.io`) }],
-  ['bun', { name: 'Bun install', pattern: host(String.raw`bun\.(?:sh|com)`, '/install') }],
+  ['webhook-site', { ...CATCHER, name: 'webhook.site', pattern: host(String.raw`webhook\.site`) }],
+  ['pipedream', { ...CATCHER, name: 'Pipedream', pattern: host(String.raw`pipedream\.net`) }],
+  ['requestbin', { ...CATCHER, name: 'RequestBin', pattern: host(String.raw`(?:requestbin\.(?:net|com)|requestb\.in)`) }],
+  ['requestcatcher', { ...CATCHER, name: 'Request Catcher', pattern: host(String.raw`requestcatcher\.com`) }],
+  ['requestrepo', { ...CATCHER, name: 'requestrepo', pattern: host(String.raw`requestrepo\.com`) }],
+  ['beeceptor', { ...CATCHER, name: 'Beeceptor', pattern: host(String.raw`beeceptor\.com`) }],
+  ['oast', { ...CATCHER, name: 'OAST', pattern: host(String.raw`(?:interact\.sh|interactsh\.com|oast\.(?:pro|live|site|online|fun|me)|oastify\.com|burpcollaborator\.net)`) }],
+  ['canarytokens', { ...CATCHER, name: 'Canarytokens', pattern: host(String.raw`canarytokens\.(?:com|org)`) }],
+  ['dnslog', { ...CATCHER, name: 'DNSLog', pattern: host(String.raw`dnslog\.cn`) }],
+  ['ceye', { ...CATCHER, name: 'CEYE', pattern: host(String.raw`ceye\.io`) }],
+  ['telegram', { ...REMOTE, name: 'Telegram', pattern: host(String.raw`api\.telegram\.org`) }],
+  ['discord', { ...REMOTE, name: 'Discord webhook', pattern: host(String.raw`discord(?:app)?\.com`, String.raw`/api(?:/v\d+)?/webhooks`) }],
+  ['slack', { ...REMOTE, name: 'Slack webhook', pattern: host(String.raw`hooks\.slack\.com`, '/(?:services|workflows|triggers)') }],
+  ['pastebin', { ...REMOTE, name: 'Pastebin', pattern: host(String.raw`pastebin\.com`) }],
+  ['paste-ee', { ...REMOTE, name: 'paste.ee', pattern: host(String.raw`paste\.ee`) }],
+  ['transfer-sh', { ...REMOTE, name: 'transfer.sh', pattern: inUrl(String.raw`transfer\.sh`) }],
+  ['file-io', { ...REMOTE, name: 'file.io', pattern: inUrl(String.raw`file\.io`) }],
+  ['0x0', { ...REMOTE, name: '0x0.st', pattern: host(String.raw`0x0\.st`) }],
+  ['ngrok', { ...REMOTE, name: 'ngrok', pattern: host(String.raw`ngrok(?:-free)?\.(?:io|app|dev)`) }],
+  ['localtunnel', { ...REMOTE, name: 'localtunnel', pattern: host(String.raw`loca\.lt`) }],
+  ['cloudflare-tunnel', { ...REMOTE, name: 'Cloudflare Tunnel', pattern: host(String.raw`trycloudflare\.com`) }],
+  ['serveo', { ...REMOTE, name: 'Serveo', pattern: host(String.raw`serveo\.net`) }],
+  ['pipedream-api', { ...REMOTE, name: 'Pipedream API', pattern: host(String.raw`pipedream\.com`) }],
+  ['bun', { ...REMOTE, name: 'Bun install', pattern: host(String.raw`bun\.(?:sh|com)`, '/install') }],
+  ['ipinfo', { ...IP_LOOKUP, name: 'ipinfo', pattern: host(String.raw`ipinfo\.io`) }],
+  ['ipify', { ...IP_LOOKUP, name: 'ipify', pattern: host(String.raw`ipify\.org`) }],
+  ['ifconfig-me', { ...IP_LOOKUP, name: 'ifconfig.me', pattern: host(String.raw`ifconfig\.me`) }],
+  ['icanhazip', { ...IP_LOOKUP, name: 'icanhazip', pattern: host(String.raw`icanhazip\.com`) }],
+  ['ip-api', { ...IP_LOOKUP, name: 'ip-api', pattern: host(String.raw`ip-api\.com`) }],
+  ['ipapi', { ...IP_LOOKUP, name: 'ipapi', pattern: host(String.raw`ipapi\.com?`) }],
+  ['checkip', { ...IP_LOOKUP, name: 'checkip', pattern: host(String.raw`checkip\.amazonaws\.com`) }],
 ])
 // Any of them, as a text may say it: most say none, told at once.
 const SAYS_ANY = new RegExp([...EXFILTRATION.values()].map(({ pattern }) => pattern.source).join('|'), 'iu')
 
-// The exfiltration services a file names, each with the lines it is named on,
-// the first NPM_MAX_FOUND, in EXFILTRATION's order; null for none, or for
-// prose or a source map.
+// The services a file names, each with the lines it is named on, the first
+// NPM_MAX_FOUND, in EXFILTRATION's order; null for none, or for prose or a
+// source map.
 export function npmExfiltration(path, text) {
   if (typeof text !== 'string' || NPM_PROSE.test(path) || SOURCE_MAP.test(path) || !SAYS_ANY.test(text)) return null
   const found = new Map(), line = lineOf(text)
@@ -95,4 +136,24 @@ export function npmExfiltration(path, text) {
     if (lines.size > 0) found.set(service, [...lines])
   }
   return found.size > 0 ? found : null
+}
+
+// The services of `found` under `tag` (HOST_TAGS), in their order; null for
+// none.
+export function npmHostsTagged(found, tag) {
+  const tagged = found && new Map([...found].filter(([service]) => EXFILTRATION.get(service).tag === tag))
+  return tagged?.size > 0 ? tagged : null
+}
+
+// The services a file names (`found`) by their tag, in HOST_TAGS' order:
+// `[tag, services]` each.
+export const npmHostTags = found => [...HOST_TAGS.keys()].map(tag => [tag, npmHostsTagged(found, tag)]).filter(([, services]) => services)
+
+// How severe a tag's `services` are: its own severity, or with `was` (null for
+// a file that held none), where one of them the file didn't name, a level
+// higher, never past `critical`, as a change between versions calls for more.
+export function npmHostSeverity(tag, services, was) {
+  const levels = [...HOST_TAGS.values()]
+  const at = levels.indexOf(HOST_TAGS.get(tag))
+  return levels[was !== undefined && [...services.keys()].some(service => !was?.has(service)) ? Math.max(0, at - 1) : at]
 }

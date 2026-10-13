@@ -521,7 +521,8 @@ test('a file\'s icon reads each side under that side\'s own path, a removed one 
 
 test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {
   const { view, source } = sourced()
-  const files = { icon: path => `<icon ${path}>`, tag: (shown, path) => `<tag ${shown.integrity} ${path}>`, warning: (shown, paths) => `<warning ${shown.integrity} ${paths.join(',')}>` }
+  const files = { icon: path => `<icon ${path}>`, tag: (shown, path, base) => `<tag ${shown.integrity} ${path} as ${base ? `${base.details.integrity} ${base.path}` : base}>`,
+    warning: (shown, paths) => `<warning ${shown.integrity} ${paths.join(',')}>` }
   const opened = []
   view.source = { ...source('2.0.0'), files, openDependency: row => opened.push(row),
     dependencies: () => ({ removed: [], added: [{ key: '\0dep', name: 'dep', kind: null, range: '^1.0.0', opens: 'dep' }, { key: '\0local', name: 'local', kind: null, range: 'file:..', opens: null }], changed: [] }) }
@@ -535,8 +536,8 @@ test('a source\'s files list open, each with its type\'s icon, those the open on
   const markup = renderText(view._renderDiff())
   assert.match(markup, /<warning sha512-2\.0\.0 new\.js,kept\.js>/u, 'warned of what the open one adds or changes')
   for (const path of ['gone.js', 'new.js', 'kept.js']) assert.match(markup, new RegExp(`<icon ${path}>`, 'u'))
-  assert.match(markup, /<tag sha512-2\.0\.0 new\.js>/u)
-  assert.match(markup, /<tag sha512-2\.0\.0 kept\.js>/u)
+  assert.match(markup, /<tag sha512-2\.0\.0 new\.js as null>/u, 'an added file as none the version compared with had')
+  assert.match(markup, /<tag sha512-2\.0\.0 kept\.js as sha512-1\.0\.0 kept\.js>/u, 'a changed one as that version has it, for what is new to it')
   assert.doesNotMatch(markup, /<tag [^>]* gone\.js>/u, 'a file only the one compared with has is not')
   assert.match(markup, /data-tooltip=2 B → 5 B · 1 → 2 LoC>/u, 'a changed file\'s lines of code')
   const summary = renderText(view._renderSummary(view._diffFor()))

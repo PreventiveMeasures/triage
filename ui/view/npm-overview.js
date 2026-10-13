@@ -25,6 +25,8 @@ import { npmRisk } from './npm-risk.js'
 import { fileRiskOf, npmFilesRisk } from './file-risk.js'
 import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
+import { HOST_TAGS, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.js'
+import { npmHostFinding } from '../../risk/npm/held.js'
 
 // Advisories' severities, most severe first, and an advisory's (`unknown`
 // where it gives none of them).
@@ -459,20 +461,34 @@ export function npmReadabilityWarning(entry, details) {
 }
 
 // A file's tags in the Files list and Compare's: what it can run beyond itself
-// (npmRunsCode), an exfiltration host it names (npmExfiltration), its flags
-// (npmFileFlagTags), then how it reads; with `opens`, for the Files list,
-// whose rows open a file's code, the first two on one line opening it there.
-export function npmFileTags(details, path, opens = false) {
+// (npmRunsCode), the services it names under the hosts' tags
+// (npmExfiltration), its flags (npmFileFlagTags), then how it reads; with
+// `opens`, for the Files list, whose rows open a file's code, the first two on
+// one line opening it there; with `base`, Compare's, the file as the version
+// compared with has it (`{ details, path }`, null for one it adds), a tag
+// naming a service new to it a level higher.
+export function npmFileTags(details, path, opens = false, base = undefined) {
   const { byPath, sizes } = npmFilesRead(details)
   const at = opens ? path : undefined
-  return html`${npmRunsCodeTags(npmFileRunsCode(details, path), undefined, at)}${npmExfiltrationTag(npmFileExfiltration(details, path), undefined, at)}${npmFileFlagTags(details, path, sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
+  return html`${npmRunsCodeTags(npmFileRunsCode(details, path), undefined, at)}${npmExfiltrationTag(npmFileExfiltration(details, path), hostsWas(base), at)}${npmFileFlagTags(details, path, sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
+
+// The services a file named as the version compared with has it (`base`,
+// `{ details, path }`): null for one it adds (`base` null), and undefined
+// where nothing is compared, or that version's risk hasn't arrived.
+const hostsWas = base => base === undefined || (base?.details.npm && !npmFilesRisk(base.details)) ? undefined
+  : base && npmFileExfiltration(base.details, base.path)
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
 // it, by their severity, where the list draws them (the Files list's, not
-// Compare's), then its stamps, as risk read it (file-risk.js fileRiskOf).
-export function npmFileFlags(details, path, alerts = []) {
-  return [...alerts.map(alert => ({ name: socketAlertName(alert.type), severity: SOCKET_SEVERITIES.get(alert.severity) ?? 'low' })), ...fileRiskOf(details, path).stamps]
+// Compare's), then its stamps, as risk read it (file-risk.js fileRiskOf), with
+// `base` as npmFileTags has it, a hosts' tag's a level higher where it names
+// a service new to the file.
+export function npmFileFlags(details, path, alerts = [], base = undefined) {
+  const { stamps, exfiltration } = fileRiskOf(details, path), was = hostsWas(base)
+  const hosts = was === undefined ? null : new Map(npmHostTags(exfiltration).map(([tag, services]) => [tag, npmHostSeverity(tag, services, was)]))
+  return [...alerts.map(alert => ({ name: socketAlertName(alert.type), severity: SOCKET_SEVERITIES.get(alert.severity) ?? 'low' })),
+    ...stamps.map(stamp => hosts?.has(stamp.name) ? { ...stamp, severity: hosts.get(stamp.name) } : stamp)]
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: each
@@ -486,9 +502,10 @@ export const npmCompareFiles = {
   // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
-  tag: npmFileTags,
-  // Its flags as its tags show them, for its lists' Flags order.
-  flags: (details, path) => npmFileFlags(details, path),
+  // Its tags, and its flags as they show them, for its lists' Flags order,
+  // `base` the file as the version compared with has it (npmFileTags).
+  tag: (details, path, base) => npmFileTags(details, path, false, base),
+  flags: (details, path, base) => npmFileFlags(details, path, [], base),
   warning(details, paths) {
     const { byPath } = npmFilesRead(details)
     const read = readabilityCounts(paths.filter(path => byPath.has(path)).map(path => byPath.get(path)))
@@ -559,18 +576,28 @@ function heldInstallScriptsBadge(npm, finding) {
 
 // What a version's files hold that calls for a look (risk/npm/held.js), in
 // orange as their tags are: what any of them runs beyond itself, the kinds
-// named; an exfiltration host one names, the services named; and an
-// obfuscator's fingerprint. Each lists its files in its tooltip, what each
-// holds and where, and nothing more.
+// named; the services they name, a chip a hosts' tag in its severity's color
+// (hostBadges); and an obfuscator's fingerprint. Each lists its files in its
+// tooltip, what each holds and where, and nothing more.
 function heldFileBadges(found) {
   const rows = id => found.get(id)?.files ?? []
   return [
     listBadge('is-warn npm-held-file npm-overview-runs', 'Runs code', rows('held-runs-code'), row => npmRunsCodeSaid(row.found), npmRunsCodeKinds(rows('held-runs-code').map(row => row.found))),
-    listBadge('is-warn npm-held-file npm-overview-exfiltration', 'Exfiltration', rows('held-exfiltration'), row => npmExfiltrationSaid(row.found),
-      npmExfiltrationNames(rows('held-exfiltration').map(row => row.found))),
+    ...hostBadges(found, 'held-', 'npm-overview', 'found'),
     listBadge('is-warn npm-held-file npm-overview-obfuscated', 'Obfuscated', rows('held-obfuscated'), row => npmObfuscationFound(row.found)),
   ]
 }
+
+// A chip for each hosts' tag a finding names services under (risk/npm/held.js
+// and compare.js: Exfiltration, Remote, IP lookup), its id `prefix`ed, in its
+// severity's color, red, orange or yellow, the services named, each file's
+// as its row's `key` holds them; its class `kind`ed by where it shows.
+const SEVERITY_CHIPS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-moderate' }
+const hostBadges = (found, prefix, kind, key) => [...HOST_TAGS.keys()].map(tag => {
+  const finding = found.get(`${prefix}${npmHostFinding(tag)}`), rows = finding?.files ?? []
+  return listBadge(`${SEVERITY_CHIPS[finding?.severity]} npm-held-file ${kind}-${npmHostFinding(tag)}`, tag, rows, row => npmExfiltrationSaid(row[key]),
+    npmExfiltrationNames(rows.map(row => row[key])))
+})
 
 // The advisories affecting each side's version, as the Advisories column
 // has them: none where they couldn't be had, and null until they arrive.
@@ -651,8 +678,9 @@ const TIP_FILES = 8
 // What the open version does to its files that calls for a look, as risk
 // finds it (risk/npm/compare.js npmFileFindings), each a red chip, though the
 // tags it gives a file (npmFileTags) say little of one alone, or warn of it in
-// orange: code that runs beyond itself new to a file, the kinds named; a host
-// malicious packages send what they take to new to a file, the services named;
+// orange: code that runs beyond itself new to a file, the kinds named; the
+// services under a hosts' tag new to a file, a chip a tag, red, or orange for
+// an IP lookup (hostBadges), the services named;
 // a large code file it adds; a file become unreadable, its longest line before
 // and now; and a file newly obfuscated. Then in orange, as a file's tags are,
 // what any of its files runs beyond itself that the red chip doesn't name,
@@ -661,7 +689,7 @@ function fileBadges(found) {
   const rows = id => found.get(id)?.files ?? []
   return [
     fileBadge('npm-compare-runs', 'Runs code', rows('runs-code'), row => npmRunsCodeSaid(row.added), npmRunsCodeKinds(rows('runs-code').map(row => row.added))),
-    fileBadge('npm-compare-exfiltration', 'Exfiltration', rows('exfiltration'), row => npmExfiltrationSaid(row.added), npmExfiltrationNames(rows('exfiltration').map(row => row.added))),
+    ...hostBadges(found, '', 'npm-compare', 'added'),
     fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
     fileBadge('npm-compare-unreadable', 'Now unreadable', rows('now-unreadable'), row => `${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`),
     fileBadge('npm-compare-obfuscated', 'Obfuscated', rows('obfuscated'), row => npmObfuscationFound(row.obfuscation)),
