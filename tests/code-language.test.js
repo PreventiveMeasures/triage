@@ -10,10 +10,10 @@ test('Stasis formats drive syntax and icons even without or despite a filename e
     ['commonjs-typescript', 'typescript', 'ts'], ['module-typescript', 'typescript', 'ts'],
     ['json', 'json', 'json'], ['solidity', 'solidity', 'solidity'],
     ['php', 'php', 'php'], ['rust', 'rust', 'rust'], ['shell', 'bash', 'shell'],
-    ['java', 'java', 'generic'], ['objc', 'objectivec', 'generic'], ['objcpp', 'objectivec', 'generic'],
-    ['c', 'c', 'generic'], ['c-header', 'c', 'generic'], ['cpp', 'cpp', 'generic'], ['cpp-header', 'cpp', 'generic'],
-    ['ruby', 'ruby', 'generic'], ['podfile', 'ruby', 'generic'], ['podspec', 'ruby', 'generic'],
-    ['fastlane', 'ruby', 'generic'], ['podfile-lock', 'yaml', 'yaml'], ['xml', 'markup', 'markup'],
+    ['java', 'java', 'java'], ['objc', 'objectivec', 'objc'], ['objcpp', 'objectivec', 'objc'],
+    ['c', 'c', 'c'], ['c-header', 'c', 'c'], ['cpp', 'cpp', 'cpp'], ['cpp-header', 'cpp', 'cpp'],
+    ['ruby', 'ruby', 'ruby'], ['podfile', 'ruby', 'ruby'], ['podspec', 'ruby', 'ruby'],
+    ['fastlane', 'ruby', 'ruby'], ['podfile-lock', 'yaml', 'yaml'], ['xml', 'markup', 'markup'],
   ]) {
     for (const path of ['bin/example', 'misleading.py']) {
       assert.equal(langForPath(path, format), lang, `${format}: ${path}`)
@@ -84,4 +84,14 @@ test('compiled code wears its own icon by extension: WebAssembly, and native add
   for (const path of ['build/Release/binding.node', 'prebuilds/linux-x64/libvips.so', 'lib/libfoo.dylib', 'win32/addon.DLL']) assert.equal(sourceFileType(path), 'native', path)
   assert.equal(sourceFileType('binding.node', 'resource:base64'), 'native', 'stored as base64, as its bytes are no text')
   for (const path of ['node', 'bin/so', 'wasm.js', 'notes.node.md']) assert.notEqual(sourceFileType(path), 'native', path)
+})
+
+test('native mobile code wears its language\'s icon by name, a .h a header\'s whichever language reads it', () => {
+  for (const [path, icon] of [['android/app/src/main/java/Main.java', 'java'], ['ios/AppDelegate.m', 'objc'], ['ios/Bridge.mm', 'objc'],
+    ['src/main.c', 'c'], ['src/view.cpp', 'cpp'], ['src/util.cc', 'cpp'], ['include/view.hpp', 'cpp'], ['ios/RCTBridge.h', 'header'], ['lib/app.rb', 'ruby']]) {
+    assert.equal(sourceFileType(path), icon, path)
+  }
+  for (const format of ['c-header', 'cpp-header', 'objc']) assert.equal(sourceFileType('ios/RCTBridge.h', format), 'header', format)
+  assert.equal(sourceFileType('ios/Podfile', 'podfile'), 'ruby', 'a Podfile by the format Stasis records')
+  assert.equal(sourceFileType('ios/Podfile'), 'generic', 'and only by it: the name alone says nothing')
 })

@@ -75,9 +75,12 @@ export function sourceFileType(path, format) {
   if (isLicense(path, format, lang)) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
-  if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css', 'yaml', 'markup'].includes(lang)) return lang
-  if (lang === 'bash') return 'shell'
   const extension = extensionOf(path)
+  // A .h is C's, C++'s or Objective-C's alike: a header, whichever reads it.
+  if (['c', 'cpp', 'objectivec'].includes(lang) && extension === 'h') return 'header'
+  if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css', 'yaml', 'markup', 'java', 'ruby', 'c', 'cpp'].includes(lang)) return lang
+  if (lang === 'bash') return 'shell'
+  if (lang === 'objectivec') return 'objc'
   if (extension === 'wasm') return 'wasm'
   if (NATIVE.has(extension)) return 'native'
   return 'generic'
@@ -123,6 +126,14 @@ const MARKS = {
   wasm: badge('#654ff0', 'WA'),
   // Native code's: a chip.
   native: svg`<rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.4" y="6.4" width="3.2" height="3.2" fill="currentColor"/><path d="M6 1.5V4m4-2.5V4M6 12v2.5m4-2.5v2.5M1.5 6H4m-2.5 4H4M12 6h2.5M12 10h2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>`,
+  // Java's: its cup, steaming.
+  java: svg`<path d="M5.4 5.8c-.9-1 .9-1.7 0-3M8.4 5.8c-.9-1 .9-1.7 0-3" fill="none" stroke="#e76f00" stroke-width="1.1" stroke-linecap="round"/><path d="M2.5 7h9v3.3A3.7 3.7 0 0 1 7.8 14H6.2a3.7 3.7 0 0 1-3.7-3.7Z" fill="#5382a1"/><path d="M11.5 8.2h.9a1.6 1.6 0 0 1 0 3.2h-1.1" fill="none" stroke="#5382a1" stroke-width="1.1"/>`,
+  objc: badge('#438eff', 'OC'),
+  c: badge('#3949ab', 'C'),
+  cpp: badge('#00599c', 'C++'),
+  header: badge('#607d8b', 'H'),
+  // Ruby's: a cut gem, Podfiles, podspecs and Fastfiles too.
+  ruby: svg`<path d="M4.5 2.5h7L14.5 6 8 14 1.5 6Z" fill="#cc342d"/><path d="M1.5 6h13M4.5 2.5 6 6l2 8 2-8 1.5-3.5M6 6l2-3.5L10 6" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width=".7" stroke-linejoin="round"/>`,
 }
 const pageMark = svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
 
