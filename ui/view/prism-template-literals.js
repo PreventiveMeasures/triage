@@ -60,11 +60,13 @@ function regexMayStart(text, at) {
   return KEYWORD_BEFORE.test(text.slice(Math.max(0, i - 10), i + 1))
 }
 
-// What may follow a regex literal, its flags aside: Prism's lookahead for its
-// regex token, a line's or the text's end, a comment, or punctuation that
-// closes an operand (`.test`, `,`, `)`). What looks like one followed by
-// anything else is a division with a slash further on: `${i++ / 2}/${n}`.
-const REGEX_FOLLOWED = /[a-z]*[^\S\r\n]*(?:$|[\r\n,.;:})\]]|\/[/*])/uy
+// What may follow a regex literal, its flags aside: a line's or the text's
+// end, a comment, punctuation that closes an operand (`.test`, `,`, `)`) —
+// Prism's lookahead for its regex token — or an operator joining it to the
+// next (`/`/ && ok`). Not `<` or `>`, which compare nothing with a regex but
+// follow the slash of a JSX tag. What looks like one followed by anything
+// else is a division with a slash further on: `${/a/ / 2}/${n}`.
+const REGEX_FOLLOWED = /[a-z]*[^\S\r\n]*(?:$|[\r\n,.;:})\]?&|+\-*%=!^]|\/[/*]|in(?:stanceof)?(?![$\w]))/uy
 
 // Where the scan of the last slash that looked like a regex and wasn't one
 // stopped, in the text being scanned: a `/` before that divides. Without it a

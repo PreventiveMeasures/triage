@@ -108,6 +108,12 @@ describe('template literals in JavaScript', () => {
     assert.deepEqual(typesAt(code, 'let'), ['keyword'])
   })
 
+  it('reads a regex an operator follows as one', () => {
+    const code = 'a = `${/`/ && b}` + `${/`/u ? c : d}` + `${/`/ instanceof RegExp}`; let h = 1'
+    assert.deepEqual(templates(code), ['`${/`/ && b}`', '`${/`/u ? c : d}`', '`${/`/ instanceof RegExp}`'])
+    assert.deepEqual(typesAt(code, 'let'), ['keyword'])
+  })
+
   it('opens no template at a backtick in a string, a comment or a regex', () => {
     const code = 's.replace(/`/g, "\\\\`") // `\nconst t = \'`\' /* ` */\nlet n = `${1}`'
     assert.deepEqual(templates(code), ['`${1}`'])
