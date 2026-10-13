@@ -64,7 +64,7 @@ function npmFileFindings(base, other, files) {
 // written, not a host under it, so one an attack sends to or fetches from
 // there (`api.github.com`, `raw.githubusercontent.com`) is still named, as is
 // a repository github.com serves files or releases from, named by it
-// (hosts.js GITHUB_DOWNLOAD); and no link shortener (`git.io`, `git.new`),
+// (hosts.js githubRepository); and no link shortener (`git.io`, `git.new`),
 // which can lead anywhere.
 const ALLOWED_HOSTS = new Set(['github.com', 'lit.dev', 'developer.mozilla.org', 'json-schema.org', 'nodejs.org', 'babeljs.io', 'tseslint.com',
   'devblogs.microsoft.com', 'semver.org', 'en.wikipedia.org'])

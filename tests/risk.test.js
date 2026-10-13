@@ -119,10 +119,14 @@ test('a host where packages keep their code and docs, named anew, calls for no l
   const side = files => ({ kind: 'sourcemap', npm: { manifest: {} }, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = side({ 'index.js': 'module.exports = 1\n' })
   const other = side({ 'index.js': 'module.exports = 1\n', 'lib/links.js': 'warn("https://github.com/lit/lit/issues")\nwarn("https://lit.dev/msg/dev-mode")\nget("https://api.github.com/repos")\n'
-    + 'get("https://github.com/someone/payloads/raw/main/x.js")\nget("https://github.com/someone/tool/releases/download/v1/tool.tgz")\n' })
+    + 'get("https://github.com/someone/payloads/raw/main/x.js")\nget("https://github.com/someone/tool/releases/download/v1/tool.tgz")\n'
+    + 'get("https://github.com/someone/latest/releases/latest/download/x.js")\nexec("git clone https://github.com/someone/cloned.git")\n'
+    + 'get("https://github.com/someone/blobbed/blob/main/x.js?raw=true")\nget("https://github.com/someone/unheard/route/x")\n'
+    + 'see("https://github.com/lit/lit/blob/main/README.md#use")\nsee("https://github.com/lit/lit/releases/tag/v2.0.0")\nsee("https://github.com/sponsors/someone")\n' })
   const hosts = npmCompareFindings(base, other, { added: [], changed: [] }).find(({ id }) => id === 'new-hosts')?.hosts.map(({ host }) => host)
-  assert.deepEqual(hosts, ['api.github.com', 'github.com/someone/payloads', 'github.com/someone/tool'],
-    'github.com and lit.dev allowed; api.github.com, a host under one, named, and the repositories github.com serves a file or a release from')
+  assert.deepEqual(hosts, ['api.github.com', 'github.com/someone/payloads', 'github.com/someone/tool', 'github.com/someone/latest', 'github.com/someone/cloned',
+    'github.com/someone/blobbed', 'github.com/someone/unheard'],
+    'github.com\'s pages and lit.dev allowed; api.github.com, a host under one, named, and every repository github.com serves what it holds from, by any path but a page')
 })
 
 test('what is read is kept by type, and an assessment kept needs no tarball', async t => {
