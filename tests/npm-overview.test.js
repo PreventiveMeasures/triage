@@ -804,6 +804,23 @@ test('Compare flags in red the files the open version adds or changes that call 
   const major = await badges(many('4.2.0', 'export {}'), many('5.0.0', `const x = '${'z'.repeat(2001)}'`))
   assert.match(major, /<li><span class=npm-extension is-warn npm-held-file npm-compare-unreadable[^]*?in a major release/u, 'orange in a major release')
 })
+test('Compare flags in red a code file the open version adds or changes that isn\'t text, as no one can read it there', async () => {
+  // Its files by path, a text each or, for one that isn't, its size, as the server tells it by its digest.
+  const version = (ver, files) => {
+    const binaries = new Map(Object.entries(files).filter(([, file]) => typeof file === 'number').map(([path, size]) => [path, { size, digest: `sha256-${path}@${ver}` }]))
+    return held({ integrity: `binary@${ver}`, kind: 'sourcemap', npmBinaries: binaries,
+      json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files).map(file => typeof file === 'number' ? null : file) }, npm: { name: 'binary', version: ver } })
+  }
+  const badges = async (base, other) => {
+    npmCompareBadges(base, other); other.risk(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other))
+  }
+  const base = version('1.0.0', { 'index.d.ts': 'export declare const x: number\n', 'legacy.js': 40, 'logo.png': 100 })
+  const flagged = await badges(base, version('1.1.0', { 'index.d.ts': 2048, 'legacy.js': 41, 'logo.png': 101 }))
+  assert.match(flagged, /<li><span class=npm-extension npm-compare-file npm-compare-binary[^]*?<span>Binary code<\/span><\/span><\/li>/u, 'a declaration file become binary, in red')
+  assert.match(flagged, /data-tooltip=Binary code: index\.d\.ts \(2\.0 KiB, not UTF-8 or holding a NUL\)\s/u, 'its size, and why it reads as none')
+  assert.doesNotMatch(flagged, /compare-tip-path">(?:legacy\.js|logo\.png)</u, 'not code binary before too, nor a file that is no code')
+  assert.doesNotMatch(await badges(base, version('1.2.0', { 'index.d.ts': 'export declare const x: string\n', 'legacy.js': 41 })), /npm-compare-binary/u, 'none where its code is text')
+})
 
 test('Compare flags what code any file of the open version runs beyond itself, in red where a file runs a kind anew, those new so said', async () => {
   const version = (ver, files) => held({ integrity: `runs@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
