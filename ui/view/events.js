@@ -1,4 +1,5 @@
 import { prepareNpmReviewTab } from './managed-bundle-navigation.js'
+import { npmRisk } from './npm-risk.js'
 import { setFindingTriage } from '../../client/ignored-triage.js'
 import { compareModeField, compareModeOf, managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
@@ -743,7 +744,7 @@ report.addEventListener('click', (e) => {
       // selection, or modal opened from the Files tab) doesn't
       // re-render the wrong view in the new tab — the modal
       // renders over non-slide tabs whenever the pointer is set.
-      prepareNpmReviewTab(state, tab)
+      prepareNpmReviewTab(state, tab, npm => npmRisk(npm)?.oldVersion ?? null)
       selectBundleTab(tab)
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
       render()
