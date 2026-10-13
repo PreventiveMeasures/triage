@@ -23,6 +23,10 @@ const flying = { now: 0, most: 0, held: null }
 // Bundles whose diffs the server answers for another base file than the one
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
+// Files (`id:path`) whose diffs the server gives up on, as it does on copies
+// too long to work out in time: the view asks for them as it paints, even
+// after their test, and none is worked out for seconds while later tests run.
+const tooLong = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
   fetchPrettyNpmFile() {},
@@ -43,6 +47,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyNpmChanges() {},
   async fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
+    if (tooLong.has(`${id}:${params.path}`)) throw Object.assign(new Error('Comparing this file took too long.'), { status: 504 })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
     if (before instanceof Error) throw before
     flying.most = Math.max(flying.most, ++flying.now)
@@ -858,6 +863,7 @@ test('a hit in a file added too large to show unasked asks for its diff too, and
 
 test('a hit in a file whose printed copies make a diff too large to show unasked asks for it, and opens at its line', async t => {
   t.after(() => { state.bundleSourcePretty = false })
+  tooLong.add('b21:dist/grown.min.js')
   const element = view('dist/grown.min.js', [{ 'dist/grown.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/grown.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(1);\n` }])
   element.base.managedId = 'b21'
   element.other.managedId = 'b22'
@@ -1066,6 +1072,7 @@ test('split, the search lists a drawn diff\'s hits in the rows that diff aligned
 
 test('a hit opened pretty-printed is found in the copy reading its text and matches no further than its own', async t => {
   t.after(() => { state.bundleSourcePretty = false })
+  tooLong.add('b27:dist/common.min.js')
   const published = `var X=1;${'x(1);y(22);'.repeat(40_000)}\n`
   const element = view(null, [{ 'dist/common.min.js': `var Y=1;${'x(1);y(22);'.repeat(40_000)}\n` }, { 'dist/common.min.js': published }])
   element.base.managedId = 'b27'
