@@ -217,6 +217,17 @@ test('a package few download is flagged as unpopular, but where its popularity i
   assert.ok(!asked.some(url => url.startsWith('https://api.npmjs.org/downloads/')), 'nor its downloads asked')
 })
 
+test('a package few download is a level less unpopular where an account known to publish one of npm\'s most downloaded packages published the version', async t => {
+  const by = account => ({ dependencies: {}, _npmUser: { name: account, email: 'a@example.com' } })
+  const daily = perDay => ({ start: '2026-08-01', end: '2026-10-11', downloads: Array.from({ length: 72 }, (_, i) => ({ day: new Date(Date.parse('2026-08-01') + i * DAY).toISOString().slice(0, 10), downloads: perDay })) })
+  npm(t, ['quiet', 'middling'].map(name => ({ name, versions: [version(name, '1.0.0', { 'package.json': '{}' }, by('stranger-account'), ago(400)),
+    version(name, '1.1.0', { 'package.json': '{}' }, by(publishers[0]), ago(300))] })), { quiet: daily(0), middling: daily(500) })
+  const popularity = async (name, number) => (await assessNpm(name, number, { now: NOW })).findings.find(({ id }) => id === 'popularity')
+  assert.deepEqual(await popularity('quiet', '1.0.0'), { id: 'popularity', severity: 'critical', tier: null, level: 'is-unpopular' }, 'an unknown account\'s: red')
+  assert.deepEqual(await popularity('quiet', '1.1.0'), { id: 'popularity', severity: 'high', tier: null, level: 'is-unpopular', known: true }, 'a known one\'s: orange')
+  assert.deepEqual([(await popularity('middling', '1.0.0')).severity, (await popularity('middling', '1.1.0')).severity], ['high', 'moderate'], 'orange, and yellow where known')
+})
+
 test('a host where packages keep their code and docs, named anew, calls for no look; a host under it, or a repository it serves files from, does', () => {
   const side = files => ({ kind: 'sourcemap', npm: { manifest: {} }, json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const base = side({ 'index.js': 'module.exports = 1\n' })

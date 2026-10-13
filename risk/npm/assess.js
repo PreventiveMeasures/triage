@@ -175,9 +175,9 @@ export async function assessNpm(name, version, { oldVersion = null, minimumRelea
     if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
     return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
   }
-  const { published } = facts.versions.get(version)
+  const { published, manifest } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context)
-  const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now,
+  const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts),
     downloads: downloads && popularity ? await npmDownloads(name, context) : null })
   const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
