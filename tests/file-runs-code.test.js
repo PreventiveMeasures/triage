@@ -65,7 +65,11 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     + 'const { a, GITHUB_TOKEN = null } = process.env\nprocess.env[\'NPM_TOKEN\'] ??= ask()\nconst NPM_TOKEN = process.env.NPM_TOKEN\n'), { tokens: [1, 2, 3, 4, 5, 6] },
     'read as it is set, compared, or destructured with a default')
   assert.deepEqual(found('a.js', 'if (!process.env.GITHUB_TOKEN.trim()) ask()\nif (!process.env[\'GITHUB_TOKEN\'].length) ask()\nif (!env.NPM_TOKEN?.length) ask()\n'
-    + 'if (!process.env.NPM_TOKEN [0]) ask()\ndelete process.env.NPM_TOKEN.x\n'), { tokens: [1, 2, 3, 4, 5] }, 'what is read of it, though negated')
+    + 'if (!process.env.NPM_TOKEN [0]) ask()\ndelete process.env.NPM_TOKEN.x\nif (!(process.env.GITHUB_TOKEN === expected)) ask()\n'
+    + 'if (!(process.env.GITHUB_TOKEN).trim()) ask()\nif (!(process.env[\'GITHUB_TOKEN\'] === x)) ask()\nif (!( (process.env[\'NPM_TOKEN\']) ) .length) ask()\n'),
+  { tokens: [1, 2, 3, 4, 5, 6, 7, 8, 9] }, 'what is read of it, or compared, though negated')
+  assert.equal(found('a.js', 'if (!process.env.GITHUB_TOKEN || !env.NPM_TOKEN) ask()\nconst none = !process.env.GITHUB_TOKEN ? 1 : 2\nreturn !process.env.NPM_TOKEN\n'
+    + 'f({ missing: !env.GITHUB_TOKEN, x })\nconst t = `${!env.NPM_TOKEN}`\nif (!(process.env[\'NPM_TOKEN\'] ?? x)) ask()\n'), null, 'negated whole, whatever follows')
   assert.deepEqual(found('a.js', 'const token = process.env[\'NPM_TOKEN\']\nif (process.env?.[\'GITHUB_TOKEN\']) use()\nif (!check(process.env.GITHUB_TOKEN)) ask()\n'),
     { tokens: [1, 2, 3] }, 'read as a key, or handed on')
   assert.deepEqual(found('a.js', 'post(JSON.stringify(process.env))\nObject.entries(process.env)\nnew URLSearchParams(process.env)\nObject.values( process . env )\n'),

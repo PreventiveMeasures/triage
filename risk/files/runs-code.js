@@ -63,17 +63,22 @@ const GLOBAL = 'globalThis|window|global|self'
 const named = name => String.raw`(?=${GLOBAL}|${name})(?<![\p{ID_Continue}$#])(?<!(?<!\.)\.${GAP})(?<!\bfunction${GAP})(?:(?:${GLOBAL})${GAP}\??\.${GAP})?${name}`
 // A token's name, as its value is read (`process.env.GITHUB_TOKEN || null`,
 // `env.NPM_TOKEN`, `||=`), not where its absence is told
-// (`!process.env.GITHUB_TOKEN`, `!(process.env.GITHUB_TOKEN)`, but for what
-// is read of it, `!process.env.GITHUB_TOKEN.trim()`), it is dropped (`delete
-// process.env.NPM_TOKEN`) or only set (`process.env.NPM_TOKEN = token`,
-// `const NPM_TOKEN = …`), but for a default as it is destructured (`{
-// NPM_TOKEN = '' } = process.env`); looked back on, a few names and dots at
-// most, only where the name starts.
+// (`!process.env.GITHUB_TOKEN`, `!(process.env.GITHUB_TOKEN)`) or it is
+// dropped (`delete process.env.NPM_TOKEN`), the token the whole of what is
+// negated or deleted (ABSENT_ENDS: not `!process.env.GITHUB_TOKEN.trim()`,
+// `!(process.env.GITHUB_TOKEN === x)`), nor where it is only set
+// (`process.env.NPM_TOKEN = token`, `const NPM_TOKEN = …`), but for a default
+// as it is destructured (`{ NPM_TOKEN = '' } = process.env`); looked back on,
+// a few names and dots at most, only where the name starts.
 const TOKEN_VAR = '(?:NPM|GITHUB)_TOKEN'
 const SET = String.raw`\s{0,4}=(?![=>])`
-const READ_ON = String.raw`\s{0,4}(?:\??\.|\[)`
+// What may follow a token negated or deleted whole: the parentheses around
+// it closed, nothing read of what they hold (`!(token).trim()`), or else what
+// ends an operand (`&&`, `||`, `??`, a ternary's `?`, `;`, `,`, `:`, `}`, `]`,
+// the line's end).
+const ABSENT_ENDS = String.raw`\s{0,4}(?:(?:\)\s{0,4}){1,4}(?![\s)]{0,8}(?:[.[]|\?\.))|&&|\|\||\?\?|\?(?!\.)|[;,:}\]]|$)`
 const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])`
-  + String.raw`(?:(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})|(?=${TOKEN_VAR}${READ_ON}))`
+  + String.raw`(?:(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})|(?!${TOKEN_VAR}${ABSENT_ENDS}))`
   + String.raw`${TOKEN_VAR}(?![\p{ID_Continue}$])(?:(?!${SET})|(?<=[{,]\s{0,4}${TOKEN_VAR}))`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
@@ -99,11 +104,12 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 const HOLDS_ANY = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
 // Before a token's name as a key, its absence told or the token dropped, as
 // TOKEN_NAME tells of one as a name (`!process.env['GITHUB_TOKEN']`,
-// `delete process.env['NPM_TOKEN']`): a few names and dots at most. After
-// it, the token set (`process.env['NPM_TOKEN'] = token`), or what is read of
-// it (`!process.env['NPM_TOKEN'].length`), whatever comes before.
+// `delete process.env['NPM_TOKEN']`): a few names and dots at most, and
+// after it, its key's bracket closed, what may follow it whole (ABSENT_ENDS,
+// not `!process.env['NPM_TOKEN'].length`). After it, the token set
+// (`process.env['NPM_TOKEN'] = token`).
 const KEY_SET = new RegExp(String.raw`^\s{0,4}\]${SET}`, 'u')
-const KEY_READ_ON = new RegExp(String.raw`^\s{0,4}\]${READ_ON}`, 'u')
+const KEY_ENDS = new RegExp(String.raw`^\s{0,4}\]${ABSENT_ENDS}`, 'mu')
 const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4}[\p{ID_Continue}$]{1,64}\s{0,4}(?:\?\.\s{0,4})?\[\s{0,4}$/u
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
@@ -205,7 +211,7 @@ function read(code, base, at) {
     // not one where its absence is told, it is dropped or only set.
     const keyed = () => {
       const after = code.slice(index + token.length, index + token.length + 20)
-      return !KEY_SET.test(after) && (KEY_READ_ON.test(after) || !KEY_ABSENT.test(code.slice(Math.max(0, index - 300), index)))
+      return !KEY_SET.test(after) && (!KEY_ENDS.test(after) || !KEY_ABSENT.test(code.slice(Math.max(0, index - 300), index)))
     }
     const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
     for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
