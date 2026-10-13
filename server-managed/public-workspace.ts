@@ -115,7 +115,8 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
 function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, part: string, url: URL,
   recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
   if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
-  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs)
+  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs,
+    part === 'pretty' ? '' : url.searchParams.get('scope') ?? '')
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of
@@ -141,13 +142,14 @@ async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundl
 // The files that changed between a bundle and `other`, another of the link's
 // bundles, both sides' pretty-printed (pretty-print.ts compared), or the pairs
 // of them its viewer diffs with renamed names hidden (rename-diff.ts
-// renamedPairs), the link checked again before each line.
+// renamedPairs), those within a reason `scope` where given, the link checked
+// again before each line.
 async function serveChanges(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, recheck: () => Promise<void>,
-  linesOf: (sides: [ComparedSide, ComparedSide]) => AsyncIterable<unknown>) {
+  linesOf: (sides: [ComparedSide, ComparedSide]) => AsyncIterable<unknown>, scope: string) {
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
   if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
   let lines
-  try { lines = linesOf(await deps.prettyCache.bundleSides(bundle, other)) }
+  try { lines = linesOf(await deps.prettyCache.bundleSides(bundle, other, scope)) }
   catch (err) {
     if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
     throw err

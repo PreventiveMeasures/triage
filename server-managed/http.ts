@@ -41,10 +41,10 @@
 //        Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/bundles/<id>/rename-diff?path=&hash=&other=&otherPath=&otherHash= → a JavaScript file diffed with another
 //        bundle's, both pretty-printed, renamed names hidden, whitespace changes shown and hidden | 400/401/404/409/413/422/429/504
-//   GET  /api/bundles/<id>/rename-diff?other= → every pair of its JavaScript files and another bundle's the viewer diffs so,
-//        Brotli-encoded ndjson | 400/401/404/422/503
-//   GET  /api/bundles/<id>/type-only?other= → the files that changed between it and another bundle in types alone, as
-//        @preventive/compare proves them, Brotli-encoded ndjson | 400/401/404/422/503
+//   GET  /api/bundles/<id>/rename-diff?other=&scope= → every pair of its JavaScript files and another bundle's the viewer
+//        diffs so, within a reason scope where given, Brotli-encoded ndjson | 400/401/404/422/503
+//   GET  /api/bundles/<id>/type-only?other=&scope= → the files that changed between it and another bundle in types alone, as
+//        @preventive/compare proves them, within a reason scope where given, Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -3263,8 +3263,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (part === 'rename-diff' || part === 'type-only' || (part === 'pretty' && url.searchParams.has('other'))) {
         if (method !== 'GET') { send405(res, 'GET'); return }
         if (part === 'rename-diff' && url.searchParams.has('path')) { await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return }
-        const linesOf = part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs
-        await handleBundleChanges(res, deps, session, id, url.searchParams.get('other') ?? '', async (cache, base, other) => linesOf(await cache.bundleSides(base, other))); return
+        // The pairs a scoped Compare diffs, of the files it compares within its scope.
+        const [linesOf, scope] = part === 'pretty' ? [compared, ''] : [part === 'type-only' ? typeOnlyFiles : renamedPairs, url.searchParams.get('scope') ?? '']
+        await handleBundleChanges(res, deps, session, id, url.searchParams.get('other') ?? '', async (cache, base, other) => linesOf(await cache.bundleSides(base, other, scope))); return
       }
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       if (part === 'download') { await handleGetBundle(req, res, deps, session, id); return }

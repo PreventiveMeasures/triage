@@ -238,9 +238,11 @@ export function fetchNpmRenameDiff(name, version, otherVersion, { path, hash, ot
 // are diffed by so, in one request: `onLine` called with each as it is worked
 // out, in path order, the answer for one asked about alone with both files'
 // paths, or `{ path, hash, otherPath, otherHash, status, message }` where it
-// has none.
-export function fetchBundleRenameDiffs(id, other, onLine, { signal } = {}) {
-  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
+// has none. Two bundles' within a reason `scope` where given.
+const scoped = (other, scope) => new URLSearchParams({ other, ...scope ? { scope } : {} })
+
+export function fetchBundleRenameDiffs(id, other, onLine, { signal, scope = '' } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${scoped(other, scope)}`, PRETTY_ERRORS, onLine, signal, RENAME_DIFF_ERRORS)
 }
 
 export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signal } = {}) {
@@ -250,9 +252,10 @@ export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signa
 // The files that changed between two bundles, or two versions of a package,
 // in types alone, as the server proves them (@preventive/compare's
 // compareTrees `typeOnly`), in one request: `onLine` called with each, `{
-// path, hash, otherPath, otherHash }`, a side not there null.
-export function fetchBundleTypeOnly(id, other, onLine, { signal } = {}) {
-  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${new URLSearchParams({ other })}`, PRETTY_ERRORS, onLine, signal)
+// path, hash, otherPath, otherHash }`, a side not there null; two bundles'
+// within a reason `scope` where given.
+export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = {}) {
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${scoped(other, scope)}`, PRETTY_ERRORS, onLine, signal)
 }
 
 export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal } = {}) {

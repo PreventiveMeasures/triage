@@ -49,5 +49,8 @@ export function prepareComparison(base, other, scope = null) {
   const otherVersions = bundlePackageVersions(to, scope ? otherSources.keys() : null, versionKey)
   diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
   diff.packageRows = comparePackages(diff.packages, baseVersions, otherVersions)
+  // The reason scope its files are within, for what the server works out of
+  // them alike (rename-diff.js, type-only.js).
+  diff.scope = scope ?? ''
   return diff
 }

@@ -76,8 +76,8 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     return renameAnswer(id, other, params.path, params.otherPath, params.hash, params.otherHash)
   },
   fetchNpmRenameDiff() {},
-  async fetchBundleRenameDiffs(id, other, onLine) {
-    renameStreams.push({ id, other })
+  async fetchBundleRenameDiffs(id, other, onLine, { scope = '' } = {}) {
+    renameStreams.push({ id, other, ...scope ? { scope } : {} })
     const [base, next] = [id, other].map(managedId => [...viewed].findLast(held => held?.managedId === managedId))
     const [olds, news] = [bundleFilesAsMap(base), bundleFilesAsMap(next)]
     for (const path of [...news.keys()].toSorted()) {
@@ -92,8 +92,8 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     }
   },
   fetchNpmRenameDiffs() {},
-  async fetchBundleTypeOnly(id, other, onLine) {
-    typeProofs.push({ id, other })
+  async fetchBundleTypeOnly(id, other, onLine, { scope = '' } = {}) {
+    typeProofs.push({ id, other, ...scope ? { scope } : {} })
     const [olds, news] = [id, other].map(managedId => bundleFilesAsMap([...viewed].findLast(held => held?.managedId === managedId)))
     const { changed, onlyBase, onlyOther } = computeBundleDiff(olds, news, () => '.').files
     const pairs = [...changed.map(({ path, basePath = path }) => [basePath, path]), ...onlyBase.map(({ path, basePath = path }) => [basePath, null]), ...onlyOther.map(({ path }) => [null, path])]
@@ -2584,4 +2584,27 @@ test('the Diff view offers to hide changes in types alone where any file it show
   const hidden = renderText(all.render())
   assert.equal(hidden.match(/Only types changed in this file\./gu)?.length, 1, 'the one changed in types alone')
   assert.match(hidden, /foo\(\);/u, 'the other drawn')
+})
+
+test('a comparison within a reason scope asks for its rename diffs and type-only files within it, apart from the whole bundles\'', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const files = [{ 'dist/sc.min.js': `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`, 'types/sc.d.ts': 'export type S = 1;\n' },
+    { 'dist/sc.min.js': `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`, 'types/sc.d.ts': 'export type S = 2;\n' }]
+  pretty.set('b75:dist/sc.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = 1;\n')
+  pretty.set('b76:dist/sc.min.js', 'var X = 1;\nq(X);\nmodule.exports = 2;\n')
+  t.after(() => { pretty.delete('b75:dist/sc.min.js'); pretty.delete('b76:dist/sc.min.js') })
+  const element = view('dist/sc.min.js', files)
+  ;[element.base.managedId, element.other.managedId] = ['b75', 'b76']
+  const [streams, proofs] = [renameStreams.length, typeProofs.length]
+  state.bundleSourcePretty = true
+  // Within a scope, painted again within it, then across the whole bundles.
+  for (const scope of ['reason:web', 'reason:web', '']) {
+    element.scope = scope
+    element.path = 'dist/sc.min.js'
+    await paintUntil(element, () => element._fileState('dist/sc.min.js', element._entries.get('dist/sc.min.js')).changes?.status === 'ready')
+    element.path = 'types/sc.d.ts'
+    renderText(element.render())
+  }
+  assert.deepEqual(renameStreams.slice(streams).filter(({ id }) => id === 'b75').map(({ scope = '' }) => scope).toSorted(), ['', 'reason:web'], 'once within the scope, once across the bundles')
+  assert.deepEqual(typeProofs.slice(proofs).filter(({ id }) => id === 'b75').map(({ scope = '' }) => scope).toSorted(), ['', 'reason:web'])
 })

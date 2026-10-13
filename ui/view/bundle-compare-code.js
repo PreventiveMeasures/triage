@@ -275,6 +275,9 @@ export class BundleCompareCode extends LitElement {
     base: { attribute: false },
     other: { attribute: false },
     files: { attribute: false },
+    // The reason scope the files are compared within (bundle-comparison.js),
+    // the server's pairs of them found within it too.
+    scope: { attribute: false },
     resolutions: { attribute: false },
     // Alerts on each side's files, by path, and their tags: Socket's, on an
     // npm version's (npm-overview.js npmSocketFileAlerts).
@@ -316,6 +319,7 @@ export class BundleCompareCode extends LitElement {
     this.base = null
     this.other = null
     this.files = null
+    this.scope = ''
     this.resolutions = []
     this.baseAlerts = null
     this.otherAlerts = null
@@ -1034,7 +1038,7 @@ export class BundleCompareCode extends LitElement {
   _fileState(path, entry, counting = false) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
-    const types = textual && typeOnly(this.base, this.other, path, entry, contents, this._repaint)
+    const types = textual && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)
     if (types && prefs.ignoreTypes) {
       const model = { a: [], b: [], blocks: [], additions: 0, deletions: 0, renamed: 0, marked: new Set(), noEol: { a: false, b: false }, words: new Map() }
       if (counting) return { pretty: null, hiding: false, model, spacesHidden: false, typesHidden: true }
@@ -1060,7 +1064,7 @@ export class BundleCompareCode extends LitElement {
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const ask = () => renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes,
-        !counting && this._renamesAlone)
+        !counting && this._renamesAlone, this.scope)
       const changes = renames && !large ? ask() : null
       const ready = changes?.status === 'ready'
       const hiding = ready && prefs.ignoreRenames
