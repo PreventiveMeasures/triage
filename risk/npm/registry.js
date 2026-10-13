@@ -91,7 +91,8 @@ async function jsonOf(res, limit, what, from = 'npm') {
 }
 
 // What npm answers `url` as JSON (jsonOf), null where it answers 404, or
-// `from` another (OSV), `body` posted as JSON where given; given up on after
+// `from` another (OSV), whose 404 is no answer, `body` posted as JSON where
+// given; given up on after
 // REQUEST_MS, or once the caller's `signal` aborts, its abort rethrown as it
 // is. `upstream-busy` where it asks to be asked later (429), as npm's
 // downloads API does past a burst of requests; `upstream-unavailable` where
@@ -101,7 +102,7 @@ async function askNpm(url, headers, limit, what, { signal }, { body, from = 'npm
     const posted = body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }
     const res = await fetch(url, { ...posted, headers: { accept: 'application/json', ...body === undefined ? {} : { 'content-type': 'application/json' }, ...headers },
       redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(REQUEST_MS), ...signal ? [signal] : []]) })
-    if (res.status === 404) { await res.body?.cancel(); return null }
+    if (res.status === 404 && from === 'npm') { await res.body?.cancel(); return null }
     if (!res.ok) { await res.body?.cancel(); throw new NpmRiskError(res.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `${from} answered ${res.status} for ${what}`) }
     return await jsonOf(res, limit, what, from)
   } catch (error) {

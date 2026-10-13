@@ -33,7 +33,8 @@ const documentOf = ({ name, versions, created, latest, removed = {} }) => ({ nam
 // `{ name, versions: [{ doc, tgz, published }], created? }`, `downloads` by
 // name, and `advisories` by name, rows as npm's bulk endpoint answers them;
 // and OSV's records by name and version (`osv`), as one page or `{ pages }`,
-// each but the last naming the next; each URL asked, in order.
+// each but the last naming the next, or a status OSV answers with; each URL
+// asked, in order.
 const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
 const OSV = 'https://api.osv.dev/v1/query'
 function npm(t, packages, downloads = {}, advisories = {}, osv = {}) {
@@ -44,6 +45,7 @@ function npm(t, packages, downloads = {}, advisories = {}, osv = {}) {
     if (url === ADVISORIES) return Response.json(Object.fromEntries(Object.keys(JSON.parse(init.body)).filter(name => advisories[name]).map(name => [name, advisories[name]])))
     if (url === OSV) {
       const { package: { name }, version: number, page_token: token = '0' } = JSON.parse(init.body)
+      if (typeof osv[`${name}@${number}`] === 'number') return Response.json({}, { status: osv[`${name}@${number}`] })
       const pages = osv[`${name}@${number}`]?.pages ?? [osv[`${name}@${number}`] ?? []]
       const page = Number(token)
       return Response.json({ ...pages[page].length > 0 ? { vulns: pages[page] } : {}, ...page + 1 < pages.length ? { next_page_token: String(page + 1) } : {} })
@@ -555,15 +557,17 @@ test('OSV\'s records of malware npm\'s advisories haven\'t tell of it too, as th
 })
 
 test('OSV\'s records are read page by page, as it pages what it can\'t answer at once, and never asked of where `osv` is false', async t => {
-  const paged = ['1.0.0', '1.0.1'].map(number => version('paged', number, { 'package.json': '{}' }, { dependencies: {} }, ago(30)))
+  const paged = ['1.0.0', '1.0.1', '1.0.2'].map(number => version('paged', number, { 'package.json': '{}' }, { dependencies: {} }, ago(30)))
   const asked = npm(t, [{ name: 'paged', versions: paged }], {}, {}, {
     'paged@1.0.0': { pages: [[], [{ id: 'MAL-2025-00003', summary: 'Malicious code in paged (npm)', aliases: [] }]] },
     'paged@1.0.1': { pages: Array.from({ length: 11 }, () => []) },
+    'paged@1.0.2': 404,
   })
   const assessed = (number, options = {}) => assessNpm('paged', number, { now: NOW, downloads: false, ...options })
   assert.deepEqual((await assessed('1.0.0')).findings.find(({ id }) => id === 'malware')?.advisories?.map(({ id }) => id), ['MAL-2025-00003'],
     'its malware on a page after one OSV answered with none')
   await assert.rejects(assessed('1.0.1'), error => error instanceof NpmRiskError && error.code === 'upstream-invalid', 'past OSV_PAGES')
+  await assert.rejects(assessed('1.0.2'), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable', 'its 404 no answer, unlike npm\'s')
   asked.length = 0
   assert.ok(!ids(await assessed('1.0.0', { osv: false })).includes('malware'), 'OSV not asked, its malware not told')
   assert.ok(!asked.includes(OSV), 'nor its name sent')
