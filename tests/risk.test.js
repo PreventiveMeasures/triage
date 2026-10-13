@@ -255,6 +255,15 @@ test('npm asked of at most 100 dependencies added, the rest left unknown; npm un
   await assert.rejects(assessNpm('many', '1.0.0', { now: NOW }), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable')
 })
 
+test('npm asking to be asked later is busy, not unavailable, and says what was asked', async t => {
+  npm(t, [{ name: 'throttled', versions: [version('throttled', '1.0.0', { 'package.json': '{}' }, {}, ago(30))] }])
+  const answer = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (url, init) => String(url).startsWith('https://api.npmjs.org/downloads/')
+    ? Promise.resolve(new Response('', { status: 429 })) : answer(url, init))
+  await assert.rejects(assessNpm('throttled', '1.0.0', { now: NOW }),
+    error => error instanceof NpmRiskError && error.code === 'upstream-busy' && error.message === 'npm answered 429 for throttled\'s downloads')
+})
+
 test('a tarball read as npm installs it, and two versions\' files paired as Compare pairs them', async () => {
   const { tgz } = packageOf('read', '1.0.0', { 'package.json': '{}', 'b.js': 'b', 'a/c.js': 'c', 'bin/tool': '\0\u0001' })
   const read = await npmTarballVersion(tgz)

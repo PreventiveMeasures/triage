@@ -35,7 +35,9 @@ const NPM_LOCKFILE_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm'
 const READ_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm', 'yarn'])
 
 // An assessment refused as busy (`npm-busy`, by npm-risk.ts or the npm reads
-// beneath it) is asked again after a wait, up to this many times.
+// beneath it), or that npm asked to ask later (risk's `upstream-busy`, as its
+// downloads API answers past a burst of requests), is asked again after a
+// wait, up to this many times.
 const BUSY_RETRIES = 20
 const BUSY_WAIT_MS = 1000
 
@@ -103,13 +105,15 @@ export type RepositoryRiskLine =
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | { type: 'done' }
 
-// What an error is known by: a GitHub or npm failure's code, or `failed`.
+// What an error is known by: a GitHub or npm failure's code, or `failed`;
+// risk's with what it asked of npm and how that failed, where it says.
 function failureOf(error: unknown): RiskFailure {
   if (error instanceof GithubApiError || error instanceof NpmPackageError) return { error: error.message }
-  return { error: error instanceof NpmRiskError ? error.code : 'failed' }
+  if (!(error instanceof NpmRiskError)) return { error: 'failed' }
+  return error.message === error.code ? { error: error.code } : { error: error.code, detail: error.message }
 }
 
-const isBusy = (error: unknown) => error instanceof NpmPackageError && error.status === 429
+const isBusy = (error: unknown) => (error instanceof NpmPackageError && error.status === 429) || (error instanceof NpmRiskError && error.code === 'upstream-busy')
 
 // Values by key, the least recently used going first once their weights
 // (`weight`, 1 each unless given) are past `limit`.

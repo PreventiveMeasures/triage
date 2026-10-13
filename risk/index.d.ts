@@ -13,9 +13,11 @@ export const DEFAULT_MINIMUM_RELEASE_AGE: number
 
 // npm has no such package or version (`package-not-found`,
 // `version-not-found`), a tarball unpacks past risk's bounds
-// (`package-too-large`), or npm couldn't be asked (`upstream-unavailable`),
-// answered past them (`upstream-too-large`) or answered what can't be read
-// (`upstream-invalid`).
+// (`package-too-large`), npm asked to be asked later (`upstream-busy`, a 429,
+// for a caller to wait on and ask again), or npm couldn't be asked
+// (`upstream-unavailable`), answered past them (`upstream-too-large`) or
+// answered what can't be read (`upstream-invalid`). `message` tells which
+// request and why.
 export class NpmRiskError extends Error {
   code: string
 }
