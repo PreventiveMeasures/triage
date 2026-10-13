@@ -29,7 +29,7 @@ const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn
 const { npmEntryFile } = await import('../ui/view/npm-entries.js')
 const { npmDependencies, npmDependencyChanges } = await import('../risk/npm/dependencies.js')
 const { npmRisk } = await import('../ui/view/npm-risk.js')
-const { npmInstallScripts } = await import('../risk/npm/install-scripts.js')
+const { npmInstallScripts, packageJsonInstallScripts } = await import('../risk/npm/install-scripts.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -347,6 +347,13 @@ test('install scripts run in npm\'s order, node-gyp\'s where a binding.gyp has n
   assert.deepEqual(npmInstallScripts({ installScripts: { install: 'prebuild-install' } }, gyp), [['install', 'prebuild-install']])
   assert.deepEqual(npmInstallScripts({ installScripts: { preinstall: 'x' } }, gyp), [['preinstall', 'x']], 'a preinstall of its own stops it too')
   assert.deepEqual(npmInstallScripts({}), [])
+})
+
+test('a package.json\'s install scripts read past a byte order mark, as npm reads them', () => {
+  const json = '{"scripts":{"postinstall":"node setup.js","test":"t"}}\n'
+  assert.deepEqual(packageJsonInstallScripts(json), [['postinstall', 'node setup.js']])
+  assert.deepEqual(packageJsonInstallScripts(`\uFEFF${json}`), [['postinstall', 'node setup.js']])
+  assert.deepEqual(packageJsonInstallScripts('{not json'), [], 'none where it isn\'t one')
 })
 
 test('npm\'s placeholder deprecation reads as its first sentence; any other message as written', () => {

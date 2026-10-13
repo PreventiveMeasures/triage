@@ -23,11 +23,12 @@ export function npmInstallScripts(manifest, paths = []) {
   return installScripts(manifest?.installScripts, Boolean(paths && (paths instanceof Set ? paths.has('binding.gyp') : paths.includes('binding.gyp'))))
 }
 
-// A package.json's install scripts, from its text; none where it isn't one,
+// A package.json's install scripts, from its text, a byte order mark it
+// starts with dropped, as npm drops one reading it; none where it isn't one,
 // or names none.
 export function packageJsonInstallScripts(text, bindingGyp = false) {
   let json = null
-  try { json = typeof text === 'string' ? JSON.parse(text) : null } catch {}
+  try { json = typeof text === 'string' ? JSON.parse(text.replace(/^\uFEFF/u, '')) : null } catch {}
   const scripts = json && typeof json === 'object' && json.scripts && typeof json.scripts === 'object' ? json.scripts : {}
   return installScripts(scripts, bindingGyp)
 }

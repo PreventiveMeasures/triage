@@ -16,7 +16,8 @@ const MINIFIED_SPACES = .01
 // What a regular expression set aside holds.
 const REGEX = '\uE000'
 const JS = {
-  // A hashbang, the file's first line (`#!/usr/bin/env node`), a comment.
+  // A hashbang, the file's first line (`#!/usr/bin/env node`), a comment,
+  // after a byte order mark too, which node's ES module loader drops first.
   // A string's or template's escape may be a line continuation (`\` before a
   // line break, CRLF's whole).
   // Linear on any text: a regular expression's context looked back on only
@@ -25,7 +26,7 @@ const JS = {
   // regular expression its line's end, a template or a comment the text's,
   // rather than tried again from each later quote or slash.
   // A regular expression first where a value starts (after `=>`, `...`, an operator or a keyword, not a property: `x.default/2`, `this.#in/2`), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?=\/)(?<=(?:^|\.\.\.|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.#])(?:await|case|default|delete|do|else|extends|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*(?:\]|(?=\\?$)))+(?:\/[a-z]*|(?=\\?$))|"(?:[^"\\\n]|\\(?:\r\n|[\s\S]))*(?:"|$)|'(?:[^'\\\n]|\\(?:\r\n|[\s\S]))*(?:'|$)|`(?:[^`\\]|\\(?:\r\n|[\s\S]))*(?:`|(?![\s\S])))|(?<![ \t])[ \t]*(?:\/\*[\s\S]*?(?:\*\/|(?![\s\S]))|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
+  stringOrComment: /((?=\/)(?<=(?:^|\.\.\.|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.#])(?:await|case|default|delete|do|else|extends|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*(?:\]|(?=\\?$)))+(?:\/[a-z]*|(?=\\?$))|"(?:[^"\\\n]|\\(?:\r\n|[\s\S]))*(?:"|$)|'(?:[^'\\\n]|\\(?:\r\n|[\s\S]))*(?:'|$)|`(?:[^`\\]|\\(?:\r\n|[\s\S]))*(?:`|(?![\s\S])))|(?<![ \t])[ \t]*(?:\/\*[\s\S]*?(?:\*\/|(?![\s\S]))|\/\/.*|(?<![\s\S])\uFEFF?#!.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words, as
   // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
   droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
@@ -76,9 +77,10 @@ export function minifiedAverage(whole, { stringOrComment, droppable, needed }) {
 
 // JavaScript or TypeScript (a declaration file too, which node runs as any
 // other), or a script run by node by its hashbang (`bin/cli`, with no
-// extension).
+// extension), a byte order mark before it or not, as node runs one after it
+// as an ES module (in a `"type": "module"` package).
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
-const NODE_HASHBANG = /^#!.*\bnode\b/u
+const NODE_HASHBANG = /^\uFEFF?#!.*\bnode\b/u
 // Whether a file (its path and text) is a script, as SCRIPT and NODE_HASHBANG tell.
 export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
 // How many places a file is told doing a thing, the first ones, at most

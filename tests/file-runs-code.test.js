@@ -34,6 +34,10 @@ test('a script is read for eval, Function and child_process, each with the lines
   assert.deepEqual(found('a.js', 'eval(a); eval(b)\n\neval(c)\n'), { eval: [1, 3] }, 'a line once')
   assert.deepEqual(found('bin/cli', '#!/usr/bin/env node\nrequire("child_process").execSync("ls")\n'), { 'child-process': [2] },
     'a script node runs by its hashbang, with no extension')
+  assert.deepEqual(found('bin/cli', '\uFEFF#!/usr/bin/env node\nrequire("child_process").execSync("ls")\n'), { 'child-process': [2] },
+    'its hashbang after a byte order mark, as node runs it as an ES module')
+  assert.deepEqual(found('a.mjs', '\uFEFF#!/usr/bin/env node `\neval(a)\n// `\n'), { eval: [2] },
+    'a hashbang after a byte order mark a comment too, a backtick in it opening no template')
 })
 
 test('a file\'s kinds as its flags, a shared tag once, the whole environment and publishing critical', () => {

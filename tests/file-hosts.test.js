@@ -19,6 +19,7 @@ test('a script names the hosts of the URLs in its strings, each with the line it
   assert.deepEqual(hosts('lib/a.js', 'get("http://45.12.3.9:8080/p")\nget("https://user:pw@evil.co/x")\nget("ftp://files.host.net/x")\nget("https://EVIL.co/again")\n'),
     { '45.12.3.9': 1, 'evil.co': 2, 'files.host.net': 3 }, 'an address, a user\'s name and port aside; each host once')
   assert.deepEqual(hosts('bin/cli', '#!/usr/bin/env node\nget("https://registry.example.dev/x")\n'), { 'registry.example.dev': 2 }, 'a script node runs by its hashbang')
+  assert.deepEqual(hosts('bin/cli', '\uFEFF#!/usr/bin/env node\nget("https://registry.example.dev/x")\n'), { 'registry.example.dev': 2 }, 'a byte order mark before it')
   assert.deepEqual(hosts('lib/a.js', 'if (/^https:\\/\\/api\\.evil\\.co\\//.test(url)) send(url)\nif (/^https?:\\/\\/other\\.co/.test(url)) send(url)\n'),
     { 'api.evil.co': 1, 'other.co': 2 }, 'a regular expression\'s, its slashes and dots escaped, its `s` optional')
   assert.deepEqual(hosts('lib/a.js', 'fetch("https:\\/\\/api.evil.com\\/x")\n'), { 'api.evil.com': 1 }, 'a string\'s, its slashes escaped as JSON can write them')
