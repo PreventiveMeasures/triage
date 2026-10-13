@@ -15,12 +15,14 @@ const SETTLED_MS = 30 * DAY_MS
 // a week, as an attack publishes its versions within days of each other.
 const CLOSE_MS = 7 * DAY_MS
 
-// A version as npm publishes one, `{ core, pre }`: its MAJOR.MINOR.PATCH and
-// its prerelease's identifiers, build metadata aside; null for any other.
-const VERSION = /^(0|[1-9]\d{0,14})\.(0|[1-9]\d{0,14})\.(0|[1-9]\d{0,14})(?:-([\da-z-]+(?:\.[\da-z-]+)*))?(?:\+[\da-z-]+(?:\.[\da-z-]+)*)?$/iu
+// A version as npm publishes one, `{ core, pre }`: its MAJOR.MINOR.PATCH, each
+// to 16 digits and a safe integer as semver takes them, and its prerelease's
+// identifiers, build metadata aside; null for any other.
+const VERSION = /^(0|[1-9]\d{0,15})\.(0|[1-9]\d{0,15})\.(0|[1-9]\d{0,15})(?:-([\da-z-]+(?:\.[\da-z-]+)*))?(?:\+[\da-z-]+(?:\.[\da-z-]+)*)?$/iu
 function parsed(version) {
   const match = VERSION.exec(version)
-  return match && { core: match.slice(1, 4).map(Number), pre: match[4]?.split('.') ?? [] }
+  const core = match?.slice(1, 4).map(Number)
+  return core?.every(Number.isSafeInteger) ? { core, pre: match[4]?.split('.') ?? [] } : null
 }
 
 // Which of two versions is higher, by semver's precedence: their cores, a

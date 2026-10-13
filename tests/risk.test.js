@@ -135,6 +135,8 @@ test('the version risk picks to compare with: below the open one, the highest mo
   assert.equal(pick('1.3.0', line), '1.2.0', 'on npm a month or more; 2.0.0 above it')
   assert.equal(pick('1.0.0', line), null, 'none below')
   assert.equal(pick('latest', [at('latest', 1)]), null, 'no version')
+  assert.equal(pick('1000000000000000.0.1', [at('1000000000000000.0.0', 60), at('1000000000000000.0.1', 1)]), '1000000000000000.0.0', 'a part of 16 digits, as semver takes it')
+  assert.equal(pick('9007199254740992.0.1', [at('9007199254740992.0.0', 60), at('9007199254740992.0.1', 1)]), null, 'one past a safe integer, as semver takes none')
   assert.equal(pick('2.0.0', [at('1.9.5', 60), at('1.10.0', 50), at('2.0.0', 1)]), '1.10.0', 'in the closest branch below, by semver')
   assert.equal(pick('3.0.0', [at('2.9.8', 250), at('2.9.9', 100), at('3.0.0', 200)]), '2.9.8', 'one published before it, not a backport since')
   assert.equal(pick('3.0.0', [at('2.9.9', 100), at('3.0.0', 200)]), '2.9.9', 'a backport where none is before it')
