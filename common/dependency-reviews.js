@@ -66,7 +66,7 @@ export function parseReviewNotes(comment) {
 }
 
 function auditNotes(comment, prefix = '') {
-  return parseReviewNotes(comment).map(note => `* ${prefix}${markdownText(note.text)}`)
+  return parseReviewNotes(comment).map(note => `* ${prefix}${note.text.replaceAll('\n', '\n  ')}`)
 }
 
 export function auditMarkdown(review) {
