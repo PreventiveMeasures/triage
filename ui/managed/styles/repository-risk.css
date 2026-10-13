@@ -14,6 +14,7 @@ td { vertical-align: top; }
 .risk-wrap { white-space: normal; overflow-wrap: break-word; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-pending, .risk-none { color: var(--muted); }
+.risk-name { text-decoration: none; }
 .risk-error { color: var(--critical); }
 .risk-chip {
   display: inline-block;

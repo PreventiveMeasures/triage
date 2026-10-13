@@ -427,7 +427,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     const findings = findingsOf(row)
     return html`<tr>
-      <td>${path ? html`<a href=${path}>${row.name}</a>` : row.name}</td>
+      <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}</td>
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._risk(row)}</td>
       <td>${findings.length > 0 ? html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
@@ -466,7 +466,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const versions = [...row.versions]
     const severity = row.malware ? 'critical' : row.severity
     return html`<tr>
-      <td><a href=${managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] })}>${row.name}</a></td>
+      <td><a class="risk-name" href=${managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] })}>${row.name}</a></td>
       <td class="mono">${versions.join(', ')}</td>
       <td>${row.malware ? html`<span class="risk-chip risk-critical">Malware</span>`
         : severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : nothing}</td>
