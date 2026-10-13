@@ -190,8 +190,8 @@ const readsSaid = reads => `Renamed names are hidden, though the file reads ${re
 // its sides were pretty-printed (see _pretty).
 export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${!!settings.markRenames}\0${pretty}`
 
-// `${integrity}\0${path}` → the file's highlighted lines, or null when Prism
-// has no grammar for it or it is too large to color.
+// `${integrity}\0${path}` → the text colored and its highlighted lines, or
+// null when Prism has no grammar for it or it is too large to color.
 const highlightCache = new Map()
 const highlightPending = new Set()
 // Each line's code as _code draws it, by its side's lines (a line model's `a`
@@ -1234,19 +1234,22 @@ export class BundleCompareCode extends LitElement {
   // Highlighted lines of one side, or null until (or unless) Prism colors
   // it; the first ask starts the work and re-renders once it lands.
   // `copy` names a text other than the file's own: `pretty`, or the old side
-  // given another file's names (`renamed` and that file).
+  // given another file's names (`renamed` and that file). Taken only for the
+  // text it colored: another under the same name (a copy printed again,
+  // another diff's old side) is colored anew, never drawn as the one before.
   _highlighted(details, path, text, copy = '') {
     if (!text) return null
     const lang = langForPath(path, stasisFormat(details, path), text)
     if (!lang) return null
     const key = `${details.integrity}\0${path}${copy ? `\0${copy}` : ''}`
-    if (highlightCache.has(key)) return highlightCache.get(key)
+    const kept = highlightCache.get(key)
+    if (kept?.text === text) return kept.lines
     if (!highlightPending.has(key)) {
       highlightPending.add(key)
       void (async () => {
         const markup = await highlight(text, lang)
         const lines = typeof markup === 'string' ? splitHighlightedLines(markup) : null
-        highlightCache.set(key, lines?.length === text.split('\n').length ? lines : null)
+        highlightCache.set(key, { text, lines: lines?.length === text.split('\n').length ? lines : null })
         highlightPending.delete(key)
         if (this.isConnected) this.requestUpdate()
       })()

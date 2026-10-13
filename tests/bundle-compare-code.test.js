@@ -36,6 +36,11 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchNpmRenameDiff() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
+// Prism can't load here, so text is drawn uncolored, unless a test colors it
+// with `highlighting.markup`, a text to the markup Prism would give.
+const highlighting = { markup: null }
+const prism = await import('../ui/view/prism-highlight.js')
+mock.module('../ui/view/prism-highlight.js', { namedExports: { ...prism, highlight: code => Promise.resolve(highlighting.markup?.(code) ?? null) } })
 const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
@@ -1960,6 +1965,19 @@ test('a file\'s line model is found again where its texts, or the blocks or mark
   assert.notEqual(marked, reprinted, 'found again with the marks given')
   assert.equal(element._model('k', 'a\nb\n', 'a\nd\n', { marks }), marked, 'kept for the same marks')
   assert.notEqual(element._model('k', 'a\nb\n', 'a\nd\n', { marks: [...marks] }), marked, 'found again for another diff\'s')
+})
+
+test('a side is colored as the text it shows: one printed again under the same name is colored anew, never drawn as the one before', async t => {
+  highlighting.markup = code => code.split('\n').map(line => `<b>${line}</b>`).join('\n')
+  t.after(() => { highlighting.markup = null })
+  const element = view()
+  const colored = async text => {
+    for (let i = 0; i < 100 && element._highlighted(element.other, 'dist/colored.js', text, 'pretty') === null; i++) await new Promise(resolve => { setTimeout(resolve, 1) })
+    return element._highlighted(element.other, 'dist/colored.js', text, 'pretty')
+  }
+  assert.deepEqual(await colored('var a = 1;\nf(a);\n'), ['<b>var a = 1;</b>', '<b>f(a);</b>', '<b></b>'])
+  assert.equal(element._highlighted(element.other, 'dist/colored.js', 'var b = 2;\ng(b);\n', 'pretty'), null, 'not the lines of the copy before')
+  assert.deepEqual(await colored('var b = 2;\ng(b);\n'), ['<b>var b = 2;</b>', '<b>g(b);</b>', '<b></b>'], 'its own, once colored')
 })
 
 test('a view gone is not painted again as a rename diff it asked for comes, so asks for none again', async t => {
