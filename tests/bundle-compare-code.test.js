@@ -2027,5 +2027,9 @@ test('a file whose names the server could not give the new side\'s says why, its
   const shown = renderText(element.render())
   assert.match(shown, /Renamed names are shown: the file reads names by their spelling \(eval or with\)\./u)
   assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
+  assert.match(shown, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to be turned off')
+  element._setRenames(false)
+  const off = renderText(element.render())
+  assert.doesNotMatch(off, /Hide renamed names|Renamed names are shown/u, 'neither, off: none of its lines marked')
 })
 

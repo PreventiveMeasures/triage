@@ -1582,7 +1582,8 @@ control. A version shows in the bundle view with four tabs:
   short ASCII names (three characters at most, as a minifier gives them,
   none a reader can't tell from another) a declaration in scope stands for,
   on every line, removed ones too. **Hide renamed names**, offered where the
-  server finds lines it marks, rather gives the old side the new side's names,
+  server finds lines it marks (and, while on, where it is to be turned off),
+  rather gives the old side the new side's names,
   so that the two sides then diff as they are. An old variable no new one
   stands for reads as `r_old` where the new side uses its name `r`, never as
   the new one. The server works it out from the two copies (`GET

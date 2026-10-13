@@ -975,8 +975,9 @@ export class BundleCompareCode extends LitElement {
       // Hide renamed names is offered where it hides any: lines that differ in
       // renamed names alone, marked otherwise, or, while it is on, names it
       // gave in lines that differ besides; and while it is on and the server's
-      // diff is coming, or failed, to be turned off.
-      const renamed = ready ? changes.reason === null && (changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before)) : prefs.ignoreRenames && changes !== null
+      // diff is coming, failed, or gave no names, as it said why, to be turned
+      // off.
+      const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && changes !== null
       const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })
       // The old side as the server diffed it, given the new side's names, where they are hidden.
       const shown = hiding ? changes.before : before
