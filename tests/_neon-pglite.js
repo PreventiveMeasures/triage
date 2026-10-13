@@ -21,14 +21,16 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
+import { startPglite } from './_pglite.js'
 
 import { openNeonDb } from '../server-e2e/db-neon.ts'
 import { openNeonObjstore } from '../server-e2e/objstore/store-neon.ts'
 import { openFsBlobBackend } from '../server-e2e/objstore/blob-fs.ts'
 
-// One PGlite instance shared across the whole file. WASM init costs
-// ~1-2s, so creating an instance per test would dominate the suite's
-// runtime; instead `freshNeonDb` DROPs the table before each open so
+// One PGlite instance shared across the whole file, started before any
+// test from the cached data directory: the mocked driver hands it out
+// synchronously. Starting one costs far more than a test, so instead
+// `freshNeonDb` DROPs the table before each open so
 // every test still starts from a clean schema (which also re-exercises
 // openNeonDb's DDL bootstrap each time). node:test runs the tests in a
 // file sequentially, so the shared instance sees no inter-test races;
@@ -38,7 +40,7 @@ import { openFsBlobBackend } from '../server-e2e/objstore/blob-fs.ts'
 // lockless gated INSERT — these tests confirm commit-outcome + recovery
 // parity, not the cross-replica snapshot+PK fork-safety argument (which
 // needs a real-Postgres concurrency test; see `tryCommitNeon`).
-let sharedPg = null
+let sharedPg = await startPglite()
 let counter = 0
 
 // One-shot fault injection for `tryCommitNeon`'s unique-violation

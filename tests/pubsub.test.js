@@ -14,13 +14,14 @@
 import assert from 'node:assert/strict'
 import { after, describe, it } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
+import { startPglite } from './_pglite.js'
 
 import { CHANNEL, createNeonPubSub, createNoopPubSub } from '../server-e2e/pubsub.ts'
 
-// One PGlite instance per file — same rationale as `_neon-pglite.js`
-// (WASM init cost). Each test holds its own Client adapter, so two
-// tests don't clobber each other's listeners.
-let sharedPg = null
+// One PGlite instance per file, started before the tests — same rationale
+// as `_neon-pglite.js` (startup cost). Each test holds its own Client
+// adapter, so two tests don't clobber each other's listeners.
+let sharedPg = await startPglite()
 function sharedInstance() {
   if (!sharedPg) sharedPg = new PGlite()
   return sharedPg

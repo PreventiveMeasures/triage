@@ -192,7 +192,7 @@ export function npmPackageData(kind, name, ask, shape) {
     packageData.set(key, answer)
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
-    if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait)
+    if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait).unref?.()
     repaint()
     return null
   }).catch(() => {})
