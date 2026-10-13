@@ -196,25 +196,25 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
 }
 
 // npm's advisories of `version` of a package, as `npm audit` asks them
-// (upstream's `advisories`), each `{ id, url?, title?, cwe }`, and OSV's
-// records of malware naming it that npm's don't, by id or alias (osvRecords,
-// malware.js npmMalwareAdvisory), as the malicious packages' of nx's
-// versions are (MAL-2025-41443, of GHSA-cxm3-wv7p-598c, which npm's
+// (upstream's `advisories`), each `{ id, url?, title?, cwe }`, and where
+// `osv`, OSV's records of malware naming it that npm's don't, by id or alias
+// (osvRecords, malware.js npmMalwareAdvisory), as the malicious packages' of
+// nx's versions are (MAL-2025-41443, of GHSA-cxm3-wv7p-598c, which npm's
 // registry hasn't): kept ADVISORIES_MS, and given up on once `signal`
 // aborts.
-export async function npmVersionAdvisories(name, version, context) {
+export async function npmVersionAdvisories(name, version, osv, context) {
   const what = `${name}@${version}`
   const { rows } = await kept(context, 'risk/npm/advisories', what, async () => {
     context.signal?.throwIfAborted()
-    const [registry, osv] = await Promise.all([untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false }), context.signal).catch(error => {
+    const [registry, records] = await Promise.all([untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false }), context.signal).catch(error => {
       throw context.signal?.aborted ? error : new NpmRiskError(error?.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `npm's advisories of ${what} couldn't be had: ${error.message}`)
-    }), osvRecords(name, version, context)])
+    }), osv ? osvRecords(name, version, context) : []])
     const told = registry.map(({ id, url, title, cwe }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe }))
     const named = new Set(told.map(({ id }) => id))
-    const malware = osv.filter(record => npmMalwareAdvisory(record) && ![record.id, ...record.aliases].some(id => named.has(id)))
+    const malware = records.filter(record => npmMalwareAdvisory(record) && ![record.id, ...record.aliases].some(id => named.has(id)))
       .map(({ id, url, title, cwe }) => ({ id, url, ...title ? { title } : {}, cwe }))
-    return { at: context.now, osv: true, rows: [...told, ...malware] }
-  }, hit => context.now - hit.at < ADVISORIES_MS && hit.osv === true)
+    return { at: context.now, osv, rows: [...told, ...malware] }
+  }, hit => context.now - hit.at < ADVISORIES_MS && hit.osv === osv)
   return rows
 }
 
@@ -228,15 +228,28 @@ export async function npmPackageReleases(name, context) {
 
 // OSV's records of `version` of a package (osv.dev's npm ecosystem), each
 // `{ id, url, title?, cwe, aliases }`: GitHub's advisories and the malicious
-// packages' (MAL-…, OpenSSF's) among them, read to OSV_BYTES.
+// packages' (MAL-…, OpenSSF's) among them, each page read to OSV_BYTES, the
+// next asked as its `next_page_token` names one, as OSV pages what it can't
+// answer at once, up to OSV_PAGES; `upstream-invalid` past them.
 const OSV_BYTES = 8 * 1024 * 1024
+const OSV_PAGES = 10
 const strings = value => Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
 async function osvRecords(name, version, context) {
-  const json = await askNpm(OSV_QUERY, {}, OSV_BYTES, `OSV's records of ${name}@${version}`, context,
-    { body: { package: { ecosystem: 'npm', name }, version }, from: 'OSV' })
-  return (Array.isArray(json?.vulns) ? json.vulns : []).filter(record => typeof record?.id === 'string' && record.id.length <= 64)
-    .map(record => ({ id: record.id, url: `https://osv.dev/vulnerability/${encodeURIComponent(record.id)}`, ...typeof record.summary === 'string' ? { title: record.summary } : {},
-      cwe: strings(record.database_specific?.cwe_ids), aliases: strings(record.aliases) }))
+  const what = `OSV's records of ${name}@${version}`
+  let records = []
+  let next = null
+  for (let page = 0; page < OSV_PAGES; page++) {
+    const json = await askNpm(OSV_QUERY, {}, OSV_BYTES, what, context,
+      { body: { package: { ecosystem: 'npm', name }, version, ...next ? { page_token: next } : {} }, from: 'OSV' })
+    records = records.concat(Array.isArray(json?.vulns) ? json.vulns : [])
+    next = typeof json?.next_page_token === 'string' && json.next_page_token !== '' ? json.next_page_token : null
+    if (!next) {
+      return records.filter(record => typeof record?.id === 'string' && record.id.length <= 64)
+        .map(record => ({ id: record.id, url: `https://osv.dev/vulnerability/${encodeURIComponent(record.id)}`, ...typeof record.summary === 'string' ? { title: record.summary } : {},
+          cwe: strings(record.database_specific?.cwe_ids), aliases: strings(record.aliases) }))
+    }
+  }
+  throw new NpmRiskError('upstream-invalid', `${what} ran past ${OSV_PAGES} pages`)
 }
 
 // `promise`, given up on once `signal` aborts, its reason thrown: what it

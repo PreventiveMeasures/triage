@@ -1019,6 +1019,14 @@ test('Socket is never asked about a private package, whoever reads it', async t 
   assert.deepEqual(asked, [], 'its name never leaves for Socket')
 })
 
+test('OSV is never asked about a private package\'s risk, whoever reads it, as a public one\'s is', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const calls = registry(t, [{ ...packageOf('@acme/secret', '1.0.0', { 'package.json': '{}' }), private: true }, packageOf('@pub/open', '1.0.0', { 'package.json': '{}' })])
+  for (const name of ['@acme/secret', '@pub/open']) assert.equal((await h.send(`/api/npm/risk?${new URLSearchParams({ name, version: '1.0.0' })}`, 'admin')).status, 200, name)
+  assert.deepEqual(calls.filter(({ url }) => url === 'https://api.osv.dev/v1/query').length, 1, 'its name never leaves for OSV, the public one\'s does')
+})
+
 test('a repository advisory\'s range with no upper bound ends below the version GitHub names as patched', async t => {
   const h = await setup(t)
   const pkg = packageOf('patched', '5.0.3', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/patched.git' } })

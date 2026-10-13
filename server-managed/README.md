@@ -912,8 +912,9 @@ one can't be held to npm's integrity, and is told as npm's. Other advisories
 are vulnerabilities, not a supply chain's risk, and stay on their tab. npm's
 registry hasn't every one of GitHub's malware advisories (those of nx's
 malicious versions, for one): the viewer's assessments add OSV's records of
-malware (risk's `npmVersionAdvisories`), a scan's not yet, asking a lockfile's
-of npm alone. A version npm has
+malware (risk's `npmVersionAdvisories`), a public package's alone, a private
+one's name never sent to OSV, as it never is to Socket; a scan's not yet,
+asking a lockfile's of npm alone. A version npm has
 no document of is asked of risk as one npm removed (`npmRiskRemoved`): its
 package taken down by npm is risk's `malware`, critical, whatever version is
 locked, and the page says so in its tooltip; one nothing tells of is told as

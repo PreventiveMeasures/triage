@@ -118,7 +118,9 @@ async function tarballOf(doc: NpmVersionDocument | undefined, signal: AbortSigna
 // scope) is told no tier nor age, as an own package. Its
 // documents are read with npm's token where the reader may have it
 // (`privileged`, as readNpmVersion), its dependencies' without; what is kept
-// of it is shared only where neither version is private. A `spare` one, no
+// of it is shared only where neither version is private, and OSV is asked of
+// its advisories only where it isn't, a private package's name never sent to
+// OSV, as it never is to Socket (http.ts). A `spare` one, no
 // reader waiting on it, is made only within MAX_SPARE_ASSESSMENTS, and tells
 // its dependencies without asking npm of their packages (assessNpm
 // `dependencies`), nor its advisories, which a scan asks of a lockfile's
@@ -134,7 +136,7 @@ export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | null,
     return scopes.get(scope)!
   }
   return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old?.version ?? null, minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
-    popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, owned,
+    popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !old?.private), signal, dependencies: !spare, advisories: !spare, osv: !doc.private, owned,
     packument: (name, { authorized }) => readNpmPackument(name, privileged && authorized, signal),
     tarball: (_name, version) => tarballOf([doc, old].find(read => read?.version === version) ?? undefined, signal) }))
 }
