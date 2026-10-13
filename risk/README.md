@@ -26,7 +26,7 @@ const assessment = await assessNpm('axios', '1.14.1', {
 
 A pair's findings flag only what is new against the version compared with, so an attack's own earlier version, or one published with it, hides what it injected. With `oldVersion: true`, risk compares with the one of the package's versions most likely free of that (`npm/old-version.js` `npmOldVersion`), and says which as the assessment's `oldVersion`: none where none is below the open version, which is then assessed alone. Of the versions below it, a release where it is one, the highest that is preferred, each preference kept only where some version holds it, in turn:
 
-1. Where an account npm doesn't know published it, one another account published, as an attack may have published more than one; and where the highest of those a known account published (`knownAccounts`), as when a package is taken from its maintainers, one a known account published, trusted however new.
+1. Where an account not known to publish published it, one another account published, as an attack may have published more than one; and where the highest of those a known account published, as when a package is taken from its maintainers, one a known account published, trusted however new. An account is known where it published one of npm's most downloaded packages (`@preventive/publishers`, `npm/manifest.js` `knownAccounts`), as the `publisher` finding takes it.
 2. Else one published a week or more apart from it, as not one of an attack's, and on npm a month or more, as looked at.
 3. One npm doesn't say is deprecated, as one a maintainer took back.
 

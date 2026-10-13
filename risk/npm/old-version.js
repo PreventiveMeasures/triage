@@ -48,11 +48,12 @@ function compared(a, b) {
 // the highest that is preferred, each preference kept only where some
 // version holds it, in turn:
 //
-// - Where an account npm doesn't know (manifest.js `knownAccounts`) published
-//   it, one another published, as an attack may have published more than
-//   one; and where the highest of those a known account published, as when
-//   a package is taken from its maintainers, one a known account published,
-//   trusted however new.
+// - Where an account not known to publish published it (manifest.js
+//   `knownAccounts`: none that published one of npm's most downloaded
+//   packages, as @preventive/publishers lists them), one another published,
+//   as an attack may have published more than one; and where the highest of
+//   those a known account published, as when a package is taken from its
+//   maintainers, one a known account published, trusted however new.
 // - Else one published a week or more apart from it, as not one of an
 //   attack's, and on npm a month or more, as looked at.
 // - One npm doesn't say is deprecated, as one a maintainer took back.
