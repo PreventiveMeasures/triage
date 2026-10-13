@@ -1412,7 +1412,7 @@ test('a file\'s head tags how it reads, as the npm Overview does: as it reads no
   assert.doesNotMatch(row('long'), /npm-encoding-tag/u, 'the tree leaving ASCII untagged')
   const minRow = /<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu[Symbol.match](tree).find(markup => markup.includes('data-tooltip=dist/min.js>'))
   assert.deepEqual(flags(minRow), ['Controls warn'], 'the tree briefer: what it warns of')
-  assert.match(minRow, /npm-encoding-tag is-notice[^>]*>Minified</u)
+  assert.match(minRow, /npm-encoding-tag is-notice[^>]*>Min</u, 'Minified as Min, its head saying it in full')
   assert.doesNotMatch(row('ctl'), /npm-encoding-tag/u, 'its controls alone where it reads as UTF-8')
   assert.deepEqual(flags(row('ctl')), ['Controls warn'])
   // A source map tagged Map in its head, wide enough, not in the tree, where its name says so.
@@ -1489,7 +1489,7 @@ test('a file is labelled where a package starts from it, a package.json with its
   const rows = Object.fromEntries([...render('index.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
     .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
   assert.deepEqual(labels(rows['package.json'], 'install'), ['postinstall'], 'the tree tags what runs on install now')
-  assert.match(rows['dist/app.min.js'], /class=npm-encoding-tag is-notice[^>]*>Minified</u)
+  assert.match(rows['dist/app.min.js'], /class=npm-encoding-tag is-notice[^>]*>Min</u)
   assert.doesNotMatch(rows['index.js'], /npm-encoding-tag|bundle-compare-code-entry/u, 'no tag for what reads as it is, and entry points in the head alone')
   // Alerts on a side's files, as Socket's on an npm version's, in the head and the tree.
   Object.assign(element, { otherAlerts: new Map([['dist/app.min.js', [{ type: 'malware' }]]]), baseAlerts: new Map([['index.js', [{ type: 'gone' }]]]),
@@ -1521,11 +1521,11 @@ test('a file is tagged with the hosts it names that the one compared with named 
   assert.doesNotMatch(compareOf(base, other).head('lib/api.js'), /<new/u, 'none where the source tells of none')
 })
 
-test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed', () => {
+test('a file is tagged Large and Obfuscated in its head and the tree, as the npm Files list tags it: as it is now, or as it was, for one removed; the tree tags Large only where a file has no other tag', () => {
   const obfuscated = Array.from({ length: 25 }, (_, i) => `var _0x${(0x1a2b + i).toString(16)}=${i};`).join('')
   const big = '// big\n'.repeat(40_000)
   const base = version('a', { 'lib/gone.js': obfuscated, 'lib/big.js': '// small\n', 'lib/plain.js': 'export const a = 1\n' })
-  const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'lib/plain.js': 'export const a = 2\n' })
+  const other = version('b', { 'dist/payload.js': `${obfuscated}\n${big}`, 'lib/big.js': big, 'dist/big.min.js': `${'var a=1;'.repeat(40_000)}\n`, 'lib/plain.js': 'export const a = 2\n' })
   const { render, head } = compareOf(base, other, { baseName: 'a', otherName: 'b' })
   const flags = markup => [...markup.matchAll(/class="npm-flag-tag (is-\w+)"[^>]*>([^<]+)</gu)].map(([, mark, tag]) => `${tag} ${mark}`)
   assert.deepEqual(flags(head('dist/payload.js')), ['Large is-notice', 'Obfuscated is-warn'])
@@ -1535,7 +1535,11 @@ test('a file is tagged Large and Obfuscated in its head and the tree, as the npm
   assert.deepEqual(flags(head('lib/plain.js')), [])
   const rows = Object.fromEntries([...render('lib/plain.js').matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
     .map(([row]) => [/bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], row]))
-  assert.deepEqual(flags(rows['dist/payload.js']), ['Large is-notice', 'Obfuscated is-warn'], 'in the tree too')
+  assert.deepEqual(flags(rows['dist/payload.js']), ['Obfuscated is-warn'], 'in the tree too, Large left out beside it')
+  assert.deepEqual(flags(rows['lib/big.js']), ['Large is-notice'], 'Large where it is the only tag')
+  assert.deepEqual(flags(head('dist/big.min.js')), ['Large is-notice'], 'in its head beside Minified')
+  assert.deepEqual(flags(rows['dist/big.min.js']), [], 'not in the tree beside Min')
+  assert.match(rows['dist/big.min.js'], /class=npm-encoding-tag is-notice[^>]*>Min</u)
   assert.deepEqual(flags(rows['lib/gone.js']), ['Obfuscated is-warn'])
   assert.deepEqual(flags(rows['lib/plain.js']), [])
 })

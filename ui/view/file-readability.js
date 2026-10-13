@@ -66,12 +66,13 @@ function readabilityNote(readability) {
 // it can't be read as it is, saying why; for one with unexpected long lines,
 // how its text is encoded (ASCII or UTF-8), its long lines tagged beside it
 // (npmReadabilityFlags) rather than in its place, as its control and
-// invisible characters are.
-export function npmEncodingTag(readability) {
+// invisible characters are. `brief` for a file tree: its short tag, where it
+// has one (Min), its tooltip naming it in full.
+export function npmEncodingTag(readability, brief = false) {
   if (!readability) return nothing
   const category = npmTaggedCategory(readability)
-  const { tag, mark } = READABILITY.get(category)
-  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${tag}</span>`
+  const { tag, short, mark } = READABILITY.get(category)
+  return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote({ ...readability, category })}>${brief ? short ?? tag : tag}</span>`
 }
 
 // A file's Controls, Invisible and Long lines (npmReadabilityLabels), beside
@@ -106,10 +107,11 @@ const npmReadabilityTag = readability => readability ? html`${npmReadabilityFlag
 // it (file-risk.js fileRiskOf), before its tag: Large, a code file of
 // NPM_LARGE_CODE or more (`bytes` its size), which says little of a file
 // alone, as `notice`; and Obfuscated, one with an obfuscator's fingerprint
-// (npmObfuscation), as `warn`. Nothing for neither.
-export function npmFileFlagTags(details, path, bytes) {
+// (npmObfuscation), as `warn`. Nothing for neither. `withLarge` false leaves
+// Large out, for a list that tags it only where a file has no other tag.
+export function npmFileFlagTags(details, path, bytes, withLarge = true) {
   const { stamps, readability } = fileRiskOf(details, path)
-  const large = stamps.some(({ name }) => name === 'Large')
+  const large = withLarge && stamps.some(({ name }) => name === 'Large')
   const obfuscation = readability?.obfuscation
   if (!large && !obfuscation) return nothing
   return html`${large ? html`<span class="npm-flag-tag is-notice" data-tooltip=${`A code file of ${formatBytes(bytes)}, 256 KiB or more`}>Large</span>` : nothing}${
