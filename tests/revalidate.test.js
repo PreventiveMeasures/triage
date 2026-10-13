@@ -283,9 +283,10 @@ describe('the app view folds the rows the pass re-rated', () => {
   })
 
   it('folds nothing once the layer is off', () => {
-    // Off, `withoutPassRows` has already taken the pass's rows out of
-    // the group — there is nothing left to fold under, and the rows
-    // the pass re-rated are the whole point of the code view.
+    // Off, `mergeReportGroups` (common/workspace-groups.js) has already
+    // taken the pass's rows out of the group — there is nothing left to
+    // fold under, and the rows the pass re-rated are the whole point of
+    // the code view.
     const group = [makeFinding('A'), pass('P')]
     state.reports = [{ groups: [group] }]
     state.showRevalidation = false

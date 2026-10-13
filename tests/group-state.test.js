@@ -92,7 +92,7 @@ function reset() {
   state.reports = []
   state.workspaceMerges = []
   // The App lens defaults on, i.e. the pass's own rows are part of
-  // every group (see withoutPassRows).
+  // every group (see mergeReportGroups in common/workspace-groups.js).
   state.showRevalidation = true
   // …and the upstream lens defaults off, i.e. groups arrive whole.
   state.upstreamOnly = false

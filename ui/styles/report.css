@@ -85,8 +85,8 @@
     margin-bottom: 1.125rem;
 
     /* Page-title fills the header so the sync-status badge nested
-       inside its `h1` (via Lit's `${reportSyncBadgeTemplate()}` in
-       the template) can right-align via `margin-left: auto`.
+       inside its `h1` (via Lit's `${syncBadgeTemplate()}` in
+       render.js) can right-align via `margin-left: auto`.
        `min-width: 0` keeps long titles from blowing out the flex
        container. */
     & .page-title { flex: 1; min-width: 0; }
@@ -206,8 +206,8 @@
     }
 
     /* `<repo-chip>` carries its own shadow-DOM styles for the chip,
-       pencil, and edit-mode input — the component is rendered inside
-       `.meta-row` directly via render.js's `repoChipHtml`. CSS
+       pencil, and edit-mode input — the component is rendered into
+       the title `h1` via render.js's `repoChipTemplate`. CSS
        custom properties (`--surface`, `--border`, `--text`, etc.)
        inherit through the shadow boundary so theme switching works
        without copying rules here. */

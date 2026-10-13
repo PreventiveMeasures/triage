@@ -378,7 +378,7 @@ const SYNC_BADGE_VIEWS = new Set(['findings', 'files', 'links'])
 // supported (mode === 'workspace', state.reports = []) so a user
 // who just created a workspace and joined a peer's chain still
 // sees the badge and can click "N cloud" to pull the peer's
-// reports down. (`reportSyncBadgeTemplate` only hides when BOTH
+// reports down. (`syncBadgeTemplate` only hides when BOTH
 // local and remote counts are zero.)
 function syncBadgeTemplate() {
   if (triageSync.status !== 'online') return nothing

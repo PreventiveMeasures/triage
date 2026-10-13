@@ -174,12 +174,12 @@ export function createHttpServer(deps: HttpServerDeps): Server {
       // REST handlers go through a separate path and must mirror it.
       // Without this, a REST PUT arriving on an existing keep-alive
       // socket AFTER SIGTERM but BEFORE `httpServer.close()` finishes
-      // draining could land in `withCommitLock`, acquire a lease, and
-      // finish its `finally { release() }` AFTER the shutdown's
-      // `heldLeaseCount` snapshot — leaving an orphan lock row that pins
-      // the key until TTL expiry. The 503 + `shutting-down` reason tells
-      // the client to retry against a different replica. Transport
-      // audit + multi-replica shutdown ordering review.
+      // draining could start a fresh upload + commit for the drain to
+      // outwait — or, landing after the drain's in-flight snapshot
+      // (lifecycle.ts `drain`), run on against the closed DB, the race
+      // ws-server.ts gates on the WS plane. The 503 + `shutting-down`
+      // reason tells the client to retry against a different replica.
+      // Transport audit + multi-replica shutdown ordering review.
       if (isShuttingDown()) {
         res.writeHead(503, { 'content-type': 'application/json', 'connection': 'close' })
         res.end(JSON.stringify({ error: 'shutting-down' }))

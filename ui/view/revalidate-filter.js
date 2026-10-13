@@ -43,7 +43,7 @@
 // second control either. It's a chip INSIDE the Confirmed row, cycling `+ Partial` →
 // `− Partial` → `only Partial` on click, riding the block the select
 // already spans. Shown only when Confirmed is up AND the loaded set
-// has partial rows to sort; `partialCycle` dispatches
+// has partial rows to sort; `_onPartial` dispatches
 // `partial-change(detail.value)` and events.js does the write.
 //
 // The three read green / red / yellow — in, out, and only — so the
