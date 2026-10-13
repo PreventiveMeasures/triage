@@ -465,6 +465,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
   if (url.pathname !== '/api/admin/repositories/risk' || method !== 'GET') return false
   const selected = repositories.filter(repo => repo.selected)
   const repoId = url.searchParams.get('repo'), teamId = url.searchParams.get('team')
+  if (repoId !== null && teamId !== null) { sendJson(res, 400, { error: 'bad-scope' }); return true }
   const team = teamId === null ? null : adminTeams().find(item => item.id === teamId) ?? null
   const scanned = new Set(selected.filter(repo => repoId === null ? !team || team.repos.some(link => link.repoId === repo.id) : String(repo.id) === repoId).map(repo => repo.id))
   if ((teamId !== null && !team) || (repoId !== null && scanned.size === 0)) { sendJson(res, 404, { error: 'no-repository' }); return true }
