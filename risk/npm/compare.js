@@ -11,7 +11,7 @@ import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.j
 import { npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
-import { SOURCE_MAP, npmBecameUnreadable, npmLargeCode, npmUnreadable } from '../files/readability.js'
+import { npmBecameUnreadable, npmLargeCode, npmUnreadable } from '../files/readability.js'
 import { SEVERITIES } from '../files/stamps.js'
 import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
@@ -92,36 +92,37 @@ function npmMajorRelease(was, now) {
 
 // Whether the open version's file at `path` (`basePath` in the one compared
 // with) had its source map rebuilt with it: its last line names a map file of
-// the package (`//# sourceMappingURL=name.js.map`, resolved from the file's
-// own as a browser resolves it; not one inline, at a URL, from a site's root,
-// or above the package's), a source map (`.map`, its `mappings`, or an
-// indexed map's `sections`, told), new or changed from the one at its path,
-// or beside the file's own before it was renamed, as a build writes them
-// together. An attack editing a built file leaves its map as it was.
+// the package by a plain path from the file's own (MAP_NAME), a source map
+// (its `mappings`, or each of an indexed map's `sections`, told), new or
+// changed from the one at its path, or beside the file's own before it was
+// renamed, as a build writes them together. An attack editing a built file
+// leaves its map as it was.
 const SOURCE_MAP_FILE = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*?#]+)/u
-// A name resolves as a browser resolves it, under two package roots told
-// apart by origin and path: only one relative to the file, and within the
-// package, lands at the same path of each.
-const PACKAGE_ROOTS = ['https://one.invalid/one/', 'https://two.invalid/two/'].map(root => new URL(root))
+// A map name a build writes (`a.js.map`, `../maps/a.map`): segments of
+// letters, digits and `._~@+-`, as a browser reads them alike. One at a URL,
+// from a site's root, or with an escape or a backslash names none.
+const MAP_NAME = /^(?:[\w.~@+-]+\/)*[\w.~@+-]+\.map$/u
 function besideFile(file, name) {
-  const [one, two] = PACKAGE_ROOTS.map(root => {
-    const url = URL.parse(name, new URL(file.split('/').map(encodeURIComponent).join('/'), root))
-    return url?.origin === root.origin && url.pathname.startsWith(root.pathname) ? url.pathname.slice(root.pathname.length) : null
-  })
-  try { return one !== null && one === two ? decodeURIComponent(one) : null } catch { return null }
+  const parts = file.split('/').slice(0, -1)
+  for (const part of name.split('/')) {
+    if (part === '..' && parts.length === 0) return null
+    if (part === '..') parts.pop()
+    else if (part !== '.') parts.push(part)
+  }
+  return parts.join('/')
 }
 function rebuiltWithMap(base, other, path, basePath) {
   const text = bundleFilesAsMap(other).get(path)
   const name = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1))?.[1] : null
-  const named = name ? besideFile(path, name) : null
-  const map = named && SOURCE_MAP.test(named) ? bundleFilesAsMap(other).get(named) : null
-  const was = bundleFilesAsMap(base)
-  return isSourceMap(map) && map !== was.get(named) && map !== was.get(besideFile(basePath, name))
+  if (!name || !MAP_NAME.test(name)) return false
+  const [map, was] = [bundleFilesAsMap(other).get(besideFile(path, name)), bundleFilesAsMap(base)]
+  return isSourceMap(map) && map !== was.get(besideFile(path, name)) && map !== was.get(besideFile(basePath, name))
 }
 const isSourceMap = text => {
   try {
     const json = JSON.parse(text)
-    return typeof json?.mappings === 'string' || Array.isArray(json?.sections)
+    return typeof json?.mappings === 'string'
+      || (Array.isArray(json?.sections) && json.sections.length > 0 && json.sections.every(section => typeof section?.map?.mappings === 'string'))
   } catch { return false }
 }
 

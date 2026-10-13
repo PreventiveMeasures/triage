@@ -208,6 +208,8 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const indexed = sections => JSON.stringify({ version: 3, sections: [{ offset: { line: 0, column: 0 }, map: JSON.parse(map(sections)) }] })
   assert.equal(found(side('1.0.0', { 'a.js': short, 'a.js.map': indexed('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': indexed('B') }))['now-unreadable'].severity,
     'high', 'an indexed map rebuilt')
+  assert.equal(found(side('1.0.0', { 'a.js': short, 'a.js.map': indexed('A') }), side('1.0.1', { 'a.js': long('a.js'), 'a.js.map': '{"version":3,"sections":[null]}' }))['now-unreadable'].severity,
+    'critical', 'an indexed map whose sections are none')
   const elsewhere = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'maps/a.map': map('A') }),
     side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=../maps/a.map\n`, 'lib/a.js.map': map('B'), 'maps/a.map': map('A') }))
   assert.equal(elsewhere['now-unreadable'].severity, 'critical', 'the map it names as it was, whatever map beside it changed')
@@ -217,7 +219,7 @@ test('a file become unreadable calls for less where its source map was rebuilt w
   const inline = found(side('1.0.0', { 'a.js': short, 'a.js.map': map('A') }),
     side('1.0.1', { 'a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=data:application/json;base64,e30=\n`, 'a.js.map': map('B') }))
   assert.equal(inline['now-unreadable'].severity, 'critical', 'a map inline is no map rebuilt beside it')
-  for (const name of ['/a.js.map', '//cdn.example/a.js.map', '\\\\cdn.example/a.js.map', '/package/lib/a.js.map', 'https://package.invalid/package/lib/a.js.map', 'https://one.invalid/one/lib/a.js.map', '//two.invalid/two/lib/a.js.map', '/one/lib/a.js.map']) {
+  for (const name of ['/a.js.map', '//cdn.example/a.js.map', '\\\\cdn.example/a.js.map', '/package/lib/a.js.map', 'https://package.invalid/package/lib/a.js.map', 'https://one.invalid/one/lib/a.js.map', '//two.invalid/two/lib/a.js.map', '/one/lib/a.js.map', 'cdn.example%2Fa.js.map']) {
     const rooted = found(side('1.0.0', { 'lib/a.js': short, 'lib/a.js.map': map('A'), 'lib/cdn.example/a.js.map': map('A') }),
       side('1.0.1', { 'lib/a.js': `${'x'.repeat(3000)}\n//# sourceMappingURL=${name}\n`, 'lib/a.js.map': map('B'), 'lib/cdn.example/a.js.map': map('B') }))
     assert.equal(rooted['now-unreadable'].severity, 'critical', `${name}: a map from a site's root or another host is none beside it`)
