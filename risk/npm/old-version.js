@@ -54,6 +54,8 @@ function compared(a, b) {
 //   as an attack may have published more than one; and where the highest of
 //   those a known account published, as when a package is taken from its
 //   maintainers, one a known account published, trusted however new.
+// - One published before it, not after, as one published since (a
+//   backport) is no version it came from; a known account's too.
 // - Else one published a week or more apart from it, as not one of an
 //   attack's, and on npm a month or more, as looked at.
 // - One npm doesn't say is deprecated, as one a maintainer took back.
@@ -69,12 +71,11 @@ export function npmOldVersion(version, releases, now) {
     .toSorted((a, b) => compared(b.of, a.of))
   let rows = prefer(below, row => row.of.pre.length === 0 || at.pre.length > 0)
   if (open.publisher && !open.known) rows = prefer(rows, row => row.publisher !== open.publisher)
+  const time = row => row.published === null ? Number.NaN : Date.parse(row.published)
+  const opened = time(open)
+  rows = prefer(rows, row => time(row) < opened)
   const vouched = Boolean(open.publisher && !open.known && rows[0]?.known)
   if (vouched) rows = rows.filter(row => row.known)
-  else {
-    const time = row => row.published === null ? Number.NaN : Date.parse(row.published)
-    const opened = time(open)
-    rows = prefer(prefer(rows, row => Math.abs(time(row) - opened) >= CLOSE_MS), row => now - time(row) >= SETTLED_MS)
-  }
+  else rows = prefer(prefer(rows, row => Math.abs(time(row) - opened) >= CLOSE_MS), row => now - time(row) >= SETTLED_MS)
   return prefer(rows, row => !row.deprecated)[0]?.version ?? null
 }

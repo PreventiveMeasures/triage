@@ -136,7 +136,9 @@ test('the version risk picks to compare with: below the open one, the highest mo
   assert.equal(pick('1.0.0', line), null, 'none below')
   assert.equal(pick('latest', [at('latest', 1)]), null, 'no version')
   assert.equal(pick('2.0.0', [at('1.9.5', 60), at('1.10.0', 50), at('2.0.0', 1)]), '1.10.0', 'in the closest branch below, by semver')
-  assert.equal(pick('3.0.0', [at('2.9.8', 250), at('2.9.9', 199.5), at('3.0.0', 200)]), '2.9.8', 'none published within a week of it, after it either')
+  assert.equal(pick('3.0.0', [at('2.9.8', 250), at('2.9.9', 100), at('3.0.0', 200)]), '2.9.8', 'one published before it, not a backport since')
+  assert.equal(pick('3.0.0', [at('2.9.9', 100), at('3.0.0', 200)]), '2.9.9', 'a backport where none is before it')
+  assert.equal(pick('3.0.0', [at('2.9.7', 250), at('2.9.8', 200.5), at('3.0.0', 200)]), '2.9.7', 'none published within a week before it')
   assert.equal(pick('0.1.2', [at('0.1.0', 20), at('0.1.1', 12), at('0.1.2', 10)]), '0.1.0', 'none a month old: one a week apart')
   assert.equal(pick('0.1.1', [at('0.1.0', 12.5), at('0.1.1', 12)]), '0.1.0', 'nor that: the highest')
   assert.equal(pick('1.3.0', [at('1.1.0', 90), at('1.2.0', 60, 'maintainer', { deprecated: true }), at('1.3.0', 1)]), '1.1.0', 'one deprecated passed over')
@@ -152,6 +154,8 @@ test('the version risk picks to compare with, by who published it: a known accou
   const known = publishers[0]
   const taken = [at('1.13.0', 60, known, { known: true }), at('1.14.0', 5, known, { known: true }), at('1.14.1', 1, 'someone-new'), at('1.14.2', 0.5, 'someone-new')]
   assert.equal(pick('1.14.2', taken), '1.14.0', 'its maintainers\' latest, trusted however new; none the new account published')
+  assert.equal(pick('2.0.0', [at('1.9.8', 30, known, { known: true }), at('1.9.9', 0.2, known, { known: true }), at('2.0.0', 1, 'someone-new')]), '1.9.8',
+    'theirs published before it, not a backport since')
   const handed = [at('1.0.0', 300, 'alice'), at('1.1.0', 100, 'alice'), at('1.2.0', 60, 'mallory'), at('1.2.1', 20, 'alice'), at('1.3.0', 1, 'mallory')]
   assert.equal(pick('1.3.0', handed), '1.1.0', 'another unknown account\'s, held to a month as any')
   assert.equal(pick('1.0.2', [at('1.0.0', 90, 'solo'), at('1.0.1', 60, 'solo'), at('1.0.2', 1, 'solo')]), '1.0.1', 'one account\'s all: its own')
