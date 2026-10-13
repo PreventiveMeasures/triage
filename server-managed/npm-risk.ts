@@ -152,16 +152,21 @@ async function bounded(spare: boolean, assess: () => Promise<NpmAssessment>): Pr
 
 // A version npm has no document of, as risk tells one npm removed, as it
 // removes every one it finds malware in (assessNpm): its package taken down
-// by npm, as a scan's (`spare`), its advisories asked of a lockfile's
-// packages at once (repository-risk.ts). Its package's document read with
-// npm's token where the reader may have it (`privileged`), and kept as a
-// private package's is; no tarball read, nothing of the version being left.
-// Spare, within MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError
-// where nothing tells of it.
+// by npm, as a scan's (`spare`), and its advisories of malware, npm's and,
+// where anyone can read its package, OSV's, which alone has some of those
+// npm removed (nx's), a private package's name never sent to OSV. Its
+// package's document read anonymously, else with npm's token where the
+// reader may have it (`privileged`), and kept as a private package's is; no
+// tarball read, nothing of the version being left. Spare, within
+// MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError where
+// nothing tells of it.
 export function npmRiskRemoved(name: string, version: string,
   { teamScoped, privileged, signal, ...stores }: NpmRiskStores & { teamScoped: boolean; privileged: boolean; signal: AbortSignal }): Promise<NpmAssessment> {
-  return bounded(true, () => assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
-    advisories: false, cache: npmRiskCache(stores, false), signal,
-    packument: (read, { authorized }) => readNpmPackument(read, privileged && authorized, signal),
-    tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) }))
+  return bounded(true, async () => {
+    const open = await readNpmPackument(name, false, signal)
+    return assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
+      osv: open !== null, cache: npmRiskCache(stores, false), signal,
+      packument: (read, { authorized }) => read === name && open ? Promise.resolve(open) : readNpmPackument(read, privileged && authorized, signal),
+      tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
+  })
 }
