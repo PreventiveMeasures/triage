@@ -129,16 +129,50 @@ test('an npm comparison\'s changed files are asked of the two versions', async (
   await settledUntil(() => comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status === 'ready')
 })
 
-test('a comparison\'s request that fails fails each file, and is asked again whole as the toggle turns on where that may succeed', async () => {
+// Timers set for a failure to be asked again, kept to be fired by the test.
+function retryTimers(t) {
+  const timers = [], wait = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 5_000 ? (timers.push({ fn, ms }), {}) : wait(fn, ms, ...rest))
+  t.after(() => { globalThis.setTimeout = wait })
+  return timers
+}
+
+test('a comparison\'s request that fails fails each file, and is asked again whole a while after where that may succeed', async t => {
+  const timers = retryTimers(t)
   const { copy } = comparisonOf({ 'a.js': readable }, { 'a.js': `${readable}a` })
   assert.equal(copy('base', 'a.js').status, 'loading')
   changeRequests[0].fail(Object.assign(new Error('The server is busy.'), { status: 503 }))
   await settledUntil(() => copy('base', 'a.js').status === 'error')
   assert.deepEqual(copy('base', 'a.js'), { status: 'error', message: 'The server is busy.', retry: true })
-  assert.equal(requests.length, 1, 'not asked again unasked')
-  togglePrettySource()
-  assert.equal(copy('base', 'a.js').status, 'loading', 'turned on, asked again')
+  assert.equal(requests.length, 1, 'not asked again at once')
+  assert.deepEqual(timers.map(({ ms }) => ms), [5_000])
+  timers.shift().fn()
+  await settledUntil(() => renders.length > 0)
+  assert.deepEqual(renders, ['base a.js'], 'the view that last asked painted again once due')
+  assert.equal(copy('base', 'a.js').status, 'loading', 'and asked again')
   assert.equal(requests.length, 2)
+  changeRequests[1].fail(Object.assign(new Error('The server is busy.'), { status: 503 }))
+  await settledUntil(() => timers.length > 0)
+  assert.deepEqual(timers.map(({ ms }) => ms), [10_000], 'twice as long, failed again')
+})
+
+test('a comparison\'s file the server was too busy to make is asked for alone once it ended, and asked again a while after where that fails too', async t => {
+  const timers = retryTimers(t)
+  const { copy } = comparisonOf({ 'a.js': readable }, { 'a.js': `${readable}a` })
+  assert.equal(copy('base', 'a.js').status, 'loading')
+  await changeRequests[0].send({ side: 'base', path: 'a.js', source: hashOf(readable), status: 429, message: 'Too many files are being pretty-printed.' })
+  changeRequests[0].end()
+  await settled()
+  answers.push(Object.assign(new Error('The server is busy.'), { status: 503 }))
+  assert.equal(copy('base', 'a.js').status, 'loading', 'asked for alone')
+  await settledUntil(() => copy('base', 'a.js').status === 'error')
+  assert.deepEqual(requests.slice(1), [['bundle', 'bundle-1', 'a.js', hashOf(readable)]])
+  assert.deepEqual(timers.map(({ ms }) => ms), [5_000])
+  answers.push('export const a = 1;\n')
+  timers.shift().fn()
+  assert.equal(copy('base', 'a.js').status, 'loading', 'asked again once due')
+  await settledUntil(() => copy('base', 'a.js').status === 'ready')
+  assert.equal(requests.length, 3)
 })
 
 test('only a managed bundle\'s or npm version\'s minified code is offered pretty-printed', () => {

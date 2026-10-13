@@ -1610,7 +1610,9 @@ control. A version shows in the bundle view with four tabs:
   server for every changed file's two sides pretty-printed as it opens, in one
   request (`GET /api/bundles/:id/pretty?other=`, `GET
   /api/npm/pretty?otherVersion=`), those the server kept coming at once, the
-  toggle on or not, and the pretty-print toggle is offered where printing
+  toggle on or not (one it brought none of asked for alone, and a failure
+  that may pass asked again a while after, twice as long each time), and the
+  pretty-print toggle is offered where printing
   changes a diff, in the file shown or any file the Diff view lists: a file
   minified on either side, as the Code tab prints one, or one whose two copies
   diff in fewer changed lines than its texts as published, as where only its

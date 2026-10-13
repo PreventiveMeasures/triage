@@ -48,6 +48,25 @@ const UNLISTED = "The server didn't pretty-print this file."
 
 // Whether asking again for a copy that failed with `status` may succeed.
 const retryable = status => !(status >= 400 && status < 500 && status !== 429)
+// A failure that may pass is asked again this long after it came, twice as
+// long each time it fails again, its view painted again then to ask.
+const RETRY_MS = 5_000
+const RETRY_MAX_MS = 5 * 60_000
+
+// Failures in a row, by what failed (a file's copy, or a comparison's).
+const failures = new Map()
+// A failure that may pass, of what `key` names, `drop`ped a while after,
+// where it is still what is kept, `notify` called then for its view to ask
+// again; or what came, its failures forgotten.
+function retried(key, failure, drop, notify) {
+  if (!failure?.retry) {
+    failures.delete(key)
+    return
+  }
+  const tries = failures.get(key) ?? 0
+  failures.set(key, tries + 1)
+  setTimeout(() => { if (drop()) notify()?.() }, Math.min(RETRY_MS * 2 ** tries, RETRY_MAX_MS))?.unref?.()
+}
 
 // Copies by integrity and path: `{ status: 'loading' }`, `{ status: 'ready',
 // text, hash }` (`hash` the copy's own, which a diff of it names:
@@ -68,9 +87,10 @@ const versions = new Map()
 // them, both sides' pretty-printed, in one request the first time one is
 // asked for, the toggle on or not (Compare tells from them where printing
 // changes a diff): `copies` by side and path as above, those that came;
-// `notify`, the view that last asked for one still coming; `ended` once its
-// request ended, and `rest`, the copy every file has where it failed. A file
-// it brought none of is asked for alone (fileCopy).
+// `notify`, the view that last asked for one; `ended` once its request ended,
+// and `rest`, the copy every file has where it failed, asked for again a while
+// after where that may succeed. A file it brought none of, or couldn't make
+// as the server was busy, is asked for alone (fileCopy).
 const comparisons = new Map()
 
 // Whether each file of a bundle or npm version can be formatted, by its
@@ -153,7 +173,10 @@ async function load(key, copy, entry, path, content, known) {
   copies.set(key, next)
   settled++
   const notify = notifiers.get(key)
-  notifiers.delete(key)
+  // One to be asked for again keeps the view that last asked, to be told then.
+  const retry = next.status === 'error' && next.retry
+  if (!retry) notifiers.delete(key)
+  retried(`file ${key}`, retry ? next : null, () => copies.get(key) === next && copies.delete(key), () => notifiers.get(key))
   notify?.()
   evict()
 }
@@ -241,7 +264,7 @@ function fileCopy(details, path, content, notify, entry = details) {
   const asked = copies.get(key)
   const copy = asked ?? { status: 'loading' }
   keep(key, copy)
-  if (copy.status === 'loading') notifiers.set(key, notify)
+  if (copy.status === 'loading' || copy.retry) notifiers.set(key, notify)
   if (!asked) load(key, copy, entry, path, content, details.fileHashes?.get(path))
   return copy
 }
@@ -277,6 +300,8 @@ async function loadComparison(key, comparison, base, other) {
   let rest = null
   try {
     const line = async ({ side, path, source, text, status, message }) => {
+      // One the server couldn't make now, as it was busy, asked for alone once this ends.
+      if (typeof text !== 'string' && retryable(status)) return
       const details = Object.hasOwn(sides, side) ? sides[side] : null
       const file = details && bundleFilesAsMap(details).get(path)
       const own = typeof text === 'string' && typeof file === 'string' && source === (details.fileHashes?.get(path) ?? await computeFileHash(file))
@@ -298,6 +323,7 @@ async function loadComparison(key, comparison, base, other) {
   }
   Object.assign(comparison, { ended: true, rest })
   settled++
+  retried(`comparison ${key}`, rest, () => comparisons.get(key) === comparison && comparisons.delete(key), () => comparison.notify)
   tell(comparison.notify)
   evictComparisons()
 }
@@ -320,11 +346,8 @@ export function comparedCopy(base, other, side, path, content, notify) {
   evictComparisons()
   const details = side === 'base' ? base : other
   if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
-  const copy = comparison.copies.get(`${side}\0${path}`) ?? comparison.rest
-  if (copy) return copy
-  if (comparison.ended) return fileCopy(details, path, content, notify)
   comparison.notify = notify
-  return { status: 'loading' }
+  return comparison.copies.get(`${side}\0${path}`) ?? comparison.rest ?? (comparison.ended ? fileCopy(details, path, content, notify) : { status: 'loading' })
 }
 
 // Turned back on, the toggle asks again for copies that failed for a reason
