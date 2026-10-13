@@ -25,12 +25,12 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
 // code file of 256 KiB or more it adds (npmLargeCode, `large-code`); a file
 // it changes that had no line over 200 characters and now has one over 2,000
-// (npmBecameUnreadable,
-// `now-unreadable`); and a file it adds or changes with an obfuscator's
-// fingerprint where the one compared with had none (`obfuscated`). Then in
-// orange what any of its files runs beyond itself that `runs-code` doesn't
-// name, kept from the version compared with (`kept-runs-code`). A renamed
-// file by its old path; one renamed alone, unchanged, holds what it held.
+// (npmBecameUnreadable, `now-unreadable`); and a file it adds or changes with
+// an obfuscator's fingerprint where the one compared with had none
+// (`obfuscated`). Then in orange what any of its files runs beyond itself that
+// `runs-code` doesn't name, kept from the version compared with
+// (`kept-runs-code`). A renamed file by its old path; one renamed alone,
+// unchanged, holds what it held.
 function npmFileFindings(base, other, files) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
