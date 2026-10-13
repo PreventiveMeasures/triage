@@ -304,9 +304,10 @@ its meaning in its whitespace (Python's, YAML's or Markdown's indentation, a
 Makefile's tabs, TSV's fields, a language not listed), and shows all of it.
 Nor are they hidden in a file where that would hide blanks of more than one
 kind changing between the same two characters, such as spaces turned to tabs
-or a run of tabs and spaces made longer. Such a file's toggle is off while
-whitespace changes are to be hidden, saying why. The toggle is offered only
-where hiding whitespace changes hides one, in the diff shown or in diff -b's.
+or a run of tabs and spaces made longer. Such a file says why in a note
+while whitespace changes are to be hidden. The toggle is offered only where
+hiding whitespace changes hides one, in the diff shown or in diff -b's: in
+the file shown, or in any file the Diff view lists.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
@@ -1573,29 +1574,29 @@ control. A version shows in the bundle view with four tabs:
   struck through, each opening as there and tagged as there, the head
   counting those tagged by each tag (`1 non-registry`): with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
-  **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
-  without JSX) minified on both sides, its names a minifier's, with the old
-  side given the new side's names wherever a minifier renamed a variable
-  alike throughout: short ASCII names (three characters at most, as a
-  minifier gives them, none a reader can't tell from another) a declaration
-  in scope stands for, on every line, removed ones
-  too, so that the two sides then diff as they are. An old variable no new
-  one stands for reads as `r_old` where the new side uses its name `r`, never
-  as the new one. The server works it out from the two copies (`GET
+  a JavaScript file (`.js`, `.mjs`, `.cjs` without JSX) minified on both
+  sides, its names a minifier's, marks its renamed lines: the two sides
+  diffed as they are, the lines that differ in names renamed alone drawn
+  faint and counted apart (`≈`), the diff drawn plain till the server
+  answers. Renamed names are those a minifier renamed alike throughout:
+  short ASCII names (three characters at most, as a minifier gives them,
+  none a reader can't tell from another) a declaration in scope stands for,
+  on every line, removed ones too. **Hide renamed names**, offered where the
+  server finds lines it marks, rather gives the old side the new side's names,
+  so that the two sides then diff as they are. An old variable no new one
+  stands for reads as `r_old` where the new side uses its name `r`, never as
+  the new one. The server works it out from the two copies (`GET
   /api/npm/rename-diff` below, `GET /api/bundles/:id/rename-diff` for bundles),
-  so it is offered with the pretty-print toggle on, for a managed bundle's or
-  a version's files, and says why where it shows the old names after all.
+  so it is done with the pretty-print toggle on, for a managed bundle's or a
+  version's files, and says why where it hides no names after all.
   The viewer takes the server's diff, checked there, as it is once it names
   the two files asked about and, by their hashes, the two copies the viewer
   draws as those it was worked out from, and shows the names where it does
-  not, asking again when the names are hidden again.
-  **Mark renamed lines**, beside it, rather diffs the two sides as they are,
-  drawing faint and counting apart (`≈`) the lines the server finds differ
-  in names renamed alone. Where either side reads names (`.name`, told only
-  where a name renamed is a function's or class's, `.toString`, `.stack`,
-  `.callee`, `.caller`), whose values a rename may change, renamed names
-  are hidden still, with a note saying so and offering them marked. It
-  is offered for those files alone: an author's name renamed, to a
+  not, asking again when the names are hidden again. Where either side reads
+  names (`.name`, told only where a name renamed is a function's or class's,
+  `.toString`, `.stack`, `.callee`, `.caller`), whose values a rename may
+  change, hidden renamed names come with a note saying so and offering them
+  marked. It is done for those files alone: an author's name renamed, to a
   minifier's or to another author's, always shows. A global (`Map`, `$`) is
   kept, as is a name declared at a script's top level, a global another
   script may read; a module's (`import`, `export`) or a CommonJS one's

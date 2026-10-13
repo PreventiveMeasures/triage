@@ -316,8 +316,9 @@ test('the Diff view pretty-prints every minified file it shows, however many', a
   const markup = renderText(all.render())
   assert.doesNotMatch(markup, /is-loading|is-error|\?disabled=true/u)
   for (const path of files) assert.equal(all._fileState(path, all._entries.get(path)).pretty.status, 'ready', `${path} diffed as its copies have it`)
-  assert.match(markup, /aria-label="Hide renamed names"[^]*aria-label="Pretty-print"[^]*?<\/button>\s*<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">[^]*?<\/span>\s*<\/header>/u,
+  assert.match(markup, /aria-label="Pretty-print"[^]*?<\/button>\s*<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">[^]*?<\/span>\s*<\/header>/u,
     'pretty-print after the toggles pressing it can show or hide, and the layout last in the bar')
+  assert.doesNotMatch(markup, /aria-label="Hide renamed names"/u, 'a script\'s top level renamed, no name to hide')
 })
 
 test('the Diff view draws its files 40 at a time, more on asking or as one past them opens, counting them all', async () => {
@@ -405,7 +406,7 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   assert.match(markup, /Only renamed names changed in this file\./u, 'its one change hidden')
   const bar = markup.slice(markup.indexOf('bundle-compare-code-bar'), markup.indexOf('bundle-compare-diff"'))
   assert.match(bar, /aria-pressed=true aria-label="Hide renamed names"/u, 'there to turn off')
-  assert.match(bar, /aria-label="Mark renamed lines" data-tooltip="Mark renamed lines" @click/u)
+  assert.doesNotMatch(bar, /aria-label="Mark renamed lines"/u, 'shown, renamed names are marked')
   assert.match(bar, /aria-label="Hide renamed names"\s+data-tooltip="Hide renamed names"/u, 'each toggle saying what it does in three words')
   all._mode = 'code'
   all._query = 'q(X)'
@@ -1159,10 +1160,11 @@ test('a file naming exfiltration hosts is tagged so in its head and the tree, a 
   assert.equal(tags(row).length, 3, 'in the tree too')
 })
 
-test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
+test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, saying why', async t => {
   const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
   const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]
-  const toggle = markup => /<button type="button" class="bundle-compare-code-toggle" aria-pressed=(\w+) aria-disabled=(\w*)\s*aria-label=Hide whitespace changes aria-description=([^>]*?) data-tooltip/u.exec(markup)
+  const toggle = markup => /<button type="button" class="bundle-compare-code-toggle" aria-pressed=(\w+)\s+aria-label=Hide whitespace changes/u.exec(markup)
+  const mixed = /Whitespace changes are shown: hiding them would hide blanks of more than one kind changing\./u
   const shownAll = renderText(view('src/tabs.js', tabbed).render())
   assert.equal(toggle(shownAll), null, 'not offered while whitespace changes show, as it may hide none here')
   const element = view('src/tabs.js', tabbed)
@@ -1171,15 +1173,17 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   const markup = renderText(element.render())
   assert.match(markup, /class=bundle-compare-diff-table/u, 'its whitespace changes show')
   assert.doesNotMatch(markup, /Only whitespace changed/u)
-  assert.deepEqual(toggle(markup).slice(1), ['false', 'true', 'Mixed whitespace'])
+  assert.equal(toggle(markup), null, 'not offered: it may hide none here')
+  assert.match(markup, mixed)
   // A run mixing tabs and spaces made longer mixes kinds too.
   const runs = [{ 'src/runs.js': '\t  a()\n' }, { 'src/runs.js': '\t    a()\n' }]
   const run = renderText(view('src/runs.js', runs).render())
   assert.match(run, /class=bundle-compare-diff-table/u)
-  assert.deepEqual(toggle(run).slice(1), ['false', 'true', 'Mixed whitespace'])
+  assert.equal(toggle(run), null)
+  assert.match(run, mixed)
   const plain = renderText(view('src/spaces.js', spaced).render())
   assert.match(plain, /Only whitespace changed in this file/u, 'one only re-indented hides them')
-  assert.deepEqual(toggle(plain).slice(1, 3), ['true', ''])
+  assert.equal(toggle(plain)[1], 'true')
   const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const CompareAll = customElements.get('bundle-compare-all')
   const code = view(null, [{ ...tabbed[0], ...spaced[0] }, { ...tabbed[1], ...spaced[1] }])
@@ -1188,13 +1192,23 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   all.models = combinedDiffRows(code.base, code.other, code.files).models
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
-  assert.match(sections['src/tabs.js'], /aria-disabled=true/u, 'the Diff view marks it in its head')
+  assert.match(sections['src/tabs.js'], mixed, 'the Diff view says so for it')
   assert.match(sections['src/tabs.js'], /class=bundle-compare-diff-table/u)
-  assert.doesNotMatch(sections['src/spaces.js'], /aria-disabled|bundle-compare-diff-table/u)
+  assert.doesNotMatch(sections['src/spaces.js'], /Whitespace changes are shown|bundle-compare-diff-table/u)
+  // A Diff view listing it alone offers no toggle in its bar: hiding hides none of its files' changes.
+  const lone = view(null, tabbed)
+  const only = new CompareAll()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) only[name] = lone[name]
+  only.models = combinedDiffRows(lone.base, lone.other, lone.files).models
+  only.willUpdate(new Map([['base'], ['other'], ['files']]))
+  only._query = 'tabs'
+  const bar = renderText(only.render())
+  assert.doesNotMatch(bar.slice(bar.indexOf('bundle-compare-code-bar'), bar.indexOf('bundle-compare-diff"')), /aria-label=Hide whitespace changes/u)
+  assert.match(bar, mixed)
 })
 
 test('Hide whitespace changes is offered only where it hides one, while they show and while they are hidden', async t => {
-  const offered = markup => /aria-disabled=\s*aria-label=Hide whitespace changes/u.test(markup)
+  const offered = markup => /aria-label=Hide whitespace changes/u.test(markup)
   const files = [{ 'src/spaces.js': '  a()\n', 'src/eol.js': 'a()', 'src/old.js': 'x\n' }, { 'src/spaces.js': '    a()\n', 'src/eol.js': 'a()\n', 'src/new.js': 'x\n' }]
   const shown = path => renderText(view(path, files).render())
   assert.ok(!offered(shown('src/api.js')), 'not for a change of more than whitespace')
@@ -1209,7 +1223,7 @@ test('Hide whitespace changes is offered only where it hides one, while they sho
   assert.ok(!offered(changed), 'nor while they are hidden, where hiding them hides none')
   assert.match(changed, /class=bundle-compare-diff-table/u)
   const spaces = hidden('src/spaces.js')
-  assert.match(spaces, /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'on, to turn off, where it hides one')
+  assert.match(spaces, /aria-pressed=true\s+aria-label=Hide whitespace changes/u, 'on, to turn off, where it hides one')
   assert.match(spaces, /Only whitespace changed in this file\.[^]*?Show whitespace changes/u)
   const pure = hidden('src/new.js')
   assert.match(pure, /Renamed without changes\./u)
@@ -1230,7 +1244,7 @@ test('Hide whitespace changes is offered only where it hides one, while they sho
   }
   assert.ok(!offered(bar()), 'none of its files hides one')
   assert.ok(offered(bar(files)))
-  assert.match(bar(files, 'spaces'), /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'there to turn off where it hides every change listed')
+  assert.match(bar(files, 'spaces'), /aria-pressed=true\s+aria-label=Hide whitespace changes/u, 'there to turn off where it hides every change listed')
 })
 
 test('with renamed names hidden, Hide whitespace changes is offered where the server\'s diff hides one', async t => {
@@ -1250,12 +1264,14 @@ test('with renamed names hidden, Hide whitespace changes is offered where the se
   }
   const shown = await settled()
   assert.match(shown, /var X = 1;/u, 'renamed names hidden')
-  assert.match(shown, /aria-pressed=false aria-disabled=\s*aria-label=Hide whitespace changes/u)
+  assert.match(shown, /aria-pressed=false\s+aria-label=Hide whitespace changes/u)
+  assert.match(shown, /aria-label="Hide renamed names"[^]*aria-label=Hide whitespace changes[^]*aria-label="Pretty-print"[^]*aria-label="Diff layout"/u,
+    'renamed names, then whitespace, then pretty-print, then the layout')
   element._setWhitespace(true)
   const hidden = await settled()
   assert.equal(renameDiffs.at(-1).ignoreWhitespace, true, 'the server diffs them with whitespace changes hidden')
   assert.match(hidden, /Only whitespace and renamed names changed in this file\./u)
-  assert.match(hidden, /aria-pressed=true aria-disabled=\s*aria-label=Hide whitespace changes/u, 'still there to turn off')
+  assert.match(hidden, /aria-pressed=true\s+aria-label=Hide whitespace changes/u, 'still there to turn off')
 })
 
 test('hidden whitespace changes are how much whitespace a line has alone: blanks put between other characters, or taken from there, show', t => {
@@ -1271,10 +1287,10 @@ test('hidden whitespace changes are how much whitespace a line has alone: blanks
   }
   const indent = renderText(view('src/indent.js', files).render())
   assert.match(indent, /Only whitespace changed in this file\./u, 'a line re-indented reads as unchanged')
-  assert.match(indent, /aria-disabled=\s*aria-label=Hide whitespace changes aria-description= data-tooltip=Hide whitespace changes @click/u, 'the toggle saying so in three words')
+  assert.match(indent, /aria-pressed=true\s+aria-label=Hide whitespace changes data-tooltip=Hide whitespace changes @click/u, 'the toggle saying so in three words')
 })
 
-test('whitespace changes all show in a file whose whitespace may mean something, hiding them not offered there', async t => {
+test('whitespace changes all show in a file whose whitespace may mean something, hiding them not offered there, saying why', async t => {
   const files = [{ 'tools/gen.py': 'if a:\n    b()\n', 'tools/same.py': 'a = 1\n' }, { 'tools/gen.py': 'if a:\n        b()\n', 'tools/same.py': 'a = 2\n' }]
   const off = renderText(view('tools/gen.py', files).render())
   assert.match(off, /class=diff-row del[^]*class=diff-row add/u)
@@ -1285,11 +1301,12 @@ test('whitespace changes all show in a file whose whitespace may mean something,
   const on = renderText(element.render())
   assert.match(on, /class=diff-row del[^]*class=diff-row add/u, 'its re-indented line shows while whitespace changes are hidden')
   assert.doesNotMatch(on, /Only whitespace changed/u)
-  assert.match(on, /aria-pressed=false aria-disabled=true\s*aria-label=Hide whitespace changes aria-description=Whitespace is significant data-tooltip=Whitespace is significant @click/u, 'its toggle off, named for what it does, saying why')
+  assert.doesNotMatch(on, /aria-label=Hide whitespace changes/u, 'not offered')
+  assert.match(on, /<p class="bundle-compare-code-note">Whitespace changes are shown: whitespace is significant in this file\.<\/p>/u, 'a note saying why')
   assert.doesNotMatch(renderText(view('tools/same.py', files).render()), /aria-label=Hide whitespace changes/u, 'nor told where hiding would hide none')
   const script = [{ 'bin/gen': '#!/usr/bin/env python3\nif a:\n    b()\n' }, { 'bin/gen': '#!/usr/bin/env python3\nif a:\n        b()\n' }]
   const gen = renderText(view('bin/gen', script).render())
-  assert.match(gen, /aria-description=Whitespace is significant/u, 'an extensionless script alike, unless its #! line names Node or a shell')
+  assert.match(gen, /whitespace is significant in this file/u, 'an extensionless script alike, unless its #! line names Node or a shell')
   assert.match(gen, /class=diff-row del[^]*class=diff-row add/u)
   const node = [{ 'bin/run': '#!/usr/bin/env node\nif (a) {\n  b()\n}\n' }, { 'bin/run': '#!/usr/bin/env node\nif (a) {\n    b()\n}\n' }]
   assert.match(renderText(view('bin/run', node).render()), /Only whitespace changed in this file\./u, 'one whose #! line names Node hides them')
@@ -1300,7 +1317,7 @@ test('whitespace changes all show in a file whose whitespace may mean something,
   all.models = combinedDiffRows(code.base, code.other, code.files).models
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
-  assert.match(sections['tools/gen.py'], /aria-disabled=true\s*aria-label=Hide whitespace changes aria-description=Whitespace is significant/u, 'the Diff view says so in its head')
+  assert.match(sections['tools/gen.py'], /whitespace is significant in this file/u, 'the Diff view says so for it')
   assert.match(sections['tools/gen.py'], /class=bundle-compare-diff-table/u)
 })
 
@@ -1321,7 +1338,8 @@ test('in a stasis bundle, whether whitespace may be hidden is told by the format
   assert.match(formatted('CMakeLists.txt'), /Only whitespace changed in this file\./u, 'CMake, which a .txt name alone would not say')
   const data = formatted('src/data.js')
   assert.match(data, /class=diff-row del[^]*class=diff-row add/u, 'a .js name carried as a resource shows its whitespace changes')
-  assert.match(data, /aria-disabled=true\s*aria-label=Hide whitespace changes aria-description=Whitespace is significant/u)
+  assert.match(data, /whitespace is significant in this file/u)
+  assert.doesNotMatch(data, /aria-label=Hide whitespace changes/u)
   assert.match(renderText(view('src/data.js', files).render()), /Only whitespace changed in this file\./u, 'by its name, where the bundle records no format')
 })
 
@@ -1619,8 +1637,34 @@ test('a diff the server answers for other files than those asked about, or of ot
   assert.doesNotMatch(shown, /Only renamed names changed/u)
 })
 
+test('pretty-printed, a minified file marks its renamed lines unasked, the plain diff drawn till the server answers, Hide renamed names offered once it finds some', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
+  const element = view('dist/marked.min.js', [{ 'dist/marked.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/marked.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b19'
+  element.other.managedId = 'b20'
+  pretty.set('b19:dist/marked.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
+  pretty.set('b20:dist/marked.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const coming = renderText(element.render())
+  assert.match(coming, /aria-label="Diff"/u, 'the plain diff drawn while the server works')
+  assert.doesNotMatch(coming, /Marking renamed lines…|Hiding renamed names…|diff-row del renamed|aria-label="Hide renamed names"/u, 'nothing marked, and nothing offered, yet')
+  for (let i = 0; i < 200 && !/diff-row del renamed/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const marked = renderText(element.render())
+  assert.match(marked, /diff-row del renamed/u, 'its renamed lines marked, unasked')
+  assert.match(marked, /≈2/u, 'and counted apart')
+  assert.match(marked, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
+  assert.match(marked, /aria-pressed=false aria-label="Hide renamed names"/u, 'Hide renamed names offered: the server found some')
+  assert.doesNotMatch(marked, /aria-label="Mark renamed lines"/u)
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const hidden = renderText(element.render())
+  assert.doesNotMatch(hidden, /diff-row del renamed/u, 'hidden where asked')
+  assert.match(hidden, /aria-pressed=true aria-label="Hide renamed names"/u)
+})
+
 test('names a file reads leave its renamed names hidden, saying what a rename may change, and offer them marked', async t => {
-  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=function(){};${'q(X);'.repeat(250)}f(X.name);\n` }])
   element.base.managedId = 'b13'
   element.other.managedId = 'b14'
@@ -1633,22 +1677,22 @@ test('names a file reads leave its renamed names hidden, saying what a rename ma
   element._setRenames(true)
   await settle()
   const read = renderText(element.render())
-  assert.match(read, /Renamed names are hidden, though the file reads \.name, which a rename may change\. <button type="button" @click=>Mark renamed lines<\/button>/u)
+  assert.match(read, /Renamed names are hidden, though the file reads \.name, which a rename may change\. <button type="button" @click=>Show them marked<\/button>/u)
   assert.doesNotMatch(read, /diff-row del renamed/u, 'its renamed names hidden')
   assert.match(read, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, shown')
-  assert.match(read, /aria-pressed=false\s+aria-label="Mark renamed lines" data-tooltip="Mark renamed lines"/u, 'the toggle free')
-  element._setMarks(true)
+  assert.doesNotMatch(read, /aria-label="Mark renamed lines"/u, 'no toggle of its own: shown, renamed names are marked')
+  element._setRenames(false)
   await settle()
   const marked = renderText(element.render())
-  assert.match(marked, /var <mark class="diff-word">Y<\/mark> = function/u, 'the old side as it is, marked as asked')
+  assert.match(marked, /var <mark class="diff-word">Y<\/mark> = function/u, 'the old side as it is, marked')
   assert.match(marked, /diff-row del renamed/u)
   assert.match(marked, /≈3/u, 'the renamed lines counted apart')
   assert.doesNotMatch(marked, /Renamed names are hidden, though/u, 'no note where they are marked')
-  assert.match(marked, /aria-pressed=true\s+aria-label="Mark renamed lines"/u)
+  assert.match(marked, /aria-pressed=false aria-label="Hide renamed names"/u, 'Hide renamed names there to turn back on')
 })
 
 test('a file whose renamed names alone changed says what they may change where it reads a function\'s source', async t => {
-  t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/same.min.js', [{ 'dist/same.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(Y.toString());module.exports=1;\n` }, { 'dist/same.min.js': `var X=1;${'q(X);'.repeat(250)}f(X.toString());module.exports=1;\n` }])
   element.base.managedId = 'b17'
   element.other.managedId = 'b18'
@@ -1660,7 +1704,8 @@ test('a file whose renamed names alone changed says what they may change where i
   for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const shown = renderText(element.render())
   assert.match(shown, /Only renamed names changed in this file\.<\/p>\s*<p>Renamed names are hidden, though the file reads \.toString, which a rename may change\.<\/p>/u)
-  assert.match(shown, />Show renamed names<\/button>[^]*>Mark renamed lines<\/button>/u)
+  assert.match(shown, />Show renamed names<\/button>/u)
+  assert.doesNotMatch(shown, />Mark renamed lines<\/button>/u)
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {
