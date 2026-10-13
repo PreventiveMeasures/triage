@@ -250,8 +250,12 @@ the `whole env`, as
 it is handed to a program, its names listed, or its entries picked among as
 they are read (`.filter(…)`, `.find(…)`, `.reduce(…)`, as npm's agent finds
 its proxy's); and `publish` to npm (`npm publish` run, the registry's
-`/-/whoami`, libnpmpublish, a PUT request in a file naming the registry's
-host). Each label is marked as an install script is, `whole env` and
+`/-/whoami`, libnpmpublish, a PUT request in a file naming the registry: its
+URL as JavaScript reads the string, its escapes decoded, the host after a
+URL's two slashes (or backslashes) or an http(s) scheme, userinfo between
+(`https://registry.npmjs.org/`, `.npmrc`'s `//registry.npmjs.org/`), or its
+host starting a string, its whole or before its path or port; not its host in
+prose, as the advisories' consent dialog tells it). Each label is marked as an install script is, `whole env` and
 `publish` in red, worse; its tooltip a list, as Compare's chips' are, of
 what it found (each way a string runs as code, a credential file or a
 token, …) with the lines it is on, and where the version compared with

@@ -102,7 +102,7 @@ test('credentials: a credential file\'s path, a token\'s name; and the environme
     'in a template\'s text, and in a string in its substitution, on its own line')
 })
 
-test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry', () => {
+test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT where the file names the registry\'s URL', () => {
   assert.deepEqual(found('a.js', 'execSync(\'npm publish --access public\')\nspawn(\'npm\', [\'publish\'])\nconst c = `pnpm publish ${dir}`\n'
     + 'fetch(\'https://registry.npmjs.org/-/whoami\', { headers })\nconst { publish } = require(\'libnpmpublish\')\n'), { publish: [1, 2, 3, 4, 5] })
   assert.deepEqual(found('a.js', 'const registry = \'https://registry.npmjs.org/\'\nfetch(registry + name, { method: \'PUT\', body })\naxios.put(url, body)\noptions.method = "put"\n'),
@@ -116,6 +116,33 @@ test('publishing: npm publish, the registry\'s whoami, libnpmpublish, a PUT wher
     'a PUT where the file names no registry, and publish not run by npm')
   assert.equal(found('a.js', 'const methods = [\'GET\', \'PUT\']\nconst registry = \'https://registry.npmjs.org/\'\nfetch(registry + \'-/v1/search\')\n'), null,
     'PUT named, not a request\'s method')
+  assert.deepEqual(found('a.js', 'fetch(url, { method: \'PUT\', body })\nwrite(`//registry.npmjs.org/:_authToken=${token}`)\n'), { publish: [1] }, '.npmrc\'s URL')
+  for (const url of ['\'https://user:pass@registry.npmjs.org/pkg\'', '`https://${token}@registry.npmjs.org/${name}`', '"https://@registry.yarnpkg.com/x"',
+    '\'https:\\/\\/registry.npmjs.org/pkg\'', '\'https:\\x2f\\x2fregistry.npmjs.org/pkg\'', '\'https:\\u002F\\u002Fregistry.npmjs.org\'', '\'https:\\u{2f}\\u{2f}registry.npmjs.org\'',
+    '\'https://token\\x40registry.npmjs.org/pkg\'', '\'https://token\\u0040registry.npmjs.org\'', '\'https://t\\u{40}registry.npmjs.org\'',
+    '\'https:\\\\\\\\registry.npmjs.org/pkg\'', '\'https:\\\\/registry.npmjs.org\'', '\'https:\\x5c\\x5cregistry.npmjs.org/pkg\'',
+    '\'https:registry.npmjs.org/pkg\'', '\'https\\x3aregistry.npmjs.org/pkg\'', '\'https\\u003Aregistry.npmjs.org\'',
+    '\'https://\\\nregistry.npmjs.org/pkg\'', '"https://\\\r\nregistry.npmjs.org"', '\'https://\\\u2028registry.npmjs.org\'',
+    '\'https:\\057\\057registry.npmjs.org/pkg\'', '\'https://t\\100registry.npmjs.org\'', '\'https\\072//registry.npmjs.org\'',
+    '\'https://user:p@ss@registry.npmjs.org/pkg\'', '\'https://\\nregistry.npmjs.org/pkg\'', '\'https:/\\t/\\rregistry.npmjs.org\'',
+    '"https://user\'pass@registry.npmjs.org/pkg"', '\'https://us\\\'er@registry.npmjs.org\'']) {
+    assert.deepEqual(found('a.js', `fetch(${url}, { method: 'PUT', body })\n`), { publish: [url.split(/\r\n|[\n\r]/u).length] },
+      `a token before its host, its separators escaped or its line continued: ${url}`)
+  }
+  assert.deepEqual(found('a.js', 'const HOST = \'registry.npmjs.org\'\nfetch(couch(user), { method: \'PUT\', body })\n'), { publish: [2] }, 'its host a string\'s whole, as npm-profile names it')
+  assert.deepEqual(found('a.js', 'const registry = \'https://\' + \'registry.npmjs.org/\'; fetch(registry + name, { method: \'PUT\' })\nconst port = \'registry.npmjs.org:443\'\n'),
+    { publish: [1] }, 'its host starting a string before its path or port, as a URL joined')
+  for (const host of ['\'registry.npmjs.org?write=true\'', '\'registry.npmjs.org#x\'']) {
+    assert.deepEqual(found('a.js', `fetch('https://' + ${host}, { method: 'PUT' })\n`), { publish: [1] }, `its query or fragment after it: ${host}`)
+  }
+  assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nlog(\'registry.npmjs.org is down\')\nlog(\'(registry.npmjs.org), *registry.npmjs.org*\')\n'
+    + 'log(\'"registry.npmjs.org" my-registry.npmjs.org a.registry.npmjs.org\')\nconst cr = \'\\registry.npmjs.org\'\n'
+    + 'log(\'[registry.npmjs.org] is npm, {registry.npmjs.org},registry.npmjs.org;registry.npmjs.org <registry.npmjs.org>\')\n'
+    + 'log(\'note:registry.npmjs.org is down\')\nmail(\'user@registry.npmjs.org\')\nopen(\'docs/registry.npmjs.org.md\')\n'
+    + 'go(\'https://example.com?next=a@registry.npmjs.org\')\ngo(\'https://example.com#a@registry.npmjs.org\')\n'), null,
+    'not prose, starting with it or naming it, nor another host, nor a carriage return')
+  assert.equal(found('a.js', 'fetch(storage, { method: \'PUT\', body })\nconst consent = html`<p>sent to <span class="mono">registry.npmjs.org</span> to look up advisories</p>`\n'
+    + 'log(\'asks registry.npmjs.org\')\n'), null, 'the registry\'s host in prose, as a dialog tells where it asks, beside a PUT to elsewhere')
 })
 
 test('a template literal\'s substitutions are code, read as their own, its text not', () => {
@@ -178,7 +205,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
   ]) assert.deepEqual(found('a.js', text), runs)
   for (const [text, runs] of [
     [`${"'npm', 'publish', ".repeat(1e5)}\n`, { publish: [1] }],
-    [`${"{ method: 'PUT' }, ".repeat(1e5)}'registry.npmjs.org'\n`, { publish: [1] }],
+    [`${"{ method: 'PUT' }, ".repeat(1e5)}'https://registry.npmjs.org'\n`, { publish: [1] }],
     [`${'JSON.stringify( '.repeat(1e5)}process.env)\n`, { env: [1] }],
     [`'npm'${' '.repeat(1e6)}'publish'\n`, { publish: [1] }],
     [`'${'npm --a '.repeat(1e5)}publish'\n`, { publish: [1] }],
