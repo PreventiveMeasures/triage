@@ -922,12 +922,13 @@ const POPULARITY_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: '
 
 // Why a version's popularity is yellow at most, as its `popularity` finding
 // tells it (risk/npm/held.js): a known account published the version
-// (`known`), or else the package is in a known scope (`scope`, a known
-// account's own where it names the `account`); null where it isn't.
+// (`known`), or else, published with provenance, the package is in a known
+// scope (`scope`, a known account's own where it names the `account`); null
+// where it isn't.
 function knownNote({ known, scope, account } = {}) {
   if (!known) return null
-  return account ? `In ${scope}, the scope of ~${account}, an account that publishes one of npm's most downloaded packages`
-    : scope ? `In ${scope}, the scope of one of npm's most downloaded packages, which only its owner publishes in`
+  return account ? `Published with provenance in ${scope}, the scope of ~${account}, an account that publishes one of npm's most downloaded packages`
+    : scope ? `Published with provenance in ${scope}, the scope of one of npm's most downloaded packages, which only its owner publishes in`
     : 'Published by an account that publishes one of npm\'s most downloaded packages'
 }
 
