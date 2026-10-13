@@ -13,6 +13,8 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // (@preventive/compare's renamedDiff), naming the two files' hashes (each
 // asked for noted; an error in place of the base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
+// The rename diffs the mock server is working out at once, and the most so far.
+const flying = { now: 0, most: 0 }
 // Bundles whose diffs the server answers for another base file than the one
 // asked about, or (`id:copy`) as worked out from another copy of it.
 const misanswered = new Set()
@@ -23,7 +25,8 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     renameDiffs.push({ id, other, ...params })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
     if (before instanceof Error) throw before
-    const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' })
+    flying.most = Math.max(flying.most, ++flying.now)
+    const { warnings, ...diff } = await renamedDiff(before, after, { whitespace: params.ignoreWhitespace ? 'all' : 'none' }).finally(() => { flying.now-- })
     assert.deepEqual(warnings, [])
     const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
     return { ...diff, hash: misanswered.has(id) ? `${params.hash}x` : params.hash, otherHash: params.otherHash, prettyHash, otherPrettyHash }
@@ -383,6 +386,44 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print 1 of 2 files: This file couldn't be read as code\./u)
+})
+
+test('the Diff view marks the renamed lines of every minified file it shows, however many, asking for each once, two at a time', async t => {
+  const files = Array.from({ length: 20 }, (_, i) => `dist/m${i}.min.js`)
+  t.after(() => {
+    state.bundleSourcePretty = false
+    for (const path of files) for (const id of ['b21', 'b22']) pretty.delete(`${id}:${path}`)
+  })
+  await import('../ui/view/bundle-compare-all.js')
+  const code = view(null, [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}module.exports=1;\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}module.exports=2;\n`]))])
+  code.base.managedId = 'b21'
+  code.other.managedId = 'b22'
+  for (const path of files) {
+    pretty.set(`b21:${path}`, 'var Y = 1;\nq(Y);\nh();\nmodule.exports = 1;\n')
+    pretty.set(`b22:${path}`, 'var X = 1;\nq(X);\nh();\nmodule.exports = 2;\n')
+  }
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  all._query = 'dist/m'
+  const asked = renameDiffs.length
+  flying.most = 0
+  state.bundleSourcePretty = true
+  const states = () => files.map(path => all._fileState(path, all._entries.get(path)))
+  const deadline = Date.now() + 20_000
+  while (states().some(file => file.changes?.status !== 'ready') && Date.now() < deadline) {
+    renderText(all.render())
+    await new Promise(resolve => { setTimeout(resolve, 5) })
+  }
+  assert.ok(states().every(file => file.changes?.status === 'ready' && file.model.marked.size === 1), 'each file\'s renamed lines marked')
+  for (let i = 0; i < 5; i++) renderText(all.render())
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  renderText(all.render())
+  const ours = renameDiffs.slice(asked).filter(({ id }) => id === 'b21')
+  assert.equal(ours.length, files.length, 'each asked for once, past those a few kept, painted again as it may be')
+  assert.ok(flying.most <= 2, `two at a time, as the server works them out (${flying.most})`)
+  assert.match(renderText(all.render()), /aria-pressed=false aria-label="Hide renamed names"/u)
 })
 
 test('the Diff view keeps its renamed names toggles where hiding them hides every change listed', async t => {

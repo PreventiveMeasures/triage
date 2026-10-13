@@ -12,6 +12,11 @@ import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 // Diffs kept, the one read last last; a view asks again on every paint for
 // those it shows.
 const KEPT_DIFFS = 16
+// Diffs asked of the server at once: as many as it works out at once
+// (server-managed/rename-diff.ts). The rest wait their turn, in the order
+// asked, as a view asks for all it shows (Compare's Diff view, every file
+// minified on both sides); one the server kept comes back at once.
+const MAX_FETCHES = 2
 
 // Diffs by both sides' integrity and path and the whitespace setting:
 // `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason, reads,
@@ -34,15 +39,45 @@ const MISMATCH = "The server's diff doesn't match this file as shown."
 export const renameDiffable = (base, other) => !!(base?.managedId && other?.managedId)
   || (!!base?.npm && !!other?.npm && base.npm.name === other.npm.name)
 
+let fetches = 0
+const turns = []
+
+async function inTurn(work) {
+  if (fetches < MAX_FETCHES) fetches++
+  else await new Promise(resolve => { turns.push(resolve) })
+  try { return await work() }
+  finally {
+    const next = turns.shift()
+    if (next) next()
+    else fetches--
+  }
+}
+
+// Diffs asked for in the task now running and in the last one that asked, as
+// a view painting asks for all it shows: kept past KEPT_DIFFS, as are those
+// still coming, so a view showing more than that never drops one it shows and
+// asks for it again.
+let asking = false, wanted = new Set(), wantedBefore = new Set()
+
+function want(key) {
+  if (!asking) {
+    asking = true
+    wantedBefore = wanted
+    wanted = new Set()
+    setTimeout(() => { asking = false })
+  }
+  wanted.add(key)
+}
+
 async function load(key, asked, base, basePath, before, other, path, after, ignoreWhitespace) {
   let next
   try {
     const [hash, otherHash] = await Promise.all([[base, basePath, before], [other, path, after]]
       .map(([details, file, text]) => details.fileHashes?.get(file) ?? computeFileHash(text)))
     const params = { path: basePath, hash, otherPath: path, otherHash, ignoreWhitespace }
-    const answer = base.npm
-      ? await fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
-      : await fetchBundleRenameDiff(base.managedId, other.managedId, params)
+    const answer = await inTurn(() => base.npm
+      ? fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
+      : fetchBundleRenameDiff(base.managedId, other.managedId, params))
     const { before: renamed, blocks, reason, reads, marks, prettyHash, otherPrettyHash } = answer
     next = answer.hash === hash && answer.otherHash === otherHash && typeof renamed === 'string' && Array.isArray(blocks)
       && (reason == null || typeof reason === 'string') && Array.isArray(reads) && reads.every(read => typeof read === 'string') && Array.isArray(marks)
@@ -64,7 +99,19 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
   diffs.set(key, next)
   const notify = notifiers.get(key)
   notifiers.delete(key)
+  evict()
   notify?.()
+}
+
+// Past KEPT_DIFFS, the least recent no view waits for: as one is asked for,
+// and as one comes that may be wanted no longer.
+function evict() {
+  for (const [old, kept] of diffs) {
+    if (diffs.size <= KEPT_DIFFS) break
+    if (wanted.has(old) || wantedBefore.has(old) || kept.status === 'loading') continue
+    diffs.delete(old)
+    notifiers.delete(old)
+  }
 }
 
 // A file's diff with renamed names hidden, `basePath` and `before` its base
@@ -80,14 +127,10 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
   if (diff.status === 'ready' && !(diff.copies[0] === drawn?.[0] && diff.copies[1] === drawn?.[1])) diff = { status: 'error', message: MISMATCH, retry: true }
   diffs.delete(key)
   diffs.set(key, diff)
+  want(key)
   if (diff.status === 'loading') notifiers.set(key, notify)
   if (!asked) load(key, diff, base, basePath, before, other, path, after, ignoreWhitespace)
-  for (const [old, kept] of diffs) {
-    if (diffs.size <= KEPT_DIFFS) break
-    if (kept.status === 'loading' || old === key) continue
-    diffs.delete(old)
-    notifiers.delete(old)
-  }
+  evict()
   return diff
 }
 
