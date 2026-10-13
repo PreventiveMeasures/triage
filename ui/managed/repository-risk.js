@@ -1,13 +1,15 @@
 // Manage → Repositories → Risk, for admins: every connected repository's npm
-// lockfiles, their packages, and what risk tells of each, as the server finds
-// them (GET /api/admin/repositories/risk, server-managed/repository-risk.ts).
-// Opened by its URL alone, /manage/repositories/risk, until it is linked.
+// lockfiles, or a team's or one repository's, their packages, and what risk
+// tells of each, as the server finds them (GET /api/admin/repositories/risk,
+// server-managed/repository-risk.ts). Opened by its URL alone,
+// /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
+import { fetchTeams } from './admin-api.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
 import riskStyles from './styles/repository-risk.css'
@@ -44,7 +46,11 @@ const ERRORS = {
   'upstream-invalid': 'npm answered unexpectedly',
 }
 const errorText = code => ERRORS[code] ?? code
-const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.' }
+const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
+  404: 'That team or repository is no longer connected. Choose again.' }
+
+// What a scan reads: every connected repository, a team's, or one.
+const SCOPES = [['all', 'All repositories'], ['team', 'Team'], ['repo', 'Repository']]
 
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
@@ -64,8 +70,9 @@ const DRAW_MS = 250
 
 const formatCount = new Intl.NumberFormat()
 
-// The scan's lines (repository-risk.ts RepositoryRiskLine), each as it comes.
-const streamRisk = (signal, onLine) => request('/api/admin/repositories/risk', START_ERRORS, async response => {
+// The lines of a scan of `params` (`team` or `repo`, or neither),
+// repository-risk.ts RepositoryRiskLine, each as it comes.
+const streamRisk = (params, signal, onLine) => request(`/api/admin/repositories/risk${params.size > 0 ? `?${params}` : ''}`, START_ERRORS, async response => {
   for await (const line of responseLines(response)) onLine(line)
 }, signal)
 
@@ -84,7 +91,8 @@ function rank(row) {
 }
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
-  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true } }
+  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true },
+    _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
   constructor() {
@@ -96,7 +104,28 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._query = ''
     this._scan = null
     this._drawTimer = null
+    // SCOPES', and the team's or repository's id it names.
+    this._scope = 'all'
+    this._target = ''
+    // The teams and connected repositories to choose among, as Teams has them.
+    this._choices = null
     this._reset()
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    void this._loadCollection('teams', 'teams', fetchTeams, data => { this._choices = data })
+  }
+
+  // Scans `scope` (SCOPES) and `target` from now on, what was found of
+  // another put away; not while a scan is under way.
+  _choose(scope, target = '') {
+    if (this._state === 'running') return
+    this._scope = scope
+    this._target = target
+    this._reset()
+    this._error = null
+    this._state = 'idle'
   }
 
   _reset() {
@@ -112,9 +141,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     super.disconnectedCallback()
   }
 
-  // Scans every connected repository anew, its lines drawn as they come.
+  // Scans what is chosen anew, its lines drawn as they come.
   async start() {
-    if (this._state === 'running') return
+    if (this._state === 'running' || (this._scope !== 'all' && !this._target)) return
+    const params = new URLSearchParams(this._scope === 'all' ? {} : { [this._scope]: this._target })
     this._reset()
     this._error = null
     this._state = 'running'
@@ -122,7 +152,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._scan = scan
     let done = false
     try {
-      await streamRisk(scan.signal, line => {
+      await streamRisk(params, scan.signal, line => {
         if (line.type === 'done') done = true
         this._apply(line)
         this._draw()
@@ -213,10 +243,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <h1 class="sr-only">Repository risk</h1>
-      <div class="page-intro"><p class="intro">Every connected repository’s npm lockfiles at its default branch, and what risk finds in each package they lock.</p>
+      <div class="page-intro"><p class="intro">Each connected repository’s npm lockfiles at its default branch, and what risk finds in each package they lock.</p>
         ${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
-          : html`<button type="button" class="btn primary" @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
+          : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
+      ${this._scopeBar()}
       <p class="risk-progress" role="status">${this._progress()}</p>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size > 0 ? this._lockfiles() : nothing}
@@ -224,8 +255,23 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </div>`
   }
 
+  _scopeBar() {
+    const running = this._state === 'running'
+    const choices = this._scope === 'team' ? (this._choices?.teams ?? []).map(team => [team.id, team.hidden ? `${team.name} (hidden)` : team.name])
+      : this._scope === 'repo' ? (this._choices?.repos ?? []).map(repo => [String(repo.repoId), repo.fullName]) : null
+    const what = this._scope === 'team' ? 'team' : 'repository'
+    return html`<div class="risk-scope-bar">
+      <div class="risk-scope" role="group" aria-label="What to scan">${SCOPES.map(([scope, label]) => html`<button type="button"
+        aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._choose(scope)}>${label}</button>`)}</div>
+      ${choices ? html`<select aria-label=${`Which ${what}`} ?disabled=${running} @change=${event => this._choose(this._scope, event.target.value)}>
+        <option value="" ?selected=${!this._target}>${this._choices ? `Choose a ${what}…` : 'Loading…'}</option>
+        ${choices.map(([value, label]) => html`<option value=${value} ?selected=${value === this._target}>${label}</option>`)}
+      </select>` : nothing}
+    </div>`
+  }
+
   _progress() {
-    if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while.'
+    if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.'
     const counts = this._counts()
     const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)} ${what}`
     const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]

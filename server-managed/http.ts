@@ -25,8 +25,8 @@
 //   GET /api/admin/repositories/impact → admin attached data summary
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
-//   GET  /api/admin/repositories/risk → admin: each connected repo's npm lockfiles, their packages and what risk tells of each,
-//        Brotli-encoded ndjson as each is found; the reader leaving stops it | 401/403
+//   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
+//        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
@@ -1346,25 +1346,59 @@ async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, all
 const REPO_RISK_RECHECK_MS = 10_000
 const REPO_RISK_IDLE_MS = 5 * 60_000
 
+// The repositories a scan of risk reads, by its query: every connected one;
+// a team's (`team`, its id), each in the team's directories of it; or one
+// (`repo`, its id). Null for a team or repository there is none of, or a
+// query naming both.
+async function riskRepositories(db: ManagedDb, query: URLSearchParams): Promise<(SelectedRepo & { paths?: string[] })[] | null> {
+  const connected = await db.listSelectedRepos()
+  const repoId = query.get('repo'), teamId = query.get('team')
+  if (teamId !== null && repoId !== null) return null
+  if (repoId !== null) {
+    const repo = connected.find(item => String(item.repoId) === repoId)
+    return repo ? [repo] : null
+  }
+  if (teamId === null) return connected
+  const team = (await db.listTeams()).find(item => item.id === teamId)
+  if (!team) return null
+  // By repository, its directories; null for the whole of it.
+  const paths = new Map<number, string[] | null>()
+  for (const { repoId: id, path } of team.repos) {
+    const kept = paths.get(id)
+    paths.set(id, path === null || kept === null ? null : [...kept ?? [], path])
+  }
+  return connected.flatMap(repo => {
+    const of = paths.get(repo.repoId)
+    return of === undefined ? [] : [of === null ? repo : { ...repo, paths: of }]
+  })
+}
+
 // GET /api/admin/repositories/risk: every connected repository's npm
-// packages, as its lockfiles lock them at its default branch's head, each
-// assessed by risk (repository-risk.ts), a line as each is found. A
+// packages, or a team's or one repository's (riskRepositories), as its
+// lockfiles lock them at its default branch's head, each assessed by risk
+// (repository-risk.ts), a line as each is found. A
 // repository is read with the admin's own GitHub access, as browsing it is
 // (repository-browser.ts), and that access checked again once it is read,
 // before any of it is told; packages as the npm viewer's admins read them, in
 // spare assessments (npm-risk.ts), trusted however new where a team lists
 // their scope. The reader leaving, losing their admin role or the server
 // shutting down stops it.
-async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
   if (!s) return
+  const repos = await riskRepositories(deps.db, query)
+  if (!repos) {
+    const both = query.has('team') && query.has('repo')
+    sendJson(res, both ? 400 : 404, { error: both ? 'bad-scope' : 'no-repository' })
+    return
+  }
   const controller = new AbortController()
   res.on('close', () => { controller.abort() })
   res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
-  const teamScoped = new Map<string, Promise<boolean>>()
+  const scopes = new Map<string, Promise<boolean>>()
   const lines = repositoryRiskLines({
-    repos: () => deps.db.listSelectedRepos(),
+    repos: () => Promise.resolve(repos),
     async open(repo) {
       const reader = await browser.reader(repo)
       const commit = await reader.commit('')
@@ -1376,13 +1410,15 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         recheck: async () => { await reader.recheckAccess() },
       }
     },
-    version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
-    async assess(doc, signal) {
-      const scope = npmPackageScope(doc.name)
-      if (scope !== null && !teamScoped.has(scope)) teamScoped.set(scope, deps.db.hasTeamNpmScope(scope))
-      return npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
-        teamScoped: scope !== null && await teamScoped.get(scope)!, privileged: true, signal, spare: true })
+    teamScoped(name) {
+      const scope = npmPackageScope(name)
+      if (scope === null) return Promise.resolve(false)
+      if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
+      return scopes.get(scope)!
     },
+    version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal)),
+    assess: (doc, teamScoped, signal) => npmRisk(doc, null, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
+      teamScoped, privileged: true, signal, spare: true }),
   }, controller.signal)
   let checked = Date.now()
   await sendLines(res, lines, async () => {
@@ -2906,7 +2942,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path === REPO_RISK_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryRisk(res, deps, cookie); return
+      await handleRepositoryRisk(res, deps, cookie, url.searchParams); return
     }
     if (path === BROWSABLE_REPOS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }

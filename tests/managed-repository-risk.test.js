@@ -7,7 +7,7 @@ import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { highestSeverity, lockedPackages, repositoryRiskLines } from '../server-managed/repository-risk.ts'
+import { highestSeverity, lockedPackages, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
 import { NpmRiskError } from '../risk/index.js'
@@ -105,23 +105,32 @@ test('a package’s risk is its most severe finding', () => {
 // what a test holds: `repos` by id, each `{ fullName, lockfiles, files }`,
 // or `{ fullName, error }` where it can't be opened, `{ fullName,
 // lockfilesError }` where its lockfiles can't be listed and `revoked: true`
-// where access to it is gone once they are read; `assess` answering
-// a version's document, and npm's integrity of each package by name
-// (`integrities`, its own name's sri unless given).
+// where access to it is gone once they are read, and `paths` where a team's
+// directories in it are; `assess` answering a version's document, and npm's
+// integrity of each package by name (`integrities`, its own name's sri
+// unless given). Each lockfile's blob is its repository's id and its path.
+// The packages a team lists the scope of are `scoped`; what was asked of
+// GitHub and npm is noted.
 function sourceOf(repos, assess, integrities = {}) {
-  const opened = [], versions = []
+  const listed = [], opened = [], read = [], scoped = new Set(), versions = []
   return {
-    opened, versions,
-    repos: () => Promise.resolve(Object.entries(repos).map(([id, repo]) => ({ repoId: Number(id), fullName: repo.fullName }))),
+    opened, listed, read, versions, scoped,
+    repos: () => Promise.resolve(Object.entries(repos).map(([id, repo]) => ({ repoId: Number(id), fullName: repo.fullName, ...repo.paths && { paths: repo.paths } }))),
     async open({ repoId }) {
       await setImmediate()
       opened.push(repoId)
       const repo = repos[repoId]
       if (repo.error) throw new GithubApiError(404, repo.error)
-      return { commit: 'a'.repeat(40), file: path => Promise.resolve(repo.files[path]),
-        lockfiles: () => repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError)) : Promise.resolve(repo.lockfiles),
+      return { commit: 'a'.repeat(40),
+        file(path) { read.push(path); return Promise.resolve(repo.files[path]) },
+        lockfiles() {
+          listed.push(repoId)
+          return repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError))
+            : Promise.resolve(repo.lockfiles.map(lockfile => ({ sha: `${repoId}:${lockfile.path}`, ...lockfile })))
+        },
         recheck: () => repo.revoked ? Promise.reject(new GithubApiError(404, 'no-repository')) : Promise.resolve() }
     },
+    teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
       versions.push(`${name}@${version}`)
       return Promise.resolve({ name, version, dist: { integrity: integrities[name] ?? sri(name) } })
@@ -129,6 +138,9 @@ function sourceOf(repos, assess, integrities = {}) {
     assess,
   }
 }
+
+// A scan's lines, read with caches of its own unless given.
+const scan = (source, signal = new AbortController().signal, caches = riskCaches()) => repositoryRiskLines(source, signal, caches)
 
 const onePnpmRepo = { 1: { fullName: 'org/one', lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }], files: { 'pnpm-lock.yaml': pnpmLockfile } } }
 const risksOf = lines => lines.filter(line => line.type === 'risk').toSorted((a, b) => a.name.localeCompare(b.name) || (a.integrity ?? '').localeCompare(b.integrity ?? ''))
@@ -140,14 +152,14 @@ test('a scan tells each repository’s lockfiles and packages, and each registry
     2: { fullName: 'org/two', lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }, { path: 'old/package-lock.json', format: 'npm' }],
       files: { 'pnpm-lock.yaml': pnpmLockfile, 'old/package-lock.json': `${JSON.stringify({ name: 'old', lockfileVersion: 1, requires: true, dependencies: {} }, null, 2)}\n` } },
     3: { fullName: 'org/gone', error: 'no-repository' },
-  }, async ({ name }, signal) => {
+  }, async ({ name }, _teamScoped, signal) => {
     assert.equal(signal.aborted, false)
     await setImmediate()
     if (name === 'is-number') throw new NpmRiskError('package-not-found')
     return { published: '2020-01-01T00:00:00.000Z', findings: name === 'left-pad'
       ? [{ id: 'deprecated', severity: 'critical', message: 'use padStart' }, { id: 'popularity', severity: 'high', tier: 30000 }] : [] }
   })
-  const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal))
+  const lines = await Array.fromAsync(scan(source))
   const of = type => lines.filter(line => line.type === type)
   assert.deepEqual(lines[0], { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }, { id: 2, fullName: 'org/two' }, { id: 3, fullName: 'org/gone' }] })
   assert.deepEqual(lines.at(-1), { type: 'done' })
@@ -185,7 +197,7 @@ test('a mirror’s copy of a package npm’s registry gives too is held to npm�
     ...onePnpmRepo,
     2: { fullName: 'org/two', lockfiles: [{ path: 'package-lock.json', format: 'npm' }], files: { 'package-lock.json': tampered } },
   }, () => Promise.resolve({ published: null, findings: [] }))
-  assert.deepEqual(risksOf(await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal))), [
+  assert.deepEqual(risksOf(await Array.fromAsync(scan(source))), [
     { type: 'risk', name: 'is-number', version: '7.0.0', published: null, severity: null, findings: [] },
     { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, findings: [] },
     { type: 'risk', name: 'left-pad', version: '1.3.0', integrity: sri('tampered'), error: 'integrity-mismatch' },
@@ -195,14 +207,14 @@ test('a mirror’s copy of a package npm’s registry gives too is held to npm�
 test('a repository whose lockfiles can’t be listed is told so, and the rest are read', async () => {
   const source = sourceOf({ 1: { fullName: 'org/limited', lockfilesError: 'github-rate-limited' }, 2: onePnpmRepo[1] },
     () => Promise.resolve({ published: null, findings: [] }))
-  const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal))
+  const lines = await Array.fromAsync(scan(source))
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(({ id, error }) => [id, error]), [[1, 'github-rate-limited'], [2, undefined]])
   assert.deepEqual(lines.at(-1), { type: 'done' })
 })
 
 test('a repository whose access is gone once it is read tells nothing of it', async () => {
   const source = sourceOf({ 1: { ...onePnpmRepo[1], revoked: true } }, assert.fail)
-  assert.deepEqual(await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal)), [
+  assert.deepEqual(await Array.fromAsync(scan(source)), [
     { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] }, { type: 'repo', id: 1, error: 'no-repository' }, { type: 'done' },
   ])
   assert.deepEqual(source.versions, [])
@@ -212,7 +224,7 @@ test('an assessment refused as busy is asked again, its version read once', asyn
   let asked = 0
   const source = sourceOf(onePnpmRepo, ({ name }) => name === 'left-pad' && asked++ === 0
     ? Promise.reject(new NpmPackageError(429, 'npm-busy')) : Promise.resolve({ published: null, findings: [] }))
-  const risks = risksOf(await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal)))
+  const risks = risksOf(await Array.fromAsync(scan(source)))
   assert.equal(asked, 2)
   assert.deepEqual(source.versions.toSorted(), ['is-number@7.0.0', 'left-pad@1.3.0'])
   assert.deepEqual(risks.map(line => [line.name, line.error ?? line.severity]), [['is-number', null], ['left-pad', null]])
@@ -220,7 +232,7 @@ test('an assessment refused as busy is asked again, its version read once', asyn
 
 // A source whose assessments wait until they are given up on, each one's
 // signal kept in `signals`.
-const hangingSource = signals => sourceOf(onePnpmRepo, (_doc, signal) => new Promise((_resolve, reject) => {
+const hangingSource = signals => sourceOf(onePnpmRepo, (_doc, _teamScoped, signal) => new Promise((_resolve, reject) => {
   signals.push(signal)
   signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
 }))
@@ -228,7 +240,7 @@ const hangingSource = signals => sourceOf(onePnpmRepo, (_doc, signal) => new Pro
 test('a scan whose lines are no longer read gives up the assessments under way', async () => {
   const signals = []
   const read = []
-  for await (const line of repositoryRiskLines(hangingSource(signals), new AbortController().signal)) {
+  for await (const line of scan(hangingSource(signals))) {
     read.push(line.type)
     if (line.type === 'lockfile') break
   }
@@ -241,16 +253,41 @@ test('a scan whose lines are no longer read gives up the assessments under way',
 test('a scan stopped ends its lines at once and gives up the assessments under way', async () => {
   const signals = []
   const stop = new AbortController()
-  const reading = Array.fromAsync(repositoryRiskLines(hangingSource(signals), stop.signal))
+  const reading = Array.fromAsync(scan(hangingSource(signals), stop.signal))
   while (signals.length < 2) await setImmediate()
   stop.abort()
   assert.deepEqual((await reading).map(line => line.type), ['repos', 'repo', 'lockfile'])
   assert.ok(signals.every(signal => signal.aborted))
 })
 
+test('a team’s repository is read for the lockfiles in its directories, or above them', async () => {
+  const paths = ['pnpm-lock.yaml', 'packages/pnpm-lock.yaml', 'packages/app/pnpm-lock.yaml', 'packages/app/deep/pnpm-lock.yaml', 'packages/other/pnpm-lock.yaml', 'packages/application/pnpm-lock.yaml']
+  const source = sourceOf({ 1: { fullName: 'org/mono', paths: ['packages/app'], lockfiles: paths.map(path => ({ path, format: 'pnpm' })),
+    files: Object.fromEntries(paths.map(path => [path, pnpmLockfile])) } }, () => Promise.resolve({ published: null, findings: [] }))
+  const repo = (await Array.fromAsync(scan(source))).find(line => line.type === 'repo')
+  assert.deepEqual(repo.lockfiles.map(({ path }) => path), paths.slice(0, 4))
+})
+
+test('a scan again reads what one before it kept: lockfiles by commit and blob, and a package’s risk for the hour', async () => {
+  const caches = riskCaches()
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve({ published: null, findings: [] }))
+  const first = await Array.fromAsync(scan(source, undefined, caches))
+  assert.deepEqual([source.listed.length, source.read.length, source.versions.length], [1, 1, 2])
+  for (const asked of [source.opened, source.listed, source.read, source.versions]) asked.length = 0
+  const again = await Array.fromAsync(scan(source, undefined, caches))
+  assert.deepEqual(again.filter(line => line.type !== 'risk'), first.filter(line => line.type !== 'risk'))
+  assert.deepEqual(risksOf(again), risksOf(first))
+  assert.deepEqual(source.opened, [1], 'its access checked again')
+  assert.deepEqual([source.listed, source.read, source.versions], [[], [], []], 'nothing asked of GitHub\'s listings and files, or of npm')
+  // Trusted once a team lists its scope, it is assessed again.
+  source.scoped.add('left-pad')
+  await Array.fromAsync(scan(source, undefined, caches))
+  assert.deepEqual(source.versions, ['left-pad@1.3.0'])
+})
+
 test('a scan that fails as a whole throws once its lines are read', async () => {
   const source = { repos: () => Promise.reject(new Error('database gone')), open: assert.fail, version: assert.fail, assess: assert.fail }
-  await assert.rejects(Array.fromAsync(repositoryRiskLines(source, new AbortController().signal)), /database gone/u)
+  await assert.rejects(Array.fromAsync(scan(source)), /database gone/u)
 })
 
 test('the repository risk page is a manage page of its own URL', () => {
@@ -272,8 +309,8 @@ async function server(t, role) {
   await new Promise(resolve => { http.listen(0, '127.0.0.1', resolve) })
   t.after(() => new Promise(resolve => { http.close(resolve) }))
   const cookie = session.setCookie.split(';')[0]
-  return ({ method = 'GET', signedIn = true } = {}) => new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port: http.address().port, path: '/api/admin/repositories/risk', method,
+  const ask = ({ method = 'GET', signedIn = true, query = '' } = {}) => new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: http.address().port, path: `/api/admin/repositories/risk${query}`, method,
       headers: signedIn ? { cookie } : {} }, res => {
       const chunks = []
       res.on('data', chunk => chunks.push(chunk))
@@ -285,6 +322,7 @@ async function server(t, role) {
     req.on('error', reject)
     req.end()
   })
+  return Object.assign(ask, { db })
 }
 
 test('repository risk is answered to admins alone, as lines', async t => {
@@ -297,4 +335,15 @@ test('repository risk is answered to admins alone, as lines', async t => {
   assert.equal((await ask({ method: 'POST' })).status, 405)
   const manager = await server(t, 'manage')
   assert.equal((await manager()).status, 403)
+})
+
+test('repository risk reads a team’s repositories or one, where there is such a team or connected repository', async t => {
+  const ask = await server(t, 'admin')
+  await ask.db.createTeam('team', 'Team', Date.now())
+  const answer = await ask({ query: '?team=team' })
+  assert.equal(answer.status, 200)
+  assert.deepEqual(answer.text.split('\n').filter(Boolean).map(line => JSON.parse(line)), [{ type: 'repos', repos: [] }, { type: 'done' }], 'a team with none')
+  assert.equal((await ask({ query: '?team=gone' })).status, 404)
+  assert.equal((await ask({ query: '?repo=1' })).status, 404, 'none connected')
+  assert.equal((await ask({ query: '?team=team&repo=1' })).status, 400)
 })
