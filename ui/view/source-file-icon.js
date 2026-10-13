@@ -57,6 +57,16 @@ export function fileIconFormat(details, path) {
   return (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined) ?? (details?.npmBinaries?.has(path) ? 'binary' : undefined)
 }
 
+// A path's extension, lowercased, read from its name alone as langForPath does.
+const extensionOf = path => {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
+// Compiled code a package ships: Node's native addons and the shared
+// libraries they load.
+const NATIVE = new Set(['node', 'so', 'dylib', 'dll'])
+
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path, format) {
   const lang = langForPath(path, format)
@@ -65,7 +75,14 @@ export function sourceFileType(path, format) {
   if (isLicense(path, format, lang)) return 'license'
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
-  if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css'].includes(lang)) return lang
+  const extension = extensionOf(path)
+  // A .h is C's, C++'s or Objective-C's alike: a header, whichever reads it.
+  if (['c', 'cpp', 'objectivec'].includes(lang) && extension === 'h') return 'header'
+  if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css', 'yaml', 'markup', 'java', 'ruby', 'c', 'cpp'].includes(lang)) return lang
+  if (lang === 'bash') return 'shell'
+  if (lang === 'objectivec') return 'objc'
+  if (extension === 'wasm') return 'wasm'
+  if (NATIVE.has(extension)) return 'native'
   return 'generic'
 }
 
@@ -81,30 +98,48 @@ const cssMark = svg`<rect x="1" y="1" width="14" height="14" rx="2" fill="#66339
 // Markdown's: the M and its down arrow, unframed, in the theme's green.
 const markdownMark = svg`<path d="M1 11.5v-7h2l1.7 2.3 1.7-2.3h2v7h-2V7.8L4.7 10 3 7.8v3.7Zm10.2-7h2V8H15l-2.8 3.5L9.4 8h1.8Z" fill="var(--green, #3fb950)"/>`
 
+// A language's letters on a square of its colour, as JS's and TS's logos are
+// drawn; three letters set smaller.
+const badge = (fill, label, ink = '#fff') => label.length > 2
+  ? svg`<rect x="1" y="1" width="14" height="14" rx="2" fill=${fill}/><text x="8" y="10.6" text-anchor="middle" fill=${ink} font-family="sans-serif" font-size="6.2" font-weight="700" letter-spacing="-.2">${label}</text>`
+  : svg`<rect x="1" y="1" width="14" height="14" rx="2" fill=${fill}/><text x="8" y="11.5" text-anchor="middle" fill=${ink} font-family="sans-serif" font-size="8" font-weight="700">${label}</text>`
+
+// Each type's glyph (sourceFileType); any other a page.
+const MARKS = {
+  __proto__: null,
+  js: badge('#e6c84f', 'JS', '#202020'),
+  ts: badge('#3178c6', 'TS'),
+  solidity: svg`<path d="m8 1 4 6-4 2-4-2Z" fill="currentColor"/><path d="m4 8 4 2 4-2-4 7Z" fill="currentColor" opacity=".65"/>`,
+  rust: rustMark,
+  php: phpMark,
+  python: pythonMark,
+  map: mapMark,
+  markdown: markdownMark,
+  license: licenseMark,
+  css: cssMark,
+  json: svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`,
+  yaml: badge('#cb171e', 'YML'),
+  // A shell's: a terminal's prompt.
+  shell: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="m4.2 6 2 2-2 2m3.3 0h4.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // HTML's, XML's and SVG's: a tag's brackets, in HTML's orange.
+  markup: svg`<path d="M4.8 4.5 1.5 8l3.3 3.5m6.4-7L14.5 8l-3.3 3.5M9.3 3 6.7 13" fill="none" stroke="#e34c26" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`,
+  wasm: badge('#654ff0', 'WA'),
+  // Native code's: a chip.
+  native: svg`<rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.4" y="6.4" width="3.2" height="3.2" fill="currentColor"/><path d="M6 1.5V4m4-2.5V4M6 12v2.5m4-2.5v2.5M1.5 6H4m-2.5 4H4M12 6h2.5M12 10h2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>`,
+  // Java's: its cup, steaming.
+  java: svg`<path d="M5.4 5.8c-.9-1 .9-1.7 0-3M8.4 5.8c-.9-1 .9-1.7 0-3" fill="none" stroke="#e76f00" stroke-width="1.1" stroke-linecap="round"/><path d="M2.5 7h9v3.3A3.7 3.7 0 0 1 7.8 14H6.2a3.7 3.7 0 0 1-3.7-3.7Z" fill="#5382a1"/><path d="M11.5 8.2h.9a1.6 1.6 0 0 1 0 3.2h-1.1" fill="none" stroke="#5382a1" stroke-width="1.1"/>`,
+  objc: badge('#438eff', 'OC'),
+  c: badge('#3949ab', 'C'),
+  cpp: badge('#00599c', 'C++'),
+  header: badge('#607d8b', 'H'),
+  // Ruby's: a cut gem, Podfiles, podspecs and Fastfiles too.
+  ruby: svg`<path d="M4.5 2.5h7L14.5 6 8 14 1.5 6Z" fill="#cc342d"/><path d="M1.5 6h13M4.5 2.5 6 6l2 8 2-8 1.5-3.5M6 6l2-3.5L10 6" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width=".7" stroke-linejoin="round"/>`,
+}
+const pageMark = svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
+
 export function sourceFileIcon(path, format) {
   const type = sourceFileType(path, format)
-  const mark = type === 'js' || type === 'ts'
-    ? svg`<rect x="1" y="1" width="14" height="14" rx="2" fill=${type === 'js' ? '#e6c84f' : '#3178c6'}/><text x="8" y="11.5" text-anchor="middle" fill=${type === 'js' ? '#202020' : '#fff'} font-family="sans-serif" font-size="8" font-weight="700">${type.toUpperCase()}</text>`
-    : type === 'solidity'
-      ? svg`<path d="m8 1 4 6-4 2-4-2Z" fill="currentColor"/><path d="m4 8 4 2 4-2-4 7Z" fill="currentColor" opacity=".65"/>`
-      : type === 'rust'
-        ? rustMark
-        : type === 'php'
-          ? phpMark
-          : type === 'python'
-            ? pythonMark
-            : type === 'map'
-              ? mapMark
-            : type === 'markdown'
-              ? markdownMark
-            : type === 'license'
-              ? licenseMark
-            : type === 'css'
-              ? cssMark
-            : type === 'json'
-              ? svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`
-              : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
-  return html`<svg class="source-file-icon" data-file-type=${type} width="16" height="16" viewBox="0 0 16 16" style="flex: none" aria-hidden="true">${mark}</svg>`
+  return html`<svg class="source-file-icon" data-file-type=${type} width="16" height="16" viewBox="0 0 16 16" style="flex: none" aria-hidden="true">${MARKS[type] ?? pageMark}</svg>`
 }
 
 export const sourceFolderIcon = html`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" style="flex: none" aria-hidden="true"><path d="M1.5 4V2.5h5L8 4h6.5v9h-13Z" stroke-linejoin="round"/></svg>`
