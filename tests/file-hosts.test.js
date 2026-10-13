@@ -75,7 +75,8 @@ test('request catchers and out-of-band hosts, services that could be fine, and I
   assert.deepEqual(exfiltration('lib/u.js', 'up("https://me@transfer.sh/x")\nup("https://file.io:443/x")\nup("//transfer.sh/y")\n'), { 'transfer-sh': [1, 3], 'file-io': [2] },
     'the host after a user, or before a port, or of a URL without a scheme')
   for (const lookalike of ['scripts/transfer.sh', 'run("./transfer.sh")', 'this.file.io = io', 'up("https://transfer.sh@example.com/upload")', 'up("https://file.io:x@example.com")',
-    'get("https://example.com/assets//transfer.sh/readme")', 'get("https:\\/\\/example.com\\/a\\/\\/file.io")', '//transfer.sh for uploads', 'go("https://ngrok.com/docs")', 'go("https://notpaste.ee")',
+    'get("https://example.com/assets//transfer.sh/readme")', 'get("https:\\/\\/example.com\\/a\\/\\/file.io")', '//transfer.sh for uploads',
+    'get("https://example.com/path://transfer.sh/readme")', 'get("https://example.com/xhttps://file.io")', 'go("https://ngrok.com/docs")', 'go("https://notpaste.ee")',
     'go("https://ipify.organic")', 'go("https://myipapi.co")', 'go("https://ngrok.io.evil.example/x")']) {
     assert.equal(exfiltration('lib/z.js', lookalike), null, lookalike)
   }
