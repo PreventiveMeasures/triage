@@ -4,12 +4,15 @@
 // npmLastingRisk), against the one asked for or else the one risk picks of
 // those held (risk/npm/old-version.js npmOldVersion), with the open
 // version's own findings, by its package's downloads (npmAssessmentOf), as
-// the server tells them, through JSON as its answer comes.
+// the server tells them, and its risk score (risk/npm/score.js), through
+// JSON as its answer comes.
 import { npmAssessmentOf, npmLastingRisk } from '../risk/npm/assess.js'
 import { npmVersionFindings } from '../risk/npm/held.js'
 import { npmKnownScope } from '../risk/npm/manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from '../risk/npm/release.js'
 import { npmOldVersion } from '../risk/npm/old-version.js'
+import { npmDownloadTier } from '../risk/npm/downloads.js'
+import { npmRiskScore } from '../risk/npm/score.js'
 import { npmRiskOf } from '../ui/view/file-risk.js'
 
 const held = new Map()
@@ -61,5 +64,7 @@ export function riskAnswer(name, version, otherVersion = null, { downloads = nul
   const kept = base === null ? npmLastingRisk(other) : npmLastingRisk(other, base, standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
     known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name), provenance: Boolean(other.npm.manifest.provenance) })
-  return JSON.parse(JSON.stringify({ name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own) }))
+  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own)
+  return JSON.parse(JSON.stringify({ name, version, oldVersion: old, published, ...assessment,
+    score: npmRiskScore(assessment.findings, { published, tier: downloads ? npmDownloadTier(downloads) : null }) }))
 }

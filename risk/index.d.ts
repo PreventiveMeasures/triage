@@ -116,6 +116,19 @@ export interface DependencyRisk {
   gap?: number
 }
 
+// A version's risk as one number (risk/npm/score.js): what its findings call
+// for (`raised`, each it counts), each by its severity, malware all of it,
+// lowered by its exposure (`lowered`): how long it has been out (`days`)
+// among how many download its package (`tier`, its rank, null past the last
+// or where unknown), `by` the share taken off. Its `level` is named as the
+// findings' severities are: from 75 critical, 50 high, 25 moderate, else low.
+export interface RiskScore {
+  score: number
+  level: 'critical' | 'high' | 'moderate' | 'low'
+  raised: { id: string; severity: Severity }[]
+  lowered?: { days: number; tier: number | null; by: number }
+}
+
 export interface NpmAssessment {
   name: string
   version: string
@@ -129,6 +142,7 @@ export interface NpmAssessment {
   files: Record<string, FileRisk>
   // Against `oldVersion`, each it holds too, flagged against none (`held`).
   dependencies: { added: DependencyRisk[]; changed: DependencyRisk[]; held?: DependencyRisk[] }
+  score: RiskScore
 }
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>

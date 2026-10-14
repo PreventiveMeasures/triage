@@ -592,8 +592,9 @@ test('malware first: a package npm took down, whatever version is asked, and an 
   asked.length = 0
   const removed = await assessed('kept', '2.0.1')
   assert.deepEqual(removed, { name: 'kept', version: '2.0.1', oldVersion: null, published: ago(20), removed: true, files: {}, dependencies: { added: [], changed: [] },
-    findings: [{ id: 'malware', severity: 'critical', advisories: [{ id: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Critical severity vulnerability that affects kept' }] }] },
-  'CWE-506, whatever its title; nothing of it left to read')
+    findings: [{ id: 'malware', severity: 'critical', advisories: [{ id: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Critical severity vulnerability that affects kept' }] }],
+    score: { score: 100, level: 'critical', raised: [{ id: 'malware', severity: 'critical' }] } },
+  'CWE-506, whatever its title; nothing of it left to read, its score all of it')
   assert.ok(!asked.some(url => url.endsWith('.tgz')), 'no tarball asked')
   assert.deepEqual(await assessed('kept', '2.0.1', { oldVersion: true }), removed, 'nor a version picked to compare it with')
   await assert.rejects(assessed('kept', '2.0.2'), error => error.code === 'version-not-found', 'one removed with no malware told of: as npm has none')

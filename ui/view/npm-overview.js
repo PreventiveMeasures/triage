@@ -559,6 +559,35 @@ export const npmCompareFiles = {
   },
 }
 
+// Each finding by its chip's label, as the risk score's tooltip lists what
+// raised it.
+const FINDING_LABELS = new Map([['malware', 'Malware'], ['deprecated', 'Deprecated'], ['publisher', 'Publisher'], ['provenance-lost', 'Provenance lost'],
+  ['held-install-scripts', 'Install scripts'], ['held-non-registry-deps', 'Non-registry deps'], ['held-unused-deps', 'Unused deps'], ['held-runs-code', 'Runs code'],
+  ['held-exfiltration', 'Exfiltration'], ['held-remote', 'Remote'], ['held-ip-lookup', 'IP lookup'], ['held-obfuscated', 'Obfuscated'], ['large-code', 'Large new code'],
+  ['now-unreadable', 'Now unreadable'], ['binary-code', 'Binary code'], ['new-hosts', 'New hosts'], ['popularity', 'Few downloads']])
+const SCORE_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-moderate', low: 'is-low' }
+// How long a version has been out, roughly: `7 years`, `3 months`, `20 days`.
+const outFor = days => days >= 730 ? `${Math.floor(days / 365)} years` : days >= 60 ? `${Math.floor(days / 30)} months` : `${days} days`
+
+// The open version's risk score, out of 100 (risk/npm/score.js), first among
+// its chips: a ring filled to it, tinted by its level; its tooltip what
+// raised it, each finding by its severity, and what lowered that, how long
+// the version has been out among how many who download it.
+function scoreBadge(risk) {
+  const score = risk?.score
+  if (!score) return nothing
+  const { score: value, level, raised, lowered } = score
+  const said = raised.map(({ id, severity }) => [FINDING_LABELS.get(id) ?? id, severity])
+  const note = lowered && said.length > 0 ? `Lowered by ${Math.round(lowered.by * 100)}%: out ${outFor(lowered.days)}${lowered.tier === null ? '' : `, its package npm's ${npmTierName(lowered.tier)} by downloads`}` : null
+  const tooltip = [`Risk ${value} of 100`, ...said.length === 0 ? ['Nothing found that calls for a look'] : said.map(([label, severity]) => `${label}, ${severity}`), ...note ? [note] : []].join('\n')
+  return html`<li><span class=${`npm-extension npm-risk-score ${SCORE_TINTS[level]}`} data-tooltip=${tooltip} .tooltipContent=${html`<div class="compare-tip">
+      <div class="compare-tip-head">Risk ${value} of 100</div>
+      ${said.length === 0 ? html`<span class="compare-tip-none">Nothing found that calls for a look</span>`
+        : html`<div class="compare-tip-rows">${said.map(([label, severity]) => html`<span class="npm-risk-finding">${label}</span><span class=${`compare-tip-said npm-risk-severity sev-${severity}`}>${severity}</span>`)}</div>`}
+      ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
+    </div>`}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
+}
+
 // What calls for a look at a version, as the server's risk tells it
 // (npm-risk.js npmRisk; risk/npm/held.js, compare.js, combined.js), chips
 // alike in the Overview and Compare, `sides` its versions, the one compared
@@ -575,8 +604,8 @@ const findingsOf = risk => new Map((risk?.findings ?? []).map(finding => [findin
 
 // What calls for a look at Compare's two versions (bundle-compare.js
 // `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: what the server's risk finds of the pair
-// (riskChips), then the advisories that affect either, Socket's scores
+// (`other`), each side's details: the open one's risk score against it
+// (scoreBadge), what the server's risk finds of the pair (riskChips), then the advisories that affect either, Socket's scores
 // either has under its bar (SOCKET_SCORES; maintenance, for a deprecated open
 // version, only under DEPRECATED_MAINTENANCE), and the package's tier by
 // downloads where it is orange or red. Each once it arrives.
@@ -586,14 +615,16 @@ export function npmCompareBadges(base, other) {
   // advisories or Socket report; never request an invented version upstream.
   const sides = [base.npm ?? { name: other.npm.name, version: 'Empty package', private: true }, other.npm]
   const affecting = advisoriesAffecting(sides)
-  const found = findingsOf(npmRisk(other.npm, base.npm?.version ?? '(empty)'))
-  const chips = [...riskChips(sides, found), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting, found.get('malware')),
+  const risk = npmRisk(other.npm, base.npm?.version ?? '(empty)')
+  const found = findingsOf(risk)
+  const chips = [scoreBadge(risk), ...riskChips(sides, found), advisoriesBadge(sides, affecting), ...socketBadges(sides, affecting, found.get('malware')),
     popularityBadge(other.npm.name, found.get('popularity'))].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
 // What calls for a look at a version on its own (`entry`, read as
-// `details`), in the Overview, the chips Compare's are (riskChips), against
+// `details`), in the Overview, its risk score and the chips Compare's are
+// (scoreBadge, riskChips), against
 // the version the server's risk picks to compare it with, the one most
 // likely free of what an attack injects (risk/npm/old-version.js), where it
 // picks one: then the advisories affecting it and Socket's scores under their
@@ -605,7 +636,7 @@ export function npmOverviewBadges(entry) {
   const risk = npmRisk(npm)
   const found = findingsOf(risk)
   const sides = risk?.oldVersion ? [{ name: npm.name, version: risk.oldVersion }, npm] : [npm]
-  const chips = [...riskChips(sides, found), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting, found.get('malware'))].filter(chip => chip !== nothing)
+  const chips = [scoreBadge(risk), ...riskChips(sides, found), advisoriesBadge([npm], affecting), ...socketBadges([npm], affecting, found.get('malware'))].filter(chip => chip !== nothing)
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">${chips}</ul>`
 }
 

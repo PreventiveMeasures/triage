@@ -7,12 +7,13 @@ import { npmCombinedFindings, npmHeldDependencyFindings } from './combined.js'
 import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
 import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
-import { npmDownloadMonths, npmSettledDownloads, npmTierLevel } from './downloads.js'
+import { npmDownloadMonths, npmDownloadTier, npmSettledDownloads, npmTierLevel } from './downloads.js'
 import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
 import { npmMalwareFinding } from './malware.js'
 import { npmKnownScope } from './manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from './release.js'
 import { npmAddedDependency } from './new-dependency.js'
+import { npmRiskScore } from './score.js'
 
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
@@ -191,15 +192,18 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
   const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, osv, context) : [] })
   if (!facts.versions.has(version)) {
     if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
-    return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] } }
+    return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] },
+      score: npmRiskScore([malware]) }
   }
   const { published, manifest } = facts.versions.get(version)
   const kept = await lasting(name, version, old, facts, context, fromEmpty)
+  const counted = downloads && popularity ? await npmDownloads(name, context) : null
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
-    provenance: Boolean(manifest.provenance), downloads: downloads && popularity ? await npmDownloads(name, context) : null })
+    provenance: Boolean(manifest.provenance), downloads: counted })
   const was = old === null ? null : facts.versions.get(old).published
   const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
-  return { name, version, oldVersion: old, published, ...npmAssessmentOf(kept, malware ? [malware, ...own] : own, added) }
+  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own, added)
+  return { name, version, oldVersion: old, published, ...assessment, score: npmRiskScore(assessment.findings, { published, now, tier: counted ? npmDownloadTier(counted) : null }) }
 }
 
 // An assessment of what of it holds whatever the time (`kept`,
