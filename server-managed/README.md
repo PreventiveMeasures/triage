@@ -982,11 +982,17 @@ shows the score in its Risk column, red from 75, orange from 50, yellow from
 25, else plain, as the viewer's ring is, malware's 100 where npm's advisories
 tell of it too, and lists the riskiest first. A package's risk that still fails tells
 its code, and, where risk failed, risk's `detail` of what it asked of npm and
-how that failed. A risk line kept before risk told a score is assessed again. Scans keep in the instance's memory a repository's lockfiles as listed
-at a commit, a lockfile's packages by its blob, and a package's risk line for an
-hour, so a scan again asks GitHub only for each repository's head and access,
-and npm for nothing it told within the hour. The database keeps risk lines for
-that hour too, and public versions'
+how that failed. A package's risk line is kept (`repository-risk/lines` rows of
+`managed_upstream_cache`, and the instance's memory) for a month: each
+lockfile's packages are looked up as it is read, and those kept told at once,
+however old, one kept within the hour as it is and an older one, or one kept
+before risk told a score, as stale (`stale: { assessedAt }`), dimmed on the
+page and said so; those with none kept are assessed first, and the stale ones
+only after, each line told again once assessed, or, where that fails, the
+stale one kept, its tooltip saying why. Scans keep in the instance's memory a
+repository's lockfiles as listed at a commit and a lockfile's packages by its
+blob, so a scan again asks GitHub only for each repository's head and access.
+The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
 on another instance, asks npm for none of them again: where npm removed a

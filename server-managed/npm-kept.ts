@@ -18,6 +18,8 @@ import type { UpstreamCacheStore } from './upstream-cache.ts'
 // A value kept by key, as JSON, `at` when it was.
 export interface KeptStore<T> {
   read(key: string): Promise<{ at: number; value: T } | null>
+  // Those of `keys` kept, by key, in one read of the database.
+  readMany(keys: string[]): Promise<Map<string, { at: number; value: T }>>
   write(key: string, value: T, at: number): Promise<void>
 }
 
@@ -41,12 +43,19 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
   const prune = (at: number) => pruneKept(db, `${type}/`, keptMs, at, error => { warn('prune', error) })
   // Keys of any length or character, as the database's: hashed.
   const keyOf = (key: string) => `${type}/${createHash('sha256').update(key).digest('hex')}`
+  const valueOf = (row: string | null | undefined) => {
+    const kept: unknown = JSON.parse(row ?? 'null')
+    return plainObject(kept) && typeof kept['at'] === 'number' && 'value' in kept ? { at: kept['at'], value: kept['value'] as T } : null
+  }
   return {
     async read(key) {
+      try { return valueOf(await db.getUpstreamCacheEntry(keyOf(key))) } catch (error) { warn('read', error); return null }
+    },
+    async readMany(keys) {
       try {
-        const kept: unknown = JSON.parse(await db.getUpstreamCacheEntry(keyOf(key)) ?? 'null')
-        return plainObject(kept) && typeof kept['at'] === 'number' && 'value' in kept ? { at: kept['at'], value: kept['value'] as T } : null
-      } catch (error) { warn('read', error); return null }
+        const rows = await db.getUpstreamCacheEntries(keys.map(keyOf))
+        return new Map(keys.flatMap(key => { const kept = valueOf(rows.get(keyOf(key))); return kept ? [[key, kept] as const] : [] }))
+      } catch (error) { warn('read', error); return new Map() }
     },
     async write(key, value, at) {
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }
@@ -66,5 +75,6 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
   }
 }
 
-// Risk lines, each read for `keptMs`, as long as a scan keeps them.
+// Risk lines, each kept `keptMs`, a scan telling one older than it counts
+// as stale (repository-risk.ts).
 export const riskLineStore = <T>(db: UpstreamCacheStore, keptMs: number, debug = false): KeptStore<T> => keptStore<T>(db, 'repository-risk/lines', keptMs, debug)

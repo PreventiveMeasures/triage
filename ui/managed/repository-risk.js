@@ -108,6 +108,24 @@ const FILTERS = {
 // What a package's risk is, as its column's heading tells it.
 const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
 
+// A package row's risk as its line tells it, `stale` where the line is one
+// kept and since gone stale (when it was assessed); a stale one assessed
+// again replaced, or, where that fails, kept, saying why (`refreshFailed`).
+export function riskOf(line, was) {
+  const stale = line.stale ?? null
+  if (line.error && !stale && was?.stale && !was.error) return { ...was, refreshFailed: line.detail ? `${errorText(line.error)}: ${line.detail}` : errorText(line.error) }
+  return line.error ? { error: line.error, detail: line.detail ?? null, stale } : { severity: line.severity, score: line.score ?? null, findings: line.findings, published: line.published, stale }
+}
+
+// How long ago `at` was, roughly: `5 minutes ago`, `3 hours ago`, `2 days ago`.
+const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+export function ago(at, now = Date.now()) {
+  const minutes = Math.round((at - now) / 60_000)
+  if (Math.abs(minutes) < 60) return relative.format(minutes, 'minute')
+  const hours = Math.round(minutes / 60)
+  return Math.abs(hours) < 48 ? relative.format(hours, 'hour') : relative.format(Math.round(hours / 24), 'day')
+}
+
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
 // Lines come faster than a table this long redraws: draw at most this often.
@@ -276,7 +294,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
-      if (row) row.risk = line.error ? { error: line.error, detail: line.detail ?? null } : { severity: line.severity, score: line.score ?? null, findings: line.findings, published: line.published }
+      if (row) row.risk = riskOf(line, row.risk)
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
     }
@@ -315,6 +333,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       repos: repos.length, reposRead: repos.filter(repo => repo.lockfiles || repo.error).length,
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
       assessable: assessed.length, told: assessed.filter(row => row.risk).length, flagged: assessed.filter(severityOf).length,
+      stale: assessed.filter(row => row.risk?.stale).length,
       advisories: this._advisories.size, malware: [...this._advisories.values()].filter(row => row.malware).length,
     }
   }
@@ -386,6 +405,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
       of(counts.told, counts.assessable, 'packages assessed'), `${formatCount.format(counts.flagged)} flagged`,
+      ...counts.stale > 0 ? [`${formatCount.format(counts.stale)} stale`] : [],
       ...counts.advisories > 0 ? [`${formatCount.format(counts.advisories)} advisories${counts.malware > 0 ? `, ${formatCount.format(counts.malware)} of malware` : ''}`] : []].join(' · ')
   }
 
@@ -442,7 +462,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _packageRow(row) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
-    return html`<tr>
+    return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
       <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}</td>
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._score(row)}</td>
@@ -457,7 +477,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // nothing where it isn't told, its findings' cell saying why.
   _score(row) {
     const score = scoreOf(row)
-    return score === null ? nothing : html`<span class=${`risk-score risk-${npmRiskLevel(score)}`}>${score}</span>`
+    const told = score === null ? nothing : html`<span class=${`risk-score risk-${npmRiskLevel(score)}`}>${score}</span>`
+    return row.risk?.stale ? html`${told}<span class="risk-stale" data-tooltip=${this._staleSaid(row.risk)}>stale</span>` : told
+  }
+
+  // Why a risk is stale: when it was assessed, and whether it is to be
+  // assessed again, once those with none are, or couldn't be.
+  _staleSaid({ stale, refreshFailed }) {
+    const next = refreshFailed ? `couldn’t be assessed again: ${refreshFailed}` : this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'
+    return `Assessed ${ago(stale.assessedAt)}; ${next}`
   }
 
   // What risk finds of a package, each by its severity; or, where it finds

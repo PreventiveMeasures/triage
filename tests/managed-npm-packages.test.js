@@ -13,7 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
   setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
-import { npmVersionStore } from '../server-managed/npm-kept.ts'
+import { npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -496,6 +496,19 @@ test('a scan keeps a scoped package\'s downloads where public ones are only wher
   // Kept by the days asked over, as risk keys them.
   const keyOf = name => `risk/npm/downloads/${name}@${asked.find(url => url.endsWith(`/${name.replace('/', '%2f')}`)).split('/').at(-2)}`
   assert.deepEqual([...(await db.getUpstreamCacheEntries(['@acme/secret', '@scope/open'].map(keyOf))).keys()], [keyOf('@scope/open')])
+})
+
+test('risk lines kept in the database are read many at once, by key, however old, and removed once older than they are kept', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const lines = riskLineStore(db, 30 * DAY)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now - 10 * DAY)
+  await lines.write('is-number@7.0.0', { score: 0 }, now)
+  assert.deepEqual(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'gone@1.0.0']),
+    new Map([['left-pad@1.3.0', { at: now - 10 * DAY, value: { score: 7 } }], ['is-number@7.0.0', { at: now, value: { score: 0 } }]]))
+  t.mock.timers.enable({ apis: ['Date'], now: now + 31 * DAY })
+  await lines.write('ms@2.1.3', { score: 0 }, now + 31 * DAY)
+  assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'ms@2.1.3'])).keys()], ['ms@2.1.3'], 'a month on, the older removed')
 })
 
 test('risk against a private version is checked again for it once told', async t => {
