@@ -2408,7 +2408,8 @@ export function ensureClientMode() {
 
 function probeStartupServerInfo() {
   const probe = probeServerInfo()
-  startupSession = probe.then(info => info?.session)
+  // A probe slower than startup's wait never holds the session: it is asked for.
+  startupSession = waitForServerInfo(probe).then(info => info?.session)
   return probe
 }
 
