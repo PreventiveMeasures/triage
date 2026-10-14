@@ -276,7 +276,9 @@ function installedVersion(doc, spec) {
 // for one npm has none of for anyone; and for a dependency's spec (`spec`),
 // the version of it npm installs (installedVersion), `installs`: `{ version,
 // latest, published, scripts }`, its package's `latest` beside it, when it
-// was published and whether it has install scripts, null for none.
+// was published and whether it has install scripts: its manifest's, or
+// node-gyp's for a `binding.gyp` (`gypfile`), or as the registry says
+// (`hasInstallScript`); null for none.
 export async function npmPublicFacts(name, context, spec = null) {
   const facts = await kept(context, 'risk/npm/public', spec === null ? name : `${name}@${spec}`, async () => {
     const doc = await packageDocument(name, context, false)
@@ -284,7 +286,7 @@ export async function npmPublicFacts(name, context, spec = null) {
     const version = spec === null ? null : installedVersion(doc, spec)
     return { at: context.now, created: firstPublished(doc), ...spec === null ? {} : { installs: version === null ? null
       : { version, latest: typeof doc['dist-tags']?.latest === 'string' ? doc['dist-tags'].latest : null, published: isTime(doc.time?.[version]) ? doc.time[version] : null,
-        scripts: Boolean(npmVersionManifest(doc.versions[version]).installScripts) } } }
+        scripts: Boolean(npmVersionManifest(doc.versions[version]).installScripts) || doc.versions[version]?.gypfile === true || doc.versions[version]?.hasInstallScript === true } } }
   }, hit => context.now - hit.at < PACKAGE_MS)
   return facts.missing ? null : { created: facts.created, ...spec === null ? {} : { installs: facts.installs } }
 }
