@@ -2096,17 +2096,23 @@ async function revalidateManagedSession() {
     // Claim the triage change-notifier for the server push — a no-op unless
     // the session's role can write triage (reads still hydrate without it).
     initManagedTriagePush()
-    // The user's teams (sidebar Teams section). probeTeams never throws; empty
-    // when logged out. Repaint the sidebar so the section reflects the result.
-    if (!(await refreshManagedTeams(isCurrent))) return
     if (!document.querySelector('base')) {
       managedBase = document.createElement('base')
       managedBase.href = '/'
       document.head.prepend(managedBase)
     }
-    if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
-      await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
-    } else if (session) await managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration })
+    // The user's teams (sidebar Teams section). probeTeams never throws; empty
+    // when logged out. Repaint the sidebar so the section reflects the result.
+    // The page opens alongside this read, not after it: Manage, npm and the
+    // other pages need only the session, and the routes resolved through a
+    // team join the read in flight (restoreManagedPageContent). The read is
+    // the session's, not the view's, so the navigation that opens the page
+    // does not cancel it.
+    const teams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
+    const page = managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)
+      ? managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
+      : session ? managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration }) : null
+    await Promise.all([teams, page])
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   } finally {
