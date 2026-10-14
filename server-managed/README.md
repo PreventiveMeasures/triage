@@ -929,7 +929,8 @@ lockfile's packages (`@preventive/lockfile`), and each package's risk, with
 `done` last; a response without `done` was cut short. On a serverless
 deployment (Vercel, whose function answers within 300 seconds), a scan stops
 after 270 seconds, the work under way given up on, its last line `continue`
-in place of `done`: the page asks again at once, keeping what it found, and
+in place of `done`: the page asks again at once, keeping what it found (but
+a repository's, where its default branch moved on between parts), and
 the next part tells what the last assessed as kept, going on from where it
 stopped, a hundred parts at most, or until three parts in a row find nothing
 more. Repositories are read one
