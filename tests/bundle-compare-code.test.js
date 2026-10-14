@@ -1917,6 +1917,57 @@ test('the tree counts a file with whitespace changes hidden where its diff hides
   assert.match(counts['src/mixed.js'], /data-tooltip=With Hide whitespace changes As published: \+2 −1> <span class=add>\+1<\/span> <span class=del>−0<\/span>/u, 'the line added alone')
 })
 
+// Two sides of a file too large for the tree to count while it draws (over
+// 20,000 lines between them), every tenth line changed.
+const largeSides = (line = i => `export const v${i} = ${i}\n`) => [Array.from({ length: 12_000 }, (_, i) => line(i)).join(''),
+  Array.from({ length: 12_000 }, (_, i) => line(i % 10 === 0 ? `${i}x` : i)).join('')]
+
+test('the tree counts a file too large to count while it draws as its diff drew it, once drawn, and keeps it', t => {
+  t.after(() => { element._setWhitespace(false) })
+  const [before, after] = largeSides()
+  const element = view('src/api.js', [{ 'src/big.js': before }, { 'src/big.js': after }])
+  assert.equal(rowCounts(renderText(element.render()))['src/big.js'], null, 'none till its diff is drawn')
+  element.path = 'src/big.js'
+  const drawn = renderText(element.render())
+  assert.match(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(drawn)[1], /class="add">\+1,200<\/span><span class="del">−1,200<\/span>/u)
+  assert.match(rowCounts(drawn)['src/big.js'], /^class="bundle-compare-code-line-counts" aria-label=1200 added, 1200 removed lines data-tooltip=> <span class=add>\+1,200<\/span> <span class=del>−1,200<\/span>/u,
+    'as its head counts them, in the same render')
+  element.path = 'src/api.js'
+  assert.match(rowCounts(renderText(element.render()))['src/big.js'], /\+1,200[^]*−1,200/u, 'kept once another file is drawn')
+  element._setWhitespace(true)
+  assert.equal(rowCounts(renderText(element.render()))['src/big.js'], null, 'none under settings it was not drawn with, not counted anew')
+  element.path = 'src/big.js'
+  assert.match(rowCounts(renderText(element.render()))['src/big.js'], /data-tooltip=With Hide whitespace changes> <span class=add>\+1,200<\/span>/u,
+    'drawn again under them: what they set aside said, its counts as published unknown')
+})
+
+test('the Diff view\'s tree counts each file it draws, however large', async () => {
+  await import('../ui/view/bundle-compare-all.js')
+  const [before, after] = largeSides()
+  const code = view(null, [{ 'src/big.js': before }, { 'src/big.js': after }])
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  assert.match(rowCounts(renderText(all.render()))['src/big.js'], /<span class=add>\+1,200<\/span> <span class=del>−1,200<\/span>/u)
+})
+
+test('the tree marks `≈` a file too large to count whose changes in types alone are hidden, drawn or not', async t => {
+  t.after(() => { element._setTypes(false) })
+  const [before, after] = largeSides(i => `export declare const v${i}: ${typeof i === 'string' ? 'string' : 'number'};\n`)
+  const element = view('src/api.js', [{ 'types/big.d.ts': before }, { 'types/big.d.ts': after }])
+  element.base.managedId = 'b81'
+  element.other.managedId = 'b82'
+  element.path = 'types/big.d.ts'
+  await paintUntil(element, markup => /accessible-label=Hide type-only changes/u.test(markup))
+  element.path = 'src/api.js'
+  element._setTypes(true)
+  assert.match(rowCounts(renderText(element.render()))['types/big.d.ts'],
+    /^class="bundle-compare-code-line-counts unchanged" aria-label=No line changes with Hide type-only changes data-tooltip=No line changes with Hide type-only changes>≈/u,
+    'not drawn under them: its proof alone tells, its counts as published unknown')
+  element.path = 'types/big.d.ts'
+  assert.match(rowCounts(renderText(element.render()))['types/big.d.ts'], /unchanged[^]*>≈/u, 'drawn')
+})
+
 test('the tree keeps `=` for a file renamed as it was, whatever the settings', t => {
   t.after(() => { element._setWhitespace(false) })
   const element = view(null, [{ 'src/same.js': 'x\n' }, { 'lib/same.js': 'x\n' }])
