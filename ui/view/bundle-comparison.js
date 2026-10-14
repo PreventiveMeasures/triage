@@ -94,12 +94,12 @@ const readOf = details => {
 
 // The comparison of `base` with `other`, within a reason `scope` where given,
 // asked for where none is kept, or one that failed for a reason that may pass
-// is due again; the one read last.
-function comparisonOf(base, other, scope) {
+// is due again, or any that failed where asked `again`; the one read last.
+function comparisonOf(base, other, scope, again = false) {
   const key = served(base, other) ? `${base.integrity}\0${other.integrity}\0${scope ?? ''}` : `${readOf(base)}\0${readOf(other)}\0${scope ?? ''}\0here`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
-  if (!comparison || (comparison.retryAt !== undefined && Date.now() >= comparison.retryAt)) {
+  if (!comparison || (again && comparison.state.status === 'error') || (comparison.retryAt !== undefined && Date.now() >= comparison.retryAt)) {
     comparison = { state: { status: 'loading' }, notify: comparison?.notify ?? null, waiting: [], failures: comparison?.failures ?? 0 }
     if (local && !served(base, other)) comparison.state = { status: 'ready', diff: local.prepareComparison(base, other, scope ?? '') }
     else load(key, comparison, base, other, scope ?? '')
@@ -119,15 +119,16 @@ export function bundleComparison(base, other, scope, notify) {
 }
 
 // The same, as its `diff` once it comes, for a view that opens on it whole:
-// rejected where it fails.
+// rejected where it fails, as no retry tells it, and asked again at once where
+// it failed before, as the view's Retry asks (npm-review-view.js).
 export function bundleComparisonDiff(base, other, scope = null) {
   return new Promise((resolve, reject) => {
-    const settle = () => {
-      const comparison = comparisonOf(base, other, scope), { state } = comparison
-      if (state.status === 'loading') comparison.waiting.push(settle)
+    const settle = (again = false) => {
+      const comparison = comparisonOf(base, other, scope, again), { state } = comparison
+      if (state.status === 'loading') comparison.waiting.push(() => settle())
       else if (state.status === 'ready') resolve(state.diff)
       else reject(new Error(state.message))
     }
-    settle()
+    settle(true)
   })
 }

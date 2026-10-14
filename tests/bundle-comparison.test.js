@@ -102,3 +102,17 @@ test('a view drawing a comparison and one waiting for it whole are both told', a
   asked.at(-1).reject(Object.assign(new Error('This bundle is no longer available.'), { status: 404 }))
   await assert.rejects(lost, { message: 'This bundle is no longer available.' })
 })
+
+test('one waiting for it whole is told of a failure that may pass, and asking again asks the server again at once', async () => {
+  const [base, other] = [sourcemap('r-base', {}, { managedId: 'r1' }), sourcemap('r-other', {}, { managedId: 'r2' })]
+  const busy = bundleComparisonDiff(base, other)
+  asked.at(-1).reject(Object.assign(new Error('Too many bundles are being compared. Try again shortly.'), { status: 429 }))
+  await assert.rejects(busy, { message: 'Too many bundles are being compared. Try again shortly.' })
+  const before = asked.length
+  assert.equal(bundleComparison(base, other, null, () => {}).status, 'error', 'a view drawing it waits for the retry')
+  assert.equal(asked.length, before)
+  const again = bundleComparisonDiff(base, other)
+  assert.equal(asked.length, before + 1, 'Retry asks at once')
+  asked.at(-1).resolve(answered)
+  assert.equal(await again, answered)
+})
