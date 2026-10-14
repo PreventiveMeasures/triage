@@ -20,6 +20,10 @@ mock.module('../ui/view/bundle-compare-all.js', { namedExports: {
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
+// The server's comparisons (bundle-comparison.js), of bundles none of these are.
+mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchBundleComparison: () => Promise.reject(new Error('not a managed bundle')), fetchNpmComparison: () => Promise.reject(new Error('not an npm version')),
+} })
 await import('../ui/view/bundle-compare.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 const Compare = customElements.get('bundle-compare')
@@ -31,6 +35,16 @@ function details(integrity, target, conditions = 'node, import') {
     reason: { deps: ['a.js', 'b.js'] },
     imports: new Map([[conditions, new Map([['app.js', new Map([['dep', target]])]])]]),
   }) }
+}
+// Bundles opened here are compared here, at once once the chunk that does it
+// is loaded (bundle-comparison.js): loaded before the views are drawn.
+const { bundleComparisonDiff } = await import('../ui/view/bundle-comparison.js')
+await bundleComparisonDiff(details('base', 'a.js'), details('other', 'b.js'))
+// The comparison a view draws.
+function diffOf(view) {
+  const paired = view._comparison()
+  assert.equal(paired.status, 'ready')
+  return paired.diff
 }
 function compare() {
   const view = new Compare()
@@ -44,7 +58,7 @@ function compare() {
 test('the summary row offers Overview and Code, Overview first, and a file row opens its diff in Code', () => {
   const view = compare()
   view._status = 'ready'
-  const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
+  const tabs = renderText(view._renderSummary(diffOf(view))).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
   assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
   assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
   assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
@@ -80,8 +94,8 @@ test('Code lists every file\'s diff while that list is under 25,000 rows, and a 
   assert.match(listed, /<bundle-compare-all /u)
   assert.doesNotMatch(listed, /<bundle-compare-code /u)
   combinedRows = 25_000
-  delete view._diffFor().combined
-  const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
+  delete diffOf(view).combined
+  const tabs = renderText(view._renderSummary(diffOf(view))).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
   assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
   assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['false', 'true'])
   assert.match(renderText(view.render()), /<bundle-compare-code /u)
@@ -89,11 +103,11 @@ test('Code lists every file\'s diff while that list is under 25,000 rows, and a 
 
 test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {
   const view = compare()
-  const collapsed = renderText(view._renderDiff())
+  const collapsed = renderText(view._renderDiff(diffOf(view)))
   assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Import resolutions <span class="bundle-compare-section-count">1/u)
   assert.doesNotMatch(collapsed, /<table/u, 'collapsed by default')
   view._openSections = new Set(['resolutions'])
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /Repointed/u)
   assert.match(markup, /<th>File<\/th><th>Import<\/th><th>Before<\/th><th>After<\/th><th>Conditions<\/th>/u)
   const row = markup.slice(markup.indexOf('<tbody>'))
@@ -103,8 +117,8 @@ test('Differences renders resolution-only changes as a collapsed File | Import |
   assert.deepEqual(cells, ['app.js', 'dep', 'b.js', 'a.js', 'node, import'])
   assert.match(markup, /File contents are unchanged; import resolutions differ/u)
   assert.doesNotMatch(markup, /These two bundles carry identical files/u)
-  assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
-  assert.equal(view._diffFor().totals.changedFiles, 0)
+  assert.match(renderText(view._renderSummary(diffOf(view))), /1 repointed resolution/u)
+  assert.equal(diffOf(view).totals.changedFiles, 0)
 })
 
 test('Repointed drops the Conditions column when every row reads `*`', () => {
@@ -112,7 +126,7 @@ test('Repointed drops the Conditions column when every row reads `*`', () => {
   view.details = details('base', 'a.js', '*')
   view._otherDetails = details('other', 'b.js', '*')
   view._openSections = new Set(['resolutions'])
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /<th>File<\/th><th>Import<\/th><th>Before<\/th><th>After<\/th><\/tr>/u)
   assert.match(markup, /<table class=bundle-compare-resolutions--no-context>/u)
   assert.doesNotMatch(markup, /bundle-compare-resolution-context/u)
@@ -120,19 +134,19 @@ test('Repointed drops the Conditions column when every row reads `*`', () => {
 
 test('changing scope recomputes resolution changes and restores the identical state when none remain', () => {
   const view = compare()
-  assert.equal(view._diffFor().resolutions.totalChanges, 1)
+  assert.equal(diffOf(view).resolutions.totalChanges, 1)
   view._scope = 'reason:deps'
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /These two bundles carry identical files/u)
   assert.doesNotMatch(markup, /Import resolutions/u)
-  assert.doesNotMatch(renderText(view._renderSummary(view._diffFor())), /repointed resolution/u)
+  assert.doesNotMatch(renderText(view._renderSummary(diffOf(view))), /repointed resolution/u)
   view._scope = ''
-  assert.equal(view._diffFor().resolutions.totalChanges, 1)
+  assert.equal(diffOf(view).resolutions.totalChanges, 1)
 })
 
 test('resolution groups cap visible rows while preserving exact counts', () => {
   const view = compare()
-  const row = view._diffFor().resolutions.changed[0]
+  const row = diffOf(view).resolutions.changed[0]
   const rows = Array.from({ length: 405 }, (_, i) => ({ ...row, key: String(i), parent: `file-${i}.js` }))
   view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderResolutions({ changed: rows, totalChanges: rows.length }))
@@ -147,14 +161,15 @@ test('added and removed resolutions never appear or contribute to the summary', 
   view.details.bundle.imports.get('node, import').get('app.js').set('removed-only', 'a.js')
   view._otherDetails.bundle.imports.get('node, import').get('app.js').set('added-only', 'b.js')
   view._openSections = new Set(['resolutions'])
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /Repointed/u)
   assert.doesNotMatch(markup, /removed-only|added-only/u)
-  assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
+  assert.match(renderText(view._renderSummary(diffOf(view))), /1 repointed resolution/u)
   view._otherDetails.bundle.imports.get('node, import').get('app.js').set('dep', 'a.js')
-  view._diffKey = null
-  assert.doesNotMatch(renderText(view._renderDiff()), /Import resolutions|Repointed/u)
-  assert.doesNotMatch(renderText(view._renderSummary(view._diffFor())), /repointed resolution/u)
+  // Read anew, as a bundle that changed is.
+  view._otherDetails = { ...view._otherDetails }
+  assert.doesNotMatch(renderText(view._renderDiff(diffOf(view))), /Import resolutions|Repointed/u)
+  assert.doesNotMatch(renderText(view._renderSummary(diffOf(view))), /repointed resolution/u)
 })
 
 test('file groups default to name order and sort independently by displayed size', () => {
@@ -224,13 +239,12 @@ test('file groups list every file, in a list that scrolls, in the order chosen',
 test('the Files section is collapsed until opened, then lists Removed | Added | Changed', () => {
   const view = compare()
   view._otherDetails.bundle.modules.get('.').files['a.js'] = 'changed'
-  view._diffKey = null
-  const collapsed = renderText(view._renderDiff())
+  const collapsed = renderText(view._renderDiff(diffOf(view)))
   assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
   const filesPart = markup => markup.slice(markup.indexOf('>Files <span'))
   assert.doesNotMatch(filesPart(collapsed), /bundle-compare-cols/u)
   view._openSections = new Set(['files'])
-  assert.match(filesPart(renderText(view._renderDiff())), /bundle-compare-cols[^]*bundle-compare-changed/u)
+  assert.match(filesPart(renderText(view._renderDiff(diffOf(view)))), /bundle-compare-cols[^]*bundle-compare-changed/u)
 })
 
 test('the Files section lists as changed a file whose record alone changed, saying how', () => {
@@ -238,9 +252,8 @@ test('the Files section lists as changed a file whose record alone changed, sayi
   // The open bundle runs a.js, its bytes the same, as an entry point with its execute bit set.
   view.details.bundle.entries.add('a.js')
   view.details.bundle.executable.add('a.js')
-  view._diffKey = null
   view._openSections = new Set(['files'])
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
   assert.match(markup, /bundle-compare-changed[^]*a\.js[^]*bundle-compare-code-meta"?>\+x<[^]*bundle-compare-code-meta"?>new entry</u)
 })
@@ -337,8 +350,7 @@ test('a package installed under an npm alias keeps one row, its versions joined 
   const view = compare()
   view.details = side('other', '1.1.0', 'one, two')
   view._otherDetails = side('base', '1.0.0', 'one')
-  view._diffKey = null
-  const { packageRows } = view._diffFor()
+  const { packageRows } = diffOf(view)
   assert.deepEqual(packageRows.removed, [])
   assert.deepEqual(packageRows.added, [])
   assert.deepEqual(packageRows.changed, [{ pkg: 'alias', baseBytes: 3, otherBytes: 8, delta: 5,
@@ -410,8 +422,7 @@ test('no "Changes from" caption; the root the file rows leave out rides on the F
   const view = compare()
   view.details = side('base', 'one')
   view._otherDetails = side('other', 'one, two')
-  view._diffKey = null
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.doesNotMatch(markup, /Changes from/u)
   assert.match(markup, /Files <span class="bundle-compare-section-count">2<\/span><span class="bundle-compare-section-note" data-tooltip-truncated data-tooltip=src\/>src\/<\/span><\/summary>/u)
 })
@@ -425,9 +436,8 @@ test('Files lines up under Packages\' lanes, or lays out its own when it lists a
     const view = compare()
     view.details = side('base', base)
     view._otherDetails = side('other', other)
-    view._diffKey = null
     view._openSections = new Set(['files'])
-    return [...renderText(view._renderDiff()).matchAll(/class="bundle-compare-cols" data-lanes=(\d) data-section=(\w+)/gu)].map(m => `${m[2]} ${m[1]}`)
+    return [...renderText(view._renderDiff(diffOf(view))).matchAll(/class="bundle-compare-cols" data-lanes=(\d) data-section=(\w+)/gu)].map(m => `${m[2]} ${m[1]}`)
   }
   // Packages: Removed (gone) | Changed (own source); Files the same kinds,
   // laid out in Packages' lanes.
@@ -443,13 +453,12 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
   const view = compare()
   view.details = side('other', { 'src/app.js': 'one', 'lib/util.ts': 'u: 1' })
   view._otherDetails = side('base', { 'src/app.js': 'one', 'src/util.js': 'u' })
-  view._diffKey = null
   view._openSections = new Set(['files'])
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.doesNotMatch(markup, /bundle-compare-group bundle-compare-(?:removed|added)/u, 'neither removed nor added')
   const changed = markup.slice(markup.lastIndexOf('bundle-compare-group bundle-compare-changed'))
   assert.match(changed, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u)
-  assert.match(renderText(view._renderSummary(view._diffFor())), /1 changed \(1 renamed\)/u)
+  assert.match(renderText(view._renderSummary(diffOf(view))), /1 changed \(1 renamed\)/u)
 })
 
 // A `source` offers what to compare with in place of the bundles on hand, as
@@ -487,12 +496,12 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.deepEqual(calls.loads, ['1.0.0'])
   assert.equal(view._otherDetails.integrity, 'sha512-1.0.0')
   assert.equal(view._status, 'ready')
-  const diff = renderText(view._renderDiff())
+  const diff = renderText(view._renderDiff(diffOf(view)))
   assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
   assert.doesNotMatch(diff, />Packages</u)
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
   view.source = { ...view.source, dependencyTags: (row, kind) => `[${kind} ${row.name}]` }
-  assert.match(renderText(view._renderDiff()), /\[added dep\]<span class="npm-dependency-kind">peer<\/span>/u, 'what the source tags one with, before its kind')
+  assert.match(renderText(view._renderDiff(diffOf(view))), /\[added dep\]<span class="npm-dependency-kind">peer<\/span>/u, 'what the source tags one with, before its kind')
 })
 
 test('a source\'s badges are given the one compared with, the open one, and the comparison\'s files', async () => {
@@ -513,8 +522,7 @@ test('a file\'s icon reads each side under that side\'s own path, a removed one 
   view.details = map('sha512-2.0.0', { 'src/index.js': 'b\n', 'src/lib/a.js': 'b\n' })
   view._otherDetails = map('sha512-1.0.0', { 'LICENSE': 'l\n', 'index.js': 'a\n', 'lib/a.js': 'a\n' })
   view._targetIntegrity = '1.0.0'
-  view._diffKey = null
-  renderText(view._renderDiff())
+  renderText(view._renderDiff(diffOf(view)))
   assert.deepEqual(asked.get('src/LICENSE'), ['sha512-1.0.0 LICENSE', 'sha512-2.0.0 src/LICENSE'], 'removed: the base read where it had the file')
   assert.deepEqual(asked.get('src/index.js'), ['sha512-1.0.0 index.js', 'sha512-2.0.0 src/index.js'], 'changed: each side under its own path')
 })
@@ -532,19 +540,18 @@ test('a source\'s files list open, each with its type\'s icon, those the open on
   view.details = map('sha512-2.0.0', { 'kept.js': 'a\n\nb\n', 'new.js': 'n\n' })
   view._otherDetails = map('sha512-1.0.0', { 'kept.js': 'a\n', 'gone.js': 'g\n' })
   view._targetIntegrity = '1.0.0'
-  view._diffKey = null
-  const markup = renderText(view._renderDiff())
+  const markup = renderText(view._renderDiff(diffOf(view)))
   assert.match(markup, /<warning sha512-2\.0\.0 new\.js,kept\.js>/u, 'warned of what the open one adds or changes')
   for (const path of ['gone.js', 'new.js', 'kept.js']) assert.match(markup, new RegExp(`<icon ${path}>`, 'u'))
   assert.match(markup, /<tag sha512-2\.0\.0 new\.js as null>/u, 'an added file as none the version compared with had')
   assert.match(markup, /<tag sha512-2\.0\.0 kept\.js as sha512-1\.0\.0 kept\.js>/u, 'a changed one as that version has it, for what is new to it')
   assert.doesNotMatch(markup, /<tag [^>]* gone\.js>/u, 'a file only the one compared with has is not')
   assert.match(markup, /data-tooltip=2 B → 5 B · 1 → 2 LoC>/u, 'a changed file\'s lines of code')
-  const summary = renderText(view._renderSummary(view._diffFor()))
+  const summary = renderText(view._renderSummary(diffOf(view)))
   assert.match(summary, /LoC<\/span>\s*<span class="bundle-compare-metric-value">2 → 3<\/span>[^]*?\+1/u)
   assert.match(summary, /Files<\/span>[^]*?<div class="bundle-compare-chips">/u, 'the file count leads its chips')
   assert.match(summary, /bundle-compare-chip removed">−1 removed[^]*bundle-compare-chip added">\+1 added[^]*bundle-compare-chip changed">1 changed/u)
-  const diff = view._diffFor()
+  const diff = diffOf(view)
   const none = renderText(view._renderSummary({ ...diff, totals: { ...diff.totals, onlyBaseFiles: 0, onlyOtherFiles: 0, changedFiles: 0 } }))
   assert.doesNotMatch(none, /bundle-compare-chip (?:removed|added|changed)"/u, 'no −0 removed, +0 added or 0 changed')
   assert.match(none, /bundle-compare-chip unchanged">0 unchanged/u)

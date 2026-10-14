@@ -61,7 +61,7 @@ import { pkgColor } from './graph/utils.js'
 import { pkgLabel } from './bundle-pkg-of.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { prepareComparison } from './bundle-comparison.js'
+import { bundleComparison } from './bundle-comparison.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
@@ -150,10 +150,9 @@ class BundleCompare extends LitElement {
     this._mode = 'overview'
     this._codePath = null
     this._codeSeek = null
-    // Diff memo — recomputed only when the (base, other) integrity
-    // pair changes, so unrelated re-renders don't re-walk every file.
-    this._diff = null
-    this._diffKey = null
+    // The comparison of the pair, as bundle-comparison.js has it, kept there
+    // by the pair's integrities: painted again once it comes.
+    this._repaint = () => this.requestUpdate()
     // The body Packages' lists fit, watched for a new width or height.
     this._fitBody = null
     this._fitObserver = null
@@ -276,8 +275,6 @@ class BundleCompare extends LitElement {
         return
       }
       this._targetIntegrity = target
-      this._diff = null
-      this._diffKey = null
       // The old base is still parsed: compare against it as it stands.
       const handed = this.source ? null : takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
       if (handed) {
@@ -295,8 +292,6 @@ class BundleCompare extends LitElement {
     this._status = 'idle'
     this._scope = ''
     this._codePath = null
-    this._diff = null
-    this._diffKey = null
   }
 
   // The id this side is picked by: its integrity, or its source's id.
@@ -376,8 +371,6 @@ class BundleCompare extends LitElement {
     this._targetIntegrity = integrity
     this._otherDetails = null
     this._codePath = null
-    this._diff = null
-    this._diffKey = null
     if (!integrity) { this._status = 'idle'; this._scope = ''; return }
     this._status = 'loading'
     this._loadOther(integrity)
@@ -670,14 +663,10 @@ class BundleCompare extends LitElement {
       </section>`)
   }
 
-  // Compute (or reuse the memo of) the diff for the current pairing.
-  _diffFor() {
-    const key = `${this.integrity}|${this._targetIntegrity}|${this._scope}`
-    if (this._diffKey !== key || !this._diff) {
-      this._diff = prepareComparison(this._otherDetails, this.details, this._scope)
-      this._diffKey = key
-    }
-    return this._diff
+  // The comparison of the current pairing: loading, ready with its `diff`,
+  // or failed (bundle-comparison.js).
+  _comparison() {
+    return bundleComparison(this._otherDetails, this.details, this._scope, this._repaint)
   }
 
   // Summary band — dependency, size and line deltas, then the file delta
@@ -752,7 +741,9 @@ class BundleCompare extends LitElement {
       && this._otherDetails
       && (this._otherDetails.json || this._otherDetails.bundle)
       && !this._otherDetails.error
-    const comparison = this._baseReady && ready ? { base: this._otherDetails, other: this.details, files: this._diffFor().files } : null
+    const paired = this._baseReady && ready ? this._comparison() : null
+    const diff = paired?.status === 'ready' ? paired.diff : null
+    const comparison = diff ? { base: this._otherDetails, other: this.details, files: diff.files } : null
     // Picker is always present (when there's anything to pick) so the
     // user can switch the compared bundle without leaving the tab; the
     // swap button rides next to the clear button once a target is live,
@@ -761,7 +752,7 @@ class BundleCompare extends LitElement {
     // after.
     const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector, comparison) : scopeSelector
 
-    const mode = this._baseReady && ready ? this._mode : 'overview'
+    const mode = diff ? this._mode : 'overview'
     let body
     if (!this._baseReady) {
       body = html`<div class="bundle-compare-empty">Loading bundle…</div>`
@@ -778,22 +769,25 @@ class BundleCompare extends LitElement {
       body = html`<div class="bundle-compare-empty is-error">Couldn't read the selected ${noun}: ${this._otherDetails.error}</div>`
     } else if (!this._otherDetails.json && !this._otherDetails.bundle) {
       body = html`<div class="bundle-compare-empty is-error">The selected ${noun} couldn't be parsed.</div>`
+    } else if (paired?.status === 'error') {
+      body = html`<div class="bundle-compare-empty is-error">Couldn't compare the ${noun}s: ${paired.message}</div>`
+    } else if (!diff) {
+      body = html`<div class="bundle-compare-empty">Comparing…</div>`
     } else if (mode !== 'code') {
       // Code shows in place of the body.
-      body = this._renderDiff()
+      body = this._renderDiff(diff)
     }
 
     return html`<div class="bundle-compare">
-      ${renderComparisonHeader(picker, this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing)}
-      ${mode === 'code' ? renderComparisonViewer({ base: this._otherDetails, other: this.details, diff: this._diffFor(), source: this.source,
+      ${renderComparisonHeader(picker, diff ? this._renderSummary(diff) : nothing)}
+      ${mode === 'code' ? renderComparisonViewer({ base: this._otherDetails, other: this.details, diff, source: this.source,
         path: this._codePath, seek: this._codeSeek, baseName: this._nameFor(this._targetIntegrity), otherName: this._nameFor(this.integrity), select: path => { this._codePath = path },
       })
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }
 
-  _renderDiff() {
-    const diff = this._diffFor()
+  _renderDiff(diff) {
     // From the one picked to the open one.
     const baseName = this._nameFor(this._targetIntegrity)
     const otherName = this._nameFor(this.integrity)

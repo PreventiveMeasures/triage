@@ -261,3 +261,30 @@ export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = 
 export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal } = {}) {
   return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
 }
+
+const COMPARISON_ERRORS = {
+  404: 'This bundle is no longer available.',
+  422: "This bundle couldn't be read.",
+  429: 'Too many bundles are being compared. Try again shortly.',
+}
+
+// A comparison as the server works it out (server-managed/comparison.ts), its
+// files paired as Compare and Review read them: the viewer pairs none of a
+// managed bundle's or a package's itself. Its `files.basePaths` a Map again.
+const readComparison = async response => {
+  const comparison = await response.json()
+  comparison.files.basePaths = new Map(comparison.files.basePaths)
+  return comparison
+}
+
+// Two bundles', the one `id` names the base, within a reason `scope` where given.
+export function fetchBundleComparison(id, other, { signal, scope = '' } = {}) {
+  return request(`/api/bundles/${encodeURIComponent(id)}/comparison?${scoped(other, scope)}`, COMPARISON_ERRORS, readComparison, signal)
+}
+
+// Two versions' of a package: `version` the one shown, compared with
+// `otherVersion`, of `otherName` where another package's, or with none as `(empty)`.
+export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name } = {}) {
+  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName } })
+  return request(`/api/npm/comparison?${params}`, NPM_ERRORS, readComparison, signal)
+}
