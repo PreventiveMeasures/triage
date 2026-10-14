@@ -53,6 +53,23 @@ for (const format of ['JSON', 'Markdown']) {
   })
 }
 
+test('a team whose security restriction leaves only other analyzers\' findings stays an App team', async () => {
+  const bodies = [
+    { type: 'security', findings: [[app('pass'), { ...source('code'), revalidate: 'confirmed' }]] },
+    { source: 'codex-security', findings: [{ id: 'import', severity: 'bug', title: 'Imported bug', file: 'app.js' }] },
+  ]
+  const classify = async security => {
+    const reports = bodies.map((body, i) => ({ id: String(i), filename: `${i}.json`, byteSize: JSON.stringify(body).length, sha256: `restricted-${i}`,
+      repo: { github: null, directory: '' }, permissions: { dependencies: true, security } }))
+    const loaded = await loadTeamReports({}, { get: id => Promise.resolve(Buffer.from(JSON.stringify(bodies[Number(id)]))) }, {
+      user: { id: 'user', role: 'view' }, teamId: `restricted-${security}`, repositories: [], reports,
+    })
+    return { app: managedTeamAppMetadata(loaded), ids: loaded.flatMap(r => reportEntries(r.data).flat().map(f => f.id)) }
+  }
+  assert.deepEqual(await classify(true), { app: { appMode: true, appFindings: 2 }, ids: ['pass', 'code', 'import'] })
+  assert.deepEqual(await classify(false), { app: { appMode: true, appFindings: 1 }, ids: ['import'] })
+})
+
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000, allowShare: true }
 
 // Teams in one repository: `app` holds an App report, `mixed` adds a source
