@@ -396,4 +396,8 @@ test('a file\'s kinds in a chip\'s tooltip: code by its own name, the rest by it
   assert.equal(npmRunsCodeSaid(kinds, new Map([['function', [5]], ['tokens', [2]]])),
     'eval (line 3), Function (line 5, new), shell (line 24), persistence (line 26), credentials (lines 2, 7, new), whole env (line 9), publish (line 11), child_process (line 1)',
     'not what each tag covers, which its own tooltip spells out')
+  const lines = (from, count) => Array.from({ length: count }, (_, at) => from + at)
+  assert.equal(npmRunsCodeSaid(new Map([['credential-files', lines(1, 50)], ['tokens', lines(101, 50)]])), 'credentials (lines 1, 2, 3, 4, 5 and 95 more)',
+    'kinds\' lines together past as many as risk keeps of one, yet none cut short')
+  assert.equal(npmRunsCodeSaid(new Map([['credential-files', lines(1, 100)], ['tokens', [200]]])), 'credentials (lines 1, 2, 3, 4, 5 and 96+ more)', 'one cut short')
 })

@@ -13,9 +13,10 @@ export { npmRunsCodeKinds } from '../../risk/files/runs-code.js'
 export const npmFileRunsCode = (details, path) => fileRiskOf(details, path).runsCode
 
 // Its first lines, and how many more: some more yet where as many as risk
-// keeps were found (NPM_MAX_FOUND).
-export const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
-  : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')}${lines.length >= NPM_MAX_FOUND ? '+' : ''} more` : ''}`
+// keeps were found (NPM_MAX_FOUND), or, for several kinds' lines together,
+// where they were of any one (`more`).
+export const linesNote = (lines, more = lines.length >= NPM_MAX_FOUND) => lines.length === 1 ? `line ${lines[0]}`
+  : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')}${more ? '+' : ''} more` : ''}`
 
 // The kinds a file holds, each with its lines, those new to it (`added`, by
 // kind) so said: by its own name where that is code, as eval's kin and
@@ -26,7 +27,10 @@ const CODE_NAME = /^[\w$.]+$/u
 export const npmRunsCodeSaid = (found, added = null) => [...Map.groupBy([...found], ([kind]) => {
   const { name, tag } = RUNS_CODE.get(kind)
   return name && CODE_NAME.test(name) ? name : tag
-})].map(([said, kinds]) => `${said} (${linesNote([...new Set(kinds.flatMap(([, lines]) => lines))].toSorted((a, b) => a - b))}${kinds.some(([kind]) => added?.has(kind)) ? ', new' : ''})`).join(', ')
+})].map(([said, kinds]) => {
+  const lines = [...new Set(kinds.flatMap(([, of]) => of))].toSorted((a, b) => a - b)
+  return `${said} (${linesNote(lines, kinds.some(([, of]) => of.length >= NPM_MAX_FOUND))}${kinds.some(([kind]) => added?.has(kind)) ? ', new' : ''})`
+}).join(', ')
 
 // The one line a tag's lines (each kind's, or service's) are, undefined for
 // several: where a click on the tag opens its file.
