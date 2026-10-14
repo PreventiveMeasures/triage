@@ -8,7 +8,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
-import { lockedPackages } from '../server-managed/locked-packages.ts'
+import { isTestFixture, lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError, githubUnreachable } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
 import { NpmRiskError } from '../risk/index.js'
@@ -494,6 +494,27 @@ test('a scan whose part\'s time is up while GitHub is still being asked tells wh
   const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 50 }))
   assert.ok(Date.now() - started < 500, 'not waiting on GitHub')
   assert.deepEqual(lines.map(line => line.type), ['repos', 'continue'])
+})
+
+test('a test\'s fixture or example is a lockfile under a directory of tests, in one of fixtures or examples inside it', () => {
+  for (const path of ['test/fixtures/package-lock.json', 'tests/fixture/old/package-lock.json', 'packages/a/__tests__/src/examples/pnpm-lock.yaml',
+    '_test_/example/yarn.lock']) assert.ok(isTestFixture(path), path)
+  for (const path of ['fixtures/package-lock.json', 'tests/package-lock.json', 'fixtures/tests/package-lock.json', 'test/fixtures.json/package-lock.json',
+    'testing/fixtures/package-lock.json', 'test/my-fixtures/package-lock.json', 'tests/fixtures']) assert.ok(!isTestFixture(path), path)
+})
+
+test('a test\'s fixture or example its reader refuses is read, but not told; one read, or refused elsewhere, is', async () => {
+  const unreadable = '{ not a lockfile'
+  const paths = ['package-lock.json', 'test/fixtures/old/package-lock.json', 'packages/a/__tests__/examples/package-lock.json', 'tests/fixtures/ok/package-lock.json',
+    'fixtures/package-lock.json', 'tests/package-lock.json']
+  const files = Object.fromEntries(paths.map(path => [path, path === 'package-lock.json' || path.includes('/ok/') ? npmLockfile : unreadable]))
+  const source = sourceOf({ 1: { fullName: 'org/one', lockfiles: paths.map(path => ({ path, format: 'npm' })), files } }, () => Promise.resolve(noneFound))
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(source.read, paths, 'each read')
+  const told = ['package-lock.json', 'tests/fixtures/ok/package-lock.json', 'fixtures/package-lock.json', 'tests/package-lock.json']
+  assert.deepEqual(lines.find(line => line.type === 'repo').lockfiles.map(({ path }) => path), told)
+  assert.deepEqual(lines.filter(line => line.type === 'lockfile').map(line => [line.path, line.error ?? 'read']),
+    [[told[0], 'read'], [told[1], 'read'], [told[2], 'lockfile-unreadable'], [told[3], 'lockfile-unreadable']])
 })
 
 test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {

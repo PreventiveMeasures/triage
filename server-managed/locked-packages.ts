@@ -95,3 +95,14 @@ export function lockedPackages(format: LockfileFormat, text: string): LockedPack
   }
   return [...found.values()]
 }
+
+// Whether a lockfile at `path` is a test's fixture or example: under a
+// directory of tests (`test`, `tests`, `__tests__` and such), in one of
+// fixtures or examples (`fixture`, `fixtures`, `example`, `examples`) inside
+// it, as a test may keep one its readers refuse on purpose.
+const FIXTURES_DIR = /^(?:fixture|example)s?$/u, TESTS_DIR = /^_*tests?_*$/u
+export function isTestFixture(path: string) {
+  const dirs = path.split('/').slice(0, -1)
+  const tests = dirs.findIndex(dir => TESTS_DIR.test(dir))
+  return tests !== -1 && dirs.slice(tests + 1).some(dir => FIXTURES_DIR.test(dir))
+}

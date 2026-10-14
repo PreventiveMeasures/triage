@@ -28,7 +28,7 @@ import type { NpmVersionDocument } from './npm-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
-import { type LockedPackage, lockedPackages } from './locked-packages.ts'
+import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import { type Queue, queue } from './queue.ts'
 import { type DownloadsSource, readyingDownloads } from './scan-downloads.ts'
 import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
@@ -334,33 +334,35 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
 // A repository's line, its lockfiles or why they couldn't be listed, and
 // then its lockfiles', and their advisories: told once they are all read
 // and access to the repository is checked again, as GitHub may have
-// withdrawn it meanwhile.
+// withdrawn it meanwhile. A test's fixture or example its reader refuses
+// (isTestFixture) isn't told at all, as a test may keep one so on purpose.
 async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
   const listed = await listLockfiles(scan, repo)
   if (!listed) return
-  const lockfiles: LockfileLine[] = []
+  const lockfiles: { sha: string; line: LockfileLine }[] = []
   for (const lockfile of listed.lockfiles) {
     if (scan.signal.aborted) return
-    lockfiles.push(await readLockfile(scan, repo.repoId, listed.opened, lockfile))
+    const line = await readLockfile(scan, repo.repoId, listed.opened, lockfile)
+    if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: lockfile.sha, line })
   }
   try { await listed.opened.recheck() } catch (error) {
     if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, 'checking access to it again') })
     return
   }
   if (scan.signal.aborted) return
-  scan.lines.add({ type: 'repo', id: repo.repoId, commit: listed.opened.commit, lockfiles: listed.lockfiles.map(({ path, format }) => ({ path, format })) })
-  for (const line of lockfiles) {
+  scan.lines.add({ type: 'repo', id: repo.repoId, commit: listed.opened.commit, lockfiles: lockfiles.map(({ line: { path, format } }) => ({ path, format })) })
+  for (const { line } of lockfiles) {
     scan.lines.add(line)
     if ('packages' in line) assessLater(scan, line.packages)
   }
-  for (const [at, line] of lockfiles.entries()) {
+  for (const { sha, line } of lockfiles) {
     if (scan.signal.aborted) return
-    const advisories = 'packages' in line ? await readAdvisories(scan, line, listed.lockfiles[at]!.sha) : null
+    const advisories = 'packages' in line ? await readAdvisories(scan, line, sha) : null
     if (advisories) scan.lines.add(advisories)
   }
   if (scan.signal.aborted) return
   scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
-    lockfiles: lockfiles.flatMap((line, at) => 'packages' in line ? [`${line.format}\0${listed.lockfiles[at]!.sha}`] : []) })
+    lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []) })
 }
 
 // Whether an earlier part told `repo` whole, by its name and a team's
