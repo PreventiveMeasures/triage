@@ -3830,7 +3830,9 @@ a.npm-compare-publisher {
 .compare-tip-none { color: var(--muted); }
 /* A file chip's rows, each file's path, wrapping where it must, then what is
    said of it, whole. */
-.compare-tip-rows.is-files { grid-template-columns: minmax(0, max-content) max-content; }
+/* A file's said wraps where the two are wider than the tooltip, rather than
+   squeezing its path to a letter a line. */
+.compare-tip-rows.is-files { grid-template-columns: minmax(0, max-content) minmax(0, max-content); }
 .compare-tip-path { overflow-wrap: anywhere; }
 /* One said in several lines (a new host's every file) reads from the top. */
 .compare-tip-path:has(+ .compare-tip-said > .compare-tip-lines), .compare-tip-said:has(> .compare-tip-lines) { align-self: start; }
