@@ -47,8 +47,10 @@ test('revalidation inputs share security with the App finding that cites them, i
     [{ id: 'pass', revalidate: 'revalidation', type: 'correctness', revalidateInputs: ['secret', 7] }],
     [{ id: 'secret', type: 'security' }],
     [{ id: 'own', type: 'correctness' }],
+    [{ id: 'not-app', revalidate: 'revalidation', isApp: false, type: 'correctness', revalidateInputs: ['ignored'] }],
+    [{ id: 'ignored', type: 'security' }],
   ] }
-  assert.deepEqual(ids(filterReportData(report, perms(true))), [['own']])
+  assert.deepEqual(ids(filterReportData(report, perms(true))), [['own'], ['not-app']], 'inputs on a non-App finding link nothing, as in the App view')
 })
 
 test('known positive security stamps are honored, while false stamps cannot bypass classification', () => {

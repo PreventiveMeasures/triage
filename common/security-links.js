@@ -20,11 +20,13 @@ export function securityLinks(links = []) {
 // another row or report. The App view counts those as represented by it, so
 // they are one issue for security too: hiding one side alone would leave the
 // App answer to a hidden security finding, or a source row without its App row.
+// Only App findings: the view ignores inputs on any other finding
+// (finding-filters.js confirmedCoverage, revalidation-input-groups.js).
 export function revalidationLinks(findings) {
   const links = []
   for (const finding of findings) {
     const inputs = finding?.revalidateInputs
-    if (typeof finding?.id !== 'string' || !Array.isArray(inputs)) continue
+    if (finding?.isApp !== true || typeof finding.id !== 'string' || !Array.isArray(inputs)) continue
     links.push([finding.id, ...inputs.filter((id) => typeof id === 'string' && id !== '')])
   }
   return links
