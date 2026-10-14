@@ -146,7 +146,7 @@ import { attachmentDisposition, sendJson, sendLines, writeResponse } from './htt
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
-import { teamAppKey, teamAppStates } from './team-app.ts'
+import { teamAppKey, teamAppStates, withWorkspaceSummary } from './team-app.ts'
 import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
@@ -1898,7 +1898,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
   // The revision sent is the reloaded catalog's, so classify what changed now.
   const apps = await teamAppStates(deps.db, deps.reportStore, session.id, teams, classified)
   sendJson(res, 200, {
-    teams: teams.map(team => ({ ...team, app: apps.get(teamAppKey(team)) ?? null,
+    teams: teams.map(team => ({ ...withWorkspaceSummary(team, apps.get(teamAppKey(team))),
       bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }),
         commitInfo: commits.commitInfo(bundle) })) })),
     revision,

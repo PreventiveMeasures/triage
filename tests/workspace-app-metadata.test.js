@@ -4,6 +4,7 @@ import './_polyfills.js'
 
 const { workspaceAppMetadata } = await import('../common/workspace-app.js')
 const { configureRevalidation } = await import('../ui/view/format.js')
+const { applyOpeningFilters, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { state } = await import('../client/state.ts')
 const { collectDuplicates } = await import('../client/linked-findings.js')
 const source = (id, extra = {}) => ({ id, severity: 'high', confidence: 9, file: 'src/app.js', isApp: false, ...extra })
@@ -70,9 +71,35 @@ describe('workspace App promotion', () => {
       report('b', [app('A'), source('S', { revalidate: 'partial' })]),
     ]), { appMode: false })
   })
-  it('does not promote empty, source-only, or import-only workspaces without a Confirmed default', () => {
-    for (const reports of [[], [report('empty')], [report('source', [source('S')])], [report('import', [source('I', { isApp: true, _source: 'codex-security' })])]]) {
+  it('does not promote empty or source-only workspaces without a Confirmed default', () => {
+    for (const reports of [[], [report('empty')], [report('source', [source('S')])]]) {
       assert.deepEqual(workspaceAppMetadata(reports), { appMode: false })
+    }
+  })
+  it('promotes a workspace of nothing but unjudged imports, which is its own App view', () => {
+    const imported = (id, extra = {}) => source(id, { isApp: true, _source: 'codex-security', confidence: undefined, ...extra })
+    assert.deepEqual(workspaceAppMetadata([report('import', [imported('I')], [imported('J')])]), { appMode: true, appFindings: 2 })
+    assert.deepEqual(workspaceAppMetadata([report('import', [imported('I', { _sourcePass: true })])]), { appMode: false },
+      'an import its report holds a pass for still needs the pass to answer it')
+    assert.deepEqual(workspaceAppMetadata([report('import', [imported('I')]), report('source', [source('S')])]), { appMode: false },
+      'an uncovered source row keeps a mixed workspace out of App mode')
+  })
+  it('keeps the confidence range of scored imports in their App view, with no outcome filter', () => {
+    const scored = [[source('high', { isApp: true, _source: 'deepsec', confidence: 9 })], [source('low', { isApp: true, _source: 'deepsec', confidence: 3 })]]
+    assert.deepEqual(workspaceAppMetadata([report('deepsec', ...scored)]), { appMode: true, appFindings: 2 })
+    const fields = ['filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy']
+    const before = Object.fromEntries(fields.map((key) => [key, state[key]]))
+    try {
+      state.showRevalidation = true
+      state.upstreamOnly = false
+      state.revalidationDetailed = false
+      configureRevalidation(true)
+      applyOpeningFilters(scored)
+      assert.equal(state.filterConfMin, 4, 'the opening floor still tunes to the imports\' own scores')
+      assert.equal(state.filterRevalidate, '', 'no pass, so no outcome to open on')
+      assert.equal(shouldLockConfirmed(scored), false)
+    } finally {
+      Object.assign(state, before)
     }
   })
 })

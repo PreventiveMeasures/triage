@@ -53,6 +53,23 @@ for (const format of ['JSON', 'Markdown']) {
   })
 }
 
+test('a team whose security restriction leaves only other analyzers\' findings stays an App team', async () => {
+  const bodies = [
+    { type: 'security', findings: [[app('pass'), { ...source('code'), revalidate: 'confirmed' }]] },
+    { source: 'codex-security', findings: [{ id: 'import', severity: 'bug', title: 'Imported bug', file: 'app.js' }] },
+  ]
+  const classify = async security => {
+    const reports = bodies.map((body, i) => ({ id: String(i), filename: `${i}.json`, byteSize: JSON.stringify(body).length, sha256: `restricted-${i}`,
+      repo: { github: null, directory: '' }, permissions: { dependencies: true, security } }))
+    const loaded = await loadTeamReports({}, { get: id => Promise.resolve(Buffer.from(JSON.stringify(bodies[Number(id)]))) }, {
+      user: { id: 'user', role: 'view' }, teamId: `restricted-${security}`, repositories: [], reports,
+    })
+    return { app: managedTeamAppMetadata(loaded), ids: loaded.flatMap(r => reportEntries(r.data).flat().map(f => f.id)) }
+  }
+  assert.deepEqual(await classify(true), { app: { appMode: true, appFindings: 2 }, ids: ['pass', 'code', 'import'] })
+  assert.deepEqual(await classify(false), { app: { appMode: true, appFindings: 1 }, ids: ['import'] })
+})
+
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000, allowShare: true }
 
 // Teams in one repository: `app` holds an App report, `mixed` adds a source
@@ -132,6 +149,29 @@ test('catalog changes reclassify teams under a new revision', async t => {
   assert.deepEqual((await h.catalog('reader')).apps.app, { appMode: true, appFindings: 1 }, 'linked findings count once')
   await h.db.setReportVisible('mixed-source', false)
   assert.deepEqual((await h.catalog('reader')).apps.mixed, { appMode: true, appFindings: 1 })
+})
+
+test('restricted readers do not see reports their permissions leave empty; unrestricted readers keep empty reports', async t => {
+  const h = await fixture(t)
+  await h.seed('secret', 'app', { type: 'security', findings: [{ id: 'secret', severity: 'high', file: 'src/secret.js' }] })
+  await h.seed('blank', 'app', { findings: [] })
+  await h.seed('dependency', 'app', { findings: [{ id: 'dependency', severity: 'high', file: 'node_modules/third/index.js' }] })
+  await h.seed('secret-links', 'app', { source: 'links', findings: [], links: [['secret', 'A']] })
+  const listed = async login => {
+    const response = await h.request('/api/teams', { login })
+    return response.body.teams.find(team => team.id === 'app').reports.map(entry => entry.id).toSorted()
+  }
+  const all = ['app-report', 'blank', 'dependency', 'secret', 'secret-links']
+  assert.deepEqual(await listed('reader'), all, 'with both permissions every report stays, empty or not')
+  await h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: true, security: false })
+  assert.deepEqual(await listed('reader'), ['app-report', 'dependency'])
+  await h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: false, security: true })
+  assert.deepEqual(await listed('reader'), ['app-report', 'secret', 'secret-links'])
+  assert.deepEqual(await listed('peer'), all, 'another reader\'s grants are their own')
+  const adminSession = hashToken(h.sessions.admin.setCookie.split(';', 1)[0].split('=')[1]), token = 'B'.repeat(43)
+  assert.equal(await h.db.createWorkspaceShare(adminSession, Date.now(), 'app', hashToken(token), { dependencies: true, security: false }), true)
+  const shared = await h.request('/api/teams/app/shared', { login: null, headers: { 'x-deepview-share': token } })
+  assert.deepEqual(shared.body.team.reports.map(entry => entry.id).toSorted(), ['app-report', 'dependency'], 'a restricted public link lists the same')
 })
 
 test('unavailable reports leave a team unclassified until a later catalog read succeeds', async t => {

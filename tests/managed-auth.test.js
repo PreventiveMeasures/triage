@@ -1680,6 +1680,7 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
   await db.close()
 })
 
+const PLAIN_REPORT = '{"findings":[{"id":"plain","file":"src/a.js"}]}'
 test('team reports: read iff admin, OR (>=view role AND in a team holding the repo)', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
@@ -1708,7 +1709,8 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   await db.insertReport({ id: reportId, filename: 'scan.json', contentType: 'application/json', byteSize: 5, sha256: 'x', uploadedBy: admin.id, repoId: 7, bundleId: null, bundleIntegrity: null, visible: true }, now)
 
   const reportStore = fakeBlobStore()
-  await reportStore.put(reportId, Buffer.from('{"findings":[]}'))
+  // One plain finding: restricted members are not listed reports left empty.
+  await reportStore.put(reportId, Buffer.from(PLAIN_REPORT))
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
     config, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
@@ -1735,7 +1737,7 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal((await view(null, reportId)).statusCode, 401) // unauthenticated
   const okAdmin = await view(adminSess, reportId)
   assert.equal(okAdmin.statusCode, 200) // admin, NOT in any team → still allowed
-  assert.equal(okAdmin.body, '{"findings":[]}')
+  assert.equal(okAdmin.body, PLAIN_REPORT)
   assert.equal(okAdmin.headers['content-type'], 'text/plain; charset=utf-8')
   assert.equal(okAdmin.headers['x-content-type-options'], 'nosniff')
   assert.equal((await view(viewerSess, reportId)).statusCode, 403) // >=view + member of the team holding repo 7
