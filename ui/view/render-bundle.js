@@ -1778,7 +1778,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
   if (!query) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-hint">
-        Search across every source in this bundle. Each match shows the surrounding
+        Search across every ${details.npm ? 'file of this version' : 'source in this bundle'}. Each match shows the surrounding
         lines for context — fewer matches get more context. Toggle
         <span class="bundle-search-hint-kbd">Aa</span> for case-sensitive and
         <span class="bundle-search-hint-kbd">.*</span> for regular-expression matching.
@@ -1873,7 +1873,7 @@ function renderBundleSearchView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
-      <div class="bundle-code-empty">This bundle doesn't carry any source content.</div>
+      <div class="bundle-code-empty">${details.npm ? 'This version has no files.' : 'This bundle doesn\'t carry any source content.'}</div>
     </div>`
   }
   const query = state.bundleSearchQuery
@@ -1936,8 +1936,8 @@ const bundleTab = (key, label, tab) => html`<button type="button" class=${classM
 // and fall back to 'overview' there — no migration needed.
 
 function renderBundleSlide(entry) {
-  // An npm package version shows its Overview, Code, Treemap and Compare,
-  // which compares it with the package's other versions.
+  // An npm package version shows its Overview, Code, Search, Treemap and
+  // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2028,7 +2028,7 @@ function renderBundleSlide(entry) {
         ${bundleTab('treemap', 'Treemap', tab)}
         ${npm ? nothing : bundleTab('graph', 'Graph', tab)}
         ${bundleTab('code', 'Code', tab)}
-        ${npm ? nothing : bundleTab('search', 'Search', tab)}
+        ${bundleTab('search', 'Search', tab)}
         ${canCompare ? bundleTab('compare', 'Compare', tab) : nothing}
         ${npm && state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true)
           ? bundleTab('review', 'Review', tab) : nothing}

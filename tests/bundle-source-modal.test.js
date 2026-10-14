@@ -87,6 +87,25 @@ test('npm Review tab requires membership in a team with dependency review enable
   }
 })
 
+test('an npm version has a Search tab, searching its text files as a bundle\'s Search does', t => {
+  const previous = { currentView: state.currentView, selectedBundle: state.selectedBundle, bundles: state.bundles, bundleDetails: state.bundleDetails,
+    bundleDetailsTab: state.bundleDetailsTab, bundleSourceFile: state.bundleSourceFile, bundleSearchQuery: state.bundleSearchQuery,
+    bundleSearchRegex: state.bundleSearchRegex, bundleSearchCase: state.bundleSearchCase }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'lib@1.0.0', integrity: 'npm-search-tab', npm: { name: 'lib', version: '1.0.0' } }
+  const details = { ...entry, kind: 'sourcemap', json: { version: 3, sources: ['index.js', 'lib/util.js', 'logo.png'], sourcesContent: ['const needle = 1\n', 'needle()\n', null] },
+    npmBinaries: new Map([['logo.png', { size: 3, digest: 'sha256-logo' }]]) }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: details, bundleDetailsTab: 'search',
+    bundleSourceFile: null, bundleSearchQuery: '', bundleSearchRegex: false, bundleSearchCase: false })
+  const hint = renderText(renderBundlesList([entry]))
+  assert.match(hint, /data-bundle-tab="search" aria-selected=true/u, 'in its tab strip, kept open')
+  assert.match(hint, /Search across every file of this version\./u)
+  state.bundleSearchQuery = 'needle'
+  const found = renderText(renderBundlesList([entry]))
+  assert.deepEqual([...found.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), ['index.js', 'lib/util.js'],
+    'its text files, one that isn\'t aside')
+})
+
 test('Compare and Review receive the same header chip renderer and file metadata source', t => {
   const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams }
   t.after(() => Object.assign(state, previous))

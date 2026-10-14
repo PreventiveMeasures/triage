@@ -82,6 +82,7 @@ test('npm viewer routes round-trip, a scoped name in two components', () => {
     { view: 'npm', packageName: '@babel/core', packageSpec: '7.24.0', bundleTab: 'code', file: 12 },
     { view: 'npm', packageName: '@babel/core', packageSpec: '1.0.0-rc.1+build.2', bundleTab: 'code', file: 3, line: 4, endLine: 9 },
     { view: 'npm', packageName: 'lodash', packageSpec: '4.17.21', bundleTab: 'treemap' },
+    { view: 'npm', packageName: '@babel/core', packageSpec: '7.24.0', bundleTab: 'search' },
     { view: 'npm', packageName: 'lodash', packageSpec: '4.17.21', bundleTab: 'compare' },
     { view: 'npm', packageName: '@a/b', packageSpec: '2.0.0', bundleTab: 'compare', compareSpec: '1.0.0' },
     { view: 'npm', packageName: '@a/b', packageSpec: '2.0.0', bundleTab: 'compare', compareSpec: 'next', compareMode: 'code' },
@@ -89,9 +90,10 @@ test('npm viewer routes round-trip, a scoped name in two components', () => {
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
   assert.deepEqual(parseManagedRoute(new URL('/npm/@a/b@2.0.0/compare/1.0.0/diff', 'https://triage.test')), routes.at(-1), 'an older /diff link opens Code')
   assert.equal(managedRoutePath(routes[4]), '/npm/@babel/core@7.24.0/code/12')
+  assert.equal(managedRoutePath(routes[7]), '/npm/@babel/core@7.24.0/search')
   for (const path of ['/npm/@babel', '/npm/_private', '/npm/.hidden', '/npm/a/b/c', '/npm/lodash@^4', '/npm/lodash/graph', '/npm/lodash/code/0',
     '/npm/lodash/code/src', '/npm/lodash@1.0.0/code/1/2', '/npm/@a/b@1@2', '/npm/a@1.0.0/compare/^1', '/npm/a@1.0.0/compare/1.0.0/graph',
-    '/npm/a@1.0.0/treemap/3', '/npm/a@1.0.0/code/3/code', '/npm/a@1.0.0/compare/1.0.0/split', '/npm/a@1.0.0/code/3/diff']) {
+    '/npm/a@1.0.0/treemap/3', '/npm/a@1.0.0/search/3', '/npm/a@1.0.0/code/3/code', '/npm/a@1.0.0/compare/1.0.0/split', '/npm/a@1.0.0/code/3/diff']) {
     assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
   }
   for (const route of [{ view: 'npm', packageName: '../api' }, { view: 'npm', packageName: 'a', packageSpec: '^1' }, { view: 'npm', packageName: 'a', bundleTab: 'graph' }]) {
