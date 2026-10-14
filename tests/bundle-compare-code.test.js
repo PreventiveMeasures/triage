@@ -47,11 +47,14 @@ async function renameAnswer(id, other, path, otherPath, hash, otherHash) {
   if (before instanceof Error) throw before
   flying.most = Math.max(flying.most, ++flying.now)
   await flying.held
+  // Answered wrongly as it was once let go, all of one answer alike, however
+  // long working it out takes.
+  const [otherFile, otherCopy] = [misanswered.has(id), misanswered.has(`${id}:copy`)]
   const { warnings, diffs: [shown, hidden], ...diff } = await renamedDiffs(before, after, { whitespace: ['none', 'change'] }).finally(() => { flying.now-- })
   assert.deepEqual(warnings, [])
-  const [prettyHash, otherPrettyHash] = await Promise.all([misanswered.has(`${id}:copy`) ? `${before}x` : before, after].map(computeFileHash))
+  const [prettyHash, otherPrettyHash] = await Promise.all([otherCopy ? `${before}x` : before, after].map(computeFileHash))
   return { ...diff, blocks: shown.blocks, marks: shown.marks, ignoringWhitespace: { blocks: hidden.blocks, marks: hidden.marks },
-    hash: misanswered.has(id) ? `${hash}x` : hash, otherHash, prettyHash, otherPrettyHash }
+    hash: otherFile ? `${hash}x` : hash, otherHash, prettyHash, otherPrettyHash }
 }
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path, hash) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve({ text: pretty.get(`${id}:${path}`), source: hash })),
@@ -2197,12 +2200,20 @@ test('a diff the server answers for other files than those asked about, or of ot
   element.other.managedId = 'b12'
   pretty.set('b11:dist/told.min.js', 'var Y = 1;\nq(Y);\nf(1);\n')
   pretty.set('b12:dist/told.min.js', 'var X = 1;\nq(X);\nf(2);\n')
+  // The server's answers held till it answers wrongly: what the first paints
+  // ask for, the comparison's and the file's alone, is answered so too, not
+  // rightly first.
+  let release
+  flying.held = new Promise(resolve => { release = resolve })
+  t.after(() => { release(); flying.held = null })
   state.bundleSourcePretty = true
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
   // The answer of another file's diff, or of another copy of this one: drawn, either might hide a change.
   for (const told of ['b11', 'b11:copy']) {
     misanswered.add(told)
+    flying.held = null
+    release()
     element._setRenames(true)
     await settle()
     assert.match(renderText(element.render()), /Couldn't hide renamed names: The server's diff doesn't match this file as shown\./u, told)
@@ -2215,6 +2226,72 @@ test('a diff the server answers for other files than those asked about, or of ot
   assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
   assert.match(shown, /diff-row add/u, 'the change shown')
   assert.doesNotMatch(shown, /Only renamed names changed/u)
+})
+
+// A comparison's answer for a file, read while the file is asked for alone
+// (as a view drawing it alone asks, the Diff view's waiting for the
+// comparison's), leaves it to that newer ask: taken in its place, the
+// comparison's would stand, of other copies than those drawn, and the ask's
+// own answer, of the copies drawn, be dropped as asked for no longer.
+test('a comparison\'s diff of a file asked for alone while it was read leaves the file to that ask', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
+  const element = view('dist/late.min.js', [{ 'dist/late.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(1);\n` }, { 'dist/late.min.js': `var X=1;${'q(X);'.repeat(250)}f(2);\n` }])
+  element.base.managedId = 'b31'
+  element.other.managedId = 'b32'
+  pretty.set('b31:dist/late.min.js', 'var Y = 1;\nq(Y);\nf(1);\n')
+  pretty.set('b32:dist/late.min.js', 'var X = 1;\nq(X);\nf(2);\n')
+  // Both files' hashes as their bundles record them, read at once, but the
+  // base's first read once `gate` is set, which waits for it.
+  const [hash, otherHash] = await Promise.all([element.base, element.other].map(side => computeFileHash(bundleFilesAsMap(side).get('dist/late.min.js'))))
+  element.other.fileHashes = new Map([['dist/late.min.js', otherHash]])
+  let gate = null, gated = false
+  element.base.fileHashes = new class extends Map {
+    get(path) {
+      if (path !== 'dist/late.min.js') return super.get(path)
+      if (!gate) return hash
+      const held = gate
+      gate = null
+      gated = true
+      return held.then(() => hash)
+    }
+  }()
+  const paint = () => renderText(element.render())
+  const until = async done => { for (let i = 0; i < 400 && !done(); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  const asked = () => renameDiffs.filter(({ id }) => id === 'b31').length
+  // The comparison's answer, of another copy, read while the file is not
+  // asked for alone: drawn as the Diff view draws it, waiting for that.
+  let release
+  flying.held = new Promise(resolve => { release = resolve })
+  t.after(() => { release(); flying.held = null })
+  misanswered.add('b31:copy')
+  element._renamesAlone = false
+  element._setRenames(true)
+  state.bundleSourcePretty = true
+  await until(() => !/is-loading/u.test(paint()) && renameStreams.some(({ id }) => id === 'b31'))
+  let open
+  gate = new Promise(resolve => { open = resolve })
+  flying.held = null
+  release()
+  await until(() => gated)
+  assert.ok(gated, 'the comparison\'s answer read, its hash waited for')
+  assert.equal(asked(), 0)
+  // Meanwhile drawn alone, the file asked for alone, of the copies drawn,
+  // its answer held while the comparison's is read on.
+  misanswered.clear()
+  flying.held = new Promise(resolve => { release = resolve })
+  element._renamesAlone = true
+  assert.match(paint(), /Hiding renamed names…/u)
+  await until(() => asked() === 1)
+  assert.equal(asked(), 1, 'asked for alone')
+  // Its hashes recorded, the comparison's answer is read on within a turn.
+  open()
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  flying.held = null
+  release()
+  await until(() => !/Hiding renamed names…/u.test(paint()))
+  const shown = paint()
+  assert.doesNotMatch(shown, /Couldn't hide renamed names/u, 'the newer ask answers it')
+  assert.match(shown, /diff-row add/u, 'the change shown')
 })
 
 test('pretty-printed, a minified file marks its renamed lines unasked, the plain diff drawn till the server answers, Hide renamed names offered once it finds some', async t => {
