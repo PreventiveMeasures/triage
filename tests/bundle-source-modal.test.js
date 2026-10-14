@@ -104,6 +104,8 @@ test('an npm version has a Search tab, searching its text files as a bundle\'s S
   const found = renderText(renderBundlesList([entry]))
   assert.deepEqual([...found.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), ['index.js', 'lib/util.js'],
     'its text files, one that isn\'t aside')
+  state.bundleDetails = { ...details, json: { version: 3, sources: ['logo.png'], sourcesContent: [null] } }
+  assert.match(renderText(renderBundlesList([entry])), /This version has no text files to search\./u, 'one whose files are all binary has files, none of them text')
 })
 
 test('Compare and Review receive the same header chip renderer and file metadata source', t => {

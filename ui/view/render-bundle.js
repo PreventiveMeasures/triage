@@ -1873,7 +1873,7 @@ function renderBundleSearchView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
-      <div class="bundle-code-empty">${details.npm ? 'This version has no files.' : 'This bundle doesn\'t carry any source content.'}</div>
+      <div class="bundle-code-empty">${details.npm ? 'This version has no text files to search.' : 'This bundle doesn\'t carry any source content.'}</div>
     </div>`
   }
   const query = state.bundleSearchQuery
