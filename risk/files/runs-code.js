@@ -235,13 +235,15 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // token`, by its path too, `gh.exe`), not its other commands (`gh auth
 // status`); the cloud's instance metadata endpoint, AWS's, Azure's and GCP's
 // (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`),
-// not an address it starts (`169.254.169.2540`) nor Azure's instance metadata
-// (`169.254.169.254/metadata/instance/compute`, its slashes escaped too,
-// `\/`), a machine's region and size, not its identity's token, as msal asks
-// it; the GitHub Actions runner's
-// process (`Runner.Worker`, `Runner.Worker.exe`, `GitHub.Runner.Worker`),
-// whose memory holds a job's secrets, not in another name (`MyRunner.Worker`,
-// `Runner.Workers`) nor case (`runner.worker`); another process's memory, by
+// not an address or a host either starts (`169.254.169.2540`,
+// `169.254.169.254.example.com`, `metadata.google.internal.example.com`; a
+// trailing dot, `metadata.google.internal.`, its host still) nor Azure's
+// instance metadata (`169.254.169.254/metadata/instance/compute`, its slashes
+// escaped too, `\/`), a machine's region and size, not its identity's token,
+// as msal asks it; the GitHub Actions runner's process (`Runner.Worker`,
+// `Runner.Worker.exe`, `GitHub.Runner.Worker`), whose memory holds a job's
+// secrets, not in another name (`MyRunner.Worker`, `Runner.Workers`) nor
+// case (`runner.worker`); another process's memory, by
 // its pid's digits or a glob (`/proc/1234/mem`, `/proc/*/mem`,
 // `/proc/[0-9]*/mem`) or a substitution (`/proc/${pid}/mem`, a shell's
 // `$pid`, `$(pgrep …)` and backticks, Python's `{pid}`, a format's `%d`),
@@ -255,7 +257,7 @@ const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['gh-token', new RegExp(GH_TOKEN, 'gu')],
-  ['cloud-metadata', /(?<![\w.])169\.254\.169\.254(?!\.?\d|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-])/gu],
+  ['cloud-metadata', /(?<![\w.])169\.254\.169\.254(?![\w-]|\.[\w-]|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-]|\.[\w-])/gu],
   ['runner-worker', /(?<![\w$-])Runner\.Worker(?![\w$-])/gu],
   ['process-memory', new RegExp(String.raw`\/proc\/(?:${PID})\/mem(?![\w-])`, 'gu')],
   ['trufflehog', new RegExp(TRUFFLEHOG, 'giu')],
@@ -323,14 +325,15 @@ const OPTION = /^(["'\u0060])-/u
 const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
 const PUT = /^(["'\u0060])put\1$/iu
 const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
-// A program run with its arguments apart, by its path too (`spawn('curl',
-// ['-fsSL', 'https://…'])`, `execFile('powershell.exe', ['-NoP', '-enc',
-// …])`, `spawn('systemctl', ['--user', 'enable', …])`, `spawnSync('gh',
-// ['auth', 'token'])`): its command line,
-// its arguments' strings after its name, read as a shell command is, a
+// A program run with its arguments apart, by its path too, a Windows one's
+// from its drive with spaces in it (`spawn('curl', ['-fsSL', 'https://…'])`,
+// `execFile('powershell.exe', ['-NoP', '-enc', …])`, `spawn('systemctl',
+// ['--user', 'enable', …])`, `spawnSync('gh', ['auth', 'token'])`,
+// `execFileSync('C:\\Program Files\\GitHub CLI\\gh.exe', …)`): its command
+// line, its arguments' strings after its name, read as a shell command is, a
 // variable's or a property's value between (`['-o', output, 'https://…']`,
 // `outputs[i]`, `options?.out`), its first 20 arguments, however long.
-const COMMAND = /^(["'\u0060])(?:\S*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl|gh)(?:\.exe)?\1$/iu
+const COMMAND = /^(["'\u0060])(?:\S*[\\/]|[a-z]:[\\/][^\n]*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl|gh)(?:\.exe)?\1$/iu
 // An argument a shell would need quoted, its separators no command's end
 // (`'Cookie: a=b; c=d'`), its own double quotes single then.
 const SEPARATES = /[;|&]/u
