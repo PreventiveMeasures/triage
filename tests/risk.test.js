@@ -733,6 +733,29 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
     { onlyOther: [{ path: 'add.js' }], changed: [{ path: 'edit.js', modified: true }, { path: 'new.js', renamedFrom: 'old.js', modified: false }] })
 })
 
+test('a build\'s content-hashed file paired with the one it replaces by its name, its content changed past pairing', () => {
+  const side = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
+  const module = 'export function mod() { return 42 }\n'.repeat(20)
+  const base = side({ 'assets/index-CyWAfh-p.js': 'one', 'main.3f2a9c1b.js': 'two', 'recorder/mod-CwYYHbcZ.js': module,
+    'chunk-Ab12cd34.js': 'three', 'chunk-Ef56gh78.js': 'four', 'lodash.debounce.js': 'five' })
+  const other = side({ 'assets/index-hRvO4yU2.js': 'six', 'main.9d8e7f6a.js': 'seven', 'recorder/mod-CVQWJZAA.js': `${module}// changed\n`, 'dashboard/mod-CQ8RZGBm.js': module,
+    'chunk-Gh90ij12.js': 'eight', 'chunk-Kl34mn56.js': 'nine', 'lodash.throttle.js': 'ten' })
+  assert.deepEqual(npmFilesDiff(base, other), {
+    onlyOther: ['chunk-Gh90ij12.js', 'chunk-Kl34mn56.js', 'lodash.throttle.js'].map(path => ({ path })),
+    changed: [{ path: 'assets/index-hRvO4yU2.js', renamedFrom: 'assets/index-CyWAfh-p.js', modified: true }, { path: 'main.9d8e7f6a.js', renamedFrom: 'main.3f2a9c1b.js', modified: true },
+      { path: 'recorder/mod-CVQWJZAA.js', renamedFrom: 'recorder/mod-CwYYHbcZ.js', modified: true }, { path: 'dashboard/mod-CQ8RZGBm.js', renamedFrom: 'recorder/mod-CwYYHbcZ.js', modified: false }],
+  }, 'Vite\'s and webpack\'s; one paired by its name a copy\'s by its content too; not two by one name, nor a word')
+})
+
+test('a content-hashed file rebuilt large, holding what it held, is neither new code nor large code', async t => {
+  const bundle = line => `${line.repeat(9000)}eval(source)\n`
+  const before = version('built', '1.0.0', { 'package.json': '{}', 'assets/index-CyWAfh-p.js': bundle('const view = () => render(state)\n') }, { dependencies: {}, scripts: {} }, ago(60))
+  const after = version('built', '1.0.1', { 'package.json': '{}', 'assets/index-hRvO4yU2.js': bundle('const page = () => draw(model)\n') }, { dependencies: {}, scripts: {} }, ago(40))
+  npm(t, [{ name: 'built', versions: [before, after] }])
+  const { findings } = await assessNpm('built', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(finding => finding.severity === 'critical'), [], JSON.stringify(findings))
+})
+
 test('a file that isn\'t text compared by its digest: one added large is large code and binary code, one kept unchanged', async t => {
   const packed = Buffer.alloc(256 * 1024, 0xff), tool = Buffer.from([0, 1, 2])
   const before = version('bin-like', '1.0.0', { 'package.json': '{}', 'bin/tool': tool }, { dependencies: {}, scripts: {} }, ago(30))

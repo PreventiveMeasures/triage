@@ -86,7 +86,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - `too-new`
   - `popularity`: red where unpopular, else orange; yellow at most, whatever its tier, where an account known to publish one of npm's most downloaded packages published the version (`known`), as few download a new package such an account starts, or else, as many are published by a CI that names no account, where the version was published with provenance, as a token alone, stolen, publishes none, and the package is in a known scope (`known` with its `scope`): one of those packages' scopes (`@preventive/publishers/npm-scopes.js`), or a known account's own, `@` and its name (its `account` too), whose owner alone publishes in it
 
-  Against `oldVersion`, what changed is folded into what it holds, never lowering it (`npm/combined.js`): each held finding the more severe of its own and its change's, what the change brought marked (`added`); and what only a change tells added:
+  Against `oldVersion`, what changed is folded into what it holds, never lowering it (`npm/combined.js`): each held finding the more severe of its own and its change's, what the change brought marked (`added`), a file moved told against its old one (`npm/diff.js`), paired by its content as git diff -M pairs it, or by its name but its hash where a build names it by its content (`assets/index-CyWAfh-p.js`), one removed and one added; and what only a change tells added:
   - `publisher`: each account's standing on the package (`wasStanding`, `nowStanding`, below), yellow to a known account or one of its maintainers, red from a known account to one new to it, else orange; a level lower in a major release (its major number higher, or its minor for 0.x), as a package changing hands with a rewrite is
   - `provenance-lost`
   - `held-install-scripts`: those added or changed (`flagged`), and what ran before (`was`)
@@ -135,7 +135,7 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `combined.js`: what a version holds with what changed folded in.
   - `compare.js`: a pair's findings; `held.js`: a version's own.
   - `files.js`: each file read once a version.
-  - `diff.js`: renames, as Compare pairs them.
+  - `diff.js`: renames, as Compare pairs them, and a build's content-hashed files by their names.
   - `malware.js`: what tells of malware, npm's takedown and its advisories.
   - `score.js`: the risk score, from the findings and the version's exposure.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
