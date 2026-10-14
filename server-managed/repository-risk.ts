@@ -14,11 +14,13 @@
 // from elsewhere (git, a tarball with no integrity, a file) is listed, not
 // assessed. Repositories are read one at a time, as GitHub's limits are the
 // caller's; packages are assessed meanwhile, as many at a time as npm-risk.ts
-// makes spare assessments. A lockfile's packages of npm's registry or a
-// mirror are asked of npm's advisories all at once, as `npm audit` asks, each
-// advisory told with whether it is of malware (risk's npmMalwareAdvisory),
-// which alone is a supply chain's risk; the rest are vulnerabilities, told
-// beside.
+// makes spare assessments, those only devDependencies need in every lockfile
+// that locks them (LockedPackage `dev`) once all the rest are, as an install
+// of no devDependencies leaves them out. A lockfile's packages of npm's
+// registry or a mirror are asked of npm's advisories all at once, as `npm
+// audit` asks, each advisory told with whether it is of malware (risk's
+// npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
+// vulnerabilities, told beside.
 import type { Advisory } from '@preventive/upstream/advisories.js'
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
 import { isExactVersion } from '@preventive/upstream/semver.js'
@@ -138,12 +140,18 @@ interface Scan {
   signal: AbortSignal
   lines: Queue<RepositoryRiskLine>
   // Each lockfile's packages not yet seen, to look up as kept (lookUp); those
-  // already seen, by name, version and a mirror's integrity; and those told
-  // stale, to assess again once those with none kept are.
+  // already seen, by seenKey, each with whether only devDependencies need it
+  // so far; those of them with none kept, put off as long as that holds, by
+  // seenKey; and those told stale, to assess again once those with none kept
+  // are.
   lookups: Queue<AssessedPackage[]>
-  seen: Set<string>
+  seen: Map<string, boolean>
+  dev: Map<string, AssessedPackage>
   stale: AssessedPackage[]
 }
+
+// A package as a scan meets it: by its name, version and a mirror's integrity.
+const seenKey = (pkg: AssessedPackage) => `${pkg.name}@${pkg.version}\0${pkg.integrity ?? ''}`
 
 // A package's key, as its risk line is kept: its name, version and a
 // mirror's integrity, and whether a team lists its scope.
@@ -184,7 +192,8 @@ async function keptLines({ source, caches }: Scan, keys: string[]) {
 // Each lockfile's packages, as assessLater gives them: their risk lines as
 // kept, however old, told at once, a fresh one as it is and an older one as
 // stale (`stale`, when it was assessed), its package assessed again once
-// those with none kept are (`scan.stale`); those with none given to `assess`.
+// those with none kept are (`scan.stale`); those with none given to `assess`,
+// but those only devDependencies need so far, put off (`scan.dev`).
 async function lookUp(scan: Scan, assess: (packages: AssessedPackage[]) => void) {
   for (let packages = await scan.lookups.take(); packages !== undefined; packages = await scan.lookups.take()) {
     const keyed: { pkg: AssessedPackage; key: string }[] = []
@@ -197,6 +206,7 @@ async function lookUp(scan: Scan, assess: (packages: AssessedPackage[]) => void)
       const hit = kept.get(key)
       if (hit && isFresh(hit)) scan.lines.add(hit.line)
       else if (hit) { scan.lines.add({ ...hit.line, stale: { assessedAt: hit.at } }); scan.stale.push(pkg) }
+      else if (scan.seen.get(seenKey(pkg)) === true) scan.dev.set(seenKey(pkg), pkg)
       else missing.push(pkg)
     }
     if (missing.length > 0) assess(missing)
@@ -246,14 +256,19 @@ async function readLockfile({ caches }: Scan, repo: number, opened: OpenedReposi
 }
 
 // A lockfile's packages of npm's registry or a mirror not yet seen this scan,
-// to look up as kept (lookUp), and assess where none is.
+// to look up as kept (lookUp), and assess where none is; and one seen as only
+// devDependencies need it, and put off, that this lockfile needs otherwise,
+// to look up again and assess now.
 function assessLater(scan: Scan, packages: LockedPackage[]) {
   const fresh: AssessedPackage[] = []
-  for (const { name, version, source, integrity } of packages) {
-    const key = `${name}@${version}\0${integrity ?? ''}`
-    if ((source !== 'registry' && source !== 'mirror') || version === null || scan.seen.has(key) || !isNpmPackageName(name) || !isNpmPackageSpec(version)) continue
-    scan.seen.add(key)
-    fresh.push({ name, version, ...integrity === undefined ? {} : { integrity } })
+  for (const { name, version, source, integrity, dev = false } of packages) {
+    if ((source !== 'registry' && source !== 'mirror') || version === null || !isNpmPackageName(name) || !isNpmPackageSpec(version)) continue
+    const pkg = { name, version, ...integrity === undefined ? {} : { integrity } }
+    const key = seenKey(pkg)
+    const was = scan.seen.get(key)
+    if (was === false || (was && dev)) continue
+    scan.seen.set(key, dev)
+    if (was === undefined || scan.dev.delete(key)) fresh.push(pkg)
   }
   if (fresh.length > 0) scan.lookups.add(fresh)
 }
@@ -344,11 +359,20 @@ async function readRepositories(scan: Scan) {
   }
 }
 
+// What is left to assess once the repositories are read, a turn at a time:
+// the stale ones that more than devDependencies need, then those only
+// devDependencies need, those with none kept before the stale ones.
+function leftOver(scan: Scan): AssessedPackage[][] {
+  const dev = (pkg: AssessedPackage) => scan.seen.get(seenKey(pkg)) === true
+  return [scan.stale.filter(pkg => !dev(pkg)), [...scan.dev.values(), ...scan.stale.filter(dev)]]
+}
+
 // The scan's lines, in the order they are found: the repositories first,
 // then each repository's lockfiles and their packages once read and access
 // is checked again, and each package's risk: as kept, however old, at once
 // (lookUp), then those with none kept once assessed, while the repositories
-// are still being read, then those told stale once assessed again; `done`
+// are still being read, then those told stale once assessed again, and those
+// only devDependencies need after all the rest (leftOver); `done`
 // last. Ends at once, the work
 // under way given up on, where `signal` aborts or the lines are no longer read. A failure of
 // a repository, a lockfile or a package is told in its line; one of the scan
@@ -357,7 +381,7 @@ async function readRepositories(scan: Scan) {
 export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source: RepositoryRiskSource<R>, signal: AbortSignal, caches = shared): AsyncGenerator<RepositoryRiskLine> {
   const stopped = new AbortController()
   const running = AbortSignal.any([signal, stopped.signal])
-  const scan: Scan = { source, caches, signal: running, lines: queue(signal), lookups: queue(running), seen: new Set(), stale: [] }
+  const scan: Scan = { source, caches, signal: running, lines: queue(signal), lookups: queue(running), seen: new Map(), dev: new Map(), stale: [] }
   const failed: unknown[] = []
   void (async () => {
     try {
@@ -368,8 +392,10 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
         try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally { scan.lookups.close() }
         await looking
       })
-      // then those told stale, assessed again.
-      if (!running.aborted && scan.stale.length > 0) await assessing(scan, assess => { assess(scan.stale); return Promise.resolve() })
+      // then those told stale, and those only devDependencies need, in turn.
+      for (const left of leftOver(scan)) {
+        if (!running.aborted && left.length > 0) await assessing(scan, assess => { assess(left); return Promise.resolve() })
+      }
       if (!running.aborted) scan.lines.add({ type: 'done' })
     } catch (error) {
       failed.push(error)

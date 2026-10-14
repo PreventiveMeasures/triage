@@ -2,7 +2,8 @@
 // lockfiles, or a team's or one repository's, their packages, and what risk
 // tells of each, as the server finds them (GET /api/admin/repositories/risk,
 // server-managed/repository-risk.ts); npm's advisories of them on a tab of
-// their own, those of malware a package's risk too. Opened by its URL alone,
+// their own, those of malware a package's risk too. Those only devDependencies
+// need are tagged so and listed after the rest. Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '@preventive/report'
@@ -94,6 +95,11 @@ export const findingsOf = row => {
 // naming it, and its package taken down by npm, as risk finds it.
 export const malwareSaid = row => [...malwareOf(row) ?? [],
   ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
+// Whether a package row is listed after the rest: only devDependencies need
+// it, in every lockfile that locks it, as an install of none leaves it out;
+// but not malware, which runs wherever it is installed, CI and a developer's
+// machine among them.
+export const putOff = row => Boolean(row.dev) && !findingsOf(row).some(({ id }) => id === 'malware')
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
@@ -107,6 +113,10 @@ const FILTERS = {
 
 // What a package's risk is, as its column's heading tells it.
 const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
+// What a package's dev tag, or an advisory's, tells.
+const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest, and listed after them unless it is malware.'
+const ADVISORY_DEV_SAID = 'Only devDependencies need the versions it affects, in every lockfile that locks them: an install without them leaves them out. Listed after the rest.'
+const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
 // A package row's risk as its line tells it, `stale` where the line is one
 // kept and since gone stale (when it was assessed); a stale one assessed
@@ -132,6 +142,10 @@ const MAX_ROWS = 1000
 const DRAW_MS = 250
 
 const formatCount = new Intl.NumberFormat()
+
+// Package rows' counts: how many, how many told, flagged and stale.
+const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
+  stale: rows.filter(row => row.risk?.stale).length })
 
 // Where a package or an advisory is locked: its lockfile, or how many, each
 // in the tooltip.
@@ -207,6 +221,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // each { path, format, packages, error, detail }.
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
+    // dev: whether every lockfile locks it as only devDependencies need it,
     // risk, malware: Set of advisory ids where npm's advisories name it }.
     this._packages = new Map()
     // By id and package: an advisory, its versions locked and where (Sets).
@@ -289,7 +304,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       for (const pkg of line.packages) {
         const key = packageKey(pkg)
         let row = this._packages.get(key)
-        if (!row) this._packages.set(key, row = { ...pkg, usedIn: new Set(), risk: null })
+        if (!row) this._packages.set(key, row = { ...pkg, dev: true, usedIn: new Set(), risk: null })
+        row.dev &&= pkg.dev === true
         row.usedIn.add(usedIn)
       }
     } else if (line.type === 'risk') {
@@ -332,8 +348,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return {
       repos: repos.length, reposRead: repos.filter(repo => repo.lockfiles || repo.error).length,
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
-      assessable: assessed.length, told: assessed.filter(row => row.risk).length, flagged: assessed.filter(severityOf).length,
-      stale: assessed.filter(row => row.risk?.stale).length,
+      // Those more than devDependencies need, and those only they need, apart.
+      needed: tally(assessed.filter(row => !row.dev)), dev: tally(assessed.filter(row => row.dev)),
       advisories: this._advisories.size, malware: [...this._advisories.values()].filter(row => row.malware).length,
     }
   }
@@ -342,15 +358,18 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const query = this._query.trim().toLowerCase()
     const [, shown] = FILTERS[this._filter]
     return [...this._packages.values()].filter(row => shown(row) && (!query || row.name.toLowerCase().includes(query)))
-      .toSorted((a, b) => rank(a) - rank(b) || findingsOf(b).length - findingsOf(a).length
+      .toSorted((a, b) => Number(putOff(a)) - Number(putOff(b)) || rank(a) - rank(b) || findingsOf(b).length - findingsOf(a).length
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
 
-  // Advisories by their package, malware first, then the most severe.
+  // Advisories by their package, malware first, then those of versions more
+  // than devDependencies need (`dev` where none is), then the most severe.
   _advisoryRows() {
     const query = this._query.trim().toLowerCase()
+    const needed = new Set([...this._packages.values()].filter(row => assessable(row.source) && !row.dev).map(row => `${row.name}@${row.version}`))
     return [...this._advisories.values()].filter(row => !query || row.name.toLowerCase().includes(query))
-      .toSorted((a, b) => Number(b.malware) - Number(a.malware) || severityRank(a.severity) - severityRank(b.severity)
+      .map(row => ({ ...row, dev: ![...row.versions].some(version => needed.has(`${row.name}@${version}`)) }))
+      .toSorted((a, b) => Number(b.malware) - Number(a.malware) || Number(a.dev) - Number(b.dev) || severityRank(a.severity) - severityRank(b.severity)
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
@@ -401,11 +420,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _progress() {
     if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.'
     const counts = this._counts()
-    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)} ${what}`
+    const { needed, dev } = counts
+    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
+    // Packages' counts, those of devDependencies alone apart where there are any.
+    const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
     const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
-      of(counts.told, counts.assessable, 'packages assessed'), `${formatCount.format(counts.flagged)} flagged`,
-      ...counts.stale > 0 ? [`${formatCount.format(counts.stale)} stale`] : [],
+      packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
+      ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],
       ...counts.advisories > 0 ? [`${formatCount.format(counts.advisories)} advisories${counts.malware > 0 ? `, ${formatCount.format(counts.malware)} of malware` : ''}`] : []].join(' · ')
   }
 
@@ -463,7 +485,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _packageRow(row) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
-      <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}</td>
+      <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}${row.dev ? devTag(DEV_SAID) : nothing}</td>
       <td class="mono">${row.version ?? '—'}</td>
       <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
@@ -521,7 +543,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const versions = [...row.versions]
     const severity = row.malware ? 'critical' : row.severity
     return html`<tr>
-      <td><a class="risk-name" href=${managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] })}>${row.name}</a></td>
+      <td><a class="risk-name" href=${managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] })}>${row.name}</a>${row.dev ? devTag(ADVISORY_DEV_SAID) : nothing}</td>
       <td class="mono">${versions.join(', ')}</td>
       <td>${row.malware ? html`<span class="risk-chip risk-critical">Malware</span>`
         : severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : nothing}</td>

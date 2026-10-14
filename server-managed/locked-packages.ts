@@ -1,7 +1,8 @@
 // The packages a lockfile of npm's ecosystem locks, as @preventive/lockfile
 // reads package-lock.json and npm-shrinkwrap.json of `lockfileVersion: 3`,
 // pnpm-lock.yaml of pnpm 9 to 12 and Yarn 1's yarn.lock, each with where it
-// is installed from (repository-risk.ts).
+// is installed from and whether only devDependencies need it
+// (repository-risk.ts).
 import { LockfileError, parseNpmLockfile } from '@preventive/lockfile/npm.js'
 import { parsePnpmLockfile } from '@preventive/lockfile/pnpm.js'
 import { parseYarn1Lockfile } from '@preventive/lockfile/yarn1.js'
@@ -21,6 +22,11 @@ export interface LockedPackage {
   // A mirror's tarball's, as the lockfile has it: npm's package of its name
   // and version only where npm's integrity is among it.
   integrity?: string
+  // Where only the importers' devDependencies reach it, as npm's `dev` flag
+  // says, and an install of no devDependencies leaves it out: in npm's and
+  // pnpm's lockfiles. Yarn 1's says nothing of it, which only the
+  // package.json files do, and none of its are.
+  dev?: true
 }
 
 // A package as each reader resolves one, its name the one it is published
@@ -29,7 +35,7 @@ type Resolution =
   | { type: 'tarball'; tarball: string | undefined; integrity: string | undefined; gitHosted?: boolean }
   | { type: 'git'; repo: string }
   | { type: 'directory' }
-interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined }
+interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined; dev?: boolean | undefined }
 
 // The packages of a lockfile of `format`, as its reader resolves them.
 // Versions go unchecked against ranges, as only what is locked is asked for.
@@ -72,14 +78,20 @@ function locked({ name, version, resolution }: ReadPackage): LockedPackage | nul
 }
 
 // The packages a lockfile of `format` (npm, pnpm or yarn, as
-// findRepoLockfiles names them) locks, each once, in the lockfile's order.
-// Throws the reader's LockfileError or YamlError for one it refuses.
+// findRepoLockfiles names them) locks, each once, in the lockfile's order:
+// `dev` only where it is wherever it is installed, at each path of npm's
+// tree, and with each of pnpm's peers. Throws the reader's LockfileError or
+// YamlError for one it refuses.
 export function lockedPackages(format: LockfileFormat, text: string): LockedPackage[] {
   const found = new Map<string, LockedPackage>()
   for (const pkg of packagesOf(format, text)) {
     const one = locked(pkg)
-    const key = one && `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}`
-    if (one && key && !found.has(key)) found.set(key, one)
+    if (!one) continue
+    if (pkg.dev === true) one.dev = true
+    const key = `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}`
+    const had = found.get(key)
+    if (!had) found.set(key, one)
+    else if (had.dev && !one.dev) delete had.dev
   }
   return [...found.values()]
 }

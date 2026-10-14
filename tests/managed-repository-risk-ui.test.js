@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, findingsOf, malwareOf, malwareSaid, putOff, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -93,4 +93,55 @@ test('a risk line told as kept is stale where it says so, an error of one stale 
   assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
   const now = Date.parse('2026-10-14T12:00:00Z')
   assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
+})
+
+test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed after the rest, but malware; their advisories after the rest too', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const advisory = (id, name, severity, versions, malware = false) => ({ id, name, title: id, severity, url: null, range: null, versions, malware })
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' },
+      { name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true },
+      { name: 'crossenv', version: '1.0.0', source: 'registry', dev: true }] },
+    { type: 'lockfile', repo: 1, path: 'web/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'mocha', version: '10.0.0', source: 'registry' },
+      { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] },
+    { type: 'risk', name: 'mocha', version: '10.0.0', published: null, severity: null, score: 0, findings: [] },
+    { type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }] },
+    { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+    { type: 'advisories', repo: 1, path: 'package-lock.json', advisories: [advisory('GHSA-eslint', 'eslint', 'critical', ['9.0.0']),
+      advisory('GHSA-left-pad', 'left-pad', 'low', ['1.3.0']), advisory('GHSA-crossenv', 'crossenv', 'critical', ['1.0.0'], true)] },
+  ]) page._apply(line)
+  assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['left-pad', false], ['mocha', false], ['eslint', true], ['crossenv', true]],
+    'dev only where every lockfile locks it so')
+  assert.deepEqual(page._rows().map(row => [row.name, putOff(row)]), [['crossenv', false], ['left-pad', false], ['mocha', false], ['eslint', true]],
+    'the riskiest first of those needed, malware among them, those of devDependencies alone after')
+  const text = templateText(page.render())
+  assert.match(text, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need it[^>]*>dev<\/span>/u)
+  assert.doesNotMatch(text, />mocha<\/a><span class="risk-dev"/u)
+  assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-left-pad', false], ['GHSA-eslint', true]],
+    'malware first, then those of versions needed, however less severe')
+  page._tab = 'advisories'
+  assert.match(templateText(page.render()), />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need the versions it affects[^>]*>dev</u)
+})
+
+test('the progress line counts packages only devDependencies need apart from the rest, where there are any, one a later lockfile needs otherwise among the rest', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'running'
+  const progress = () => templateText(page.render()).match(/<p class="risk-progress" role="status">([^<]*)</u)[1]
+  const lockfile = (path, packages) => ({ type: 'lockfile', repo: 1, path, format: 'npm', packages })
+  page._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] })
+  page._apply({ type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: ['package-lock.json', 'web/package-lock.json', 'docs/package-lock.json'].map(path => ({ path, format: 'npm' })) })
+  page._apply(lockfile('package-lock.json', [{ name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'is-number', version: '7.0.0', source: 'registry' },
+    { name: 'mine', version: '1.0.0', source: 'git', dev: true }]))
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] })
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 1 of 3 lockfiles · 1 of 2 packages assessed · 1 flagged', 'none assessed of devDependencies alone: as before')
+  page._apply(lockfile('web/package-lock.json', [{ name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }]))
+  page._apply({ type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }], stale: { assessedAt: 1 } })
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 2 of 3 lockfiles · 1 of 2 non-dev and 1 of 2 dev packages assessed · 1 non-dev and 1 dev flagged · 0 non-dev and 1 dev stale')
+  // docs needs eslint otherwise: it is among the rest from now on.
+  page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 3 of 3 lockfiles · 2 of 3 non-dev and 0 of 1 dev packages assessed · 2 non-dev and 0 dev flagged · 1 non-dev and 0 dev stale')
 })

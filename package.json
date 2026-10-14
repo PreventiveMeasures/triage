@@ -351,7 +351,7 @@
     "@exodus/stasis-core": "1.0.0-beta.9",
     "@preventive/compare": "^1.2.3",
     "@preventive/diff": "^1.0.2",
-    "@preventive/lockfile": "1.0.0",
+    "@preventive/lockfile": "1.1.0",
     "@preventive/publishers": "^1.1.0",
     "@preventive/report": "1.0.0-alpha.9",
     "@preventive/sourcemap": "1.0.0-alpha.1",
