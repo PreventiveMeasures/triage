@@ -21,8 +21,9 @@ export const linesNote = (lines, more = lines.length >= NPM_MAX_FOUND) => lines.
 // The kinds a file holds, each with its lines, those new to it (`added`, by
 // kind) so said: by its own name where that is code, as eval's kin and
 // child_process are (`eval (line 3), Function (line 5, new)`), else by its
-// tag, kinds sharing one as one (`shell (line 4), credentials (lines 2,
-// 7)`), as the tag's own tooltip spells out what it covers (npmRunsCodeTags).
+// tag, kinds sharing one as one (`shell (line 4), persistence (line 6)`), as
+// the tag's own tooltip spells out what it covers (npmRunsCodeTags); a
+// version's credentials have a chip of their own (npmCredentialsSaid).
 const CODE_NAME = /^[\w$.]+$/u
 export const npmRunsCodeSaid = (found, added = null) => [...Map.groupBy([...found], ([kind]) => {
   const { name, tag } = RUNS_CODE.get(kind)
