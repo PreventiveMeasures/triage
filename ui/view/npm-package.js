@@ -217,9 +217,10 @@ function repaint() {
 // A package's versions, newest first, and dist-tags, when each was
 // published (`times`) and its first was (`created`, null where the server
 // didn't say), whether the registry has it only for the server's token
-// (`private`), and whether a team lists its scope (`teamScoped`).
-export function npmVersionList(name) {
-  return npmPackageData('versions', name, () => fetchNpmVersions(name),
+// (`private`), and whether a team lists its scope (`teamScoped`). `signal`
+// gives up the request where this is the first to ask for it.
+export function npmVersionList(name, signal = undefined) {
+  return npmPackageData('versions', name, () => fetchNpmVersions(name, { signal }),
     data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, created: typeof data.created === 'string' ? data.created : null,
       private: data.private === true, teamScoped: data.teamScoped === true }))
 }
@@ -352,12 +353,13 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     // beside the version rather than once it has come: its package's
     // versions, for the header's picker, and where the route names it
     // exactly, its risk, on a tab that reads it. Each is kept as it is asked
-    // (npmPackageData), for that render to take up. The risk is given up
-    // where the route is left before the version opens, as the server makes
-    // only a few at once; apart from the view's own signal, which opening the
-    // version renews (selectBundle).
-    npmVersionList(name)
+    // (npmPackageData), for that render to take up. Both are given up where
+    // the route is left before the version opens, as the server reads only a
+    // few package documents and makes only a few assessments at once; apart
+    // from the view's own signal, which opening the version renews
+    // (selectBundle).
     const early = new AbortController()
+    npmVersionList(name, early.signal)
     if (spec != null && EXACT_VERSION.test(spec) && RISK_TABS.has(tab)) npmRisk({ name, version: spec }, null, early.signal)
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
