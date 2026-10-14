@@ -122,6 +122,13 @@ const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}
 // says it in a few words, and a note why a file whose changes it would hide
 // shows them all as their blanks mix kinds (_fileState).
 const HIDE_RENAMES = 'Hide renamed names', HIDE_TYPES = 'Hide type-only changes', HIDE_WHITESPACE = 'Hide whitespace changes'
+// The settings a file's diff is drawn under, as the tree keeps its counts by
+// them; and what of a file's changes those set aside, as its state drawn or
+// counted says (_fileState): printed, its whitespace, renamed names or
+// changes in types alone hidden.
+const countSettings = () => `${!!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}`
+const setAside = ({ pretty, spacesHidden, hiding, typesHidden }) => [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES,
+  typesHidden && HIDE_TYPES].filter(Boolean)
 const WHITESPACE_KEPT = {
   mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
 }
@@ -357,12 +364,15 @@ export class BundleCompareCode extends LitElement {
     this._models = new Map()
     this._modelCap = MODEL_CACHE
     // Path → the tree's line counts for it (_lineCounts), for these entries;
-    // a model's key → its blocks as the tree counts them (_counts); and path →
+    // a model's key → its blocks as the tree counts them (_counts); path →
     // its counts as its diff draws them, with what they were found under
-    // (_shownCounts).
+    // (_shownCounts); and path → its counts as its diff last drew them, with
+    // the settings it drew under (_noteDrawn), for a file too large for the
+    // tree to count itself (_largeCounts).
     this._counted = new Map()
     this._countModels = new Map()
     this._drawnCounts = new Map()
+    this._drawnTotals = new Map()
     // What diff -b would hide in the texts a file shows (_whitespaceHidden).
     this._spaced = new Map()
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
@@ -395,6 +405,7 @@ export class BundleCompareCode extends LitElement {
       this._counted = new Map()
       this._countModels = new Map()
       this._drawnCounts = new Map()
+      this._drawnTotals = new Map()
       this._treeLimit = this.extensions?.treePageSize ?? Infinity
       // A path may name another pair of files now (another scope pairs a
       // renamed file anew), so what the search kept of it is found again,
@@ -916,16 +927,21 @@ export class BundleCompareCode extends LitElement {
   // else as published: `=` for one renamed, or recorded otherwise, as it was,
   // and `≈` for one whose changes the settings drawing it set aside, all of
   // them, or marked as differing in renamed names alone; the counts as
-  // published told where they differ, and the lines marked.
+  // published told where they differ, and the lines marked. One too large to
+  // count here as its diff drew it (_largeCounts), its counts as published
+  // told where it drew them so.
   _treeCounts(path, entry) {
     if (entry.kind === 'repointed') return nothing
-    const published = this._lineCounts(path, entry)
-    const shown = published && this._shownCounts(path, entry)
-    if (!published || shown === undefined) return nothing
+    let published = this._lineCounts(path, entry), shown
+    if (published === null && this._counted.has(path)) ({ published, shown } = this._largeCounts(path, entry))
+    else shown = published && this._shownCounts(path, entry)
+    if (!(published || shown) || shown === undefined) return nothing
     const { additions, deletions } = shown ?? published
-    const changed = published.additions > 0 || published.deletions > 0, renamed = entry.kind === 'renamed'
+    // Its counts as published unknown, its sides differ: two the same are counted at once (fileLineCounts).
+    const changed = !published || published.additions > 0 || published.deletions > 0, renamed = entry.kind === 'renamed'
     const marked = shown?.renamed > 0 ? `\n≈${shown.renamed.toLocaleString()} lines differing in renamed names alone, marked` : ''
-    const aside = shown ? `${shown.aside.join(', ')}${marked}\nAs published: +${published.additions.toLocaleString()} −${published.deletions.toLocaleString()}` : null
+    const asPublished = published ? `\nAs published: +${published.additions.toLocaleString()} −${published.deletions.toLocaleString()}` : ''
+    const aside = shown ? `${shown.aside.join(', ')}${marked}${asPublished}` : null
     if (additions === 0 && deletions === 0) {
       if ((renamed || entry.modified === false) && !changed) return html`<span class="bundle-compare-code-line-counts unchanged" aria-label="No line changes">=</span>`
       if (shown && changed) {
@@ -933,7 +949,7 @@ export class BundleCompareCode extends LitElement {
           data-tooltip=${`No line changes with ${aside}`}>≈</span>`
       }
     }
-    const differs = shown && (additions !== published.additions || deletions !== published.deletions)
+    const differs = shown && (!published || additions !== published.additions || deletions !== published.deletions)
     return html`<span class="bundle-compare-code-line-counts" aria-label=${`${additions} added, ${deletions} removed lines`} data-tooltip=${differs ? `With ${aside}` : nothing}>
       <span class=${classMap({ add: true, empty: renamed && additions === 0 })}>+${additions.toLocaleString()}</span>
       <span class=${classMap({ del: true, empty: entry.kind === 'added' || (renamed && deletions === 0) })}>−${deletions.toLocaleString()}</span>
@@ -956,7 +972,7 @@ export class BundleCompareCode extends LitElement {
   // is spent (_lineCounts), to be counted on a later render.
   _shownCounts(path, entry) {
     if (!(state.bundleSourcePretty || prefs.ignoreWhitespace || prefs.ignoreRenames || prefs.ignoreTypes)) return null
-    const settings = `${!!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}\0${this._arrived}\0${this._forced.size}`
+    const settings = `${countSettings()}\0${this._arrived}\0${this._forced.size}`
     const kept = this._drawnCounts.get(path)
     if (kept?.settings === settings) return kept.counts
     const now = performance.now()
@@ -965,8 +981,8 @@ export class BundleCompareCode extends LitElement {
       this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
       return undefined
     }
-    const { pretty, hiding, model, spacesHidden, typesHidden } = this._countingState(path, entry)
-    const aside = [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES, typesHidden && HIDE_TYPES].filter(Boolean)
+    const counted = this._countingState(path, entry), { model } = counted
+    const aside = setAside(counted)
     const counts = model && aside.length > 0 ? { additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside } : null
     this._drawnCounts.set(path, { settings, counts })
     return counts
@@ -989,6 +1005,27 @@ export class BundleCompareCode extends LitElement {
     const counts = fileLineCounts(before, after)
     this._counted.set(path, counts)
     return counts
+  }
+
+  // A file's lines as its diff drew them (_fileState), kept with the settings
+  // it drew under for the tree, where it is too large to count (_largeCounts).
+  _noteDrawn(path, drawn) {
+    const { model } = drawn
+    if (model) this._drawnTotals.set(path, { settings: countSettings(), counts: { additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside: setAside(drawn) } })
+    return drawn
+  }
+
+  // A file too large for the tree to count (fileLineCounts) counted as its
+  // diff last drew it under these settings (_noteDrawn): as published where
+  // they set nothing of it aside, else as shown; none changed, shown, where
+  // its changes in types alone are hidden (type-only.js), drawn or not; else
+  // none, no diff of it found here.
+  _largeCounts(path, entry) {
+    const drawn = this._drawnTotals.get(path)
+    if (drawn?.settings === countSettings()) return drawn.counts.aside.length === 0 ? { published: drawn.counts, shown: null } : { published: null, shown: drawn.counts }
+    const contents = prefs.ignoreTypes ? fileContents(this.base, this.other, path, entry) : null
+    const types = typeof contents?.before === 'string' && typeof contents.after === 'string' && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)
+    return { published: null, shown: types ? { additions: 0, deletions: 0, renamed: 0, aside: [HIDE_TYPES] } : null }
   }
 
   // ── The selected file ────────────────────────────────────────────
@@ -1042,8 +1079,8 @@ export class BundleCompareCode extends LitElement {
     if (types && prefs.ignoreTypes) {
       const model = { a: [], b: [], blocks: [], additions: 0, deletions: 0, renamed: 0, marked: new Set(), noEol: { a: false, b: false }, words: new Map() }
       if (counting) return { pretty: null, hiding: false, model, spacesHidden: false, typesHidden: true }
-      return { ...contents, textual, large: false, printing: null, pretty: null, key: null, generated: false, renamed: false, warned: [], hiding: false, changes: null,
-        model, whitespace: null, spacesHidden: false, types, typesHidden: true }
+      return this._noteDrawn(path, { ...contents, textual, large: false, printing: null, pretty: null, key: null, generated: false, renamed: false, warned: [], hiding: false, changes: null,
+        model, whitespace: null, spacesHidden: false, types, typesHidden: true })
     }
     // Its printed copies drawn where the toggle is on and printing changes
     // its diff (_printing); counted, not asked for where it is off.
@@ -1119,7 +1156,8 @@ export class BundleCompareCode extends LitElement {
     // failed to hide, until they are shown (see _scrollSought); marked, they
     // leave its rows as they are.
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
-    return { before: shown, after, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace, spacesHidden: found.ignoreWhitespace, types }
+    return this._noteDrawn(path, { before: shown, after, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace,
+      spacesHidden: found.ignoreWhitespace, types })
   }
 
   // Whether a file's whitespace may mean something on either side, so its
