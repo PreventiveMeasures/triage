@@ -3,7 +3,8 @@
 // server doesn't speak the e2e sync protocol yet). Every handler is async; the
 // boot's `track()` keeps in-flight requests drainable on shutdown.
 //
-//   GET  /api/config             → { mode:'managed', managed:{ loginPath, cookieName } }  (public)
+//   GET  /api/config             → { mode:'managed', managed:{ loginPath, cookieName }, session }  (public;
+//        `session` is /api/auth/session's answer, null signed out, absent when it could not be read)
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
@@ -120,7 +121,7 @@ import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedR
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
-import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
+import { CONFIG_PATH, type ManagedSessionInfo, type ServerInfo } from '../common/server-info.ts'
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import { upstreamGithub } from './github-errors.ts'
@@ -581,6 +582,24 @@ async function readWorkspaceSession(res: ServerResponse, deps: ManagedHttpDeps, 
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
   if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return null }
   return s
+}
+
+// Who am I? While an admin views as another user, that user, plus the admin
+// as `viewer`. A view that has ended (with the admin's session or role, or the
+// viewed account) is cleared, returning to the own session. Null signed out.
+async function currentSession(config: ManagedConfig, db: ManagedDb, cookie: string | undefined): Promise<{ body: ManagedSessionInfo | null; headers: Record<string, string> }> {
+  const now = Date.now()
+  let s = await readSession(config, db, cookie, now)
+  const ended = s == null && viewToken(config, cookie) != null
+  if (ended) s = await readSession(config, db, cookie, now, { own: true })
+  return {
+    body: s && {
+      user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
+      csrfToken: s.session.csrfToken,
+      ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
+    },
+    headers: ended ? { 'set-cookie': clearViewCookie(config) } : {},
+  }
 }
 
 // GET /api/admin/scan/models — the server's canonical scan model ids and effort
@@ -3163,13 +3182,16 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
 
     // Public mode probe — lets a client detect the managed protocol up front.
+    // It also sends the session, sparing the client's GET /api/auth/session;
+    // a failed read leaves that request to the client, never failing the probe.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
+      const current = await currentSession(config, db, cookie).catch((err) => { console.warn('managed: config session read failed:', err); return null })
       sendJson(res, 200, { ...info, ...(config.githubNewIssueLabels ? { githubNewIssueLabels: config.githubNewIssueLabels } : {}),
         managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? {
           uploadChunkBytes: UPLOAD_CHUNK_BYTES, uploadMaxBytes: { reports: config.maxReportBytes, bundles: config.maxBundleBytes },
-        } : {}) } })
+        } : {}) }, ...(current ? { session: current.body } : {}) }, current?.headers)
       return
     }
     if (viewing && underPrefix(path, VIEW_PREFIXES) && !viewAllows(method, path)) { sendViewOnly(res); return }
@@ -3212,22 +3234,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
       res.end(); return
     }
-    // Who am I? While an admin views as another user, that user, plus the
-    // admin as `viewer`. A view that has ended (with the admin's session or
-    // role, or the viewed account) is cleared, returning to the own session.
     if (path === SESSION_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      const now = Date.now()
-      let s = await readSession(config, db, cookie, now)
-      const ended = s == null && viewing
-      if (ended) s = await readSession(config, db, cookie, now, { own: true })
-      const headers: Record<string, string> = ended ? { 'set-cookie': clearViewCookie(config) } : {}
-      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }, headers); return }
-      sendJson(res, 200, {
-        user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
-        csrfToken: s.session.csrfToken,
-        ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
-      }, headers)
+      const { body, headers } = await currentSession(config, db, cookie)
+      if (body == null) { sendJson(res, 401, { error: 'unauthenticated' }, headers); return }
+      sendJson(res, 200, body, headers)
       return
     }
     if (path === VIEW_AS_PATH) { await handleViewAs(req, res, deps, cookie); return }

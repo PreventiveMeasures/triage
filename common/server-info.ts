@@ -20,6 +20,14 @@ export interface ManagedServerInfo {
   allowShare?: boolean
 }
 
+// GET /api/auth/session's answer. A managed server's GET /api/config also
+// carries it as `session`, null when signed out, so a client can skip asking.
+export interface ManagedSessionInfo {
+  user: { id: string; login: string; name: string | null; role: string }
+  csrfToken: string
+  viewer?: { id: string; login: string; name: string | null }
+}
+
 // The `server-info` frame payload (the `type` discriminant is added at the
 // send site). `managed` is null on e2e-only deployments.
 export interface ServerInfo {
