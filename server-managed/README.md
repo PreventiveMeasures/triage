@@ -937,6 +937,15 @@ large), after how long; never GitHub's text. A package from npm's registry is as
 from another host with an integrity, such as a company's mirror, as npm's
 package of its name and version only where the lockfile's integrity is npm's;
 one from git, a tarball with no integrity or a file is listed but not assessed.
+A package only devDependencies need, wherever a lockfile installs it, as npm's
+and pnpm's lockfiles say (`@preventive/lockfile`'s `dev`; Yarn 1's say nothing
+of it, which only the package.json files do), is `dev: true` in its
+lockfile's line; one every lockfile of the scan locks so is assessed only once
+all the rest are, the stale ones among them, as an install of no
+devDependencies leaves it out, and the page tags it `dev` and lists it after
+the rest, but for malware, which runs wherever it is installed, CI and a
+developer's machine among them; and an advisory of versions only
+devDependencies need after those of the rest, malware's first all the same.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour), and told in an `advisories` line,
