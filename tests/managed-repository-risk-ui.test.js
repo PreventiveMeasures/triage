@@ -329,4 +329,11 @@ test('a team is chosen among buttons, as the scope is, where there are five or f
   assert.match(picker(), /<option value=t5/u)
   page._choices = { teams: [], repos: [] }
   assert.match(picker(), /^<select[^]*Choose a team/u, 'none: the list, empty')
+  // A scan of it done, the team chosen again keeps what it found; another doesn't.
+  page._state = 'done'
+  page._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] })
+  page._choose('team', 't2')
+  assert.deepEqual([page._state, page._repos.size], ['done', 1])
+  page._choose('team', 't3')
+  assert.deepEqual([page._state, page._repos.size], ['idle', 0])
 })

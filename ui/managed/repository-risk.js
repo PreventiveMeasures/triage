@@ -220,7 +220,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Scans `scope` (SCOPES) and `target` from now on, what was found of
   // another put away; not while a scan is under way.
   _choose(scope, target = '') {
-    if (this._state === 'running') return
+    // The one chosen chosen again keeps what was found of it.
+    if (this._state === 'running' || (scope === this._scope && target === this._target)) return
     this._scope = scope
     this._target = target
     this._reset()
