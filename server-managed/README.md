@@ -965,8 +965,9 @@ the rest, but for malware, which runs wherever it is installed, CI and a
 developer's machine among them; and an advisory of versions only
 devDependencies need after those of the rest, malware's first all the same.
 The page's progress line counts packages assessed, flagged and stale of
-devDependencies alone apart from the rest, as each lockfile tells it so far:
-a later lockfile that needs one otherwise moves it among the rest.
+devDependencies alone apart from the rest once any package is listed, as
+each lockfile tells it so far, before any is assessed, and none as none: a
+later lockfile that needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour, in the instance's memory and the
@@ -1029,7 +1030,10 @@ instance's memory and for a day in the database (`repository-risk/listings`
 and `repository-risk/lockfiles` rows, as the lockfiles' packages, private
 repositories' among them, are kept in memory, told only once the reader's
 access is checked), so a scan again, or its next part on another instance,
-asks GitHub only for each repository's head and access.
+asks GitHub only for each repository's head and access. A lockfile's packages
+are kept as they are read (`LOCKFILE_READ`, counted up as they tell more of
+each, as `dev`): one kept as read before, and a part's progress naming it,
+isn't taken, and the lockfile is read again.
 The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or

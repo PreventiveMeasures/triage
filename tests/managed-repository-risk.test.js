@@ -507,7 +507,7 @@ test('a scan in parts goes on past the repositories a part before told whole, as
   })
   const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
   assert.deepEqual([first.at(-1), risksOf(first).map(line => line.name)], [{ type: 'continue' }, ['is-number']])
-  assert.deepEqual(kept, { repos: [{ id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }] }, 'the repository told whole')
+  assert.deepEqual(kept, { read: 2, repos: [{ id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml\u00002'] }] }, 'the repository told whole')
   // Another instance: its own caches empty.
   const again = Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress })
   const lines = await Array.fromAsync(repositoryRiskLines(again, new AbortController().signal, riskCaches(), { partMs: 5000 }))
@@ -516,13 +516,14 @@ test('a scan in parts goes on past the repositories a part before told whole, as
   assert.deepEqual([again.opened, again.listed, again.read], [[], [], []], 'GitHub asked nothing')
 })
 
-test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since, or that part was a day before', async () => {
-  const told = { id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }
+test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since, or that part was a day before, or read its lockfiles otherwise', async () => {
+  const told = { id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml\u00002'] }
   const stores = { lockfiles: lineStore() }
   await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores)))
-  for (const [then, why, at = Date.now()] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'],
-    [{}, 'kept a day before', Date.now() - SCAN_READ_KEPT_MS], [{}, 'as it was']]) {
-    const progress = { read: () => Promise.resolve({ at, value: { repos: [{ ...told, ...then }] } }), write: () => Promise.resolve() }
+  for (const [then, why, at = Date.now(), read = 2] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'],
+    [{}, 'kept a day before', Date.now() - SCAN_READ_KEPT_MS], [{ lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }, 'read before lockfiles told dev', undefined, undefined],
+    [{}, 'as it was']]) {
+    const progress = { read: () => Promise.resolve({ at, value: { ...read === undefined ? {} : { read }, repos: [{ ...told, ...then }] } }), write: () => Promise.resolve() }
     const source = Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores, { progress })
     await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 5000 }))
     assert.deepEqual(source.opened, why === 'as it was' ? [] : [1], why)
@@ -561,6 +562,17 @@ test('what a scan read of GitHub is kept where the source keeps it, beyond an in
   const later = Object.assign(sourceOf(onePnpmRepo, assess), stores)
   await Array.fromAsync(scan(later))
   assert.deepEqual([later.listed, later.read], [[1], ['pnpm-lock.yaml']], 'a day on, listed and read again')
+})
+
+test('a lockfile\'s packages kept as read before they told which only devDependencies need are read again', async () => {
+  const stores = { lockfiles: lineStore() }
+  // As kept before: by its format and blob alone, none of its packages dev.
+  stores.lockfiles.rows.set('npm\u00001:package-lock.json', { at: Date.now(), value: { packages: lockedPackages('npm', devNpmLockfile).map(({ dev: _dev, ...pkg }) => pkg) } })
+  const source = Object.assign(sourceOf({ 1: devRepos[1] }, () => Promise.resolve(noneFound)), stores)
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(source.read, ['package-lock.json'], 'read of GitHub again')
+  assert.deepEqual(lines.find(line => line.type === 'lockfile').packages.filter(pkg => pkg.dev).map(pkg => `${pkg.name}@${pkg.version}`),
+    ['is-number@7.0.0', 'mocha@10.0.0', 'ms@2.1.2'])
 })
 
 test('a lockfile\'s advisories are kept where the source keeps them, beyond an instance, for an hour', async t => {

@@ -79,7 +79,7 @@ test('a risk kept and gone stale is told, dimmed and said so, until assessed aga
   const text = () => templateText(page.render())
   assert.match(text(), /<tr class=is-stale>/u)
   assert.match(text(), /risk-high>54<\/span><span class="risk-stale" data-tooltip=Assessed 3 days ago; to be assessed again once the rest are>stale/u)
-  assert.match(text(), /· 1 stale/u)
+  assert.match(text(), /· 1 non-dev and 0 dev stale/u)
   page._apply({ type: 'risk', name: 'debug', version: '4.4.0', error: 'upstream-unavailable', detail: 'fetch failed' })
   assert.match(text(), /risk-high>54<[^]*couldn’t be assessed again: npm unavailable: fetch failed>stale/u, 'the stale risk kept')
   page._apply({ type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [] })
@@ -137,7 +137,8 @@ test('the progress line counts packages only devDependencies need apart from the
   page._apply(lockfile('package-lock.json', [{ name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'is-number', version: '7.0.0', source: 'registry' },
     { name: 'mine', version: '1.0.0', source: 'git', dev: true }]))
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] })
-  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 1 of 3 lockfiles · 1 of 2 packages assessed · 1 flagged', 'none assessed of devDependencies alone: as before')
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 1 of 3 lockfiles · 1 of 2 non-dev and 0 of 0 dev packages assessed · 1 non-dev and 0 dev flagged',
+    'none assessable of devDependencies alone: told so all the same')
   page._apply(lockfile('web/package-lock.json', [{ name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }]))
   page._apply({ type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }], stale: { assessedAt: 1 } })
   assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 2 of 3 lockfiles · 1 of 2 non-dev and 1 of 2 dev packages assessed · 1 non-dev and 1 dev flagged · 0 non-dev and 1 dev stale')

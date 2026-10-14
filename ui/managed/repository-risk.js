@@ -511,8 +511,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const counts = this._counts()
     const { needed, dev } = counts
     const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
-    // Packages' counts, those of devDependencies alone apart where there are any.
-    const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
+    // Packages' counts, those of devDependencies alone apart once any package
+    // is listed, none of them told as none: how many are which is known as
+    // the lockfiles are read, before any is assessed.
+    const packages = (what, count) => needed.total + dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
     const state = this._state === 'running' && this._parts > 1 ? `Scanning, part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
       packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
