@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request } from 'node:http'
 import { test } from 'node:test'
-import { setImmediate } from 'node:timers/promises'
+import { setTimeout as delay, setImmediate } from 'node:timers/promises'
 import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -483,6 +483,17 @@ test('a scan given a part\'s time stops once past it, its last line continue, an
   assert.deepEqual(again.at(-1), { type: 'done' })
   assert.deepEqual(risksOf(again).map(line => line.name), ['is-number', 'left-pad'])
   assert.ok(!assessed.includes('left-pad'), 'what the first part kept told again as kept')
+})
+
+test('a scan whose part\'s time is up while GitHub is still being asked tells what it found and continue at once, not waiting on it', async () => {
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve(noneFound))
+  // Opening the repository outlasts the part, as a request to GitHub given no signal may.
+  const opening = source.open
+  source.open = async repo => { await delay(1000); return opening(repo) }
+  const started = Date.now()
+  const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.ok(Date.now() - started < 500, 'not waiting on GitHub')
+  assert.deepEqual(lines.map(line => line.type), ['repos', 'continue'])
 })
 
 test('what a scan read of GitHub is kept where the source keeps it, beyond an instance, for a day: a part on another goes on from it', async t => {

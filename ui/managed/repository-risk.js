@@ -320,10 +320,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // A scan's next part tells its repositories and lockfiles again: those
     // told already kept as they are until told otherwise.
     if (line.type === 'repos') {
-      // Those no longer listed, as disconnected or no longer the team's,
-      // forgotten.
-      const listed = new Set(line.repos.map(({ id }) => id))
-      const gone = [...this._repos.values()].filter(repo => !listed.has(repo.id))
+      // Those no longer listed, as disconnected or no longer the team's, or
+      // listed by another name, as renamed, forgotten.
+      const listed = new Map(line.repos.map(({ id, fullName }) => [id, fullName]))
+      const gone = [...this._repos.values()].filter(repo => listed.get(repo.id) !== repo.fullName)
       for (const repo of gone) this._repos.delete(repo.id)
       this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)))
       for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })

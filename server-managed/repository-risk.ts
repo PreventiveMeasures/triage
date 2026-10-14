@@ -414,7 +414,11 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   const part = new AbortController(), stopped = new AbortController()
   const parting = partMs === null ? undefined : setTimeout(() => { part.abort() }, partMs)
   const running = AbortSignal.any([signal, stopped.signal, part.signal])
-  const scan: Scan = { source, caches, signal: running, lines: queue(signal), lookups: queue(running), seen: new Map(), dev: new Map(), stale: [] }
+  // The lines told until the part's time is up, those found by then told, and
+  // none waited for: the work under way, such as a request to GitHub, which
+  // isn't given up on at once, outlasting it.
+  const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
+  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [] }
   const failed: unknown[] = []
   void (async () => {
     try {

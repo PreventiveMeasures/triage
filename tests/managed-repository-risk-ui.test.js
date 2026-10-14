@@ -284,3 +284,13 @@ test('a repository a later part no longer lists, as disconnected or no longer th
   assert.deepEqual([...page._repos.keys()], [1])
   assert.deepEqual([...page._packages.values()].map(row => row.name), ['debug'])
 })
+
+test('a repository a later part lists by another name, as renamed, is told by it', async t => {
+  const read = name => [{ type: 'repos', repos: [{ id: 1, fullName: name }] }, { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    lockfileAt('package-lock.json', [locked('debug', '4.4.0')])]
+  partsServed(t, [[...read('org/one'), { type: 'continue' }], [...read('org/uno'), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(page._repos.get(1).fullName, 'org/uno')
+  assert.deepEqual([...page._packages.values()].map(row => [...row.usedIn]), [['org/uno/package-lock.json']])
+})
