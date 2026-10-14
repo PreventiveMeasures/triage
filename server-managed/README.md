@@ -931,7 +931,8 @@ deployment (Vercel, whose function answers within 300 seconds), a scan stops
 after 270 seconds, the work under way given up on, its last line `continue`
 in place of `done`: the page asks again at once, keeping what it found, and
 the next part tells what the last assessed as kept, going on from where it
-stopped, a hundred parts at most. Repositories are read one
+stopped, a hundred parts at most, or until three parts in a row find nothing
+more. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
 any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
@@ -1008,9 +1009,13 @@ however old, one kept within the hour as it is and an older one, or one kept
 before risk told a score, as stale (`stale: { assessedAt }`), dimmed on the
 page and said so; those with none kept are assessed first, and the stale ones
 only after, each line told again once assessed, or, where that fails, the
-stale one kept, its tooltip saying why. Scans keep in the instance's memory a
-repository's lockfiles as listed at a commit and a lockfile's packages by its
-blob, so a scan again asks GitHub only for each repository's head and access.
+stale one kept, its tooltip saying why. Scans keep a repository's lockfiles
+as listed at a commit and a lockfile's packages by its blob, in the
+instance's memory and for a day in the database (`repository-risk/listings`
+and `repository-risk/lockfiles` rows, as the lockfiles' packages, private
+repositories' among them, are kept in memory, told only once the reader's
+access is checked), so a scan again, or its next part on another instance,
+asks GitHub only for each repository's head and access.
 The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or

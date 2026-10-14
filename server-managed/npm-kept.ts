@@ -5,7 +5,7 @@
 // (npm-manifest.ts npmVersionFields), for a day (readNpmVersion asks npm again
 // then, as a version can be deprecated, its package made private, or itself
 // removed); and, for scans, each package's risk line, for as long as a scan
-// keeps it (repository-risk.ts). Each store removes its own rows kept longer
+// keeps it, and what a scan read of GitHub, for a day (repository-risk.ts). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -79,3 +79,8 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
 // Risk lines, each kept `keptMs`, for good where Infinity, a scan telling one
 // past RISK_KEPT_MS as stale (repository-risk.ts).
 export const riskLineStore = <T>(db: UpstreamCacheStore, keptMs: number, debug = false): KeptStore<T> => keptStore<T>(db, 'repository-risk/lines', keptMs, debug)
+// What a scan read of GitHub, each read for keptMs (repository-risk.ts
+// SCAN_READ_KEPT_MS): a repository's lockfiles as listed at a commit
+// (`listings`), and a lockfile's packages by its blob (`lockfiles`).
+export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles', keptMs: number, debug = false): KeptStore<T> =>
+  keptStore<T>(db, `repository-risk/${type}`, keptMs, debug)

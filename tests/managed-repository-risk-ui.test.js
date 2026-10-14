@@ -171,3 +171,22 @@ test('a scan the server answers in parts is asked again from where it stopped, w
   assert.deepEqual([...page._packages.values()].map(row => [row.name, row.risk?.score]), [['debug', 0], ['ms', 3]], 'the first part\'s kept')
   assert.equal(page._repos.get(1).lockfiles.get('package-lock.json').packages, 2, 'its lockfile as the first part read it')
 })
+
+test('a scan whose parts go on finding nothing more stops, rather than asking again until MAX_PARTS', async t => {
+  const part = [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry' }] },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [], stale: { assessedAt: 1 } },
+    { type: 'continue' }]
+  let asked = 0
+  t.mock.method(globalThis, 'fetch', url => {
+    if (String(url).includes('/api/admin/repositories/risk')) asked++
+    return Promise.resolve(new Response(part.map(line => JSON.stringify(line)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } }))
+  })
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(asked, 4, 'the first part, then three finding nothing more')
+  assert.equal(page._state, 'stopped')
+  assert.match(page._error, /last 3 parts found nothing more/u)
+  assert.equal(page._packages.get('debug@4.4.0\0').risk.stale.assessedAt, 1, 'what was told kept')
+})

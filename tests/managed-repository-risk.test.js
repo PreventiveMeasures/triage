@@ -7,7 +7,7 @@ import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { SCAN_READ_KEPT_MS, highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError, githubUnreachable } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
@@ -483,6 +483,23 @@ test('a scan given a part\'s time stops once past it, its last line continue, an
   assert.deepEqual(again.at(-1), { type: 'done' })
   assert.deepEqual(risksOf(again).map(line => line.name), ['is-number', 'left-pad'])
   assert.ok(!assessed.includes('left-pad'), 'what the first part kept told again as kept')
+})
+
+test('what a scan read of GitHub is kept where the source keeps it, beyond an instance, for a day: a part on another goes on from it', async t => {
+  const stores = { listings: lineStore(), lockfiles: lineStore() }
+  const assess = () => Promise.resolve(noneFound)
+  const first = sourceOf(onePnpmRepo, assess)
+  const told = await Array.fromAsync(scan(Object.assign(first, stores)))
+  assert.deepEqual([first.listed, first.read], [[1], ['pnpm-lock.yaml']])
+  assert.deepEqual([stores.listings.writes.length, stores.lockfiles.writes.length], [1, 1])
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), stores)
+  assert.deepEqual(await Array.fromAsync(scan(again)), told)
+  assert.deepEqual([again.opened, again.listed, again.read], [[1], [], []], 'opened, as access is checked, and nothing listed or read again')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + SCAN_READ_KEPT_MS })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess), stores)
+  await Array.fromAsync(scan(later))
+  assert.deepEqual([later.listed, later.read], [[1], ['pnpm-lock.yaml']], 'a day on, listed and read again')
 })
 
 test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {

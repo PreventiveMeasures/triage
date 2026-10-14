@@ -89,7 +89,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, riskLineStore } from './npm-kept.ts'
+import { npmVersionStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -128,7 +128,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { repositoryRiskLines } from './repository-risk.ts'
+import { SCAN_READ_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -1449,6 +1449,10 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     removed: (name, version, ownScope, signal) => npmRiskRemoved(name, version, { ...stores, teamScoped: ownScope, privileged: true, signal }),
     // Kept for good, a scan telling one past RISK_KEPT_MS at once, as stale.
     risks: riskLineStore(deps.db, Infinity, deps.config.debug),
+    // What it read of GitHub kept a day, for a scan answered in parts to go
+    // on from where the last stopped, on whichever instance answers the next.
+    listings: scanReadStore(deps.db, 'listings', SCAN_READ_KEPT_MS, deps.config.debug),
+    lockfiles: scanReadStore(deps.db, 'lockfiles', SCAN_READ_KEPT_MS, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's
     // audit is bounded on its own, for one npm doesn't answer to fail alone and

@@ -82,6 +82,13 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // Where risk lines are kept beyond this instance, as RiskCaches keeps them
   // in it (npm-kept.ts riskLineStore, the database's).
   risks?: KeptStore<RiskLine>
+  // Where a repository's lockfiles as listed at a commit, and a lockfile's
+  // packages by its blob, are kept beyond this instance, as RiskCaches keeps
+  // them in it (npm-kept.ts scanReadStore, the database's), each read for
+  // SCAN_READ_KEPT_MS: a scan answered in parts (`partMs`) goes on from
+  // where the last stopped on whichever instance answers the next.
+  listings?: KeptStore<ListedLockfile[]>
+  lockfiles?: KeptStore<LockfileRead>
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
@@ -130,6 +137,9 @@ export const riskCaches = (): RiskCaches => ({
   advisories: lru(50_000, kept => kept.rows.length + 1),
 })
 export const RISK_KEPT_MS = 60 * 60_000
+// How long the source's `listings` and `lockfiles` are read for: what
+// GitHub has at a commit or a blob doesn't change, how it is read here may.
+export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
 // How many kept risk lines are read of the source's `risks` at once.
 const KEPT_READ = 500
 const shared = riskCaches()
@@ -237,22 +247,32 @@ async function assessing(scan: Scan, feed: (assess: (packages: AssessedPackage[]
 
 type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 
+// What is kept by `key`: in this instance's memory, else in `store` within
+// SCAN_READ_KEPT_MS, else `read` and kept in both.
+async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>) {
+  const known = memory.get(key)
+  if (known !== undefined) return known
+  const kept = await store?.read(key)
+  if (kept && Date.now() - kept.at < SCAN_READ_KEPT_MS) { memory.set(key, kept.value); return kept.value }
+  const value = await read()
+  memory.set(key, value)
+  await store?.write(key, value, Date.now())
+  return value
+}
+
 // A lockfile's line, its packages or why they couldn't be had: as kept by its
 // blob, else read from GitHub and kept.
-async function readLockfile({ caches }: Scan, repo: number, opened: OpenedRepository, { path, format, sha }: ListedLockfile): Promise<LockfileLine> {
+async function readLockfile({ source, caches }: Scan, repo: number, opened: OpenedRepository, { path, format, sha }: ListedLockfile): Promise<LockfileLine> {
   const at = { type: 'lockfile', repo, path, format } as const
   if (!READ_FORMATS.has(format)) return { ...at, error: 'unsupported-format' }
-  const key = `${format}\0${sha}`
-  let read = caches.lockfiles.get(key)
-  if (!read) {
-    let text
-    try { text = await opened.file(path) } catch (error) { return { ...at, ...failureOf(error) } }
-    try { read = { packages: lockedPackages(format, text) } } catch (error) {
-      read = { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
-    }
-    caches.lockfiles.set(key, read)
-  }
-  return { ...at, ...read }
+  try {
+    return { ...at, ...await keptRead(caches.lockfiles, source.lockfiles, `${format}\0${sha}`, async (): Promise<LockfileRead> => {
+      const text = await opened.file(path)
+      try { return { packages: lockedPackages(format, text) } } catch (error) {
+        return { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
+      }
+    }) }
+  } catch (error) { return { ...at, ...failureOf(error) } }
 }
 
 // A lockfile's packages of npm's registry or a mirror not yet seen this scan,
@@ -281,10 +301,8 @@ async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
   try {
     const opened = await scan.source.open(repo)
     if (scan.signal.aborted) return null
-    const key = `${repo.repoId}@${opened.commit}`
-    let listed = scan.caches.listings.get(key)
     doing = 'listing its lockfiles'
-    if (!listed) scan.caches.listings.set(key, listed = await opened.lockfiles())
+    const listed = await keptRead(scan.caches.listings, scan.source.listings, `${repo.repoId}@${opened.commit}`, () => opened.lockfiles())
     const lockfiles = listed.filter(({ path, format }) => NPM_LOCKFILE_FORMATS.has(format) && lockfileOf(path, repo.paths))
     return { opened, lockfiles }
   } catch (error) {

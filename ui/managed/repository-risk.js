@@ -139,6 +139,9 @@ export function ago(at, now = Date.now()) {
 // How many parts a scan is asked in at most, where the server answers in
 // parts (`continue`): 100 of 270s each, some seven hours.
 const MAX_PARTS = 100
+// How many parts running may tell nothing more (_told) before a scan stops,
+// as one that goes no further wouldn't finish in MAX_PARTS either.
+const MAX_IDLE_PARTS = 3
 
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
@@ -253,15 +256,18 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       // A part at a time where the server answers in parts (`continue`), as a
       // serverless deployment's time-limited function does: each asked again
       // from where the last stopped, what it told kept here.
-      for (let ended = 'continue'; ended === 'continue';) {
+      for (let ended = 'continue', idle = 0; ended === 'continue';) {
         if (++this._parts > MAX_PARTS) throw new Error(`Stopped after ${formatCount.format(MAX_PARTS)} parts. Scan again to go on from where it stopped.`)
         ended = null
+        const told = this._told()
         await streamRisk(params, scan.signal, line => {
           if (line.type === 'done' || line.type === 'continue') ended = line.type
           this._apply(line)
           this._draw()
         })
         if (ended === null) throw new Error('The scan ended before it finished. Try again.')
+        idle = this._told() > told ? 0 : idle + 1
+        if (ended === 'continue' && idle >= MAX_IDLE_PARTS) throw new Error(`Stopped: the last ${formatCount.format(MAX_IDLE_PARTS)} parts found nothing more. Scan again to try once more.`)
       }
       this._state = 'done'
     } catch (err) {
@@ -296,6 +302,18 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       return
     }
     this._drawTimer ??= setTimeout(() => { this._drawTimer = null; this.requestUpdate() }, DRAW_MS)
+  }
+
+  // How much of the scan is told: repositories and lockfiles read or failed,
+  // and packages' risks told other than stale.
+  _told() {
+    let told = 0
+    for (const repo of this._repos.values()) {
+      if (repo.lockfiles || repo.error) told++
+      for (const lockfile of repo.lockfiles?.values() ?? []) if (lockfile.packages !== null || lockfile.error) told++
+    }
+    for (const row of this._packages.values()) if (row.risk && !row.risk.stale) told++
+    return told
   }
 
   _apply(line) {
