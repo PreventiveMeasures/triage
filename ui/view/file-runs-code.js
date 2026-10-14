@@ -17,11 +17,16 @@ export const npmFileRunsCode = (details, path) => fileRiskOf(details, path).runs
 export const linesNote = lines => lines.length === 1 ? `line ${lines[0]}`
   : `lines ${lines.slice(0, 5).join(', ')}${lines.length > 5 ? ` and ${(lines.length - 5).toLocaleString('en')}${lines.length >= NPM_MAX_FOUND ? '+' : ''} more` : ''}`
 
-// The kinds a file holds, each named with its lines, by its own name where
-// kinds share a tag, those new to it (`added`, by kind) so said:
-// `eval (line 3), Function (line 5, new)`.
-export const npmRunsCodeSaid = (found, added = null) => [...found].map(([kind, lines]) =>
-  `${RUNS_CODE.get(kind).name ?? RUNS_CODE.get(kind).tag} (${linesNote(lines)}${added?.has(kind) ? ', new' : ''})`).join(', ')
+// The kinds a file holds, each with its lines, those new to it (`added`, by
+// kind) so said: by its own name where that is code, as eval's kin and
+// child_process are (`eval (line 3), Function (line 5, new)`), else by its
+// tag, kinds sharing one as one (`shell (line 4), credentials (lines 2,
+// 7)`), as the tag's own tooltip spells out what it covers (npmRunsCodeTags).
+const CODE_NAME = /^[\w$.]+$/u
+export const npmRunsCodeSaid = (found, added = null) => [...Map.groupBy([...found], ([kind]) => {
+  const { name, tag } = RUNS_CODE.get(kind)
+  return name && CODE_NAME.test(name) ? name : tag
+})].map(([said, kinds]) => `${said} (${linesNote([...new Set(kinds.flatMap(([, lines]) => lines))].toSorted((a, b) => a - b))}${kinds.some(([kind]) => added?.has(kind)) ? ', new' : ''})`).join(', ')
 
 // The one line a tag's lines (each kind's, or service's) are, undefined for
 // several: where a click on the tag opens its file.

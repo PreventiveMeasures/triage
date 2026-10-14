@@ -388,3 +388,12 @@ test('a text reads in time as its length, what is left open read to its end', { 
   // kept (NPM_MAX_FOUND).
   assert.deepEqual(npmRunsCode('a.js', 'eval(x)\n'.repeat(1e5)).get('eval'), Array.from({ length: 100 }, (_, i) => i + 1), 'its first hits\' lines')
 })
+
+test('a file\'s kinds in a chip\'s tooltip: code by its own name, the rest by its tag, kinds sharing a tag as one', async () => {
+  const { npmRunsCodeSaid } = await import('../ui/view/file-runs-code.js')
+  const kinds = new Map([['eval', [3]], ['function', [5]], ['shell', [24]], ['persistence', [26]], ['credential-files', [7]], ['tokens', [2, 7]],
+    ['env', [9]], ['publish', [11]], ['child-process', [1]]])
+  assert.equal(npmRunsCodeSaid(kinds, new Map([['function', [5]], ['tokens', [2]]])),
+    'eval (line 3), Function (line 5, new), shell (line 24), persistence (line 26), credentials (lines 2, 7, new), whole env (line 9), publish (line 11), child_process (line 1)',
+    'not what each tag covers, which its own tooltip spells out')
+})
