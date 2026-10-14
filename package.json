@@ -352,7 +352,7 @@
   "dependencies": {
     "@exodus/stasis": "1.0.0-beta.9",
     "@exodus/stasis-core": "1.0.0-beta.9",
-    "@preventive/compare": "^1.2.8",
+    "@preventive/compare": "1.2.10",
     "@preventive/diff": "^1.0.2",
     "@preventive/lockfile": "1.1.0",
     "@preventive/publishers": "^1.1.0",
