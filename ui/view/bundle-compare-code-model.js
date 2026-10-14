@@ -8,7 +8,7 @@
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { hidesMixedWhitespace, pairLines } from '@preventive/compare'
+import { hidesMixedWhitespace, pairLines } from '@preventive/compare/view.js'
 import { blocksHold, changeBlocks, textLines } from '../../common/line-diff.js'
 
 export { textLines }

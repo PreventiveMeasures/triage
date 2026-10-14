@@ -1245,6 +1245,21 @@ tree alone (`bundleCompareFiles`), paired as that Compare pairs them. Access is
 checked as for `pretty?other=`, again before each line; a pair the viewer pairs
 otherwise, or one the server was too busy for, it asks for alone.
 
+`GET /api/bundles/:id/comparison?other=` compares the bundle with the `other`
+one for Compare's Overview and Code: the files each side has alone, and those
+that changed, at one path or renamed, paired as `compareTrees` pairs them
+within a package (`common/bundle-comparison.js prepareComparison`), with
+their sizes, lines and recorded changes, the packages, dependency versions and
+import resolutions that differ, and the totals (`comparison.ts`). The viewer of
+a managed bundle pairs nothing itself: only bundles it opened from disk, which
+no server holds, it pairs, in a chunk loaded for those alone. With `&scope=reason:<tree>`, each side's files are those of the tree
+alone. Answered as Brotli-encoded JSON once worked out, the bundles read one at
+a time as the pretty-printed copies read them; `files.root` is the directory
+one side's files sit under in the other's, where they differ, and
+`files.basePaths` then each base file's path as the other lays it out, as
+`[path, laid out]` pairs, else none. Access is checked as for `pretty?other=`,
+and again before it is sent; a public link answers for two of its own bundles.
+
 `GET /api/bundles/:id/type-only?other=` tells which TypeScript files that
 changed between the two bundles changed in types alone, for Compare's **Hide
 type-only changes**: every changed, added and removed file, paired as the
@@ -2024,7 +2039,12 @@ bundle's are (`GET /api/bundles/:id/rename-diff`), and without a file every
 pair of them, a line each, as a bundle's; `GET
 /api/npm/type-only?name=&version=&otherVersion=` tells which of their
 TypeScript files changed in types alone, as a bundle's (`GET
-/api/bundles/:id/type-only`), nothing of it kept; a diff of two public
+/api/bundles/:id/type-only`), nothing of it kept; `GET
+/api/npm/comparison?name=&version=&otherVersion=&otherName=` compares the
+version shown with `otherVersion`, of `otherName` where Review compares a
+dependency replaced by another package, or with none as `(empty)`, as a
+bundle's is (`GET /api/bundles/:id/comparison`), each package's private access
+checked before and again once it is worked out; a diff of two public
 versions' files is kept in memory among the last few dozen, a private one's never,
 its sides, formatted again for it, read in its turn among the diffs waiting.
 Responses are `private, no-store`. Nothing else derived from a package's

@@ -6,7 +6,7 @@ import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-pac
 import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'
 import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
-import { prepareComparison } from './bundle-comparison.js'
+import { bundleComparisonDiff } from './bundle-comparison.js'
 import { comparisonFileList, withinComparisonLimits } from './bundle-compare-files.js'
 import { buildBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
 import { reviewTitle, sameReviewContext, selectReviewOnOpen, takeReviewSelection } from './npm-review-presentation.js'
@@ -107,20 +107,23 @@ export class NpmReview extends LitElement {
       const parsed = target === '(empty)' ? null : parseNpmPackageInput(target)
       const base = parsed ? (await loadNpmVersion(parsed.name, parsed.spec ?? 'latest')).details : EMPTY_REVIEW_BASE
       if (this._baseKey !== key) return
+      // Its files as the server pairs them with the base's (bundle-comparison.js), the review opening on them.
+      const diff = await bundleComparisonDiff(base, this.details)
+      if (this._baseKey !== key) return
       if (resume) {
         if (latest) selectReviewOnOpen(latest)
         this._target = target
         this.request = { bundle: this.entry.integrity, ...this._location(target) }
         this._baseKey = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
       }
-      this._base = base; this._ensureContext(base)
+      this._base = base; this._ensureContext(base, diff)
     } catch (error) { if (this._baseKey === key) this._baseError = error.message }
   }
-  _ensureContext(base) {
+  _ensureContext(base, diff) {
     const context = reviewContext(this.entry, base), key = JSON.stringify([this.session?.id, this.session?.role, context])
     if (key === this._key) return
     this._controller.abort(); this._cancelSaves(); this._controller = new AbortController(); this._context = context
-    this._diff = prepareComparison(base, this.details)
+    this._diff = diff
     const files = comparisonFileList(base, this.details, this._diff)
     this._files = orderedComparisonFiles(buildBundleSourceTree(files.map(file => file.path)))
     const nonText = new Set(files.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path))

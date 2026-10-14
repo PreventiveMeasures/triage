@@ -129,6 +129,14 @@ export async function fetchNpmTypeOnly(name, version, otherVersion, onLine, opti
   return (await loadManagedBundle()).fetchNpmTypeOnly(name, version, otherVersion, onLine, options)
 }
 
+export async function fetchBundleComparison(id, other, options) {
+  return (await loadManagedBundle()).fetchBundleComparison(id, other, options)
+}
+
+export async function fetchNpmComparison(name, version, otherVersion, options) {
+  return (await loadManagedBundle()).fetchNpmComparison(name, version, otherVersion, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

@@ -4,6 +4,7 @@ import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
 import { withinComparisonLimits } from '../ui/view/bundle-compare-files.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
+import { prepareComparison } from '../common/bundle-comparison.js'
 
 const requests = [], state = {}
 let answer = { reviews: [], teams: [] }
@@ -27,6 +28,13 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   latestDependencyReview: (...args) => { latestRequests.push(args); return latestAnswer instanceof Error ? Promise.reject(latestAnswer) : Promise.resolve(latestAnswer) },
+} })
+// Comparisons as the server works them out (server-managed/comparison.ts),
+// the pairs Review asks for noted.
+const comparisonsAsked = []
+mock.module('../ui/view/bundle-comparison.js', { namedExports: {
+  bundleComparison: (base, other, scope) => ({ status: 'ready', diff: prepareComparison(base, other, scope) }),
+  bundleComparisonDiff: (base, other, scope) => { comparisonsAsked.push([base, other]); return Promise.resolve(prepareComparison(base, other, scope)) },
 } })
 mock.module('../ui/view/npm-compare-source.js', { namedExports: { npmComparisonSource: () => ({ choices: [], options: [] }) } })
 mock.module('../ui/view/npm-package.js', { namedExports: {
@@ -83,7 +91,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   const saved = { ...review, entries: ['package.json', 'asset.bin', 'index.js'].map((path, i) => ({ ...file, id: String(i), file: path, status: 'accept', comment: '' })) }
   answer = { reviews: [saved], teams: [] }
   page._key = null
-  page._ensureContext(page._base)
+  page._ensureContext(page._base, prepareComparison(page._base, page.details))
   await Promise.resolve()
   assert.deepEqual(page._files, ['asset.bin', 'index.js', 'package.json'])
   assert.deepEqual(page._nonTextFiles, ['asset.bin', 'index.js'], 'a binary-to-text change remains non-reviewable')
@@ -417,6 +425,8 @@ test('a review without a base compares every package file against an empty packa
   answer = { reviews: [], teams: [] }
   await page._loadBase('(empty)')
   const empty = page._base
+  assert.deepEqual(comparisonsAsked.at(-1), [empty, page.details], 'its files paired as the server pairs them, before it opens')
+  assert.deepEqual(page._diff.files.onlyOther.map(row => row.path).toSorted(), ['empty.txt', 'image.png', 'index.js'])
   const diff = computeBundleDiff(bundleCompareFiles(empty), bundleCompareFiles(page.details), () => '.')
   assert.deepEqual(diff.files.onlyOther.map(row => row.path).toSorted(), ['empty.txt', 'image.png', 'index.js'])
   assert.deepEqual(diff.files.onlyBase, [])
@@ -430,7 +440,8 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
   page._key = null
   page.details = sources(['lib/index.js', 'lib/helper.ts'], ['new entry', 'helper'])
   answer = { reviews: [], teams: [] }
-  page._ensureContext({ ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base })
+  const old = { ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base }
+  page._ensureContext(old, prepareComparison(old, page.details))
   assert.deepEqual(page._files, ['lib/helper.ts', 'lib/index.js'])
   assert.equal(page._diff.files.changed.find(row => row.path === 'lib/helper.ts').renamedFrom, 'lib/helper.js')
   assert.equal(page._diff.files.changed.find(row => row.path === 'lib/index.js').renamedFrom, undefined)
