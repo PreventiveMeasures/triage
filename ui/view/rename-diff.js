@@ -103,25 +103,28 @@ function evict() {
 }
 
 // Every pair a comparison's view diffs with renamed names hidden, in one
-// request: each kept as it comes, where it names its two sides' files as
-// they are and the pair has none yet but one asked for alone meanwhile (a
-// failure keeps its own wait), and one the server couldn't diff now, as it
-// was busy, left to be asked for alone once this ends; where the request
-// failed, what every pair it brought none of has, the comparison asked for
-// again a while after where that may succeed.
+// request: each kept as it comes, where it names its two sides' files as they
+// are and the pair has none yet but one asked for alone meanwhile (a failure
+// keeps its own wait), unless asked for again while it was read, which leaves
+// the pair to that newer ask; and one the server couldn't diff now, as it was
+// busy, left to be asked for alone once this ends; where the request failed,
+// what every pair it brought none of has, the comparison asked for again a
+// while after where that may succeed.
 async function loadComparison(key, comparison, base, other, scope) {
   let rest = null
   try {
     const line = async ({ path, otherPath, hash, otherHash, status, message, ...answer }) => {
       if (typeof path !== 'string' || typeof otherPath !== 'string') return
       const pair = `${path}\0${otherPath}`
-      const taken = () => (comparison.diffs.get(pair)?.status ?? 'loading') !== 'loading'
-      if (taken()) return
+      // The pair as it was when this came: none yet, or one asked for alone, on its way.
+      const found = comparison.diffs.get(pair)
+      if ((found?.status ?? 'loading') !== 'loading') return
       const [olds, news] = [bundleFilesAsMap(base).get(path), bundleFilesAsMap(other).get(otherPath)]
       const diff = message === undefined
         ? typeof olds === 'string' && typeof news === 'string' && readAnswer({ ...answer, hash, otherHash }, await fileHash(base, path, olds), await fileHash(other, otherPath, news))
         : !retryable(status) && { status: 'error', message, retry: false }
-      if (!diff || taken()) return
+      // Asked for again while this was read, the pair is the newer ask's to answer.
+      if (!diff || comparison.diffs.get(pair) !== found) return
       // In place of one asked for alone again, its failures before carried on.
       diff.tries = comparison.diffs.get(pair)?.tries
       comparison.diffs.set(pair, diff)
