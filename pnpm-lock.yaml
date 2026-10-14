@@ -21,8 +21,8 @@ importers:
         specifier: ^1.0.2
         version: 1.0.2
       '@preventive/lockfile':
-        specifier: 1.1.0
-        version: 1.1.0
+        specifier: 1.1.1
+        version: 1.1.1
       '@preventive/publishers':
         specifier: ^1.1.0
         version: 1.1.0
@@ -923,8 +923,8 @@ packages:
     resolution: {integrity: sha512-Dfr/iHIUfsMQqbC9sJ10LaHdKL+Buf7D1ZAqZXcFpgU2N13uDsgA77qmjlmD7o7IWTi9suOC6LclAZyFNLPzRA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.7.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/lockfile@1.1.0':
-    resolution: {integrity: sha512-mfGnukiMumeYsQyMpz8KXxyMTNglSDd2tg2dhL/ho3l92RHmrROy8YprMH27ujowb2IugAiiNXmayqItyETGjw==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.1.0.tgz}
+  '@preventive/lockfile@1.1.1':
+    resolution: {integrity: sha512-l4xJOKmlGp8oYunIKTYgkzqf1REiF+a1N+sd7q0dLk6xhv0MOS+lodpBNobjCzMiv6hhNHqmxL1ll/6qcrq4SA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.1.1.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/publishers@1.1.0':
@@ -2212,7 +2212,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/lockfile@1.1.0':
+  '@preventive/lockfile@1.1.1':
     dependencies:
       '@exodus/bytes': 1.16.0
     transitivePeerDependencies:
