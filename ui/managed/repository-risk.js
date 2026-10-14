@@ -230,8 +230,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // each { path, format, packages, error, detail }.
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
-    // dev: whether every lockfile locks it as only devDependencies need it,
-    // risk, malware: Set of advisory ids where npm's advisories name it }.
+    // neededIn: Set of those of usedIn that lock it as more than
+    // devDependencies need, dev: whether none does, risk, malware: Set of
+    // advisory ids where npm's advisories name it }.
     this._packages = new Map()
     // By id and package: an advisory, its versions locked and where (Sets).
     this._advisories = new Map()
@@ -353,9 +354,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       for (const pkg of line.packages) {
         const key = packageKey(pkg)
         let row = this._packages.get(key)
-        if (!row) this._packages.set(key, row = { ...pkg, dev: true, usedIn: new Set(), risk: null })
-        row.dev &&= pkg.dev === true
+        if (!row) this._packages.set(key, row = { ...pkg, usedIn: new Set(), neededIn: new Set(), risk: null })
         row.usedIn.add(usedIn)
+        if (pkg.dev !== true) row.neededIn.add(usedIn)
+        row.dev = row.neededIn.size === 0
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
@@ -371,8 +373,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _forget(usedIn) {
     if (usedIn.length === 0) return
     for (const [key, row] of this._packages) {
-      for (const used of usedIn) row.usedIn.delete(used)
+      for (const used of usedIn) { row.usedIn.delete(used); row.neededIn.delete(used) }
       if (row.usedIn.size === 0) this._packages.delete(key)
+      row.dev = row.neededIn.size === 0
     }
     this._readvise()
   }

@@ -297,3 +297,12 @@ test('a repository a later part lists by another name, as renamed, is told by it
   assert.equal(page._repos.get(1).fullName, 'org/uno')
   assert.deepEqual([...page._packages.values()].map(row => [...row.usedIn]), [['org/uno/package-lock.json']])
 })
+
+test('a package a later part no longer has a lockfile need otherwise than devDependencies is tagged dev', async t => {
+  const read = (...paths) => [...repoAt('a', ...paths), lockfileAt('package-lock.json', [{ ...locked('eslint', '9.0.0'), dev: true }]),
+    ...paths.includes('web/package-lock.json') ? [lockfileAt('web/package-lock.json', [locked('eslint', '9.0.0')])] : []]
+  partsServed(t, [[...read('package-lock.json', 'web/package-lock.json'), { type: 'continue' }], [...read('package-lock.json'), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['eslint', true]])
+})
