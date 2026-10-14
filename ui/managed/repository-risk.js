@@ -433,11 +433,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     for (const { range, versions, ...advisory } of advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
-      if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set() })
+      if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() })
       if (range) row.ranges.add(range)
       for (const version of versions) row.versions.add(version)
       row.malware ||= advisory.malware
       row.usedIn.add(usedIn)
+      // The versions each lockfile told it of, for those of one kind alone
+      // to name only their lockfiles (_advisoryKinds).
+      const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
+      for (const version of versions) told.add(version)
       if (!row.malware) continue
       for (const pkg of this._packages.values()) {
         if (assessable(pkg.source) && pkg.name === row.name && row.versions.has(pkg.version)) (pkg.malware ??= new Set()).add(row.id)
@@ -467,8 +471,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // Each of KINDS' advisories, by their package: each with the versions of
-  // that kind it affects, `dev` where only devDependencies need them; a
-  // version is development's where every package locked of it is `dev`.
+  // that kind it affects and the lockfiles that told it of them, `dev` where
+  // only devDependencies need them; a version is development's where every
+  // package locked of it is `dev`.
   // Malware's are of both, with all their versions, `dev` where all are.
   _advisoryKinds() {
     const devOnly = new Map()
@@ -487,8 +492,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         kinds.development.push(all)
         continue
       }
-      if (needed.length > 0) kinds.production.push({ ...row, versions: new Set(needed), dev: false })
-      if (dev.length > 0) kinds.development.push({ ...row, versions: new Set(dev), dev: true })
+      // Each kind's versions, and the lockfiles that told it of them.
+      const of = shown => ({ ...row, versions: new Set(shown),
+        usedIn: new Set([...row.versionsIn].filter(([, told]) => shown.some(version => told.has(version))).map(([usedIn]) => usedIn)) })
+      if (needed.length > 0) kinds.production.push({ ...of(needed), dev: false })
+      if (dev.length > 0) kinds.development.push({ ...of(dev), dev: true })
     }
     return kinds
   }

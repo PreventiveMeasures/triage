@@ -133,23 +133,25 @@ test('packages only devDependencies need, in every lockfile that locks them, are
     'beside the search, each saying how many')
 })
 
-test('an advisory is shown with the versions of each kind it affects: those production takes, whatever its lockfile doesn\'t say, or those only devDependencies need', () => {
+test('an advisory is shown with the versions of each kind it affects, and the lockfiles that told it of them: those production takes, whatever its lockfile doesn\'t say, or those only devDependencies need', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'done'
+  const debug = versions => ({ type: 'advisories', repo: 1, advisories: [{ id: 'GHSA-debug', name: 'debug', title: 'ReDoS', severity: 'moderate', url: null,
+    range: '<4.5.0', versions, malware: false }] })
   for (const line of [
     { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
-    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }, { path: 'yarn.lock', format: 'yarn' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }, { path: 'yarn.lock', format: 'yarn' }] },
     { type: 'lockfile', repo: 1, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'debug', version: '4.3.4', source: 'registry' },
-      { name: 'debug', version: '4.4.0', source: 'registry', dev: true }, { name: 'debug', version: '2.6.9', source: 'registry', dev: true }] },
+      { name: 'debug', version: '2.6.9', source: 'registry', dev: true }] },
+    { type: 'lockfile', repo: 1, path: 'web/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry', dev: true }] },
     // Yarn 1's lockfile says nothing of what devDependencies alone need.
     { type: 'lockfile', repo: 1, path: 'yarn.lock', format: 'yarn', packages: [{ name: 'debug', version: '2.6.9', source: 'registry' }] },
-    { type: 'advisories', repo: 1, path: 'pnpm-lock.yaml', advisories: [{ id: 'GHSA-debug', name: 'debug', title: 'ReDoS', severity: 'moderate', url: null,
-      range: '<4.5.0', versions: ['2.6.9', '4.3.4', '4.4.0'], malware: false }] },
+    { ...debug(['2.6.9', '4.3.4']), path: 'pnpm-lock.yaml' }, { ...debug(['4.4.0']), path: 'web/pnpm-lock.yaml' }, { ...debug(['2.6.9']), path: 'yarn.lock' },
   ]) page._apply(line)
-  const shown = () => page._advisoryRows().map(row => [row.id, [...row.versions], row.dev])
-  assert.deepEqual(shown(), [['GHSA-debug', ['2.6.9', '4.3.4'], false]])
+  const shown = () => page._advisoryRows().map(row => [row.id, [...row.versions], row.dev, [...row.usedIn]])
+  assert.deepEqual(shown(), [['GHSA-debug', ['2.6.9', '4.3.4'], false, ['org/one/pnpm-lock.yaml', 'org/one/yarn.lock']]])
   page._kind = 'development'
-  assert.deepEqual(shown(), [['GHSA-debug', ['4.4.0'], true]])
+  assert.deepEqual(shown(), [['GHSA-debug', ['4.4.0'], true, ['org/one/web/pnpm-lock.yaml']]], 'not the lockfiles of the other versions')
 })
 
 test('the progress line counts packages only devDependencies need apart from the rest, where there are any, one a later lockfile needs otherwise among the rest', () => {
