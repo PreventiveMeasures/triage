@@ -1187,18 +1187,22 @@ type-only changes**: every changed, added and removed file, paired as the
 viewer pairs them, whose change @preventive/compare's `compareTrees` stamps
 `typeOnly` -- each side there a file named as a declaration file (`.d.ts`,
 `.d.mts`, `.d.cts`, `.d.css.ts`) that its `proveTypeOnly` proves holds types
-alone, so that it runs nothing, with an `export {}` kept on both sides or
-neither -- and nothing else decides it. Proving needs Node's type stripping, so
-the viewer can't. Each pair is asked of the engine on its own, as a tree of a
-file a side; two paths it takes for no rename are types only where each of
-their changes is, which is what it stamps of them paired. Proven in a worker
-thread, off the event loop, a comparison at a time per process, up to sixteen
-more waiting (the response cut short past that, or past a minute), and
-answered as Brotli-encoded ndjson once all are proven, a line each, `{ path,
-hash, otherPath, otherHash }`, a side not there null, which the viewer checks
-name the files it shows; within a tree with `&scope=`, as the stream above.
-Access is checked as for `pretty?other=`; a public link answers for two of its
-own bundles.
+alone but for a runtime, the module loads, bare `export {}`, directives and
+pragmas its stripping leaves, which the change leaves as it was (a rename
+across module formats aside, where that runtime loads a module or keeps an
+`export {}`): an added file's empty or a single bare `export {}`, which nothing
+loaded before, a removed one's empty -- and nothing else decides it. Proving
+needs Node's type stripping, so the viewer can't. Each pair is asked of the
+engine on its own, as a tree of a file a side; two paths it takes for no
+rename are types only where each of their changes is: the file gone erasing
+whole, and the one come erasing whole or leaving a single bare `export {}`.
+Proven in a worker thread, off the event loop, a comparison at a time per
+process, up to sixteen more waiting (the response cut short past that, or past
+a minute), and answered as Brotli-encoded ndjson once all are proven, a line
+each, `{ path, hash, otherPath, otherHash }`, a side not there null, which the
+viewer checks name the files it shows; within a tree with `&scope=`, as the
+stream above. Access is checked as for `pretty?other=`; a public link answers
+for two of its own bundles.
 
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
