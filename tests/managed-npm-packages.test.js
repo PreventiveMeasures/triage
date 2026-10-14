@@ -483,7 +483,7 @@ test('risk\'s records kept in memory are held to a length, the first kept going 
     'ten of 7 MiB: the first gone for the 64 MiB memory holds')
 })
 
-test('risk\'s downloads of a public package are kept in the database, for another instance, a private one\'s not, and removed two days on', async t => {
+test('risk\'s downloads of a public package are kept in the database, for another instance, a private one\'s not, and removed eight days on', async t => {
   const db = openSqliteManagedDb(':memory:')
   const DAY = 24 * 60 * 60_000, now = Date.now()
   const counted = { start: '2026-08-01', end: '2026-10-11', days: [1, 2] }
@@ -493,9 +493,9 @@ test('risk\'s downloads of a public package are kept in the database, for anothe
   const kept = () => db.getUpstreamCacheEntries(['risk/npm/downloads/left-pad@2026-08-01:2026-10-11', 'risk/npm/downloads/@acme/secret@2026-08-01:2026-10-11',
     'risk/npm/downloads/is-number@2026-08-01:2026-10-13']).then(rows => [...rows.keys()])
   assert.deepEqual(await kept(), ['risk/npm/downloads/left-pad@2026-08-01:2026-10-11'], 'a private package\'s kept in memory alone')
-  t.mock.timers.enable({ apis: ['Date'], now: now + 3 * DAY })
+  t.mock.timers.enable({ apis: ['Date'], now: now + 9 * DAY })
   await npmRiskCache({ db }, true).write('risk/npm/downloads', 'is-number@2026-08-01:2026-10-13', counted)
-  assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'three days on, the first removed as another is written')
+  assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'nine days on, the first removed as another is written')
 })
 
 test('a scan reads the database once and writes it once a lookup of npm\'s downloads, as a request\'s queries take turns', async t => {
@@ -528,8 +528,8 @@ test('a scan keeps a scoped package\'s downloads where public ones are only wher
       : Response.json({ package: '@scope/open', start: '2026-08-01', end: '2026-08-01', downloads: [{ day: '2026-08-01', downloads: 5 }] }))
   })
   for (const name of ['@acme/secret', '@scope/open']) await npmReadyScanDownload(name, { db }, new AbortController().signal)
-  // Kept by the days asked over, as risk keys them.
-  const keyOf = name => `risk/npm/downloads/${name}@${asked.find(url => url.endsWith(`/${name.replace('/', '%2f')}`)).split('/').at(-2)}`
+  // Kept by name, as risk keys them.
+  const keyOf = name => `risk/npm/downloads/${name}`
   assert.deepEqual([...(await db.getUpstreamCacheEntries(['@acme/secret', '@scope/open'].map(keyOf))).keys()], [keyOf('@scope/open')])
 })
 
@@ -544,6 +544,16 @@ test('risk lines kept in the database are read many at once, by key, however old
   t.mock.timers.enable({ apis: ['Date'], now: now + 31 * DAY })
   await lines.write('ms@2.1.3', { score: 0 }, now + 31 * DAY)
   assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'ms@2.1.3'])).keys()], ['ms@2.1.3'], 'a month on, the older removed')
+})
+
+test('risk lines kept for good are never removed, however old', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const lines = riskLineStore(db, Infinity)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now)
+  t.mock.timers.enable({ apis: ['Date'], now: now + 400 * DAY })
+  await lines.write('ms@2.1.3', { score: 0 }, now + 400 * DAY)
+  assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'ms@2.1.3'])).keys()], ['left-pad@1.3.0', 'ms@2.1.3'])
 })
 
 test('risk against a private version is checked again for it once told', async t => {

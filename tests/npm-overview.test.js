@@ -16,13 +16,13 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.
-const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, malware: {} }
+const answers = { advisories: {}, stats: {}, socket: {}, provenance: {}, versions: {}, malware: {}, told: {} }
 // Each version Socket was asked about.
 const socketAsked = []
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => Promise.resolve(answers.advisories[name] ?? { versions: [], advisories: [] }), fetchNpmStats: name => Promise.resolve(answers.stats[name] ?? {}),
   fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion,
-    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`],
+    { downloads: answers.stats[name]?.downloads ?? null, times: answers.versions[name]?.times, malware: answers.malware[`${name}@${version}`], told: answers.told[`${name}@${version}`],
       ...answers.versions[name]?.teamScoped && { minimumReleaseAge: 0, downloads: null } })),
   fetchNpmPackage() {}, fetchNpmProvenance: (name, version) => Promise.resolve({ provenance: answers.provenance[`${name}@${version}`] ?? null }), fetchNpmSocket: async (name, version) => { socketAsked.push(`${name}@${version}`); return { socket: await answers.socket[`${name}@${version}`] ?? null } }, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: name => Promise.resolve(answers.versions[name] ?? { versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
@@ -653,7 +653,7 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   // from elsewhere had before in a note; after install scripts.
   const depending = (name, version, dependencies, files = {}) => ({ npm: { name, version, manifest: { dependencies } },
     json: { sources: Object.keys(files), sourcesContent: Object.values(files) } })
-  const depChips = shown => [...shown.matchAll(/<li><span class="npm-extension is-warn (npm-compare-(?:registry|unimported))"\s+data-tooltip=([^\n]*)[^]*?<\/li>/gu)]
+  const depChips = shown => [...shown.matchAll(/<li><span class="?npm-extension is-warn (npm-compare-(?:registry|unimported))"?\s+data-tooltip=([^\n]*)[^]*?<\/li>/gu)]
     .map(([chip, classes, tip]) => `${classes} | ${tip} | ${[...chip.matchAll(/<span class=(is-flagged)?>([^<]+)<code>([^<]+)</gu)].map(([, bold, name, spec]) => `${bold ? '*' : ''}${name}${spec}`).join('; ')} | ${
       /compare-tip-note">([^<]+)</u.exec(chip)?.[1]} | ${/npm-extension-count">([^<]+)</u.exec(chip)?.[1]}`)
   assert.deepEqual(depChips(await badges(depending('fetched', '1.2.0', { websocket: '^1.0.29' }),
@@ -675,6 +675,23 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   assert.match(await badges(scripted('first', '1.0.0', undefined), { ...scripted('first', '1.1.0', { postinstall: 'node x.js' }), npm: { name: 'first', version: '1.1.0', manifest: { installScripts: { postinstall: 'node x.js' }, dependencies: { y: '1' } } } }),
     /npm-compare-install[^]*npm-compare-unimported/u, 'after install scripts')
   assert.deepEqual(depChips(await badges(depending('dropping', '1.0.0', { gone: 'github:a/gone' }), depending('dropping', '1.1.0', {}))), [], 'not one it drops')
+  // Unused deps tinted as risk grades them by their packages: red for one
+  // first published since the version compared with, its age said; yellow
+  // for one among npm's top 20,000, as a peer's or a tool's is, its tier said,
+  // or for those all kept from the version compared with.
+  const unusedChip = shown => /<li><span class=npm-extension (is-\w+) npm-compare-unimported\s+data-tooltip=([^\n]*)[^]*?<\/li>/u.exec(shown)?.slice(1).join(' | ')
+  answers.told['told@1.14.1'] = { 'plain-crypto-js': { tier: null, level: 'is-unpopular', created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, react: { tier: 200, level: 'is-solid' } }
+  assert.equal(unusedChip(await badges(depending('told', '1.14.0', {}), depending('told', '1.14.1', { 'plain-crypto-js': '^4.2.1', react: '^19.0.0' }))),
+    'is-critical | Imported by nothing of 1.14.1: plain-crypto-js ^4.2.1 (new package, 18 hours old), react ^19.0.0 (npm\'s top 200); new since 1.14.0: plain-crypto-js, react')
+  answers.told['hijacked@1.1.0'] = { 'old-lib': { tier: 2000, level: 'is-top', installs: { version: '3.0.1', latest: '4.0.0', published: '2026-09-20T00:00:00.000Z', scripts: true, new: true } } }
+  assert.equal(unusedChip(await badges(depending('hijacked', '1.0.0', {}), depending('hijacked', '1.1.0', { 'old-lib': '^3.0.0' }))),
+    'is-critical | Imported by nothing of 1.1.0: old-lib ^3.0.0 (npm\'s top 2,000; installs 3.0.1 (its latest 4.0.0), published since 1.0.0, running its install scripts); new since 1.0.0: old-lib',
+    'an old package\'s old major line given a release since, to run its install scripts')
+  answers.told['peer@1.1.0'] = { react: { tier: 200, level: 'is-solid' } }
+  assert.equal(unusedChip(await badges(depending('peer', '1.0.0', {}), depending('peer', '1.1.0', { react: '^19.0.0' }))),
+    'is-moderate | Imported by nothing of 1.1.0: react ^19.0.0 (npm\'s top 200); new since 1.0.0: react')
+  assert.equal(unusedChip(await badges(depending('debug-kept', '1.0.0', { debug: '^4.0.0' }), depending('debug-kept', '1.1.0', { debug: '^4.0.0' }))),
+    'is-moderate | Imported by nothing of 1.1.0: debug ^4.0.0', 'kept from 1.0.0')
 
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.

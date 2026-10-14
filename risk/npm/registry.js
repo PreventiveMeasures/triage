@@ -33,7 +33,9 @@
 // tarball unpacking past tarball.js's, `package-too-large`.
 import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
+import { compareVersions, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { npmVersionManifest } from './manifest.js'
+import { npmAlias } from './specs.js'
 import { npmPlaceholder } from './malware.js'
 import { npmOldVersion } from './old-version.js'
 import { npmTarballVersion } from './tarball.js'
@@ -50,6 +52,10 @@ const ADVISORIES_MS = 60 * 60_000
 // months' downloads a day.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const DOWNLOADS_BYTES = 1024 * 1024
+// How long a package's downloads are kept: a week, as the tier they put it in,
+// by the most of its latest six weeks' (downloads.js npmDownloadTier), hardly
+// moves in one, and npm's downloads API answers only some 40 lookups a minute.
+const DOWNLOADS_MS = 7 * DAY_MS
 // How many packages npm's downloads API answers in one lookup, unscoped ones
 // alone (it refuses a scoped one in a bulk lookup), and how much of it is read.
 const BULK_DOWNLOADS = 128
@@ -63,6 +69,9 @@ export class NpmRiskError extends Error {
 }
 
 const isTime = value => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))
+// An object as JSON holds one, not an array (manifest.js plainObject).
+const plainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
 // A scoped name in a downloads API path, its slash escaped.
 const encoded = name => name.replace('/', '%2f')
 const token = () => typeof process === 'undefined' ? null
@@ -249,13 +258,42 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
   }
 }
 
+// The version of a package's document npm installs for a dependency's spec
+// (`spec`, an alias's by its own range, `npm:name@^1`, as specs.js npmAlias
+// reads one), as npm picks one:
+// the tag it names, else its `latest` where that satisfies it, or any range
+// does (`*`, a prerelease latest too), and isn't deprecated, else the highest
+// that satisfies it, one not deprecated first; null for none, or for a spec
+// that is no range nor tag (a URL, a repository).
+function installedVersion(doc, spec) {
+  const alias = npmAlias(spec)
+  const range = (alias ? alias.spec : String(spec)).trim()
+  const tags = plainObject(doc['dist-tags']) ? doc['dist-tags'] : {}, versions = plainObject(doc.versions) ? doc.versions : {}
+  if (Object.hasOwn(tags, range) && Object.hasOwn(versions, tags[range])) return tags[range]
+  if (validRange(range || '*') === null) return null
+  if (Object.hasOwn(versions, tags.latest) && typeof versions[tags.latest]?.deprecated !== 'string' && ((range || '*') === '*' || satisfies(tags.latest, range))) return tags.latest
+  const matching = Object.keys(versions).filter(version => satisfies(version, range || '*'))
+  const current = matching.filter(version => typeof versions[version]?.deprecated !== 'string')
+  return (current.length > 0 ? current : matching).reduce((best, version) => best === null || compareVersions(version, best) > 0 ? version : best, null)
+}
+
 // When a package anyone can read was first published, `{ created }`, or null
-// for one npm has none of for anyone.
-export async function npmPublicFacts(name, context) {
-  const facts = await kept(context, 'risk/npm/public', name,
-    async () => { const doc = await packageDocument(name, context, false); return doc ? { at: context.now, created: firstPublished(doc) } : { at: context.now, missing: true } },
-    hit => context.now - hit.at < PACKAGE_MS)
-  return facts.missing ? null : { created: facts.created }
+// for one npm has none of for anyone; and for a dependency's spec (`spec`),
+// the version of it npm installs (installedVersion), `installs`: `{ version,
+// latest, published, scripts }`, its package's `latest` beside it, when it
+// was published and whether it has install scripts: its manifest's, or
+// node-gyp's for a `binding.gyp` (`gypfile`), or as the registry says
+// (`hasInstallScript`); null for none.
+export async function npmPublicFacts(name, context, spec = null) {
+  const facts = await kept(context, 'risk/npm/public', spec === null ? name : `${name}@${spec}`, async () => {
+    const doc = await packageDocument(name, context, false)
+    if (!doc) return { at: context.now, missing: true }
+    const version = spec === null ? null : installedVersion(doc, spec)
+    return { at: context.now, created: firstPublished(doc), ...spec === null ? {} : { installs: version === null ? null
+      : { version, latest: typeof doc['dist-tags']?.latest === 'string' ? doc['dist-tags'].latest : null, published: isTime(doc.time?.[version]) ? doc.time[version] : null,
+        scripts: Boolean(npmVersionManifest(doc.versions[version]).installScripts) || doc.versions[version]?.gypfile === true || doc.versions[version]?.hasInstallScript === true } } }
+  }, hit => context.now - hit.at < PACKAGE_MS)
+  return facts.missing ? null : { created: facts.created, ...spec === null ? {} : { installs: facts.installs } }
 }
 
 // The days a package's downloads are asked over at `now`: from the first of
@@ -267,10 +305,10 @@ function rangeAt(now) {
 }
 
 // A package's downloads as kept, from npm's answer of them over a range of
-// days: `{ start, end, days }`, a count a day from `start`, or `{ none }`
-// where npm counts none (null).
-function downloadsOf(json) {
-  if (json === null) return { none: true }
+// days `asked` then: `{ at, start, end, days }`, a count a day from
+// `start`, or `{ at, none }` where npm counts none (null).
+function downloadsOf(json, asked) {
+  if (json === null) return { at: asked, none: true }
   const start = Date.parse(json.start)
   const length = Math.round((Date.parse(json.end) - start) / DAY_MS) + 1
   const days = Array.from({ length: Number.isSafeInteger(length) && length > 0 && length <= 400 ? length : 0 }, () => 0)
@@ -278,22 +316,24 @@ function downloadsOf(json) {
     const at = Math.round((Date.parse(row.day) - start) / DAY_MS)
     if (at >= 0 && at < days.length && Number.isSafeInteger(row.downloads)) days[at] = row.downloads
   }
-  return { start: json.start, end: json.end, days }
+  return { at: asked, start: json.start, end: json.end, days }
 }
+// Whether downloads kept are told as they are: kept within DOWNLOADS_MS.
+const freshDownloads = (held, now) => held != null && now - held.at < DOWNLOADS_MS
 
-// A package's downloads a day over rangeAt's days, `{ start, end, days }`,
-// null where npm counts none.
+// A package's downloads a day over rangeAt's days when asked, `{ start, end,
+// days }`, kept a week (DOWNLOADS_MS), null where npm counts none.
 export async function npmDownloads(name, context) {
-  const range = rangeAt(context.now)
-  const answer = await kept(context, 'risk/npm/downloads', `${name}@${range}`,
-    async () => downloadsOf(await askNpm(`${DOWNLOADS}/${range}/${encoded(name)}`, {}, DOWNLOADS_BYTES, `${name}'s downloads`, context)))
+  const answer = await kept(context, 'risk/npm/downloads', name,
+    async () => downloadsOf(await askNpm(`${DOWNLOADS}/${rangeAt(context.now)}/${encoded(name)}`, {}, DOWNLOADS_BYTES, `${name}'s downloads`, context), context.now),
+    hit => freshDownloads(hit, context.now))
   return answer.none ? null : answer
 }
 
 // Readies, at once, the downloads assessNpm asks of each of these packages
 // (`names`) that can be, kept in `cache` as npmDownloads keeps them, so that
-// their assessments ask npm none: those kept already, as they are, and
-// unscoped ones, asked of npm BULK_DOWNLOADS at a time, as its downloads API
+// their assessments ask npm none: those kept within a week (DOWNLOADS_MS), as
+// they are, and unscoped ones, asked of npm BULK_DOWNLOADS at a time, as its downloads API
 // answers them; `ready` is told each once its downloads are kept. The rest,
 // scoped ones (it answers those only one by one) and any a bulk lookup
 // didn't answer, are left for npmReadyDownload, one at a time. npm asking to
@@ -302,22 +342,21 @@ export async function npmDownloads(name, context) {
 export async function npmReadyDownloads(names, ready, { cache, signal, now = Date.now() }) {
   const context = { cache, signal, now }
   const range = rangeAt(now)
-  const keyOf = name => `${name}@${range}`
   const unique = [...new Set(names)]
   const unscoped = []
   const ask = async part => {
     const json = await askNpm(`${DOWNLOADS}/${range}/${part.join(',')}`, {}, BULK_DOWNLOADS_BYTES, `${part.length} packages' downloads`, context)
     const answered = part.filter(name => json && Object.hasOwn(json, name))
-    await keepMany(cache, answered.map(name => [keyOf(name), downloadsOf(json[name])]))
+    await keepMany(cache, answered.map(name => [name, downloadsOf(json[name], now)]))
     for (const name of answered) ready(name)
   }
   // Those kept read BULK_DOWNLOADS at a time, the rest asked as they fill a
   // lookup.
   for (let at = 0; at < unique.length; at += BULK_DOWNLOADS) {
     const part = unique.slice(at, at + BULK_DOWNLOADS)
-    const held = await keptMany(cache, part.map(keyOf))
+    const held = await keptMany(cache, part)
     for (const name of part) {
-      if (held.get(keyOf(name)) != null) ready(name)
+      if (freshDownloads(held.get(name), now)) ready(name)
       else if (!name.startsWith('@')) unscoped.push(name)
     }
     while (unscoped.length >= BULK_DOWNLOADS) await ask(unscoped.splice(0, BULK_DOWNLOADS))

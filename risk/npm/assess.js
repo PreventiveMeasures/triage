@@ -12,13 +12,14 @@ import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPub
 import { npmMalwareFinding } from './malware.js'
 import { npmKnownScope } from './manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from './release.js'
-import { npmAddedDependency } from './new-dependency.js'
+import { npmAddedDependency, npmUnusedDependencySeverity } from './new-dependency.js'
+import { SEVERITIES } from '../files/stamps.js'
 import { npmRiskScore } from './score.js'
 
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
 // one more whenever a heuristic changes what it finds, so one kept by an
 // older reading is read anew.
-const RISK_VERSION = 16
+const RISK_VERSION = 17
 
 // How long an assessment kept may be as JSON, and what risk reads of either
 // version's files: a package past it, whose files name thousands of hosts or
@@ -123,26 +124,32 @@ const MAX_TOLD_DEPENDENCIES = 100
 // with what risk tells of its package
 // (new-dependency.js npmAddedDependency): its tier, its last whole month's
 // downloads by what its tier goes by where it has one (`month`, `{ total,
-// from }`), `uncounted` where npm counts none of them, and `created` and `gap`
+// from }`), `uncounted` where npm counts none of them, `created` and `gap`
 // where it is new since the version compared with (`published`, when that
-// and the open version were); four asked at a time, whether each is the
+// and the open version were), and for one nothing imports (flagged so, or
+// among `unusedKeys`), the version its spec installs (`installs`,
+// registry.js npmPublicFacts); `missing` where
+// its package was looked up and npm has none of it for anyone, as once
+// unpublished or taken down; four asked at a time, whether each is the
 // caller's own among them, none more once one fails or MAX_TOLD_DEPENDENCIES
 // not the caller's own were taken, however many a version adds.
-async function addedDependencies(added, published, context, owned) {
+async function addedDependencies(added, published, context, owned, unusedKeys = new Set()) {
   const told = [...added]
   const asked = told.flatMap((row, at) => row.opens ? [at] : [])
   let next = 0, taken = 0
   const tell = async row => {
     const downloads = await npmDownloads(row.opens, context)
-    let facts = npmAddedDependency({ downloads, published }, context.now)
+    const unused = row.flags.some(flag => flag.check === 'unimported') || unusedKeys.has(keyOf(row))
+    let facts = npmAddedDependency({ downloads, published, unused }, context.now), missing = false
     if (facts.wanted) {
-      const listed = await npmPublicFacts(row.opens, context)
-      facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published }, context.now)
+      const listed = await npmPublicFacts(row.opens, context, unused ? row.range : null)
+      missing = listed === null
+      facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published, unused }, context.now)
     }
     const settled = npmSettledDownloads(downloads, context.now)
     const month = npmDownloadMonths(settled).at(-1)
     return { ...row, ...facts.tier === null ? {} : { ...tierOf(facts.tier), ...settled ? month && { month: { total: month.total, from: month.from.toISOString().slice(0, 10) } } : { uncounted: true } },
-      ...facts.created ? { created: facts.created, gap: facts.gap } : {} }
+      ...facts.created ? { created: facts.created, gap: facts.gap } : {}, ...facts.installs ? { installs: facts.installs } : {}, ...missing ? { missing } : {} }
   }
   await Promise.all(Array.from({ length: 4 }, async () => {
     while (next < asked.length && taken < MAX_TOLD_DEPENDENCIES) {
@@ -201,21 +208,60 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
     provenance: Boolean(manifest.provenance), downloads: counted })
   const was = old === null ? null : facts.versions.get(old).published
-  const added = downloads && dependencies ? await addedDependencies(kept.dependencies.added, [was, published], context, owned) : kept.dependencies.added
-  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own, added)
+  // Those it holds that nothing imports by another spec than the version
+  // compared with's, told by their new spec as an added one nothing imports
+  // is (`respecified`), and an added one nothing imports however it was
+  // flagged, as one moved from another kind of dependency is.
+  const unusedKeys = unusedKeysOf(kept)
+  const respecified = kept.dependencies.changed.filter(row => unusedKeys.has(keyOf(row))).map(row => ({ ...row, range: row.to }))
+  const told = downloads && dependencies ? await addedDependencies([...kept.dependencies.added, ...respecified], [was, published], context, owned, unusedKeys)
+    : [...kept.dependencies.added, ...respecified]
+  const added = told.slice(0, kept.dependencies.added.length)
+  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own, added, told.slice(added.length))
   return { name, version, oldVersion: old, published, ...assessment, score: npmRiskScore(assessment.findings, { published, now, tier: counted ? npmDownloadTier(counted) : null }) }
+}
+
+// A dependency's key among a version's, by its kind and name.
+const keyOf = row => `${row.kind ?? ''}\0${row.name}`
+
+// The keys of the dependencies a version holds that nothing of it imports
+// (`kept`, npmLastingRisk's: its `held-unused-deps`).
+const unusedKeysOf = kept => new Set((kept.findings.find(({ id }) => id === 'held-unused-deps')?.dependencies ?? []).map(keyOf))
+
+// The dependencies nothing of a version imports (`held-unused-deps`), each
+// graded by what risk tells of its package fresh (`told`, as
+// addedDependencies tells it; new-dependency.js
+// npmUnusedDependencySeverity), with its tier, when its package was first
+// published and the version its spec installs where told: kept from the
+// version compared with where there was one (`compared`) and it named it as
+// the same kind of dependency by the same spec: not one marked new, nor
+// `added` (its kind and name new, as one moved from another kind is), nor
+// `changed` (each said with the spec it had, `was`). The finding as its most severe.
+function unusedGraded(finding, told, compared, { added, changed }) {
+  const facts = new Map(told.map(row => [keyOf(row), row])), was = new Map(changed.map(row => [keyOf(row), row.from]))
+  const anew = new Set(added.map(keyOf))
+  const dependencies = finding.dependencies.map(row => {
+    const of = facts.get(keyOf(row))
+    return { ...row, ...was.has(keyOf(row)) ? { was: was.get(keyOf(row)) } : {}, severity: npmUnusedDependencySeverity(of, compared && !row.added && !anew.has(keyOf(row)) && !was.has(keyOf(row))),
+      ...of?.level ? { tier: of.tier, level: of.level } : {}, ...of?.created ? { created: of.created, gap: of.gap } : {}, ...of?.installs ? { installs: of.installs } : {},
+      ...of?.missing ? { missing: true } : {} }
+  })
+  return { ...finding, severity: SEVERITIES[Math.min(...dependencies.map(row => SEVERITIES.indexOf(row.severity)))], dependencies }
 }
 
 // An assessment of what of it holds whatever the time (`kept`,
 // npmLastingRisk's) and what is told fresh: the open version's own findings
 // (`own`, held.js npmVersionFindings, and its malware), its malware and
 // deprecation first and the rest last, its tier as JSON holds it (tierOf),
-// and its dependencies `added`, as addedDependencies tells them. The managed
+// and its dependencies `added`, as addedDependencies tells them, those it
+// holds by another spec that nothing imports beside them (`respecified`),
+// for its unused dependencies' grades. The managed
 // server's (assessNpm), and a test's of versions it holds.
 const FIRST = new Set(['malware', 'deprecated'])
-export function npmAssessmentOf(kept, own, added = kept.dependencies.added) {
+export function npmAssessmentOf(kept, own, added = kept.dependencies.added, respecified = []) {
   return {
-    findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings,
+    findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings.map(finding => finding.id === 'held-unused-deps'
+      ? unusedGraded(finding, [...added, ...respecified], Boolean(kept.dependencies.held), kept.dependencies) : finding),
       ...own.filter(({ id }) => !FIRST.has(id)).map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
     files: kept.files,
     dependencies: { ...kept.dependencies, added },

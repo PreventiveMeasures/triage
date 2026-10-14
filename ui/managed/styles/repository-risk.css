@@ -80,9 +80,10 @@ td { vertical-align: top; }
 }
 .risk-score.risk-low { color: var(--muted); background: none; font-weight: 400; }
 /* A risk told as kept and since gone stale (a scan assesses it again once
-   those with none kept are): dimmed, and said so. */
+   those with none kept are): dimmed, and said so; and a package only
+   devDependencies need, tagged alike. */
 .is-stale .risk-score, .is-stale .risk-findings { opacity: .55; }
-.risk-stale {
+.risk-stale, .risk-dev {
   margin-left: .35rem;
   padding: 0 .35rem;
   border: 1px solid var(--border);

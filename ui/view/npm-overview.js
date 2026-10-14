@@ -840,6 +840,21 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
       .tooltipContent=${content}>${inner}</span></li>`
 }
 
+// What the server's risk tells of the package of a dependency nothing
+// imports, as it grades it (risk/npm/new-dependency.js
+// npmUnusedDependencySeverity): first published since the version compared
+// with (`sides`' first), how old it was when the open one was, else its tier
+// by downloads, or none npm has for anyone; and the version its spec installs where that has install
+// scripts, its package's latest where it isn't that, published since too
+// where it was; its spec before where that version named it by another;
+// null where it tells none, as of one kept from that version.
+const unusedSaid = (sides, { created, gap, level, tier, installs, missing, was }) => [
+  was === undefined ? null : `was ${was}`,
+  created ? `new package, ${gap >= 0 ? `${npmSpan(gap)} old` : 'published later'}` : missing ? 'no package npm has' : level ? `npm's ${npmTierName(tier ?? Infinity)}` : null,
+  installs?.scripts ? `installs ${installs.version}${installs.latest && installs.latest !== installs.version ? ` (its latest ${installs.latest})` : ''}`
+    + `${installs.new ? `, published since ${sides[0].version}` : ''}, running its install scripts` : null,
+].filter(Boolean).join('; ') || null
+
 // As `Non-registry deps`, the dependencies the open version takes from
 // elsewhere than npm's registry; and, as `Unused deps`, those nothing of it
 // imports, which npm installs all the same, their install scripts and all,
@@ -849,7 +864,8 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
 // what spec it had for one from elsewhere.
 function dependencyBadges(sides, found) {
   const { version } = sides.at(-1)
-  const fetched = found.get('held-non-registry-deps')?.dependencies ?? [], unimported = found.get('held-unused-deps')?.dependencies ?? []
+  const fetched = found.get('held-non-registry-deps')?.dependencies ?? [], unused = found.get('held-unused-deps')
+  const unimported = unused?.dependencies ?? []
   const anew = rows => rows.some(row => row.added) ? `; new since ${sides[0].version}: ${rows.filter(row => row.added).map(({ name }) => name).join(', ')}` : ''
   const chips = []
   if (fetched.length > 0) {
@@ -862,9 +878,10 @@ function dependencyBadges(sides, found) {
   }
   if (unimported.length > 0) {
     const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
-    chips.push(html`<li><span class="npm-extension is-warn npm-compare-unimported"
-      data-tooltip=${`Imported by nothing of ${version}: ${unimported.map(({ name, range }) => `${name} ${range}`).join(', ')}${anew(unimported)}`}
-      .tooltipContent=${compareTip(`Nothing imports ${it}`, [sides.at(-1)], [tipLines(unimported.map(({ name, range, kind, added }) => [kind ? `${name} (${kind})` : name, range, added]))],
+    const named = row => row.kind ? `${row.name} (${row.kind})` : row.name
+    chips.push(html`<li><span class=${`npm-extension ${SEVERITY_CHIPS[unused.severity] ?? 'is-warn'} npm-compare-unimported`}
+      data-tooltip=${`Imported by nothing of ${version}: ${unimported.map(row => `${row.name} ${row.range}${unusedSaid(sides, row) ? ` (${unusedSaid(sides, row)})` : ''}`).join(', ')}${anew(unimported)}`}
+      .tooltipContent=${compareTip(`Nothing imports ${it}`, [sides.at(-1)], [tipLines(unimported.map(row => [[named(row), unusedSaid(sides, row)].filter(Boolean).join(', '), row.range, row.added]))],
         `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>
       <span>Unused deps</span><span class="npm-extension-count">${unimported.length.toLocaleString('en')}</span></span></li>`)
   }
