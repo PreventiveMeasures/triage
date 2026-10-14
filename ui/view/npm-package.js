@@ -166,7 +166,8 @@ function keepKnown({ name, version, known }) {
 // Something read about a package for this session, as `ask` answers and
 // `shape` keeps it: `{ status }` while the server is asked ('loading', then
 // 'ready' with what `shape` gives, or 'error' until a retry), each a new
-// object, so the view repaints when it arrives. What came with a version
+// object, so the view repaints when it arrives; one given up (aborted) is
+// not kept, and asked for again when next wanted. What came with a version
 // (keepKnown) is ready without asking.
 export function npmPackageData(kind, name, ask, shape) {
   sessionKept()
@@ -182,13 +183,18 @@ export function npmPackageData(kind, name, ask, shape) {
   packageData.set(key, loading)
   ask().then(
     data => ({ status: 'ready', ...shape(data) }),
-    () => {
+    err => {
+      if (err?.name === 'AbortError') return null
       const failures = loading.failures + 1
       const wait = Math.min(DATA_RETRY_MS * 2 ** (failures - 1), DATA_RETRY_MAX_MS)
       return { status: 'error', failures, wait, retryAt: Date.now() + wait }
     },
   ).then(answer => {
     if (packageData.get(key) !== loading) return null
+    if (answer === null) {
+      packageData.delete(key)
+      return null
+    }
     packageData.set(key, answer)
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
@@ -311,7 +317,9 @@ function showLookup(lookup) {
 }
 
 // A version as npm's registry names it (`4.18.1`, `1.0.0-rc.1`), which the
-// server answers as asked: not a dist-tag, nor one it would name otherwise.
+// server answers as asked, not a dist-tag it resolves. No published version
+// has build metadata (`+build.4`): npm's publish strips it (semver.clean),
+// and the registry has none of a spec that holds it.
 const EXACT_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/u
 // The tabs whose first render reads the version's own risk: the Overview's
 // chips, and Compare's tags on its files.
@@ -344,17 +352,25 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     // beside the version rather than once it has come: its package's
     // versions, for the header's picker, and where the route names it
     // exactly, its risk, on a tab that reads it. Each is kept as it is asked
-    // (npmPackageData), for that render to take up.
+    // (npmPackageData), for that render to take up. The risk is given up
+    // where the route is left before the version opens, as the server makes
+    // only a few at once; apart from the view's own signal, which opening the
+    // version renews (selectBundle).
     npmVersionList(name)
-    if (spec != null && EXACT_VERSION.test(spec) && RISK_TABS.has(tab)) npmRisk({ name, version: spec })
+    const early = new AbortController()
+    if (spec != null && EXACT_VERSION.test(spec) && RISK_TABS.has(tab)) npmRisk({ name, version: spec }, null, early.signal)
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
+      early.abort()
       if (err?.name === 'AbortError' || !isCurrent()) return false
       searching = null
       showLookup({ input, pending: false, error: err.message })
       return { view: 'npm' }
     }
-    if (!isCurrent() || !isManagedUiMode()) return false
+    if (!isCurrent() || !isManagedUiMode()) {
+      early.abort()
+      return false
+    }
   }
   if (searching?.name === name && searching.spec === spec) {
     saveRecentSearches([input, ...npmRecentSearches().filter(other => other !== input)])

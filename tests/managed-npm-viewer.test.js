@@ -11,7 +11,8 @@ import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 const state = {}
 const renders = [], requests = [], riskRequests = [], versionRequests = []
-let answer = null, versionsAnswer = () => Promise.resolve({ versions: [] })
+let answer = null, riskHeld = false, versionsAnswer = () => Promise.resolve({ versions: [] })
+const riskSignals = []
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -22,7 +23,12 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
   fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
-  fetchNpmRisk(name, version, otherVersion) { riskRequests.push([name, version, otherVersion]); return Promise.resolve(riskAnswer(name, version, otherVersion)) },
+  fetchNpmRisk(name, version, otherVersion, { signal } = {}) {
+    riskRequests.push([name, version, otherVersion])
+    riskSignals.push(signal)
+    // Held, where a test asks, till its signal gives it up.
+    return riskHeld ? new Promise((resolve, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)) }) : Promise.resolve(riskAnswer(name, version, otherVersion))
+  },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
@@ -43,6 +49,8 @@ beforeEach(() => {
   requests.length = 0
   versionRequests.length = 0
   riskRequests.length = 0
+  riskSignals.length = 0
+  riskHeld = false
   answer = () => Promise.resolve(data)
   versionsAnswer = () => Promise.resolve({ versions: [] })
   // A session of its own each, so nothing kept from another test answers.
@@ -198,12 +206,30 @@ test('a version\'s versions, and its risk where the route names it exactly, are 
   npmVersionList('@scope/pkg')
   npmRisk({ name: '@scope/pkg', version: '1.2.3' })
   assert.deepEqual([versionRequests.length, riskRequests.length], [1, 1], 'its render taking them up, not asking again')
+  assert.equal(riskSignals[0].aborted, false, 'nor giving it up once the version opened')
   for (const [packageName, packageSpec, bundleTab] of [['tagged', 'next', 'overview'], ['latest', null, 'overview'], ['treemapped', '1.0.0', 'treemap']]) {
     answer = () => Promise.resolve({ ...data, name: packageName, integrity: `sha512-${packageName}` })
     await openNpmRoute({ view: 'npm', packageName, packageSpec, bundleTab }, () => true, () => {})
     assert.equal(versionRequests.at(-1), packageName, `${packageName}: its versions`)
   }
   assert.equal(riskRequests.length, 1, 'not the risk of a version a dist-tag or none names, which only the server resolves, nor on a tab that reads none')
+  // A route left before its version opens gives its risk up, the server
+  // making only a few at once, and keeps no failure of it.
+  riskHeld = true
+  let current = true
+  answer = () => new Promise(resolve => { release = () => resolve({ ...data, name: 'left', integrity: 'sha512-left' }) })
+  const leaving = openNpmRoute({ view: 'npm', packageName: 'left', packageSpec: '2.0.0', bundleTab: 'overview' }, () => current, () => {})
+  await setImmediate()
+  assert.deepEqual([riskRequests.at(-1), riskSignals.at(-1).aborted], [['left', '2.0.0', null], false])
+  current = false
+  release()
+  assert.equal(await leaving, false)
+  assert.equal(riskSignals.at(-1).aborted, true)
+  await setImmediate()
+  riskHeld = false
+  npmRisk({ name: 'left', version: '2.0.0' })
+  assert.deepEqual(riskRequests.at(-1), ['left', '2.0.0', null])
+  assert.equal(riskRequests.length, 3, 'asked again when next wanted')
 })
 
 test('a Compare link opens the version with the one it compares with', async () => {
