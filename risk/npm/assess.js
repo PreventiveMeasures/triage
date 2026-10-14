@@ -135,10 +135,11 @@ async function addedDependencies(added, published, context, owned) {
   let next = 0, taken = 0
   const tell = async row => {
     const downloads = await npmDownloads(row.opens, context)
-    let facts = npmAddedDependency({ downloads, published }, context.now)
+    const unused = row.flags.some(flag => flag.check === 'unimported')
+    let facts = npmAddedDependency({ downloads, published, unused }, context.now)
     if (facts.wanted) {
       const listed = await npmPublicFacts(row.opens, context)
-      facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published }, context.now)
+      facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published, unused }, context.now)
     }
     const settled = npmSettledDownloads(downloads, context.now)
     const month = npmDownloadMonths(settled).at(-1)

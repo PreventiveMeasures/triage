@@ -12,17 +12,20 @@ import { npmDownloadTier, npmSettledDownloads, npmTierLow } from './downloads.js
 // until the day after it was first published, nor any of a private one's);
 // `listed`, once its version list is read, `{ created, private }`, when its
 // first version was published and whether only a token reads it; and
-// `published`, when the version compared with and the open one were. Its
-// `tier` (Infinity, unpopular, where npm counts none of a public package's;
-// null where it can't yet be told), whether its version list is `wanted` to
-// tell more (below the top 20,000, or none counted), and `created`, `gap`
+// `published`, when the version compared with and the open one were; and
+// whether nothing of the version imports it (`unused`). Its `tier`
+// (Infinity, unpopular, where npm counts none of a public package's; null
+// where it can't yet be told), whether its version list is `wanted` to tell
+// more (below the top 20,000, or none counted, or unused whatever its tier,
+// as how new its package is grades it, npmUnusedDependencySeverity), and
+// `created`, `gap`
 // where its package is new since the version compared with: when its first
 // version was published, and how long before the open version that was
 // (negative for after, as a name someone took once a release named it).
-export function npmAddedDependency({ downloads, listed = null, published = [] }, now = Date.now()) {
+export function npmAddedDependency({ downloads, listed = null, published = [], unused = false }, now = Date.now()) {
   const settled = npmSettledDownloads(downloads, now)
   const counted = settled ? npmDownloadTier(settled) : null
-  const wanted = !settled || (counted !== null && npmTierLow(counted))
+  const wanted = !settled || unused || (counted !== null && npmTierLow(counted))
   const tier = settled ? counted : listed && !listed.private ? Infinity : null
   const [was, open] = published
   const created = wanted && tier !== null && listed?.created && was && open && Date.parse(listed.created) > Date.parse(was) ? listed.created : null

@@ -877,6 +877,18 @@ test('an assessment whose signal aborts before its advisories are asked asks non
   assert.deepEqual(asked, [], 'npm\'s advisories not asked')
 })
 
+test('a new dependency nothing imports, among the top 20,000 by downloads yet first published since the version compared with, red all the same', async t => {
+  const meta = dependencies => ({ dependencies, scripts: {} })
+  const before = version('boosting', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({}), ago(30))
+  const after = version('boosting', '1.1.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ boosted: '^1.0.0' }), ago(20))
+  const dependency = version('boosted', '1.0.0', { 'package.json': '{}' }, meta({}), ago(25))
+  const days = Array.from({ length: 72 }, (_, at) => ({ day: new Date(Date.parse('2026-08-01') + at * DAY).toISOString().slice(0, 10), downloads: 4e6 }))
+  npm(t, [{ name: 'boosting', versions: [before, after] }, { name: 'boosted', versions: [dependency] }], { boosted: { start: '2026-08-01', end: '2026-10-11', downloads: days } })
+  const unused = (await assessNpm('boosting', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
+  assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].created], ['critical', 'is-top', ago(25)],
+    'its package\'s age asked whatever its tier, as it grades it')
+})
+
 test('a new dependency\'s package told by its downloads but its latest two weeks\', and its age where it is new since the version compared with', () => {
   const now = Date.parse('2026-10-12T12:00:00Z')
   const days = (perDay, latest = perDay) => ({ start: '2026-08-01', end: '2026-10-11', days: Array.from({ length: 72 }, (_, i) => i < 58 ? perDay : latest) })
@@ -888,6 +900,8 @@ test('a new dependency\'s package told by its downloads but its latest two weeks
     { tier: Infinity, wanted: true, created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, 'none counted: unpopular, and new since the version compared with')
   assert.equal(npmAddedDependency({ downloads: null, listed: { created: '2026-03-30T05:57:32.867Z', private: true }, published: axios }, now).tier, null, 'a private one: not told')
   assert.equal(npmAddedDependency({ downloads: days(0), listed: { created: '2020-01-01T00:00:00.000Z', private: false }, published: axios }, now).created, null, 'not one that existed before')
+  assert.deepEqual(npmAddedDependency({ downloads: days(4e6), listed: { created: '2026-03-30T05:57:32.867Z', private: false }, published: axios, unused: true }, now),
+    { tier: 2000, wanted: true, created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, 'one nothing imports: its age asked whatever its tier, as it grades it')
 })
 
 test('a version document read for what risk reads of it', () => {
