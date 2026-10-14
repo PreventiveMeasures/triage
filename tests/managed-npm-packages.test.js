@@ -16,7 +16,7 @@ import { npmVersionFields } from '../server-managed/npm-manifest.ts'
 import { npmVersionStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
-import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
+import { npmReadyScanDownload, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -461,6 +461,20 @@ test('risk\'s downloads of a public package are kept in the database, for anothe
   t.mock.timers.enable({ apis: ['Date'], now: now + 3 * DAY })
   await npmRiskCache({ db }, true).write('risk/npm/downloads', 'is-number@2026-08-01:2026-10-13', counted)
   assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'three days on, the first removed as another is written')
+})
+
+test('a scan keeps a scoped package\'s downloads where public ones are only where npm counts some, never a private one\'s none', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    asked.push(String(input))
+    return Promise.resolve(String(input).endsWith('/@acme%2fsecret') ? Response.json({ error: 'package @acme/secret not found' }, { status: 404 })
+      : Response.json({ package: '@scope/open', start: '2026-08-01', end: '2026-08-01', downloads: [{ day: '2026-08-01', downloads: 5 }] }))
+  })
+  for (const name of ['@acme/secret', '@scope/open']) await npmReadyScanDownload(name, { db }, new AbortController().signal)
+  // Kept by the days asked over, as risk keys them.
+  const keyOf = name => `risk/npm/downloads/${name}@${asked.find(url => url.endsWith(`/${name.replace('/', '%2f')}`)).split('/').at(-2)}`
+  assert.deepEqual([...(await db.getUpstreamCacheEntries(['@acme/secret', '@scope/open'].map(keyOf))).keys()], [keyOf('@scope/open')])
 })
 
 test('risk against a private version is checked again for it once told', async t => {

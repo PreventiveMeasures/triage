@@ -195,9 +195,16 @@ export function npmRiskRemoved(name: string, version: string,
 // What a scan readies before assessing its packages (repository-risk.ts):
 // their downloads, as risk asks them, kept where a public package's are
 // (npmRiskCache), so that their assessments wait on npm's downloads API for
-// none. At once, those kept and unscoped ones, in bulk; each other one on its
-// own (npmReadyScanDownload).
+// none. At once, those kept and unscoped ones, in bulk, all public, as only a
+// scoped package can be private; each other one on its own
+// (npmReadyScanDownload), kept only where npm counts some, which it does of
+// public packages alone: a private one's none, as of one it has no such
+// package of, isn't kept where public ones are, for its assessment to ask
+// its own where private ones are.
 export const npmReadyScanDownloads = (names: string[], ready: (name: string) => void, stores: NpmRiskStores, signal: AbortSignal) =>
   npmReadyDownloads(names, ready, { cache: npmRiskCache(stores, true), signal })
-export const npmReadyScanDownload = (name: string, stores: NpmRiskStores, signal: AbortSignal) =>
-  npmReadyDownload(name, { cache: npmRiskCache(stores, true), signal })
+export function npmReadyScanDownload(name: string, stores: NpmRiskStores, signal: AbortSignal) {
+  const cache = npmRiskCache(stores, true)
+  const counted = (value: unknown) => !(value && typeof value === 'object' && 'none' in value)
+  return npmReadyDownload(name, { cache: { read: cache.read, write: (type, key, value) => counted(value) ? cache.write(type, key, value) : Promise.resolve() }, signal })
+}

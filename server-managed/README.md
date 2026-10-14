@@ -972,7 +972,9 @@ time in one lookup (risk's `npmReadyDownloads`); and scoped ones, which the
 API answers only one by one, one at a time at the pace it allows, while the
 assessors go on with the others. Public packages' downloads are kept in the
 database (`npm-risk.ts`), a day's for two days, so that another instance, or
-a scan again that day, asks the API for none of them again. One refused as busy (`npm-busy`), or that npm asked to ask later
+a scan again that day, asks the API for none of them again; a scoped one a
+scan readies on its own only where the API counts some, as it counts public
+packages alone, so that a private one's none is never kept with them. One refused as busy (`npm-busy`), or that npm asked to ask later
 (risk's `upstream-busy`), is asked again after a wait, so a
 large scan goes at the pace npm allows. A package's risk line carries its
 findings and risk's `score` of it, out of 100 (risk/npm/score.js); the page
