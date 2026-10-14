@@ -28,11 +28,14 @@ const treeData = (content, at) => typeof content === 'string' ? `\0text\0${conte
 // changes, the same file. Null for a name whose last part before its
 // extension is no hash: 8 to 32 of base64url's characters with a digit or a
 // capital, as a lowercase word (`index-client.js`, `lodash.debounce.js`) has
-// neither.
+// neither. Its hash the last 8 or more characters (`vendor-react-DQ4mN2sx`'s
+// stem `vendor-react`), or, `whole`, all from its first separator on, as a
+// longer hash may hold a `-` (`index-AbCdEf12-GhIjKl34`'s stem `index`).
 const HASHED_NAME = /^(.+)[-.]([\w-]{8,32})((?:\.[A-Za-z\d]+)+)$/u
-function hashedKey(path) {
+const WHOLE_HASHED_NAME = /^(.+?)[-.]([\w-]{8,32})((?:\.[A-Za-z\d]+)+)$/u
+function hashedKey(path, whole = false) {
   const at = path.lastIndexOf('/') + 1
-  const [, stem, hash, extension] = HASHED_NAME.exec(path.slice(at)) ?? []
+  const [, stem, hash, extension] = (whole ? WHOLE_HASHED_NAME : HASHED_NAME).exec(path.slice(at)) ?? []
   if (!hash || !/[\dA-Z]/u.test(hash)) return null
   return `${path.slice(0, at)}${stem}\0${extension}`
 }
@@ -53,14 +56,19 @@ export function npmFilesDiff(base, other) {
   // A content-hashed file added where one by the same name but its hash
   // (hashedKey) is removed, one each, is that file changed, as a build
   // renames it: what it runs, how it reads and how large it is told against
-  // it, not all of it new.
-  const hashed = paths => Map.groupBy(paths.filter(hashedKey), hashedKey)
-  const moved = new Set(), removed = hashed(onlyBase)
-  for (const [key, paths] of hashed(onlyOther)) {
-    const was = removed.get(key)
-    if (paths.length !== 1 || was?.length !== 1) continue
-    changed.push({ path: paths[0], renamedFrom: was[0], modified: !same(before.get(was[0]), after.get(paths[0])) })
-    moved.add(paths[0])
+  // it, not all of it new. Those its last characters don't pair, by all
+  // from its first separator on.
+  const moved = new Set(), named = new Set()
+  for (const whole of [false, true]) {
+    const hashed = paths => Map.groupBy(paths.filter(path => hashedKey(path, whole)), path => hashedKey(path, whole))
+    const removed = hashed(onlyBase.filter(path => !named.has(path)))
+    for (const [key, paths] of hashed(onlyOther.filter(path => !moved.has(path)))) {
+      const was = removed.get(key)
+      if (paths.length !== 1 || was?.length !== 1) continue
+      changed.push({ path: paths[0], renamedFrom: was[0], modified: !same(before.get(was[0]), after.get(paths[0])) })
+      moved.add(paths[0])
+      named.add(was[0])
+    }
   }
   // The rest by content, against every file removed: one paired by its name
   // may be another's too, a build's copy of it elsewhere.
