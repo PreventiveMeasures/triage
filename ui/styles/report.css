@@ -3794,6 +3794,9 @@ a.npm-compare-publisher {
 
   & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 }
+/* Unused deps risk counts none of (npm-overview.js dependencyBadges): a
+   notice, in the text's own color. */
+.npm-extension.npm-compare-unimported.is-notice { color: var(--text); }
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {
   --sev: var(--muted);
