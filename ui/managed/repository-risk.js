@@ -143,6 +143,10 @@ const DRAW_MS = 250
 
 const formatCount = new Intl.NumberFormat()
 
+// Package rows' counts: how many, how many told, flagged and stale.
+const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
+  stale: rows.filter(row => row.risk?.stale).length })
+
 // Where a package or an advisory is locked: its lockfile, or how many, each
 // in the tooltip.
 function usedInCell(lockfiles) {
@@ -344,8 +348,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return {
       repos: repos.length, reposRead: repos.filter(repo => repo.lockfiles || repo.error).length,
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
-      assessable: assessed.length, told: assessed.filter(row => row.risk).length, flagged: assessed.filter(severityOf).length,
-      stale: assessed.filter(row => row.risk?.stale).length,
+      // Those more than devDependencies need, and those only they need, apart.
+      needed: tally(assessed.filter(row => !row.dev)), dev: tally(assessed.filter(row => row.dev)),
       advisories: this._advisories.size, malware: [...this._advisories.values()].filter(row => row.malware).length,
     }
   }
@@ -416,11 +420,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _progress() {
     if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.'
     const counts = this._counts()
-    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)} ${what}`
+    const { needed, dev } = counts
+    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
+    // Packages' counts, those of devDependencies alone apart where there are any.
+    const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
     const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
-      of(counts.told, counts.assessable, 'packages assessed'), `${formatCount.format(counts.flagged)} flagged`,
-      ...counts.stale > 0 ? [`${formatCount.format(counts.stale)} stale`] : [],
+      packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
+      ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],
       ...counts.advisories > 0 ? [`${formatCount.format(counts.advisories)} advisories${counts.malware > 0 ? `, ${formatCount.format(counts.malware)} of malware` : ''}`] : []].join(' · ')
   }
 

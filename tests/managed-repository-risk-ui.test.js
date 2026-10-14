@@ -126,3 +126,22 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   page._tab = 'advisories'
   assert.match(templateText(page.render()), />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need the versions it affects[^>]*>dev</u)
 })
+
+test('the progress line counts packages only devDependencies need apart from the rest, where there are any, one a later lockfile needs otherwise among the rest', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'running'
+  const progress = () => templateText(page.render()).match(/<p class="risk-progress" role="status">([^<]*)</u)[1]
+  const lockfile = (path, packages) => ({ type: 'lockfile', repo: 1, path, format: 'npm', packages })
+  page._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] })
+  page._apply({ type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: ['package-lock.json', 'web/package-lock.json', 'docs/package-lock.json'].map(path => ({ path, format: 'npm' })) })
+  page._apply(lockfile('package-lock.json', [{ name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'is-number', version: '7.0.0', source: 'registry' },
+    { name: 'mine', version: '1.0.0', source: 'git', dev: true }]))
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] })
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 1 of 3 lockfiles · 1 of 2 packages assessed · 1 flagged', 'none assessed of devDependencies alone: as before')
+  page._apply(lockfile('web/package-lock.json', [{ name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }]))
+  page._apply({ type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }], stale: { assessedAt: 1 } })
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 2 of 3 lockfiles · 1 of 2 non-dev and 1 of 2 dev packages assessed · 1 non-dev and 1 dev flagged · 0 non-dev and 1 dev stale')
+  // docs needs eslint otherwise: it is among the rest from now on.
+  page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
+  assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 3 of 3 lockfiles · 2 of 3 non-dev and 0 of 1 dev packages assessed · 2 non-dev and 0 dev flagged · 1 non-dev and 0 dev stale')
+})

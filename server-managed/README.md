@@ -946,6 +946,9 @@ devDependencies leaves it out, and the page tags it `dev` and lists it after
 the rest, but for malware, which runs wherever it is installed, CI and a
 developer's machine among them; and an advisory of versions only
 devDependencies need after those of the rest, malware's first all the same.
+The page's progress line counts packages assessed, flagged and stale of
+devDependencies alone apart from the rest, as each lockfile tells it so far:
+a later lockfile that needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour), and told in an `advisories` line,
