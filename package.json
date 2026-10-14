@@ -259,6 +259,8 @@
     "common/revalidation-input-groups.js",
     "common/server-info.ts",
     "common/scan-server.ts",
+    "common/security-links.d.ts",
+    "common/security-links.js",
     "common/utf8.d.ts",
     "common/utf8.js",
     "common/workspace-app.js",

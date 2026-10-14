@@ -3,6 +3,7 @@
 // access is per finding: App, own source, and the own-source organizations stay.
 import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { readManagedReport } from './report-content.ts'
+import { revalidationLinks, securityLinks } from '../security-links.js'
 
 export interface ViewerPermissions {
   dependencies: boolean
@@ -80,7 +81,7 @@ export function filterReportData(data: unknown, perms: ViewerPermissions, repo?:
     entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: projectFinding(original, report) })),
   }))
   const groups = entries.map(({ members }) => members.flatMap(({ finding }) => finding ? [finding] : []))
-  if (!perms.security) stampSecurityGroups(groups)
+  if (!perms.security) stampSecurityGroups(groups, { linkedIds: securityLinks(revalidationLinks(groups.flat())).linkedIds })
   const githubOrgs = new Set<string>(), npmScopes = new Set<string>()
   const addOrgs = (finding: Finding) => {
     const github = githubOrg(finding), npm = npmScope(finding)

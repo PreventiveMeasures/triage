@@ -10,6 +10,7 @@ const { activeFilterDescriptions } = await import('../ui/view/export-summary.js'
 const { deleteFile, ensureBundleFindingsIndexed, ensureLinkedFindingsIndexed, reportRowsForFindingIds, saveFile, subscribeToBundleFindingIndex, subscribeToLinkedFindings } = await import('../client/index.js')
 const { setCount } = await import('../client/counts.js')
 const { LINKS_KIND } = await import('../client/linked-findings.js')
+const { clearManagedWorkspace, setManagedWorkspace } = await import('../client/managed/workspace.js')
 const finding = (id, extra = {}) => ({ id, file: 'src/app.js', severity: 'high', confidence: 9, ...extra })
 
 beforeEach(() => {
@@ -115,5 +116,63 @@ test('known linked evidence updates cached rows without loading reports and stay
     await deleteFile(linksName)
     unsubscribeLinks()
     unsubscribeIndex()
+  }
+})
+
+const citing = (id, inputs, extra = {}) => finding(id, { isApp: true, revalidate: 'revalidation', revalidateInputs: inputs, ...extra })
+
+for (const serverMode of ['e2e', 'managed']) {
+  test(`${serverMode}: App findings and the inputs they cite in other reports share security, in either direction`, () => {
+    state.serverMode = serverMode
+    state.currentWorkspace = 'workspace'
+    state.reports = [
+      { fileName: 'secure-pass.json', groups: [[citing('secure-answer', ['cited'], { type: 'security' })]] },
+      { fileName: 'pass.json', groups: [[citing('answer', ['secret'], { type: 'correctness' })]] },
+      { fileName: 'source.json', groups: [
+        [finding('cited', { type: 'correctness' })], [finding('secret', { type: 'security' })], [finding('plain', { type: 'correctness' })],
+      ] },
+    ]
+    getMergedGroups()
+    const stamped = Object.fromEntries(state.reports.flatMap(r => r.groups.flat()).map(f => [f.id, f.isSecurity]))
+    assert.deepEqual(stamped, { 'secure-answer': true, answer: true, cited: true, secret: true, plain: false })
+  })
+}
+
+test('an App row citing a loaded finding from an unopened report is evidence through the local index', async () => {
+  const cited = crypto.randomUUID(), name = `security-citing-${cited}.json`
+  const unsubscribeIndex = subscribeToBundleFindingIndex(() => { state.findingIndexTick++ })
+  state.reports = [{ fileName: 'visible.json', groups: [[finding(cited, { type: 'correctness' })]] }]
+  const matches = () => getMergedGroups()[0].every(f => f.isSecurity)
+  try {
+    assert.equal(matches(), false)
+    await saveFile(name, JSON.stringify({ type: 'security', groups: [[citing(crypto.randomUUID(), [cited])]] }))
+    await ensureBundleFindingsIndexed()
+    assert.equal(matches(), true, 'the citing App row is found without loading its report')
+    assert.equal(state.reports.length, 1)
+    await deleteFile(name)
+    assert.equal(matches(), false, 'deleting the citing report clears the evidence')
+  } finally {
+    await deleteFile(name)
+    unsubscribeIndex()
+  }
+})
+
+test('managed mode finds App rows citing a loaded finding anywhere in the team workspace', () => {
+  // Rows outside the loaded reports carry the server's stamp, as team responses do.
+  state.serverMode = 'managed'
+  state.currentManagedTeam = 'team'
+  state.managedSession = { id: 'user', login: 'user', name: null, avatarUrl: null, role: 'view', csrfToken: null }
+  const source = { id: 'source', filename: 'source.json', repo: { github: null, directory: '' }, data: { findings: [finding('cited', { type: 'correctness' })] } }
+  const pass = { id: 'pass', filename: 'pass.json', repo: { github: null, directory: '' }, data: { findings: [citing('answer', ['cited'], { isSecurity: true })] } }
+  try {
+    state.reports = [{ fileName: 'source.json', groups: [[finding('cited', { type: 'correctness' })]] }]
+    setManagedWorkspace('team', [source])
+    assert.equal(getMergedGroups()[0][0].isSecurity, false)
+    setManagedWorkspace('team', [source, pass])
+    assert.equal(getMergedGroups()[0][0].isSecurity, true)
+  } finally {
+    clearManagedWorkspace()
+    state.currentManagedTeam = null
+    state.managedSession = null
   }
 })
