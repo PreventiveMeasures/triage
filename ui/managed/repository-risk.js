@@ -70,6 +70,9 @@ const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only ad
 
 // What a scan reads: every connected repository, a team's, or one.
 const SCOPES = [['all', 'All repositories'], ['team', 'Team'], ['repo', 'Repository']]
+// Up to how many teams are chosen among as buttons, as the scope is; more in
+// a list.
+const TEAM_BUTTONS = 5
 
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
@@ -488,22 +491,34 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <span class="result-count">${count === total ? '' : `${formatCount.format(count)} of `}${formatCount.format(total)} ${what}</span>`
   }
 
-  // A team's chosen from a list, and a repository with the picker the other
-  // pages share, by owner and searchable.
+  // A team's chosen with _teamPicker, and a repository with the picker the
+  // other pages share, by owner and searchable.
   _scopeBar() {
     const running = this._state === 'running'
     const loading = this._choices ? '' : 'Loading…'
     return html`<div class="risk-scope-bar">
       <div class="risk-scope" role="group" aria-label="What to scan">${SCOPES.map(([scope, label]) => html`<button type="button"
         aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._choose(scope)}>${label}</button>`)}</div>
-      ${this._scope === 'team' ? html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
-        <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
-        ${(this._choices?.teams ?? []).map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${team.hidden ? `${team.name} (hidden)` : team.name}</option>`)}
-      </select>` : nothing}
+      ${this._scope === 'team' ? this._teamPicker(running, loading) : nothing}
       ${this._scope === 'repo' ? html`<repository-selector label="Which repository" placeholder=${loading || 'Choose a repository…'} ?disabled=${running || !this._choices}
         .options=${(this._choices?.repos ?? []).map(repo => ({ value: String(repo.repoId), label: repo.fullName }))} .value=${this._target || null}
         @repository-change=${event => this._choose('repo', event.detail.value)}></repository-selector>` : nothing}
     </div>`
+  }
+
+  // A team, chosen as the scope is among a few (TEAM_BUTTONS), else from a
+  // list.
+  _teamPicker(running, loading) {
+    const teams = this._choices?.teams ?? []
+    const name = team => team.hidden ? `${team.name} (hidden)` : team.name
+    if (teams.length > 0 && teams.length <= TEAM_BUTTONS) {
+      return html`<div class="risk-scope" role="group" aria-label="Which team">${teams.map(team => html`<button type="button"
+        aria-pressed=${team.id === this._target} ?disabled=${running} @click=${() => this._choose('team', team.id)}>${name(team)}</button>`)}</div>`
+    }
+    return html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
+      <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
+      ${teams.map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${name(team)}</option>`)}
+    </select>`
   }
 
   _progress() {

@@ -314,3 +314,19 @@ test('a repository a later part fails to read, as its access is withdrawn, has w
   await page.start()
   assert.deepEqual([page._repos.get(1).error, page._repos.get(1).lockfiles, page._packages.size], ['no-repository', null, 0])
 })
+
+test('a team is chosen among buttons, as the scope is, where there are five or fewer, else from a list', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  const teams = count => Array.from({ length: count }, (_, at) => ({ id: `t${at}`, name: `Team ${at}`, hidden: at === 1 }))
+  const picker = () => templateText(page.render()).match(/<div class="risk-scope" role="group" aria-label="Which team">.*?<\/div>|<select aria-label="Which team".*?<\/select>/su)?.[0]
+  page._choose('team', 't2')
+  assert.match(picker(), /^<select/u, 'a list while the teams load')
+  page._choices = { teams: teams(5), repos: [] }
+  const buttons = [...picker().matchAll(/aria-pressed=(\w+)[^]*?team\.id\)>([^<]+)<\/button>/gu)].map(([, pressed, name]) => [name, pressed === 'true'])
+  assert.deepEqual(buttons, [['Team 0', false], ['Team 1 (hidden)', false], ['Team 2', true], ['Team 3', false], ['Team 4', false]])
+  page._choices = { teams: teams(6), repos: [] }
+  assert.match(picker(), /^<select/u, 'six: a list')
+  assert.match(picker(), /<option value=t5/u)
+  page._choices = { teams: [], repos: [] }
+  assert.match(picker(), /^<select[^]*Choose a team/u, 'none: the list, empty')
+})
