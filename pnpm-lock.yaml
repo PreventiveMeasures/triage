@@ -15,8 +15,8 @@ importers:
         specifier: 1.0.0-beta.9
         version: 1.0.0-beta.9
       '@preventive/compare':
-        specifier: ^1.2.4
-        version: 1.2.4(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
+        specifier: ^1.2.6
+        version: 1.2.6(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
       '@preventive/diff':
         specifier: ^1.0.2
         version: 1.0.2
@@ -892,8 +892,8 @@ packages:
     resolution: {integrity: sha512-lJN3Wdt1pdsYXjAKJatYFn97N1l+0Kge6ixHIvHR1bdk5Zy/zDxigPbc3Rv1F13zObgV6X1TK7IvvHEaqFCvIA==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.0.0-beta.4.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/compare@1.2.4':
-    resolution: {integrity: sha512-2bQFyFDOgCQ3FTDAsUBvceu2iZlZ1W+SxTMHT4Ub+LtfVvEaAqoik1ej+d6LdHxmv3Op2L3xoZoaUPkUOMt39A==, tarball: https://registry.npmjs.org/@preventive/compare/-/compare-1.2.4.tgz}
+  '@preventive/compare@1.2.6':
+    resolution: {integrity: sha512-7fBXG7CIvaIBfgj7uCio6QJzKzRlI6266jvelhN3W58WRpaxrO2oyi+sKQJGjQa+MCFuVLGzdT8yxuz/FuTamA==, tarball: https://registry.npmjs.org/@preventive/compare/-/compare-1.2.6.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       css-tree: '>=3.2.1'
@@ -2179,7 +2179,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/compare@1.2.4(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)':
+  '@preventive/compare@1.2.6(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)':
     dependencies:
       '@exodus/bytes': 1.16.0
       '@preventive/diff': 1.0.2
