@@ -683,6 +683,10 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.told['told@1.14.1'] = { 'plain-crypto-js': { tier: null, level: 'is-unpopular', created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, react: { tier: 200, level: 'is-solid' } }
   assert.equal(unusedChip(await badges(depending('told', '1.14.0', {}), depending('told', '1.14.1', { 'plain-crypto-js': '^4.2.1', react: '^19.0.0' }))),
     'is-critical | Imported by nothing of 1.14.1: plain-crypto-js ^4.2.1 (new package, 18 hours old), react ^19.0.0 (npm\'s top 200); new since 1.14.0: plain-crypto-js, react')
+  answers.told['hijacked@1.1.0'] = { 'old-lib': { tier: 2000, level: 'is-top', installs: { version: '3.0.1', latest: '4.0.0', published: '2026-09-20T00:00:00.000Z', scripts: true, new: true } } }
+  assert.equal(unusedChip(await badges(depending('hijacked', '1.0.0', {}), depending('hijacked', '1.1.0', { 'old-lib': '^3.0.0' }))),
+    'is-critical | Imported by nothing of 1.1.0: old-lib ^3.0.0 (npm\'s top 2,000; installs 3.0.1 (its latest 4.0.0), published since 1.0.0, running its install scripts); new since 1.0.0: old-lib',
+    'an old package\'s old major line given a release since, to run its install scripts')
   answers.told['peer@1.1.0'] = { react: { tier: 200, level: 'is-solid' } }
   assert.equal(unusedChip(await badges(depending('peer', '1.0.0', {}), depending('peer', '1.1.0', { react: '^19.0.0' }))),
     'is-moderate | Imported by nothing of 1.1.0: react ^19.0.0 (npm\'s top 200); new since 1.0.0: react')

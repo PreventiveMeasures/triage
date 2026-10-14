@@ -17,6 +17,7 @@ import { npmOldVersion } from '../risk/npm/old-version.js'
 import { npmAccountStanding } from '../risk/npm/release.js'
 import { npmCombinedFindings } from '../risk/npm/combined.js'
 import { npmAssessmentOf } from '../risk/npm/assess.js'
+import { npmPublicFacts } from '../risk/npm/registry.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
@@ -179,10 +180,16 @@ test('a dependency nothing imports graded by its package: one kept yellow, a new
   const graded = (rows, added, compared = true) => npmAssessmentOf({ findings: [{ id: 'held-unused-deps', severity: 'high', dependencies: rows }], files: {},
     dependencies: { added: [], changed: [], ...compared ? { held: [] } : {} } }, [], added).findings[0]
   const severities = (rows, added, compared) => graded(rows, added, compared).dependencies.map(({ name, severity }) => `${name} ${severity}`)
-  assert.deepEqual(severities([row('debug'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true })],
-    [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: 50_000, level: 'is-low' }, { ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]),
-  ['debug moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical'],
-  'kept from the version compared with; new: a peer\'s or a tool\'s, as popular as react; past the top 20,000; its package not told; first published since')
+  const installs = (scripts, isNew, latest = '4.0.0') => ({ installs: { version: '3.0.1', latest, published: '2026-10-01T00:00:00.000Z', scripts, new: isNew } })
+  assert.deepEqual(severities([row('debug'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true }),
+    row('scripted', { added: true }), row('hijacked', { added: true }), row('bumped', { added: true }), row('active', { added: true })],
+  [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: 50_000, level: 'is-low' }, { ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY },
+    { ...row('scripted'), tier: 5, level: 'is-solid', ...installs(true, false) }, { ...row('hijacked'), tier: 5, level: 'is-solid', ...installs(true, true) },
+    { ...row('bumped'), tier: 5, level: 'is-solid', ...installs(false, true) }, { ...row('active'), tier: 5, level: 'is-solid', ...installs(true, true, '3.0.1') }]),
+  ['debug moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical', 'scripted high', 'hijacked critical', 'bumped moderate', 'active high'],
+  'kept from the version compared with; new: a peer\'s or a tool\'s, as popular as react; past the top 20,000; its package not told; first published since; '
+    + 'the version it installs running install scripts; that version published since too, not its latest, as an old major line given a release to run them; one published since with none; '
+    + 'its latest, as a package still releasing')
   assert.equal(graded([row('debug'), row('fresh', { added: true })], [{ ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]).severity, 'critical',
     'the finding as its most severe')
   assert.equal(graded([row('debug')], []).severity, 'moderate', 'all kept: yellow')
@@ -204,7 +211,7 @@ test('against the version before: what it adds and changes, its publisher and pr
   assert.deepEqual(ids(assessment), ['publisher', 'provenance-lost', 'held-unused-deps'])
   assert.deepEqual(assessment.findings[0], { id: 'publisher', was: known, now: 'someone-new', wasKnown: true, nowKnown: false, wasStanding: 'known', nowStanding: 'new', severity: 'critical' })
   assert.deepEqual(assessment.findings[2], { id: 'held-unused-deps', severity: 'critical', dependencies: [{ name: 'crypto-like', kind: null, range: '^4.2.1', added: true,
-    severity: 'critical', tier: null, level: 'is-unpopular', created: ago(20.5), gap: 0.5 * DAY }] },
+    severity: 'critical', tier: null, level: 'is-unpopular', created: ago(20.5), gap: 0.5 * DAY, installs: { version: '4.2.1', latest: '4.2.1', published: ago(20.5), scripts: true, new: true } }] },
     'what it holds, the one added marked: red, its package first published since 1.0.0, as plain-crypto-js was since axios 1.14.0')
   const [added] = assessment.dependencies.added
   assert.equal(added.name, 'crypto-like')
@@ -887,6 +894,31 @@ test('a new dependency nothing imports, among the top 20,000 by downloads yet fi
   const unused = (await assessNpm('boosting', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
   assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].created], ['critical', 'is-top', ago(25)],
     'its package\'s age asked whatever its tier, as it grades it')
+})
+
+test('a new dependency nothing imports, its package old and downloaded, red where the version its range installs is published since and has install scripts', async t => {
+  const meta = (dependencies, scripts = {}) => ({ dependencies, scripts })
+  const before = version('victim', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({}), ago(30))
+  const after = version('victim', '1.1.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ 'old-lib': '^3.0.0' }), ago(20))
+  const lib = [version('old-lib', '3.0.0', { 'package.json': '{}' }, meta({}), ago(2000)), version('old-lib', '4.0.0', { 'package.json': '{}' }, meta({}), ago(400)),
+    version('old-lib', '3.0.1', { 'package.json': '{}', 'setup.js': '' }, meta({}, { postinstall: 'node setup.js' }), ago(25))]
+  const days = Array.from({ length: 72 }, (_, at) => ({ day: new Date(Date.parse('2026-08-01') + at * DAY).toISOString().slice(0, 10), downloads: 4e6 }))
+  npm(t, [{ name: 'victim', versions: [before, after] }, { name: 'old-lib', versions: lib, latest: '4.0.0' }], { 'old-lib': { start: '2026-08-01', end: '2026-10-11', downloads: days } })
+  const unused = (await assessNpm('victim', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
+  assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].installs], ['critical', 'is-top', { version: '3.0.1', latest: '4.0.0', published: ago(25), scripts: true, new: true }],
+    'old-lib\'s latest is 4.0.0, years old and downloaded; ^3.0.0 installs 3.0.1, published since 1.0.0 with a postinstall')
+})
+
+test('the version a dependency\'s spec installs, as npm picks it: a tag it names, else latest where that satisfies it, else the highest, one not deprecated first', async () => {
+  const doc = { name: 'lib', 'dist-tags': { latest: '4.0.0', next: '5.0.0-rc.1' }, time: { '3.0.0': ago(900), '3.1.0': ago(30), '3.2.0': ago(10), '4.0.0': ago(400), '5.0.0-rc.1': ago(5) },
+    versions: { '3.0.0': { version: '3.0.0' }, '3.1.0': { version: '3.1.0', scripts: { postinstall: 'node x.js' } }, '3.2.0': { version: '3.2.0', deprecated: 'broken' },
+      '4.0.0': { version: '4.0.0' }, '5.0.0-rc.1': { version: '5.0.0-rc.1' } } }
+  const installs = async spec => (await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(doc) }, spec)).installs
+  assert.deepEqual(await installs('^3.0.0'), { version: '3.1.0', latest: '4.0.0', published: ago(30), scripts: true }, 'the highest 3.x not deprecated, latest 4.0.0 not satisfying it')
+  assert.deepEqual(await Promise.all(['^4.0.0', '*', '', 'next', 'npm:lib@~3.0.0', 'npm:lib'].map(async spec => (await installs(spec)).version)),
+    ['4.0.0', '4.0.0', '4.0.0', '5.0.0-rc.1', '3.0.0', '4.0.0'], 'latest where it satisfies; a tag; an alias by its own range')
+  assert.deepEqual(await Promise.all(['^9.0.0', 'github:a/b', 'https://example.com/lib.tgz'].map(installs)), [null, null, null], 'none satisfying it, nor a spec that is no range')
+  assert.deepEqual(await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(doc) }), { created: ago(900) }, 'none asked without a spec')
 })
 
 test('a new dependency\'s package told by its downloads but its latest two weeks\', and its age where it is new since the version compared with', () => {

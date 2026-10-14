@@ -33,6 +33,7 @@
 // tarball unpacking past tarball.js's, `package-too-large`.
 import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
+import { compareVersions, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { npmVersionManifest } from './manifest.js'
 import { npmPlaceholder } from './malware.js'
 import { npmOldVersion } from './old-version.js'
@@ -63,6 +64,9 @@ export class NpmRiskError extends Error {
 }
 
 const isTime = value => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))
+// An object as JSON holds one, not an array (manifest.js plainObject).
+const plainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
 // A scoped name in a downloads API path, its slash escaped.
 const encoded = name => name.replace('/', '%2f')
 const token = () => typeof process === 'undefined' ? null
@@ -249,13 +253,38 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
   }
 }
 
+// The version of a package's document npm installs for a dependency's spec
+// (`spec`, an alias's by its own range, `npm:name@^1`), as npm picks one:
+// the tag it names, else its `latest` where that satisfies it, else the
+// highest that does, one not deprecated first; null for none, or for a spec
+// that is no range nor tag (a URL, a repository).
+function installedVersion(doc, spec) {
+  const alias = spec.startsWith('npm:') ? spec.slice(4) : null
+  const range = alias === null ? spec : alias.lastIndexOf('@') > 0 ? alias.slice(alias.lastIndexOf('@') + 1) : ''
+  const tags = plainObject(doc['dist-tags']) ? doc['dist-tags'] : {}, versions = plainObject(doc.versions) ? doc.versions : {}
+  if (Object.hasOwn(tags, range) && Object.hasOwn(versions, tags[range])) return tags[range]
+  if (validRange(range || '*') === null) return null
+  if (Object.hasOwn(versions, tags.latest) && satisfies(tags.latest, range || '*')) return tags.latest
+  const matching = Object.keys(versions).filter(version => satisfies(version, range || '*'))
+  const current = matching.filter(version => typeof versions[version]?.deprecated !== 'string')
+  return (current.length > 0 ? current : matching).reduce((best, version) => best === null || compareVersions(version, best) > 0 ? version : best, null)
+}
+
 // When a package anyone can read was first published, `{ created }`, or null
-// for one npm has none of for anyone.
-export async function npmPublicFacts(name, context) {
-  const facts = await kept(context, 'risk/npm/public', name,
-    async () => { const doc = await packageDocument(name, context, false); return doc ? { at: context.now, created: firstPublished(doc) } : { at: context.now, missing: true } },
-    hit => context.now - hit.at < PACKAGE_MS)
-  return facts.missing ? null : { created: facts.created }
+// for one npm has none of for anyone; and for a dependency's spec (`spec`),
+// the version of it npm installs (installedVersion), `installs`: `{ version,
+// latest, published, scripts }`, its package's `latest` beside it, when it
+// was published and whether it has install scripts, null for none.
+export async function npmPublicFacts(name, context, spec = null) {
+  const facts = await kept(context, 'risk/npm/public', spec === null ? name : `${name}@${spec}`, async () => {
+    const doc = await packageDocument(name, context, false)
+    if (!doc) return { at: context.now, missing: true }
+    const version = spec === null ? null : installedVersion(doc, spec)
+    return { at: context.now, created: firstPublished(doc), ...spec === null ? {} : { installs: version === null ? null
+      : { version, latest: typeof doc['dist-tags']?.latest === 'string' ? doc['dist-tags'].latest : null, published: isTime(doc.time?.[version]) ? doc.time[version] : null,
+        scripts: Boolean(npmVersionManifest(doc.versions[version]).installScripts) } } }
+  }, hit => context.now - hit.at < PACKAGE_MS)
+  return facts.missing ? null : { created: facts.created, ...spec === null ? {} : { installs: facts.installs } }
 }
 
 // The days a package's downloads are asked over at `now`: from the first of
