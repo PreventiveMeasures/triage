@@ -40,6 +40,17 @@ test('security removes complete original rows before dependency filtering, and s
   assert.deepEqual(ids(filterReportData(report, perms(false, true))), [['app'], ['app', 'other'], ['allowed-app'], ['own']])
 })
 
+test('revalidation inputs share security with the App finding that cites them, in either direction', () => {
+  const report = { groups: [
+    [{ id: 'secure-pass', revalidate: 'revalidation', type: 'security', revalidateInputs: ['cited'] }],
+    [{ id: 'cited', type: 'correctness' }],
+    [{ id: 'pass', revalidate: 'revalidation', type: 'correctness', revalidateInputs: ['secret', 7] }],
+    [{ id: 'secret', type: 'security' }],
+    [{ id: 'own', type: 'correctness' }],
+  ] }
+  assert.deepEqual(ids(filterReportData(report, perms(true))), [['own']])
+})
+
 test('known positive security stamps are honored, while false stamps cannot bypass classification', () => {
   const report = { findings: [
     { id: 'linked', security: false, isSecurity: true },
