@@ -26,9 +26,9 @@ const treeData = (content, at) => typeof content === 'string' ? `\0text\0${conte
 // Rollup's `[name]-[hash]`, webpack's `[name].[contenthash].js`) by its name
 // but its hash, `assets/index\0.js`: a release renames it as its content
 // changes, the same file. Null for a name whose last part before its
-// extension is no hash: 8 to 32 of base64url's characters with a digit or a
-// capital, as a lowercase word (`index-client.js`, `lodash.debounce.js`) has
-// neither. Its hash its last 8 or more such characters, so that chunks named
+// extension is no hash: 8 to 32 of base64url's characters with a letter, and
+// a digit or a capital, as neither a lowercase word (`index-client.js`,
+// `lodash.debounce.js`) nor a number (a date, `migration-20240101.js`) is. Its hash its last 8 or more such characters, so that chunks named
 // after a module (`vendor-react-DQ4mN2sx.js`) pair each with its own; a
 // longer hash holding a `-` (Rollup's `[hash:16]`) is cut there, so that a
 // rebuild pairs by its content alone, as its parts aren't told from a
@@ -37,7 +37,7 @@ const HASHED_NAME = /^(.+)[-.]([\w-]{8,32})((?:\.[A-Za-z\d]+)+)$/u
 function hashedKey(path) {
   const at = path.lastIndexOf('/') + 1
   const [, stem, hash, extension] = HASHED_NAME.exec(path.slice(at)) ?? []
-  if (!hash || !/[\dA-Z]/u.test(hash)) return null
+  if (!hash || !/[A-Za-z]/u.test(hash) || !/[\dA-Z]/u.test(hash)) return null
   return `${path.slice(0, at)}${stem}\0${extension}`
 }
 
