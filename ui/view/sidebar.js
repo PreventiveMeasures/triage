@@ -1911,6 +1911,8 @@ let managedSessionPending = true
 let managedTeamsPending = true
 let managedNavigationPending = false
 let managedBase = null
+// The session's catalog read while it is in flight (revalidateManagedSession).
+let managedSessionTeams = null
 // The session the startup mode probe sent, for the first managed session probe
 // in place of GET /api/auth/session. Dropped once taken, or when startup opens
 // another protocol, so no later probe takes it stale.
@@ -2105,10 +2107,11 @@ async function revalidateManagedSession() {
     // when logged out. Repaint the sidebar so the section reflects the result.
     // The page opens alongside this read, not after it: Manage, npm and the
     // other pages need only the session, and the routes resolved through a
-    // team join the read in flight (restoreManagedPageContent). The read is
-    // the session's, not the view's, so the navigation that opens the page
-    // does not cancel it.
-    const teams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
+    // team wait for this read (viewManagedTeams). The read is the session's,
+    // not a view's: neither the navigation that opens the page nor leaving
+    // that page before the read answers cancels it.
+    const teams = managedSessionTeams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
+      .finally(() => { if (managedSessionTeams === teams) managedSessionTeams = null })
     const page = managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)
       ? managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
       : session ? managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration }) : null
@@ -2127,6 +2130,13 @@ async function revalidateManagedSession() {
 setManagedTeamFeedRefresh((isCurrent, signal, revision) => refreshManagedTeams(isCurrent, { strict: true, signal, revision }))
 
 const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
+
+// A view's catalog: the session's read while it is in flight, waited for
+// rather than joined, since a joined read is cancelled with its view
+// (createManagedTeamsProbe); otherwise the shared catalog, read if expired.
+function viewManagedTeams(isCurrent) {
+  return managedSessionTeams ?? refreshManagedTeams(isCurrent, { reuse: true })
+}
 let managedTeamsUpdate = 0
 async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal(), reuse = false, revision = null } = {}) {
   const generation = clientModeGeneration
@@ -2240,7 +2250,7 @@ function cancelManagedRestoration() {
   managedNavigationPending = false
   beginViewNavigation()
   const generation = clientModeGeneration
-  void refreshManagedTeams(() => generation === clientModeGeneration && isManagedUiMode(), { reuse: true })
+  void viewManagedTeams(() => generation === clientModeGeneration && isManagedUiMode())
 }
 
 // Navigate to one of the admin / manage pages: load the admin bundle
@@ -2264,7 +2274,8 @@ async function restoreManagedPageContent(route, isCurrent) {
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
-  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent, { reuse: true }))) return false
+  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding)
+    && (!(await viewManagedTeams(isCurrent)) || !isCurrent())) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
     if (!canAccessManagedPage('manage-bundles')) return false
