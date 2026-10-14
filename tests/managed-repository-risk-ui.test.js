@@ -260,3 +260,27 @@ test('a lockfile a later part no longer lists, at the same commit, as a team\'s 
   assert.deepEqual([...page._packages.values()].map(row => [`${row.name}@${row.version}`, [...row.usedIn]]), [['debug@4.4.0', ['org/one/package-lock.json']]])
   assert.deepEqual([...page._repos.get(1).lockfiles.keys()], ['package-lock.json'])
 })
+
+test('a lockfile\'s advisories told again otherwise, as audited again over an hour on, replace those it told', async t => {
+  const malware = { id: 'GHSA-xxxx', name: 'debug', severity: 'critical', title: 'Malware in debug', range: '4.4.0', versions: ['4.4.0'], malware: true }
+  const vulnerable = { id: 'GHSA-yyyy', name: 'ms', severity: 'high', title: 'ReDoS', range: '<3', versions: ['2.1.3'], malware: false }
+  const read = [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0'), locked('ms', '2.1.3')])]
+  partsServed(t, [[...read, advised('package-lock.json', [malware, vulnerable]), { type: 'continue' }],
+    [...read, advised('package-lock.json', [vulnerable]), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._advisories.keys()], ['GHSA-yyyy\0ms'], 'the one withdrawn forgotten')
+  assert.equal(page._packages.get('debug@4.4.0\0').malware, undefined, 'and its malware')
+})
+
+test('a repository a later part no longer lists, as disconnected or no longer the team\'s, has what it told forgotten', async t => {
+  const one = [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), advised('package-lock.json', [])]
+  const two = [{ type: 'repo', id: 2, commit: 'b'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 2, path: 'package-lock.json', format: 'npm', packages: [locked('ms', '2.1.3')] }]
+  partsServed(t, [[{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }, { id: 2, fullName: 'org/two' }] }, ...one.slice(1), ...two, { type: 'continue' }],
+    [...one, { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._repos.keys()], [1])
+  assert.deepEqual([...page._packages.values()].map(row => row.name), ['debug'])
+})

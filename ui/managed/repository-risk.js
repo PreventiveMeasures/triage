@@ -320,6 +320,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // A scan's next part tells its repositories and lockfiles again: those
     // told already kept as they are until told otherwise.
     if (line.type === 'repos') {
+      // Those no longer listed, as disconnected or no longer the team's,
+      // forgotten.
+      const listed = new Set(line.repos.map(({ id }) => id))
+      const gone = [...this._repos.values()].filter(repo => !listed.has(repo.id))
+      for (const repo of gone) this._repos.delete(repo.id)
+      this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)))
       for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
@@ -330,9 +336,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       // what those no longer listed told forgotten.
       const moved = repo.commit !== null && repo.commit !== line.commit
       const listed = new Set(moved ? [] : line.lockfiles.map(({ path }) => path))
-      this._forget([...repo.lockfiles?.keys() ?? []].filter(path => !listed.has(path)).map(path => `${repo.fullName}/${path}`))
+      const gone = [...repo.lockfiles?.keys() ?? []].filter(path => !listed.has(path)).map(path => `${repo.fullName}/${path}`)
       Object.assign(repo, { commit: line.commit, error: null, detail: null })
       repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, (!moved && repo.lockfiles?.get(lockfile.path)) || { ...lockfile, packages: null, error: null }]))
+      this._forget(gone)
     } else if (line.type === 'lockfile') {
       const repo = this._repos.get(line.repo)
       const lockfile = repo?.lockfiles?.get(line.path)
@@ -355,35 +362,47 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // What lockfiles no longer told (`usedIn`, a repository's name and a path)
-  // told forgotten: the packages and advisories no other lockfile tells with
-  // them, and malware no advisory left tells.
+  // What lockfiles no longer listed told (`usedIn`, a repository's name and
+  // a path) forgotten: the packages no other lockfile tells, and the
+  // advisories as those listed tell them.
   _forget(usedIn) {
     if (usedIn.length === 0) return
-    for (const rows of [this._packages, this._advisories]) {
-      for (const [key, row] of rows) {
-        for (const used of usedIn) row.usedIn.delete(used)
-        if (row.usedIn.size === 0) rows.delete(key)
-      }
+    for (const [key, row] of this._packages) {
+      for (const used of usedIn) row.usedIn.delete(used)
+      if (row.usedIn.size === 0) this._packages.delete(key)
     }
-    for (const row of this._packages.values()) {
-      const ids = [...row.malware ?? []].filter(id => this._advisories.has(`${id}\0${row.name}`))
-      row.malware = ids.length > 0 ? new Set(ids) : undefined
+    this._readvise()
+  }
+
+  // Each listed lockfile's advisories, as it told them last, told anew.
+  _readvise() {
+    this._advisories = new Map()
+    for (const row of this._packages.values()) row.malware = undefined
+    for (const repo of this._repos.values()) {
+      for (const [path, lockfile] of repo.lockfiles ?? []) if (lockfile.advisories) this._advise(`${repo.fullName}/${path}`, lockfile.advisories)
     }
   }
 
-  // A lockfile's advisories, each kept once by its id and package: npm
-  // answers one a range it covers, here its ranges and versions together,
-  // and malware if any says so (npm-insights.ts merges them alike). Malware's
-  // marked on the packages of the versions it names.
+  // A lockfile's advisories, kept as it told them: told again otherwise, as
+  // a scan over an hour long audits it again (repository-risk.ts
+  // RISK_KEPT_MS), they replace those it told before.
   _applyAdvisories(line) {
     const repo = this._repos.get(line.repo)
     const lockfile = repo?.lockfiles?.get(line.path)
     if (!lockfile) return
     if (line.error) { lockfile.advisoriesError = line.error; return }
-    Object.assign(lockfile, { advisories: true, advisoriesError: null })
-    const usedIn = `${repo.fullName}/${line.path}`
-    for (const { range, versions, ...advisory } of line.advisories) {
+    const before = lockfile.advisories
+    Object.assign(lockfile, { advisories: line.advisories, advisoriesError: null })
+    if (!before) this._advise(`${repo.fullName}/${line.path}`, line.advisories)
+    else if (JSON.stringify(before) !== JSON.stringify(line.advisories)) this._readvise()
+  }
+
+  // Advisories a lockfile (`usedIn`) tells, each kept once by its id and
+  // package: npm answers one a range it covers, here its ranges and versions
+  // together, and malware if any says so (npm-insights.ts merges them
+  // alike). Malware's marked on the packages of the versions it names.
+  _advise(usedIn, advisories) {
+    for (const { range, versions, ...advisory } of advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
       if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set() })

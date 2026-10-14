@@ -931,7 +931,8 @@ deployment (Vercel, whose function answers within 300 seconds), a scan stops
 after 270 seconds, the work under way given up on, its last line `continue`
 in place of `done`: the page asks again at once, keeping what it found (but
 a repository's lockfiles', where its default branch moved on between parts,
-or a team's directories in it changed), and
+or a team's directories in it changed, a repository's no longer listed, and
+a lockfile's advisories audited again otherwise), and
 the next part tells what the last assessed as kept, going on from where it
 stopped, a hundred parts at most, or until three parts in a row find nothing
 more. Repositories are read one
