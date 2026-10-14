@@ -61,7 +61,10 @@ const COPY = String.raw`(?:\{${GAP}\.\.\.${GAP})?`
 const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${COPY}${ENV}`
   + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${COPY}${ENV}(?!${PICKED})`
 // What a shell command, and a place code runs from again later, may say
-// (SHELL, PERSISTENCE), and trufflehog (TRUFFLEHOG).
+// (SHELL, PERSISTENCE), and what of the credentials is told in any case:
+// trufflehog (TRUFFLEHOG), GCP's metadata host, and a string naming gh
+// (`'gh'`, `'/usr/bin/gh'`, `'GH.EXE'`) as a program run with its arguments
+// apart is, whatever is between them (`'gh', ['auth', /* … */ 'token']`).
 // A shell, as a hashbang or a pipe names it (`#!/bin/ksh`, `| fish`,
 // BusyBox's `ash`, `| powershell`); after a pipe, by its path or env's too (`| /bin/sh`,
 // `| /usr/bin/env bash`), env's options, their values, and settings before
@@ -69,13 +72,14 @@ const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}
 const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
 const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
 const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
-  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode|trufflehog`
+  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode|trufflehog|metadata\.google\.internal|["'\x60\/\\]gh(?:\.exe)?["'\x60]`
 // What says one of the credentials a command, an endpoint or a process holds
 // (HOLDS' gh-token, cloud-metadata, runner-worker and process-memory), as
-// code and its strings may say it: `gh auth token`, and a string naming gh
-// (`'gh'`, `'/usr/bin/gh'`), as a program run with its arguments apart is,
-// whatever is between them (`'gh', ['auth', /* … */ 'token']`).
-const SAYS_CREDENTIALS = String.raw`auth[^\S\n]+token|["'\x60\/\\]gh(?:\.exe)?["'\x60]|169\.254\.169\.254|metadata\.google\.internal|Runner\.Worker|\/proc\/`
+// code and its strings may say it, in the case it is written: `gh auth
+// token`'s command, lowercase as gh reads it, the metadata endpoint's
+// address, `Runner.Worker` and `/proc/`; what is told in any case is
+// SHELL_OR_PLACE's.
+const SAYS_CREDENTIALS = String.raw`auth[^\S\n]+token|169\.254\.169\.254|Runner\.Worker|\/proc\/`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
@@ -232,10 +236,12 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
   + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|(?:PowerShell|\$pshome)${SEPARATOR}profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
 // Credentials a command, an endpoint or a process holds, as recent npm
 // malware reached for them: the GitHub CLI printing its token (`gh auth
-// token`, by its path too, `gh.exe`), not its other commands (`gh auth
-// status`); the cloud's instance metadata endpoint, AWS's, Azure's and GCP's
-// (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`),
-// not an address or a host either starts (`169.254.169.2540`,
+// token`, by its path too, `gh.exe`, its name in any case as Windows runs
+// it, `GH.EXE`), not its other commands (`gh auth status`); the cloud's
+// instance metadata endpoint, AWS's, Azure's and GCP's
+// (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`,
+// in any case as DNS reads it), not an address or a host either starts or
+// ends (`169.254.169.2540`, `foo-169.254.169.254`,
 // `169.254.169.254.example.com`, `metadata.google.internal.example.com`; a
 // trailing dot, `metadata.google.internal.`, its host still) nor Azure's
 // instance metadata (`169.254.169.254/metadata/instance/compute`, its slashes
@@ -250,14 +256,14 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // not a process's own (`/proc/self/mem`) nor what else /proc tells of one
 // (`/proc/1234/status`); and trufflehog, a scanner for secrets, in any case
 // (`TruffleHog`), not in another name (`trufflehogs`, `TRUFFLEHOG_VERSION`).
-const GH_TOKEN = String.raw`(?<![\w.-])gh(?:\.exe)?[^\S\n]+auth[^\S\n]+token(?![\w-])`
+const GH_TOKEN = String.raw`(?<![\w.-])[gG][hH](?:\.[eE][xX][eE])?[^\S\n]+auth[^\S\n]+token(?![\w-])`
 const PID = String.raw`[\d*?[\]-]{1,20}|\$\{[^}\n]{0,100}\}|\$\([^)\n]{0,200}\)|\u0060[^\u0060\n]{0,200}\u0060|\$\w{1,64}|\{\w{0,64}\}|%d`
 const TRUFFLEHOG = String.raw`(?<![\p{ID_Continue}$-])trufflehog(?![\p{ID_Continue}$-])`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['gh-token', new RegExp(GH_TOKEN, 'gu')],
-  ['cloud-metadata', /(?<![\w.])169\.254\.169\.254(?![\w-]|\.[\w-]|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-]|\.[\w-])/gu],
+  ['cloud-metadata', /(?<![\w.-])169\.254\.169\.254(?![\w-]|\.[\w-]|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-]|\.[\w-])/giu],
   ['runner-worker', /(?<![\w$-])Runner\.Worker(?![\w$-])/gu],
   ['process-memory', new RegExp(String.raw`\/proc\/(?:${PID})\/mem(?![\w-])`, 'gu')],
   ['trufflehog', new RegExp(TRUFFLEHOG, 'giu')],

@@ -109,8 +109,8 @@ test('credentials: gh auth token, the cloud\'s metadata endpoint, the Actions ru
     + 'execFileSync(\'/usr/local/bin/gh\', [\'auth\', \'token\', \'--hostname\', host])\nconst t = execSync(`gh auth token`).toString()\nexec(\'GH_TOKEN=$(gh.exe auth token) x\')\n'),
   { 'gh-token': [1, 2, 3, 4, 5] }, 'gh auth token, its arguments apart too, as s1ngularity ran it')
   assert.deepEqual(found('a.js', 'run(\'gh\', [\'auth\', /* print it */ \'token\'])\nrun(\'gh\', [\n          \'auth\',\n          \'token\',\n        ])\n'
-    + 'execFileSync(\'C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\', [\'auth\', \'token\'])\n'), { 'gh-token': [1, 2, 6] },
-    'its arguments apart with a comment or lines between, though the file says nothing else first, and by a Windows path with spaces')
+    + 'execFileSync(\'C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\', [\'auth\', \'token\'])\nspawnSync(\'GH.EXE\', [\'auth\', \'token\'])\nexecSync(\'GH auth token\')\n'),
+  { 'gh-token': [1, 2, 6, 7, 8] }, 'its arguments apart with a comment or lines between, though the file says nothing else first, by a Windows path with spaces, its name in any case')
   assert.equal(found('a.js', 'execSync(\'gh auth status\')\nspawnSync(\'gh\', [\'auth\', \'login\'])\nconst help = \'gh auth\'\nconst c = gh.auth.token\nconst d = \'sigh auth token\'\n// gh auth token\n'), null,
     'gh\'s other commands, a property, another name, a comment')
   assert.deepEqual(found('a.js', 'fetch(\'http://169.254.169.254/latest/meta-data/iam/security-credentials/\')\nconst host = "metadata.google.internal"\n'
@@ -118,9 +118,11 @@ test('credentials: gh auth token, the cloud\'s metadata endpoint, the Actions ru
     + 'fetch(\'http://169.254.169.254/metadata/identity/oauth2/token?resource=x\')\nconst mapped = \'::ffff:169.254.169.254\'\n'
     + 'const escaped = \'http:\\/\\/169.254.169.254\\/metadata\\/identity\\/oauth2\\/token\'\nconst fqdn = \'http://metadata.google.internal.\'\n'), { 'cloud-metadata': [1, 2, 3, 4, 5, 6, 7, 8] },
   'the cloud\'s instance metadata endpoint, AWS\'s, GCP\'s and Azure\'s')
+  assert.deepEqual(found('a.js', 'fetch(\'http://METADATA.GOOGLE.INTERNAL/computeMetadata/v1/instance/service-accounts/default/token\')\n'), { 'cloud-metadata': [1] },
+    'GCP\'s host in any case, as DNS reads it, though the file says nothing else first')
   assert.equal(found('a.js', 'const a = \'169.254.169.2540\'\nconst b = \'10.169.254.169.254\'\nconst c = \'169.254.169.25\'\nconst d = \'169.254.169.254.1\'\n'
     + 'const e = \'metadata.google.internals\'\nconst IMDS = "http://169.254.169.254/metadata/instance/compute"\n// fetch(\'http://169.254.169.254/latest/meta-data/\')\n'
-    + 'const f = \'http:\\/\\/169.254.169.254\\/metadata\\/instance\\/compute\'\nget(\'http://169.254.169.254.example.com/\')\nget(\'http://metadata.google.internal.example.com/\')\n'), null,
+    + 'const f = \'http:\\/\\/169.254.169.254\\/metadata\\/instance\\/compute\'\nget(\'http://169.254.169.254.example.com/\')\nget(\'http://metadata.google.internal.example.com/\')\nget(\'http://foo-169.254.169.254/path\')\n'), null,
     'not an address or a host it starts or ends, nor Azure\'s instance metadata, a machine\'s region as msal asks it, its slashes escaped or not, nor in a comment')
   assert.deepEqual(found('a.js', 'if (cmdline.includes(\'Runner.Worker\')) return pid\nexec(\'pgrep -f Runner.Worker\')\nconst exe = \'Runner.Worker.exe\'\n'
     + 'const ns = \'GitHub.Runner.Worker\'\nopenSync(`/proc/${pid}/mem`, \'r\')\nconst all = \'/proc/*/mem\'\nconst one = "/proc/1234/mem"\nconst py = "mem_path = f\'/proc/{pid}/mem\'"\nformat(\'/proc/%d/mem\', pid)\n'),
