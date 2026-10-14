@@ -3,9 +3,9 @@
 // server's event loop: each pair a tree of a file a side, a side not there
 // none, its paths as they are, which say what a file is. Two paths pair as one
 // change wherever compareTrees takes them for a rename at all; where it
-// doesn't, the pair is types only where each of its two changes is, as each
-// side holds types alone and neither keeps an `export {}`, which is what it
-// would stamp of them paired. `[true, false, ...]` by pair.
+// doesn't, the pair is types only where each of its two changes is: the file
+// gone erasing whole, and the one come erasing whole or leaving a single bare
+// `export {}`, which nothing loaded before. `[true, false, ...]` by pair.
 import { parentPort, workerData } from 'node:worker_threads'
 import { compareTrees } from '@preventive/compare'
 

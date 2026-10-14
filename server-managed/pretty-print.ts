@@ -28,7 +28,7 @@ import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
 // Part of every kept copy's name; bumped when what the formatter writes for
 // the same file changes, or what its check lets through, so copies written
 // before are no longer read.
-const PRETTY_VERSION = 3
+const PRETTY_VERSION = 4
 // Formats running at once per process, each holding its file's syntax tree,
 // and those waiting their turn past them (a version's files are formatted one
 // after another, beside other readers'), any more refused.

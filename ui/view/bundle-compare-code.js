@@ -1208,7 +1208,7 @@ export class BundleCompareCode extends LitElement {
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
       </div>`
     }
-    // Proven by the server to run nothing on either side (type-only.js).
+    // Proven by the server to change types alone, what runs left as it was (type-only.js).
     if (typesHidden) {
       return html`<div class="bundle-compare-code-message">
         <p>Only types changed in this file.${recorded ? ` ${recorded}` : ''}</p>
