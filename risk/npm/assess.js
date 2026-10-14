@@ -127,7 +127,9 @@ const MAX_TOLD_DEPENDENCIES = 100
 // from }`), `uncounted` where npm counts none of them, `created` and `gap`
 // where it is new since the version compared with (`published`, when that
 // and the open version were), and for one nothing imports, the version its
-// spec installs (`installs`, registry.js npmPublicFacts); four asked at a time, whether each is the
+// spec installs (`installs`, registry.js npmPublicFacts); `missing` where
+// its package was looked up and npm has none of it for anyone, as once
+// unpublished or taken down; four asked at a time, whether each is the
 // caller's own among them, none more once one fails or MAX_TOLD_DEPENDENCIES
 // not the caller's own were taken, however many a version adds.
 async function addedDependencies(added, published, context, owned) {
@@ -137,15 +139,16 @@ async function addedDependencies(added, published, context, owned) {
   const tell = async row => {
     const downloads = await npmDownloads(row.opens, context)
     const unused = row.flags.some(flag => flag.check === 'unimported')
-    let facts = npmAddedDependency({ downloads, published, unused }, context.now)
+    let facts = npmAddedDependency({ downloads, published, unused }, context.now), missing = false
     if (facts.wanted) {
       const listed = await npmPublicFacts(row.opens, context, unused ? row.range : null)
+      missing = listed === null
       facts = npmAddedDependency({ downloads, listed: listed && { ...listed, private: false }, published, unused }, context.now)
     }
     const settled = npmSettledDownloads(downloads, context.now)
     const month = npmDownloadMonths(settled).at(-1)
     return { ...row, ...facts.tier === null ? {} : { ...tierOf(facts.tier), ...settled ? month && { month: { total: month.total, from: month.from.toISOString().slice(0, 10) } } : { uncounted: true } },
-      ...facts.created ? { created: facts.created, gap: facts.gap } : {}, ...facts.installs ? { installs: facts.installs } : {} }
+      ...facts.created ? { created: facts.created, gap: facts.gap } : {}, ...facts.installs ? { installs: facts.installs } : {}, ...missing ? { missing } : {} }
   }
   await Promise.all(Array.from({ length: 4 }, async () => {
     while (next < asked.length && taken < MAX_TOLD_DEPENDENCIES) {
@@ -221,7 +224,8 @@ function unusedGraded(finding, added, compared) {
   const dependencies = finding.dependencies.map(row => {
     const of = told.get(`${row.kind ?? ''}\0${row.name}`)
     return { ...row, severity: npmUnusedDependencySeverity(of, compared && !row.added),
-      ...of?.level ? { tier: of.tier, level: of.level } : {}, ...of?.created ? { created: of.created, gap: of.gap } : {}, ...of?.installs ? { installs: of.installs } : {} }
+      ...of?.level ? { tier: of.tier, level: of.level } : {}, ...of?.created ? { created: of.created, gap: of.gap } : {}, ...of?.installs ? { installs: of.installs } : {},
+      ...of?.missing ? { missing: true } : {} }
   })
   return { ...finding, severity: SEVERITIES[Math.min(...dependencies.map(row => SEVERITIES.indexOf(row.severity)))], dependencies }
 }

@@ -844,11 +844,11 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
 // imports, as it grades it (risk/npm/new-dependency.js
 // npmUnusedDependencySeverity): first published since the version compared
 // with (`sides`' first), how old it was when the open one was, else its tier
-// by downloads; and the version its spec installs where that has install
+// by downloads, or none npm has for anyone; and the version its spec installs where that has install
 // scripts, its package's latest where it isn't that, published since too
 // where it was; null where it tells none, as of one kept from that version.
-const unusedSaid = (sides, { created, gap, level, tier, installs }) => [
-  created ? `new package, ${gap >= 0 ? `${npmSpan(gap)} old` : 'published later'}` : level ? `npm's ${npmTierName(tier ?? Infinity)}` : null,
+const unusedSaid = (sides, { created, gap, level, tier, installs, missing }) => [
+  created ? `new package, ${gap >= 0 ? `${npmSpan(gap)} old` : 'published later'}` : missing ? 'no package npm has' : level ? `npm's ${npmTierName(tier ?? Infinity)}` : null,
   installs?.scripts ? `installs ${installs.version}${installs.latest && installs.latest !== installs.version ? ` (its latest ${installs.latest})` : ''}`
     + `${installs.new ? `, published since ${sides[0].version}` : ''}, running its install scripts` : null,
 ].filter(Boolean).join('; ') || null

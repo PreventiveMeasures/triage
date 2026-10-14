@@ -182,14 +182,15 @@ test('a dependency nothing imports graded by its package: one kept yellow, a new
   const severities = (rows, added, compared) => graded(rows, added, compared).dependencies.map(({ name, severity }) => `${name} ${severity}`)
   const installs = (scripts, isNew, latest = '4.0.0') => ({ installs: { version: '3.0.1', latest, published: '2026-10-01T00:00:00.000Z', scripts, new: isNew } })
   assert.deepEqual(severities([row('debug'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true }),
-    row('scripted', { added: true }), row('hijacked', { added: true }), row('bumped', { added: true }), row('active', { added: true })],
+    row('scripted', { added: true }), row('hijacked', { added: true }), row('bumped', { added: true }), row('active', { added: true }), row('pulled', { added: true })],
   [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: 50_000, level: 'is-low' }, { ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY },
     { ...row('scripted'), tier: 5, level: 'is-solid', ...installs(true, false) }, { ...row('hijacked'), tier: 5, level: 'is-solid', ...installs(true, true) },
-    { ...row('bumped'), tier: 5, level: 'is-solid', ...installs(false, true) }, { ...row('active'), tier: 5, level: 'is-solid', ...installs(true, true, '3.0.1') }]),
-  ['debug moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical', 'scripted high', 'hijacked critical', 'bumped moderate', 'active high'],
+    { ...row('bumped'), tier: 5, level: 'is-solid', ...installs(false, true) }, { ...row('active'), tier: 5, level: 'is-solid', ...installs(true, true, '3.0.1') },
+    { ...row('pulled'), tier: 5, level: 'is-solid', missing: true }]),
+  ['debug moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical', 'scripted high', 'hijacked critical', 'bumped moderate', 'active high', 'pulled high'],
   'kept from the version compared with; new: a peer\'s or a tool\'s, as popular as react; past the top 20,000; its package not told; first published since; '
     + 'the version it installs running install scripts; that version published since too, not its latest, as an old major line given a release to run them; one published since with none; '
-    + 'its latest, as a package still releasing')
+    + 'its latest, as a package still releasing; one npm has no package of, its downloads counted all the same')
   assert.equal(graded([row('debug'), row('fresh', { added: true })], [{ ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]).severity, 'critical',
     'the finding as its most severe')
   assert.equal(graded([row('debug')], []).severity, 'moderate', 'all kept: yellow')
@@ -907,6 +908,16 @@ test('a new dependency nothing imports, its package old and downloaded, red wher
   const unused = (await assessNpm('victim', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
   assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].installs], ['critical', 'is-top', { version: '3.0.1', latest: '4.0.0', published: ago(25), scripts: true, new: true }],
     'old-lib\'s latest is 4.0.0, years old and downloaded; ^3.0.0 installs 3.0.1, published since 1.0.0 with a postinstall')
+})
+
+test('a new dependency nothing imports whose package npm has none of for anyone, orange whatever downloads it still counts', async t => {
+  const meta = dependencies => ({ dependencies, scripts: {} })
+  const before = version('pulling', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({}), ago(30))
+  const after = version('pulling', '1.1.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ gone: '^1.0.0' }), ago(20))
+  const days = Array.from({ length: 72 }, (_, at) => ({ day: new Date(Date.parse('2026-08-01') + at * DAY).toISOString().slice(0, 10), downloads: 4e6 }))
+  npm(t, [{ name: 'pulling', versions: [before, after] }], { gone: { start: '2026-08-01', end: '2026-10-11', downloads: days } })
+  const unused = (await assessNpm('pulling', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
+  assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].missing], ['high', 'is-top', true], 'unpublished or taken down, its downloads counted all the same')
 })
 
 test('the version a dependency\'s spec installs, as npm picks it: a tag it names, else latest where that satisfies it, else the highest, one not deprecated first', async () => {

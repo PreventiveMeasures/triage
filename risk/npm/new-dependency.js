@@ -45,7 +45,9 @@ export function npmAddedDependency({ downloads, listed = null, published = [], u
 // isn't its package's latest, as an old package's old major line given a
 // release to run them would, where a package still releasing its latest
 // wouldn't; orange where that version has install scripts, as installing an unused
-// dependency runs them and nothing else; yellow among npm's top 20,000, as
+// dependency runs them and nothing else, or npm has none of its package
+// for anyone (`missing`), as once unpublished or taken down, whatever
+// downloads it still counts; yellow among npm's top 20,000, as
 // a dependency named for another's peer or by a tool's config is (react,
 // typescript, eslint), older and more downloaded than the package naming
 // it; orange past them, or where its package isn't told.
@@ -53,6 +55,6 @@ export function npmUnusedDependencySeverity(told, kept) {
   if (kept) return 'moderate'
   const { scripts, new: anew, version, latest } = told?.installs ?? {}
   if (told?.created || (scripts && anew && version !== latest)) return 'critical'
-  if (scripts) return 'high'
+  if (scripts || told?.missing) return 'high'
   return told?.level && !npmTierLow(told.tier ?? Infinity) ? 'moderate' : 'high'
 }
