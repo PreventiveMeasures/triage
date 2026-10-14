@@ -21,5 +21,11 @@ export async function checkUpstreamCacheStore(db) {
   assert.equal(await db.deleteUpstreamCacheEntries('repository-risk/lines/', 3), 1, 'those under the prefix kept before then')
   assert.deepEqual(await db.getUpstreamCacheEntries(['repository-risk/lines/old', 'repository-risk/lines/new', 'repository-risk/linesake', key]),
     new Map([['repository-risk/lines/new', '{}'], ['repository-risk/linesake', '{}'], [key, '{"v":2}']]))
+  // Many at once, as each alone: a newer kept, the last of a key given twice.
+  await db.setUpstreamCacheEntries([['many/a', '"a1"'], ['many/b', '"b1"'], ['many/a', '"a2"'], [key, '{"v":"older"}']], 2)
+  assert.deepEqual(await db.getUpstreamCacheEntries(['many/a', 'many/b', key]), new Map([['many/a', '"a2"'], ['many/b', '"b1"'], [key, '{"v":2}']]))
+  await db.setUpstreamCacheEntries([['many/b', '"b2"']], 4)
+  await db.setUpstreamCacheEntries([], 5)
+  assert.equal(await db.getUpstreamCacheEntry('many/b'), '"b2"')
   return { key, value: '{"v":2}' }
 }

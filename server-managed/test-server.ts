@@ -482,8 +482,10 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     { type: 'repos', repos: selected.filter(repo => scanned.has(repo.id)).map(repo => ({ id: repo.id, fullName: repo.fullName })) },
     { type: 'repo', id: first!.id, commit, lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'docs/bun.lock', format: 'bun' }] },
     { type: 'lockfile', repo: first!.id, path: 'package-lock.json', format: 'npm', packages: [
-      { name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'lodash', version: '4.17.21', source: 'registry' },
-      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'minimist', version: '0.0.8', source: 'registry' },
+      // left-pad and minimist 0.0.8 only devDependencies need; lodash too, but
+      // the second repository's lockfile needs it otherwise.
+      { name: 'left-pad', version: '1.3.0', source: 'registry', dev: true }, { name: 'lodash', version: '4.17.21', source: 'registry', dev: true },
+      { name: 'event-stream', version: '3.3.6', source: 'registry' }, { name: 'minimist', version: '0.0.8', source: 'registry', dev: true },
       { name: 'minimist', version: '1.2.5', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
     ] },
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },

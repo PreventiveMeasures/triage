@@ -13,10 +13,10 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
   setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
-import { npmVersionStore } from '../server-managed/npm-kept.ts'
+import { npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
-import { npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
+import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -353,6 +353,21 @@ test('a version npm removed is told of by OSV\'s malware where anyone can read i
   assert.ok(!calls.some(({ url }) => url === OSV), 'its name never left for OSV')
 })
 
+test('a removed version\'s package npm has none of anonymously is asked of npm again only where its token reads more', async t => {
+  withToken(t)
+  const calls = registry(t, [])
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const removed = (name, privileged) => npmRiskRemoved(name, '1.0.0', { db, teamScoped: false, privileged, signal: new AbortController().signal })
+  const missing = error => error instanceof NpmRiskError && error.code === 'package-not-found'
+  const asked = name => calls.filter(({ url }) => url === `${REGISTRY}/${name}`).map(({ auth }) => auth)
+  await assert.rejects(removed('nowhere', true), missing)
+  assert.deepEqual(asked('nowhere'), [null], 'an unscoped one: anonymously, once')
+  await assert.rejects(removed('@acme/nowhere', false), missing)
+  assert.deepEqual(asked('@acme/nowhere'), [null], 'a scoped one, for a reader without private access: anonymously, once')
+  await assert.rejects(removed('@acme/hidden', true), missing)
+  assert.deepEqual(asked('@acme/hidden'), [null, 'Bearer server-token'], 'for one with it: then with the token')
+})
+
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
   const h = await setup(t)
   withToken(t)
@@ -413,6 +428,26 @@ test('a team listing the scope lets its members read it, while the team is visib
   assert.equal((await h.send(packagePath('@acme/secret', '2.0.0'))).status, 404)
 })
 
+test('a reader\'s team scopes are read only where they count: a scoped package read below manager, and again only for a private answer', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('open-lib', '1.0.0', { 'index.js': '' }), packageOf('@acme/open', '1.0.0', { 'index.js': '' }),
+    { ...packageOf('@acme/secret', '1.0.0', { 'index.js': 'secret' }), private: true }])
+  assert.equal((await h.send('/api/admin/teams/set-npm-scopes', 'admin', { method: 'POST', body: { teamId: 'team', scopes: ['@acme'] } })).status, 200)
+  const listScopes = h.db.listUserNpmScopes.bind(h.db)
+  let reads = 0
+  t.mock.method(h.db, 'listUserNpmScopes', user => { reads++; return listScopes(user) })
+  const readsOf = async (name, who) => {
+    reads = 0
+    assert.equal((await h.send(packagePath(name, '1.0.0'), who)).status, 200, `${name}, read by ${who}`)
+    return reads
+  }
+  assert.equal(await readsOf('open-lib', 'triage'), 0, 'an unscoped package')
+  assert.equal(await readsOf('@acme/secret', 'manage'), 0, 'a manager')
+  assert.equal(await readsOf('@acme/open', 'triage'), 1, 'a public scoped one: as it is asked of npm, its public answer not')
+  assert.equal(await readsOf('@acme/secret', 'triage'), 2, 'a private one: again before it is answered')
+})
+
 test('without a token, private packages stay closed to every role', async t => {
   const h = await setup(t)
   delete process.env['NPM_TOKEN']
@@ -446,6 +481,79 @@ test('risk\'s records kept in memory are held to a length, the first kept going 
   for (let i = 0; i < 10; i++) await cache.write('risk/npm/assessments', `part-${i}`, part)
   assert.deepEqual(await Promise.all([0, 1, 9].map(async i => (await cache.read('risk/npm/assessments', `part-${i}`))?.length ?? null)), [null, 7 * MiB, 7 * MiB],
     'ten of 7 MiB: the first gone for the 64 MiB memory holds')
+})
+
+test('risk\'s downloads of a public package are kept in the database, for another instance, a private one\'s not, and removed eight days on', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const counted = { start: '2026-08-01', end: '2026-10-11', days: [1, 2] }
+  await npmRiskCache({ db }, true).write('risk/npm/downloads', 'left-pad@2026-08-01:2026-10-11', counted)
+  await npmRiskCache({ db }, false).write('risk/npm/downloads', '@acme/secret@2026-08-01:2026-10-11', counted)
+  assert.deepEqual(await npmRiskCache({ db }, true).read('risk/npm/downloads', 'left-pad@2026-08-01:2026-10-11'), counted, 'read by another instance')
+  const kept = () => db.getUpstreamCacheEntries(['risk/npm/downloads/left-pad@2026-08-01:2026-10-11', 'risk/npm/downloads/@acme/secret@2026-08-01:2026-10-11',
+    'risk/npm/downloads/is-number@2026-08-01:2026-10-13']).then(rows => [...rows.keys()])
+  assert.deepEqual(await kept(), ['risk/npm/downloads/left-pad@2026-08-01:2026-10-11'], 'a private package\'s kept in memory alone')
+  t.mock.timers.enable({ apis: ['Date'], now: now + 9 * DAY })
+  await npmRiskCache({ db }, true).write('risk/npm/downloads', 'is-number@2026-08-01:2026-10-13', counted)
+  assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'nine days on, the first removed as another is written')
+})
+
+test('a scan reads the database once and writes it once a lookup of npm\'s downloads, as a request\'s queries take turns', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const queries = []
+  const counted = Object.assign(Object.create(db), {
+    getUpstreamCacheEntries: keys => { queries.push(`read ${keys.length}`); return db.getUpstreamCacheEntries(keys) },
+    getUpstreamCacheEntry: key => { queries.push('read 1'); return db.getUpstreamCacheEntry(key) },
+    setUpstreamCacheEntries: (entries, at) => { queries.push(`write ${entries.length}`); return db.setUpstreamCacheEntries(entries, at) },
+    setUpstreamCacheEntry: (key, value, at) => { queries.push('write 1'); return db.setUpstreamCacheEntry(key, value, at) },
+  })
+  t.mock.method(globalThis, 'fetch', input => Promise.resolve(Response.json(Object.fromEntries(String(input).split('/').at(-1).split(',')
+    .map(name => [name, { package: name, start: '2026-08-01', end: '2026-08-01', downloads: [{ day: '2026-08-01', downloads: 5 }] }])))))
+  const names = Array.from({ length: 130 }, (_, i) => `pkg-${i}`)
+  const ready = []
+  await npmReadyScanDownloads(names, name => { ready.push(name) }, { db: counted }, new AbortController().signal)
+  assert.deepEqual(queries, ['read 128', 'write 128', 'read 2', 'write 2'])
+  assert.equal(ready.length, 130)
+  queries.length = 0
+  await npmReadyScanDownloads(names, () => {}, { db: counted }, new AbortController().signal)
+  assert.deepEqual(queries, ['read 128', 'read 2'], 'again, all kept: read alone')
+})
+
+test('a scan keeps a scoped package\'s downloads where public ones are only where npm counts some, never a private one\'s none', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    asked.push(String(input))
+    return Promise.resolve(String(input).endsWith('/@acme%2fsecret') ? Response.json({ error: 'package @acme/secret not found' }, { status: 404 })
+      : Response.json({ package: '@scope/open', start: '2026-08-01', end: '2026-08-01', downloads: [{ day: '2026-08-01', downloads: 5 }] }))
+  })
+  for (const name of ['@acme/secret', '@scope/open']) await npmReadyScanDownload(name, { db }, new AbortController().signal)
+  // Kept by name, as risk keys them.
+  const keyOf = name => `risk/npm/downloads/${name}`
+  assert.deepEqual([...(await db.getUpstreamCacheEntries(['@acme/secret', '@scope/open'].map(keyOf))).keys()], [keyOf('@scope/open')])
+})
+
+test('risk lines kept in the database are read many at once, by key, however old, and removed once older than they are kept', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const lines = riskLineStore(db, 30 * DAY)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now - 10 * DAY)
+  await lines.write('is-number@7.0.0', { score: 0 }, now)
+  assert.deepEqual(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'gone@1.0.0']),
+    new Map([['left-pad@1.3.0', { at: now - 10 * DAY, value: { score: 7 } }], ['is-number@7.0.0', { at: now, value: { score: 0 } }]]))
+  t.mock.timers.enable({ apis: ['Date'], now: now + 31 * DAY })
+  await lines.write('ms@2.1.3', { score: 0 }, now + 31 * DAY)
+  assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'ms@2.1.3'])).keys()], ['ms@2.1.3'], 'a month on, the older removed')
+})
+
+test('risk lines kept for good are never removed, however old', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const lines = riskLineStore(db, Infinity)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now)
+  t.mock.timers.enable({ apis: ['Date'], now: now + 400 * DAY })
+  await lines.write('ms@2.1.3', { score: 0 }, now + 400 * DAY)
+  assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'ms@2.1.3'])).keys()], ['left-pad@1.3.0', 'ms@2.1.3'])
 })
 
 test('risk against a private version is checked again for it once told', async t => {

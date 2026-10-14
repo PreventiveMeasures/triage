@@ -5,6 +5,7 @@ import { Buffer } from 'node:buffer'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '@preventive/report'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
+import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -104,18 +105,12 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   }))
   for (const result of results) if (result.status === 'rejected') throw result.reason
   const globalLinks = snapshot.linkRevision ? await db.getEnabledLinkGroups(snapshot.linkRevision) : []
-  const edges = new Map<string, Set<string>>()
-  const connect = (a: string, b: string) => {
-    if (!edges.has(a)) edges.set(a, new Set())
-    edges.get(a)!.add(b)
-  }
-  // A star is enough for transitive security propagation, without a quadratic
-  // expansion for large links. Unknown IDs can connect known findings.
-  for (const ids of globalLinks.concat(reports.flatMap(report => linksOf(report.data) ?? []))) {
-    for (const id of ids.slice(1)) { connect(ids[0]!, id); connect(id, ids[0]!) }
-  }
   const groups = reports.flatMap(report => groupsOf(report.data).map(group => group.map(f => projectFinding(f, report.data as Finding)!)))
-  stampSecurityGroups(groups, { linkedIds: id => edges.get(id) ?? [] })
+  // Unknown IDs can connect known findings. App findings link to the inputs
+  // they revalidated in other reports, as the App view counts them.
+  stampSecurityGroups(groups, { linkedIds: securityLinks([
+    ...globalLinks, ...reports.flatMap(report => linksOf(report.data) ?? []), ...revalidationLinks(groups.flat()),
+  ]).linkedIds })
   const securityIds = new Set(groups.flat().filter(f => f['isSecurity'] === true).map(f => String(f['id'])))
   const allIds = new Set<string>(), visible: Visibility = new Map()
   for (let i = 0; i < reports.length; i++) {

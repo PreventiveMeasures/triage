@@ -55,16 +55,18 @@ const standingOf = (name, at, times) => npmAccountStanding(releasesOf(name, time
 // What the server answers of `name@version` against `otherVersion`, else the
 // version risk picks of those held, none where it picks none, as it is asked with its package's `downloads`, when each version was
 // published (`times`, where a version held says none), the open version's
-// minimum release age (`minimumReleaseAge`, two weeks unless given), and the
-// `malware` finding npm's takedown and advisories make of it, where they do.
-export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null } = {}) {
+// minimum release age (`minimumReleaseAge`, two weeks unless given), the
+// `malware` finding npm's takedown and advisories make of it, where they do,
+// and what risk tells of each dependency added's package (`told`, by name,
+// as assess.js addedDependencies tells it).
+export function riskAnswer(name, version, otherVersion = null, { downloads = null, times = {}, minimumReleaseAge = DEFAULT_MINIMUM_RELEASE_AGE, malware = null, told = {} } = {}) {
   const other = versionOf(name, version), published = other.npm.published ?? times[version] ?? null
   const old = otherVersion ?? npmOldVersion(version, releasesOf(name, times), Date.now())
   const base = old === '(empty)' ? { npm: { name, version: '', manifest: {} }, json: { sources: [], sourcesContent: [] } } : old === null ? null : versionOf(name, old)
   const kept = base === null ? npmLastingRisk(other) : npmLastingRisk(other, base, standingOf(name, published, times))
   const own = npmVersionFindings({ deprecated: other.npm.manifest.deprecated, published, minimumReleaseAge, downloads,
     known: Boolean(other.npm.manifest.knownAccounts), scope: npmKnownScope(name), provenance: Boolean(other.npm.manifest.provenance) })
-  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own)
+  const assessment = npmAssessmentOf(kept, malware ? [malware, ...own] : own, kept.dependencies.added.map(row => ({ ...row, ...told[row.name] })))
   return JSON.parse(JSON.stringify({ name, version, oldVersion: old, published, ...assessment,
     score: npmRiskScore(assessment.findings, { published, tier: downloads ? npmDownloadTier(downloads) : null }) }))
 }

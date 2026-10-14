@@ -926,7 +926,25 @@ lockfile locks them too. It answers Brotli-encoded ndjson as it goes
 (`repository-risk.ts` names each line): the repositories, then each
 repository's lockfiles (`findRepoLockfiles`), each npm, pnpm or Yarn 1
 lockfile's packages (`@preventive/lockfile`), and each package's risk, with
-`done` last; a response without `done` was cut short. Repositories are read one
+`done` last; a response without `done` was cut short. On a serverless
+deployment (Vercel, whose function answers within 300 seconds), a scan stops
+after 270 seconds, the work under way given up on and not waited for, its
+last line `continue`
+in place of `done`: the page asks again at once, keeping what it found (but
+a repository's lockfiles', where its default branch moved on between parts,
+or a team's directories in it changed, a repository's no longer listed or
+renamed, and
+a lockfile's advisories audited again otherwise), and
+the next part tells what the last assessed as kept, going on from where it
+stopped, a hundred parts at most, or until three parts in a row find nothing
+more. The repositories a part told whole are kept for the next
+(`repository-risk/progress` rows, by the admin, the id the page gives the scan
+and its scope, for a day, written as a part ends and waited on five seconds
+at most): it tells none of them again, nor asks GitHub of them, as the page
+has them already, but looks up their packages' risks as their lockfiles are
+kept, so a scan of more repositories than a part reaches goes on past them.
+One renamed since, or whose team's directories changed, is read again; one
+whose default branch moved on is told as the scan read it. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
 any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
@@ -937,9 +955,23 @@ large), after how long; never GitHub's text. A package from npm's registry is as
 from another host with an integrity, such as a company's mirror, as npm's
 package of its name and version only where the lockfile's integrity is npm's;
 one from git, a tarball with no integrity or a file is listed but not assessed.
+A package only devDependencies need, wherever a lockfile installs it, as npm's
+and pnpm's lockfiles say (`@preventive/lockfile`'s `dev`; Yarn 1's say nothing
+of it, which only the package.json files do), is `dev: true` in its
+lockfile's line; one every lockfile of the scan locks so is assessed only once
+all the rest are, the stale ones among them, as an install of no
+devDependencies leaves it out, and the page tags it `dev` and lists it after
+the rest, but for malware, which runs wherever it is installed, CI and a
+developer's machine among them; and an advisory of versions only
+devDependencies need after those of the rest, malware's first all the same.
+The page's progress line counts packages assessed, flagged and stale of
+devDependencies alone apart from the rest, as each lockfile tells it so far:
+a later lockfile that needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
-kept by the lockfile's blob for an hour), and told in an `advisories` line,
+kept by the lockfile's blob for an hour, in the instance's memory and the
+database, `repository-risk/advisories` rows, and one that failed, as by timing
+out, ten minutes, for a scan's next parts not to wait on it again), and told in an `advisories` line,
 each advisory with whether it is of malware, as risk tells it
 (`npmMalwareAdvisory`): OSV's of a malicious package (`MAL-…`), or one such a
 record names, GitHub's CWE-506, embedded malicious code, or a title
@@ -963,20 +995,42 @@ read its package, OSV's (nx's malicious versions have OSV's alone), and the
 page says so in its tooltip; one nothing tells of is told as not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
 the server, leaving the rest to readers, and without asking npm of each
 dependency's package, nor of the version's advisories, which a lockfile's are
-asked at once. One refused as busy (`npm-busy`), or that npm asked to ask later
-(risk's `upstream-busy`, as npm's downloads API answers 429 past a burst of
-requests, a hundred or so, for some seconds), is asked again after a wait, so a
+asked at once. A package's downloads, which risk asks of npm's downloads API
+for its popularity and score, and which that API answers some 40 lookups a
+minute of before answering 429 for a while, are readied before it is assessed
+(`scan-downloads.ts`), so that no assessment waits on that API: at once, each
+lockfile's as it is read, those kept already and unscoped ones, asked 128 at a
+time in one lookup (risk's `npmReadyDownloads`); and scoped ones, which the
+API answers only one by one, one at a time at the pace it allows, while the
+assessors go on with the others. Public packages' downloads are kept in the
+database (`npm-risk.ts`), for a week, as risk tells them that long (the tier
+they put a package in, the most of its latest six weeks', hardly moves in
+one), so that another instance, or a scan again that week, asks the API for
+none of them again; a scoped one a
+scan readies on its own only where the API counts some, as it counts public
+packages alone, so that a private one's none is never kept with them. One refused as busy (`npm-busy`), or that npm asked to ask later
+(risk's `upstream-busy`), is asked again after a wait, so a
 large scan goes at the pace npm allows. A package's risk line carries its
 findings and risk's `score` of it, out of 100 (risk/npm/score.js); the page
 shows the score in its Risk column, red from 75, orange from 50, yellow from
 25, else plain, as the viewer's ring is, malware's 100 where npm's advisories
 tell of it too, and lists the riskiest first. A package's risk that still fails tells
 its code, and, where risk failed, risk's `detail` of what it asked of npm and
-how that failed. A risk line kept before risk told a score is assessed again. Scans keep in the instance's memory a repository's lockfiles as listed
-at a commit, a lockfile's packages by its blob, and a package's risk line for an
-hour, so a scan again asks GitHub only for each repository's head and access,
-and npm for nothing it told within the hour. The database keeps risk lines for
-that hour too, and public versions'
+how that failed. A package's risk line is kept (`repository-risk/lines` rows of
+`managed_upstream_cache`, and the instance's memory) for good: each
+lockfile's packages are looked up as it is read, and those kept told at once,
+however old, one kept within the hour as it is and an older one, or one kept
+before risk told a score, as stale (`stale: { assessedAt }`), dimmed on the
+page and said so; those with none kept are assessed first, and the stale ones
+only after, each line told again once assessed, or, where that fails, the
+stale one kept, its tooltip saying why. Scans keep a repository's lockfiles
+as listed at a commit and a lockfile's packages by its blob, in the
+instance's memory and for a day in the database (`repository-risk/listings`
+and `repository-risk/lockfiles` rows, as the lockfiles' packages, private
+repositories' among them, are kept in memory, told only once the reader's
+access is checked), so a scan again, or its next part on another instance,
+asks GitHub only for each repository's head and access.
+The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
 on another instance, asks npm for none of them again: where npm removed a
@@ -1674,7 +1728,13 @@ control. A version shows in the bundle view with four tabs:
   nothing of the open version imports, as the Overview tells
   (`plain-crypto-js`, which axios 1.14.1 added to run its postinstall), their
   names and ranges in its tooltip, one that was another kind of dependency
-  before not new; an open version under two weeks old, as on
+  before not new, tinted as risk grades them by their packages: red for one
+  first published since the version compared with (`new package, 18 hours
+  old`), or whose range installs a version published since with install
+  scripts, not its package's latest (`installs 3.0.1 (its latest 4.0.0),
+  published since 1.0.0, running its install scripts`), orange where that version has install scripts, yellow for one
+  among npm's top 20,000 (`npm's top 200`), as a dependency named for
+  another's peer is, or for those all kept, else orange; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they

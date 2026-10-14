@@ -151,6 +151,16 @@ test('team workspaces use only their own grants and links; security removes rows
   for (const role of ['admin', 'manage']) assert.equal(ids((await workspace(h, 'restricted', role)).body.reports[0]).length, 7, role)
 })
 
+test('security removes App findings and the inputs they cite in other reports together', async t => {
+  const h = await fixture(t)
+  await h.seed('secure-pass', { type: 'security', findings: [{ id: 'secure-answer', revalidate: 'revalidation', revalidateInputs: ['cited'] }] })
+  await h.seed('pass', { type: 'correctness', findings: [{ id: 'answer', revalidate: 'revalidation', revalidateInputs: ['secret'] }] })
+  await h.seed('cited', { type: 'correctness', findings: [{ id: 'cited', file: 'src/cited.js' }, { id: 'uncited', file: 'src/uncited.js' }] })
+  const visible = async team => (await workspace(h, team)).body.reports.filter(r => ['secure-pass', 'pass', 'cited'].includes(r.id)).flatMap(ids)
+  assert.deepEqual((await visible('broad')).toSorted(), ['answer', 'cited', 'secure-answer', 'uncited'])
+  assert.deepEqual(await visible('no-security'), ['uncited'], 'neither an App answer nor its cited source is left without the other')
+})
+
 test('ordinary users cannot fetch individual or arbitrary report batches; invalid teams fail before blob reads', async t => {
   const h = await fixture(t)
   for (const role of ['view', 'triage', 'none']) {

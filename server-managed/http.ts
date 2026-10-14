@@ -89,7 +89,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, riskLineStore } from './npm-kept.ts'
+import { npmVersionStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -128,7 +128,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { RISK_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
+import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -151,14 +151,14 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
-import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
+import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskRemoved } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
@@ -1351,6 +1351,10 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
 // go idle, unread or with no line to send, before the scan is stopped.
 const REPO_RISK_RECHECK_MS = 10_000
 const REPO_RISK_IDLE_MS = 5 * 60_000
+// A scan's part on a serverless deployment, within its function's 300s
+// (vercel.managed.json): past it the scan stops, its last line `continue`,
+// and the page asks again, from where it stopped (repository-risk.ts).
+const REPO_RISK_PART_MS = 270_000
 
 // The repositories a scan of risk reads, by its query: every connected one;
 // a team's (`team`, its id), each in the team's directories of it; or one
@@ -1379,6 +1383,14 @@ async function riskRepositories(db: ManagedDb, query: URLSearchParams): Promise<
   })
 }
 
+// Where a scan in parts keeps its progress (repository-risk.ts
+// ScanProgress) under `key`, for a day; none where the page gave no scan id.
+function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
+  if (scan === null || !/^[\w-]{1,64}$/u.test(scan)) return undefined
+  const kept = scanReadStore<ScanProgress>(deps.db, 'progress', SCAN_READ_KEPT_MS, deps.config.debug)
+  return { read: () => kept.read(key), write: (progress: ScanProgress) => kept.write(key, progress, Date.now()) }
+}
+
 // GET /api/admin/repositories/risk: every connected repository's npm
 // packages, or a team's or one repository's (riskRepositories), as its
 // lockfiles lock them at its default branch's head, each assessed by risk
@@ -1404,8 +1416,19 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
   const scopes = new Map<string, Promise<boolean>>()
+  const teamScoped = (name: string) => {
+    const scope = npmPackageScope(name)
+    if (scope === null) return Promise.resolve(false)
+    if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
+    return scopes.get(scope)!
+  }
   const versions = npmVersionStore(deps.db, deps.config.debug)
+  const stores = { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug }
   const lines = repositoryRiskLines({
+    // Which repositories a scan in parts told whole, by the admin, the id the
+    // page gives the scan (`scan`) and its scope, for the next part to go on
+    // past them.
+    progress: scanProgress(deps, `${s.user.id}\0${query.get('scan')}\0${query.get('team') ?? ''}\0${query.get('repo') ?? ''}`, query.get('scan')),
     repos: () => Promise.resolve(repos),
     async open(repo) {
       const reader = await browser.reader(repo)
@@ -1418,21 +1441,32 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         recheck: async () => { await reader.recheckAccess() },
       }
     },
-    teamScoped(name) {
-      const scope = npmPackageScope(name)
-      if (scope === null) return Promise.resolve(false)
-      if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
-      return scopes.get(scope)!
+    teamScoped,
+    // Each package's downloads readied before it is assessed
+    // (scan-downloads.ts), so that none waits on npm's downloads API; a
+    // team's own not asked, as risk asks none of theirs.
+    downloads: {
+      async atOnce(names, ready, signal) {
+        const asked: string[] = []
+        for (const name of names) if (await teamScoped(name)) ready(name); else asked.push(name)
+        await npmReadyScanDownloads(asked, ready, stores, signal)
+      },
+      one: (name, signal) => npmReadyScanDownload(name, stores, signal),
     },
     // Public versions' documents kept in the database (npm-kept.ts), as the
     // viewer keeps them: whether npm still has one, its whole document tells
     // risk.
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
-    assess: (doc, teamScoped, signal) => npmRisk(doc, 'pick', { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
-      teamScoped, privileged: true, signal, spare: true }),
-    removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
-      teamScoped, privileged: true, signal }),
-    risks: riskLineStore(deps.db, RISK_KEPT_MS, deps.config.debug),
+    assess: (doc, ownScope, signal) => npmRisk(doc, 'pick', { ...stores, teamScoped: ownScope, privileged: true, signal, spare: true }),
+    removed: (name, version, ownScope, signal) => npmRiskRemoved(name, version, { ...stores, teamScoped: ownScope, privileged: true, signal }),
+    // Kept for good, a scan telling one past RISK_KEPT_MS at once, as stale.
+    risks: riskLineStore(deps.db, Infinity, deps.config.debug),
+    // What it read of GitHub kept a day, for a scan answered in parts to go
+    // on from where the last stopped, on whichever instance answers the next.
+    listings: scanReadStore(deps.db, 'listings', SCAN_READ_KEPT_MS, deps.config.debug),
+    lockfiles: scanReadStore(deps.db, 'lockfiles', SCAN_READ_KEPT_MS, deps.config.debug),
+    // And each lockfile's advisories, for as long as a scan tells them.
+    audits: scanReadStore(deps.db, 'advisories', RISK_KEPT_MS, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's
     // audit is bounded on its own, for one npm doesn't answer to fail alone and
@@ -1444,7 +1478,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
       if (audited.status !== 200) throw new NpmPackageError(502, audited.body.error)
       return audited.body
     },
-  }, controller.signal)
+  }, controller.signal, undefined, { partMs: deps.config.serverless ? REPO_RISK_PART_MS : null })
   let checked = Date.now()
   await sendLines(res, lines, async () => {
     if (deps.isShuttingDown()) return false
@@ -2614,12 +2648,15 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true, scopes: (await deps.db.listTeamNpmScopes())[teamId] ?? [] })
 }
 
-// Who reads npm packages now: a session with workspace access, its role and
-// the npm scopes of its visible teams. Null for none.
-async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
+// Who reads npm packages now: a session with workspace access, its role and,
+// where they count for any of `names` it is asked about (npmScopesCount), the
+// npm scopes of its visible teams, else none: none are read for an unscoped
+// package, an admin or a manager, or an answer checked again that is public.
+// Null for none.
+async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined, names: readonly string[]): Promise<NpmReader | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null || !roleAtLeast(s.user.role, 'view')) return null
-  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
+  return { role: s.user.role, scopes: new Set(npmScopesCount(s.user.role, names) ? await deps.db.listUserNpmScopes(s.user.id) : []), userId: s.user.id }
 }
 
 // What a registry read found, or a 404 for the package (handleNpm's catch
@@ -2636,7 +2673,7 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
-    const reader = await npmReader(deps, cookie)
+    const reader = await npmReader(deps, cookie, reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []]))
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     const documents = new Map<string, Promise<NpmVersionDocument | null>>()
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
@@ -2650,7 +2687,7 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
     const packages = await Promise.all(reviews.map(review => Promise.all([
       read(review.package, review.version), ...(review.basePackage ? [read(review.basePackage, review.baseVersion!)] : []),
     ])))
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, packages.flat().flatMap(doc => doc?.private ? [doc.name] : []))
     if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
   } catch (error) {
@@ -2760,7 +2797,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
-    const reader = await npmReader(deps, cookie)
+    const reader = await npmReader(deps, cookie, [context.package, ...context.basePackage ? [context.basePackage] : []])
     if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     const kept = npmVersionStore(deps.db, deps.config.debug)
     const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal, kept)
@@ -2791,7 +2828,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     }
     const limit = change?.action === 'publish' && change.final && change.final.status !== 'reject'
       ? await npmReviewPublicationLimit(deps, reader, doc, controller.signal) : 'accept'
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, [doc, base].flatMap(item => item?.private ? [item.name] : []))
     if (!current || current.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     if ([doc, base].some(item => item?.private && !canReadPrivateNpm(current, item.name))) { sendJson(res, 404, { error: 'package-not-found' }); return }
     if (!change) {
@@ -2834,7 +2871,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   }
   const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
   if (path === NPM_RENAME_DIFF_PATH && params.has('path') && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const reader = await npmReader(deps, cookie)
+  const reader = await npmReader(deps, cookie, [name])
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -2842,7 +2879,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // A reader who lost their session, or their private access to an answer
   // that needed it, while the registry was asked gets nothing.
   const recheck = async (isPrivate: boolean) => {
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
     if (current == null) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
     if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
     return !res.destroyed
@@ -2963,7 +3000,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (!(await recheck(isPrivate))) return
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await sendLines(res, lines, async () => {
-        const current = await npmReader(deps, cookie)
+        const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
         return current != null && (!isPrivate || canReadPrivateNpm(current, name))
       })
       return

@@ -64,8 +64,8 @@ export function markedCounts(blocks, marks) {
 // A file's lines added and removed between its two sides as they are, for a
 // tree to list beside it, as an npm dependency review's tree counts them:
 // none where a side is not text, nor for a file too large to count while a
-// tree draws (its diff can still be asked for), an added or removed one's
-// lines counted without a diff.
+// tree draws (counted there as its diff draws, once drawn), an added or
+// removed one's lines counted without a diff.
 const COUNT_CHARS = 2_000_000
 const COUNT_LINES = 20_000
 const lineCount = text => {
