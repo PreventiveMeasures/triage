@@ -1759,7 +1759,9 @@ control. A version shows in the bundle view with four tabs:
   scripts, not its package's latest (`installs 3.0.1 (its latest 4.0.0),
   published since 1.0.0, running its install scripts`), orange where that version has install scripts, yellow for one
   among npm's top 20,000 (`npm's top 200`), as a dependency named for
-  another's peer is, or for those all kept, else orange; an open version under two weeks old, as on
+  another's peer is, or for those all kept, else orange, and a notice's
+  for lodash and Babel's presets alone (`no risk counted`); an open version
+  under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they

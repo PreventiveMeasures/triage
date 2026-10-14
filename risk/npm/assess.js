@@ -6,7 +6,7 @@ import { npmBaseFilesTell, npmCompareFindings } from './compare.js'
 import { npmCombinedFindings, npmHeldDependencyFindings } from './combined.js'
 import { npmHeldFindings, npmVersionFindings } from './held.js'
 import { npmVersionFileRisk } from './files.js'
-import { npmDependencyChanges, npmFlagDependencyChanges } from './dependencies.js'
+import { npmDependencyChanges, npmFlagDependencyChanges, npmUnusedDependencyCounted } from './dependencies.js'
 import { npmDownloadMonths, npmDownloadTier, npmSettledDownloads, npmTierLevel } from './downloads.js'
 import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPublicFacts, npmVersionAdvisories, npmVersionFiles } from './registry.js'
 import { npmMalwareFinding } from './malware.js'
@@ -127,7 +127,8 @@ const MAX_TOLD_DEPENDENCIES = 100
 // from }`), `uncounted` where npm counts none of them, `created` and `gap`
 // where it is new since the version compared with (`published`, when that
 // and the open version were), and for one nothing imports (flagged so, or
-// among `unusedKeys`), the version its spec installs (`installs`,
+// among `unusedKeys`) that risk counts (dependencies.js
+// npmUnusedDependencyCounted), the version its spec installs (`installs`,
 // registry.js npmPublicFacts); `missing` where
 // its package was looked up and npm has none of it for anyone, as once
 // unpublished or taken down; four asked at a time, whether each is the
@@ -139,7 +140,7 @@ async function addedDependencies(added, published, context, owned, unusedKeys = 
   let next = 0, taken = 0
   const tell = async row => {
     const downloads = await npmDownloads(row.opens, context)
-    const unused = row.flags.some(flag => flag.check === 'unimported') || unusedKeys.has(keyOf(row))
+    const unused = (row.flags.some(flag => flag.check === 'unimported') || unusedKeys.has(keyOf(row))) && npmUnusedDependencyCounted(row)
     let facts = npmAddedDependency({ downloads, published, unused }, context.now), missing = false
     if (facts.wanted) {
       const listed = await npmPublicFacts(row.opens, context, unused ? row.range : null)
@@ -225,8 +226,9 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
 const keyOf = row => `${row.kind ?? ''}\0${row.name}`
 
 // The keys of the dependencies a version holds that nothing of it imports
-// (`kept`, npmLastingRisk's: its `held-unused-deps`).
-const unusedKeysOf = kept => new Set((kept.findings.find(({ id }) => id === 'held-unused-deps')?.dependencies ?? []).map(keyOf))
+// (`kept`, npmLastingRisk's: its `held-unused-deps`), those risk counts
+// (dependencies.js npmUnusedDependencyCounted).
+const unusedKeysOf = kept => new Set((kept.findings.find(({ id }) => id === 'held-unused-deps')?.dependencies ?? []).filter(npmUnusedDependencyCounted).map(keyOf))
 
 // The dependencies nothing of a version imports (`held-unused-deps`), each
 // graded by what risk tells of its package fresh (`told`, as
@@ -236,13 +238,16 @@ const unusedKeysOf = kept => new Set((kept.findings.find(({ id }) => id === 'hel
 // version compared with where there was one (`compared`) and it named it as
 // the same kind of dependency by the same spec: not one marked new, nor
 // `added` (its kind and name new, as one moved from another kind is), nor
-// `changed` (each said with the spec it had, `was`). The finding as its most severe.
+// `changed` (each said with the spec it had, `was`); one risk doesn't count
+// (dependencies.js npmUnusedDependencyCounted) a notice, told all the same.
+// The finding as its most severe.
 function unusedGraded(finding, told, compared, { added, changed }) {
   const facts = new Map(told.map(row => [keyOf(row), row])), was = new Map(changed.map(row => [keyOf(row), row.from]))
   const anew = new Set(added.map(keyOf))
   const dependencies = finding.dependencies.map(row => {
     const of = facts.get(keyOf(row))
-    return { ...row, ...was.has(keyOf(row)) ? { was: was.get(keyOf(row)) } : {}, severity: npmUnusedDependencySeverity(of, compared && !row.added && !anew.has(keyOf(row)) && !was.has(keyOf(row))),
+    return { ...row, ...was.has(keyOf(row)) ? { was: was.get(keyOf(row)) } : {}, severity: npmUnusedDependencyCounted(row)
+      ? npmUnusedDependencySeverity(of, compared && !row.added && !anew.has(keyOf(row)) && !was.has(keyOf(row))) : 'notice',
       ...of?.level ? { tier: of.tier, level: of.level } : {}, ...of?.created ? { created: of.created, gap: of.gap } : {}, ...of?.installs ? { installs: of.installs } : {},
       ...of?.missing ? { missing: true } : {} }
   })
