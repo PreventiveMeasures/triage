@@ -310,6 +310,13 @@ function showLookup(lookup) {
   render({ animate: false })
 }
 
+// A version as npm's registry names it (`4.18.1`, `1.0.0-rc.1`), which the
+// server answers as asked: not a dist-tag, nor one it would name otherwise.
+const EXACT_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/u
+// The tabs whose first render reads the version's own risk: the Overview's
+// chips, and Compare's tags on its files.
+const RISK_TABS = new Set(['overview', 'compare'])
+
 // Open a `/npm` route: the lookup page, or a package version, which replaces
 // whatever bundle was shown. Answers the route the page ends on, the version
 // exact, or false. A version that fails to open leaves the lookup page saying
@@ -333,6 +340,13 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
       showLookup({ input, pending: true, error: null })
       renderSidebar()
     }
+    // What its first render asks for that the route names enough of, asked
+    // beside the version rather than once it has come: its package's
+    // versions, for the header's picker, and where the route names it
+    // exactly, its risk, on a tab that reads it. Each is kept as it is asked
+    // (npmPackageData), for that render to take up.
+    npmVersionList(name)
+    if (spec != null && EXACT_VERSION.test(spec) && RISK_TABS.has(tab)) npmRisk({ name, version: spec })
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false

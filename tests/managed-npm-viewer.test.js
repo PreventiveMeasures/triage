@@ -10,7 +10,7 @@ import { templateText as text } from './_lit.js'
 import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 const state = {}
-const renders = [], requests = [], versionRequests = []
+const renders = [], requests = [], riskRequests = [], versionRequests = []
 let answer = null, versionsAnswer = () => Promise.resolve({ versions: [] })
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
   fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
-  fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion)),
+  fetchNpmRisk(name, version, otherVersion) { riskRequests.push([name, version, otherVersion]); return Promise.resolve(riskAnswer(name, version, otherVersion)) },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
@@ -42,6 +42,7 @@ beforeEach(() => {
   beginViewNavigation()
   requests.length = 0
   versionRequests.length = 0
+  riskRequests.length = 0
   answer = () => Promise.resolve(data)
   versionsAnswer = () => Promise.resolve({ versions: [] })
   // A session of its own each, so nothing kept from another test answers.
@@ -182,6 +183,27 @@ test('a version that fails to list says so, without a picker of nothing, and is 
   await setImmediate()
   assert.deepEqual(npmCompareSource(npmPackageEntry(data)).options.map(option => option.id), ['1.0.0'])
   assert.equal(versionRequests.length, 3)
+})
+
+test('a version\'s versions, and its risk where the route names it exactly, are asked beside it, not once it has come', async () => {
+  let release = null
+  answer = () => new Promise(resolve => { release = () => resolve(data) })
+  const opening = openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'overview' }, () => true, () => {})
+  await setImmediate()
+  assert.deepEqual(requests, [['@scope/pkg', '1.2.3']])
+  assert.deepEqual(versionRequests, ['@scope/pkg'], 'its versions asked while it loads')
+  assert.deepEqual(riskRequests, [['@scope/pkg', '1.2.3', null]], 'and its risk')
+  release()
+  await opening
+  npmVersionList('@scope/pkg')
+  npmRisk({ name: '@scope/pkg', version: '1.2.3' })
+  assert.deepEqual([versionRequests.length, riskRequests.length], [1, 1], 'its render taking them up, not asking again')
+  for (const [packageName, packageSpec, bundleTab] of [['tagged', 'next', 'overview'], ['latest', null, 'overview'], ['treemapped', '1.0.0', 'treemap']]) {
+    answer = () => Promise.resolve({ ...data, name: packageName, integrity: `sha512-${packageName}` })
+    await openNpmRoute({ view: 'npm', packageName, packageSpec, bundleTab }, () => true, () => {})
+    assert.equal(versionRequests.at(-1), packageName, `${packageName}: its versions`)
+  }
+  assert.equal(riskRequests.length, 1, 'not the risk of a version a dist-tag or none names, which only the server resolves, nor on a tab that reads none')
 })
 
 test('a Compare link opens the version with the one it compares with', async () => {
