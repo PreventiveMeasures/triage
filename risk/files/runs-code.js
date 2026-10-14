@@ -240,13 +240,17 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // it, `GH.EXE`), not its other commands (`gh auth status`); the cloud's
 // instance metadata endpoint, AWS's, Azure's and GCP's
 // (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`,
-// in any case as DNS reads it), not an address or a host either starts or
-// ends (`169.254.169.2540`, `foo-169.254.169.254`,
-// `169.254.169.254.example.com`, `metadata.google.internal.example.com`; a
-// trailing dot, `metadata.google.internal.`, its host still) nor Azure's
-// instance metadata (`169.254.169.254/metadata/instance/compute`, its slashes
-// escaped too, `\/`), a machine's region and size, not its identity's token,
-// as msal asks it; the GitHub Actions runner's process (`Runner.Worker`,
+// in any case as DNS reads it), as a host whole (HOST_START, HOST_END): not
+// an address or a host either starts or ends (`169.254.169.2540`,
+// `foo-169.254.169.254`, `169.254.169.254.example.com`,
+// `metadata.google.internal.example.com`; a trailing dot,
+// `metadata.google.internal.`, its host still), nor in a URL's path or
+// userinfo (`https://example.com/169.254.169.254`,
+// `https://169.254.169.254@example.com`; WHATWG's `\@` a path's, its host
+// the address still), nor Azure's instance metadata
+// (`169.254.169.254/metadata/instance/compute`, its slashes escaped too,
+// `\/`), a machine's region and size, not its identity's token, as msal asks
+// it; the GitHub Actions runner's process (`Runner.Worker`,
 // `Runner.Worker.exe`, `GitHub.Runner.Worker`), whose memory holds a job's
 // secrets, not in another name (`MyRunner.Worker`, `Runner.Workers`) nor
 // case (`runner.worker`); another process's memory, by
@@ -258,12 +262,18 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // (`TruffleHog`), not in another name (`trufflehogs`, `TRUFFLEHOG_VERSION`).
 const GH_TOKEN = String.raw`(?<![\w.-])[gG][hH](?:\.[eE][xX][eE])?[^\S\n]+auth[^\S\n]+token(?![\w-])`
 const PID = String.raw`[\d*?[\]-]{1,20}|\$\{[^}\n]{0,100}\}|\$\([^)\n]{0,200}\)|\u0060[^\u0060\n]{0,200}\u0060|\$\w{1,64}|\{\w{0,64}\}|%d`
+// A host whole, a URL's or alone: not after a word, a dot or a hyphen, nor a
+// path's one slash (`https://example.com/169.254.169.254`), a URL's two
+// (`//`, `\/\/`) its start; nor before more of a name or userinfo's `@`
+// (`https://169.254.169.254@example.com`, `…:password@`).
+const HOST_START = String.raw`(?<![\w.-]|(?<![\/\\])\/)`
+const HOST_END = String.raw`(?![\w-]|\.[\w-]|(?::[^\s\/@'"\x60]{0,64})?@)`
 const TRUFFLEHOG = String.raw`(?<![\p{ID_Continue}$-])trufflehog(?![\p{ID_Continue}$-])`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['gh-token', new RegExp(GH_TOKEN, 'gu')],
-  ['cloud-metadata', /(?<![\w.-])169\.254\.169\.254(?![\w-]|\.[\w-]|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-]|\.[\w-])/giu],
+  ['cloud-metadata', new RegExp(String.raw`${HOST_START}169\.254\.169\.254${HOST_END}(?!\\?\/metadata\\?\/instance(?![\w-]))|${HOST_START}metadata\.google\.internal${HOST_END}`, 'giu')],
   ['runner-worker', /(?<![\w$-])Runner\.Worker(?![\w$-])/gu],
   ['process-memory', new RegExp(String.raw`\/proc\/(?:${PID})\/mem(?![\w-])`, 'gu')],
   ['trufflehog', new RegExp(TRUFFLEHOG, 'giu')],
