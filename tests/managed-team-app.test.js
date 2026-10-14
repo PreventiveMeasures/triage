@@ -151,6 +151,29 @@ test('catalog changes reclassify teams under a new revision', async t => {
   assert.deepEqual((await h.catalog('reader')).apps.mixed, { appMode: true, appFindings: 1 })
 })
 
+test('restricted readers do not see reports their permissions leave empty; unrestricted readers keep empty reports', async t => {
+  const h = await fixture(t)
+  await h.seed('secret', 'app', { type: 'security', findings: [{ id: 'secret', severity: 'high', file: 'src/secret.js' }] })
+  await h.seed('blank', 'app', { findings: [] })
+  await h.seed('dependency', 'app', { findings: [{ id: 'dependency', severity: 'high', file: 'node_modules/third/index.js' }] })
+  await h.seed('secret-links', 'app', { source: 'links', findings: [], links: [['secret', 'A']] })
+  const listed = async login => {
+    const response = await h.request('/api/teams', { login })
+    return response.body.teams.find(team => team.id === 'app').reports.map(entry => entry.id).toSorted()
+  }
+  const all = ['app-report', 'blank', 'dependency', 'secret', 'secret-links']
+  assert.deepEqual(await listed('reader'), all, 'with both permissions every report stays, empty or not')
+  await h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: true, security: false })
+  assert.deepEqual(await listed('reader'), ['app-report', 'dependency'])
+  await h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: false, security: true })
+  assert.deepEqual(await listed('reader'), ['app-report', 'secret', 'secret-links'])
+  assert.deepEqual(await listed('peer'), all, 'another reader\'s grants are their own')
+  const adminSession = hashToken(h.sessions.admin.setCookie.split(';', 1)[0].split('=')[1]), token = 'B'.repeat(43)
+  assert.equal(await h.db.createWorkspaceShare(adminSession, Date.now(), 'app', hashToken(token), { dependencies: true, security: false }), true)
+  const shared = await h.request('/api/teams/app/shared', { login: null, headers: { 'x-deepview-share': token } })
+  assert.deepEqual(shared.body.team.reports.map(entry => entry.id).toSorted(), ['app-report', 'dependency'], 'a restricted public link lists the same')
+})
+
 test('unavailable reports leave a team unclassified until a later catalog read succeeds', async t => {
   const h = await fixture(t)
   t.mock.method(console, 'warn', () => {})

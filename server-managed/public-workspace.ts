@@ -17,7 +17,7 @@ import { serveTeamFeed } from './team-feed.ts'
 import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
 import { typeOnlyFiles } from './type-only.ts'
-import { sharedTeamApp } from './team-app.ts'
+import { sharedTeamApp, withWorkspaceSummary } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   sendJson(res, status, body, { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
@@ -46,8 +46,8 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   const send = async (body: unknown) => { await recheck(); json(res, 200, body) }
   const sendTeam = async () => {
-    const [summaries, app] = await Promise.all([bundleSummaries(snapshot.team.bundles, deps.bundleCache), sharedTeamApp(deps.db, deps.reportStore, snapshot)])
-    await send({ user: snapshot.user, team: { ...snapshot.team, app,
+    const [summaries, workspace] = await Promise.all([bundleSummaries(snapshot.team.bundles, deps.bundleCache), sharedTeamApp(deps.db, deps.reportStore, snapshot)])
+    await send({ user: snapshot.user, team: { ...withWorkspaceSummary(snapshot.team, workspace),
       bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })),
     } })
     await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)
