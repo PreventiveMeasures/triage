@@ -7,6 +7,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
+import { npmRiskLevel } from '../../risk/npm/score.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
@@ -79,8 +80,11 @@ const assessable = source => source === 'registry' || source === 'mirror'
 export const malwareOf = row => row.risk?.error === 'integrity-mismatch' ? null : row.malware ?? null
 // A package row's most severe finding, its malware first, as critical: the
 // advisories', or risk's own of a package npm took down, once. What its rows
-// are ranked and flagged by, not its risk, which isn't told yet.
+// are flagged by.
 const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
+// A package row's risk, out of 100, as risk scores it (risk/npm/score.js):
+// malware's 100, the advisories' as risk's own; null where it isn't told.
+export const scoreOf = row => malwareOf(row) ? 100 : row.risk && !row.risk.error ? row.risk.score ?? null : null
 export const findingsOf = row => {
   const found = row.risk?.findings ?? []
   return malwareOf(row) ? [{ id: 'malware', severity: 'critical' }, ...found.filter(({ id }) => id !== 'malware')] : found
@@ -99,6 +103,9 @@ const FILTERS = {
   failed: ['Not assessed: failed', row => Boolean(row.risk?.error)],
   elsewhere: ['Not assessed: not from npm', row => !assessable(row.source)],
 }
+
+// What a package's risk is, as its column's heading tells it.
+const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
 
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
@@ -126,13 +133,14 @@ const streamRisk = (params, signal, onLine) => request(`/api/admin/repositories/
 const riskKey = ({ name, version, integrity }) => `${name}@${version}\0${integrity ?? ''}`
 const packageKey = pkg => assessable(pkg.source) ? riskKey(pkg) : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
-// A package row's rank: the most severe first, then those still to be told,
-// those that couldn't be, those found of nothing, and those not assessed.
+// A package row's rank: by its risk, the highest first, then those still to
+// be told, those that couldn't be, those of none, and those not assessed.
 function rank(row) {
-  if (severityOf(row)) return SEVERITIES.indexOf(severityOf(row))
-  if (!assessable(row.source)) return SEVERITIES.length + 3
-  if (!row.risk) return SEVERITIES.length
-  return row.risk.error ? SEVERITIES.length + 1 : SEVERITIES.length + 2
+  const score = scoreOf(row)
+  if (score > 0) return -score
+  if (!assessable(row.source)) return 4
+  if (score === 0) return 3
+  return row.risk ? 2 : 1
 }
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
@@ -267,7 +275,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
-      if (row) row.risk = line.error ? { error: line.error, detail: line.detail ?? null } : { severity: line.severity, findings: line.findings, published: line.published }
+      if (row) row.risk = line.error ? { error: line.error, detail: line.detail ?? null } : { severity: line.severity, score: line.score ?? null, findings: line.findings, published: line.published }
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
     }
@@ -424,7 +432,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         </select>
         ${this._search(rows.length, this._packages.size, 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th>Version</th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
+        <thead><tr><th>Package</th><th>Version</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
         <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
@@ -436,15 +444,23 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return html`<tr>
       <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}</td>
       <td class="mono">${row.version ?? '—'}</td>
+      <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
       <td>${usedInCell(row.usedIn)}</td>
     </tr>`
   }
 
+  // A package's risk, out of 100, in its level's color (risk/npm/score.js
+  // npmRiskLevel): red from 75, orange from 50, yellow from 25, else plain;
+  // nothing where it isn't told, its findings' cell saying why.
+  _score(row) {
+    const score = scoreOf(row)
+    return score === null ? nothing : html`<span class=${`risk-score risk-${npmRiskLevel(score)}`}>${score}</span>`
+  }
+
   // What risk finds of a package, each by its severity; or, where it finds
   // nothing, whether it is still to be told, couldn't be, or wasn't asked.
-  // A finding's severity isn't the package's risk, which isn't told yet.
   _findings(row) {
     const findings = findingsOf(row)
     if (findings.length > 0) {

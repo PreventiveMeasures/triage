@@ -957,9 +957,13 @@ dependency's package, nor of the version's advisories, which a lockfile's are
 asked at once. One refused as busy (`npm-busy`), or that npm asked to ask later
 (risk's `upstream-busy`, as npm's downloads API answers 429 past a burst of
 requests, a hundred or so, for some seconds), is asked again after a wait, so a
-large scan goes at the pace npm allows. A package's risk that still fails tells
+large scan goes at the pace npm allows. A package's risk line carries its
+findings and risk's `score` of it, out of 100 (risk/npm/score.js); the page
+shows the score in its Risk column, red from 75, orange from 50, yellow from
+25, else plain, as the viewer's ring is, malware's 100 where npm's advisories
+tell of it too, and lists the riskiest first. A package's risk that still fails tells
 its code, and, where risk failed, risk's `detail` of what it asked of npm and
-how that failed. Scans keep in the instance's memory a repository's lockfiles as listed
+how that failed. A risk line kept before risk told a score is assessed again. Scans keep in the instance's memory a repository's lockfiles as listed
 at a commit, a lockfile's packages by its blob, and a package's risk line for an
 hour, so a scan again asks GitHub only for each repository's head and access,
 and npm for nothing it told within the hour. The database keeps risk lines for

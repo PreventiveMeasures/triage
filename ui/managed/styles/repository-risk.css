@@ -66,6 +66,19 @@ td { vertical-align: top; }
   color: var(--sev);
   background: color-mix(in srgb, var(--sev) 14%, transparent);
 }
+/* A package's risk score, in its level's color; plain where low. */
+.risk-score {
+  display: inline-block;
+  min-width: 2.25rem;
+  padding: 0 .4rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--sev);
+  background: color-mix(in srgb, var(--sev) 14%, transparent);
+}
+.risk-score.risk-low { color: var(--muted); background: none; font-weight: 400; }
 .risk-findings {
   display: flex;
   flex-wrap: wrap;
