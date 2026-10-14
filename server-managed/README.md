@@ -937,7 +937,12 @@ renamed, and
 a lockfile's advisories audited again otherwise), and
 the next part tells what the last assessed as kept, going on from where it
 stopped, a hundred parts at most, or until three parts in a row find nothing
-more. Repositories are read one
+more. The repositories a part told whole are kept for the next
+(`repository-risk/progress` rows, by the admin, the id the page gives the scan
+and its scope, for a day): it tells none of them again, nor asks GitHub of
+them, as the page has them already, but looks up their packages' risks as
+their lockfiles are kept, so a scan of more repositories than a part reaches
+goes on past them. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
 any of them is told. A repository GitHub isn't reached for (`github-unreachable`)

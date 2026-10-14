@@ -496,6 +496,26 @@ test('a scan whose part\'s time is up while GitHub is still being asked tells wh
   assert.deepEqual(lines.map(line => line.type), ['repos', 'continue'])
 })
 
+test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {
+  const stores = { lockfiles: lineStore(), risks: lineStore() }
+  let kept = null
+  const progress = { read: () => Promise.resolve(kept), write: value => { kept = structuredClone(value); return Promise.resolve() } }
+  // left-pad's assessment outlasts the first part, given up on as the scan stops.
+  const assess = ({ name }, _teamScoped, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { resolve(noneFound) }, name === 'left-pad' && kept === null ? 1000 : 0)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+  })
+  const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
+  assert.deepEqual([first.at(-1), risksOf(first).map(line => line.name)], [{ type: 'continue' }, ['is-number']])
+  assert.deepEqual(kept, { repos: [[1, ['pnpm\u00001:pnpm-lock.yaml']]] }, 'the repository told whole')
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress })
+  const lines = await Array.fromAsync(repositoryRiskLines(again, new AbortController().signal, riskCaches(), { partMs: 5000 }))
+  assert.deepEqual(lines.map(line => line.type), ['repos', 'risk', 'risk', 'done'], 'none of its lines told again but its packages\' risks')
+  assert.deepEqual(risksOf(lines).map(line => line.name), ['is-number', 'left-pad'])
+  assert.deepEqual([again.opened, again.listed, again.read], [[], [], []], 'GitHub asked nothing')
+})
+
 test('what a scan read of GitHub is kept where the source keeps it, beyond an instance, for a day: a part on another goes on from it', async t => {
   const stores = { listings: lineStore(), lockfiles: lineStore() }
   const assess = () => Promise.resolve(noneFound)
@@ -718,6 +738,9 @@ test('repository risk is answered to admins alone, as lines', async t => {
   assert.equal(answer.status, 200)
   assert.equal(answer.headers['content-type'], 'application/x-ndjson')
   assert.deepEqual(answer.text.split('\n').filter(Boolean).map(line => JSON.parse(line)), [{ type: 'repos', repos: [] }, { type: 'done' }])
+  for (const id of ['8f14e45f-ceea-467f-a8c1-5d0e9f4e3b1a', 'not one/of ours']) {
+    assert.equal((await ask({ query: `?scan=${encodeURIComponent(id)}` })).text, answer.text, 'a scan\'s id, or one not taken as such, answered alike')
+  }
   assert.equal((await ask({ signedIn: false })).status, 401)
   assert.equal((await ask({ method: 'POST' })).status, 405)
   const manager = await server(t, 'manage')

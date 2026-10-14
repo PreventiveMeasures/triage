@@ -245,7 +245,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Scans what is chosen anew, its lines drawn as they come.
   async start() {
     if (this._state === 'running' || (this._scope !== 'all' && !this._target)) return
-    const params = new URLSearchParams(this._scope === 'all' ? {} : { [this._scope]: this._target })
+    // The scan's id, for its parts to go on past the repositories those
+    // before told whole (repository-risk.ts ScanProgress).
+    const params = new URLSearchParams({ ...this._scope === 'all' ? {} : { [this._scope]: this._target }, scan: crypto.randomUUID() })
     this._reset()
     this._error = null
     this._state = 'running'

@@ -128,7 +128,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
+import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -1383,6 +1383,14 @@ async function riskRepositories(db: ManagedDb, query: URLSearchParams): Promise<
   })
 }
 
+// Where a scan in parts keeps its progress (repository-risk.ts
+// ScanProgress) under `key`, for a day; none where the page gave no scan id.
+function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
+  if (scan === null || !/^[\w-]{1,64}$/u.test(scan)) return undefined
+  const kept = scanReadStore<ScanProgress>(deps.db, 'progress', SCAN_READ_KEPT_MS, deps.config.debug)
+  return { read: async () => (await kept.read(key))?.value ?? null, write: (progress: ScanProgress) => kept.write(key, progress, Date.now()) }
+}
+
 // GET /api/admin/repositories/risk: every connected repository's npm
 // packages, or a team's or one repository's (riskRepositories), as its
 // lockfiles lock them at its default branch's head, each assessed by risk
@@ -1417,6 +1425,10 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   const versions = npmVersionStore(deps.db, deps.config.debug)
   const stores = { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug }
   const lines = repositoryRiskLines({
+    // Which repositories a scan in parts told whole, by the admin, the id the
+    // page gives the scan (`scan`) and its scope, for the next part to go on
+    // past them.
+    progress: scanProgress(deps, `${s.user.id}\0${query.get('scan')}\0${query.get('team') ?? ''}\0${query.get('repo') ?? ''}`, query.get('scan')),
     repos: () => Promise.resolve(repos),
     async open(repo) {
       const reader = await browser.reader(repo)

@@ -21,10 +21,8 @@
 // audit` asks, each advisory told with whether it is of malware (risk's
 // npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
 // vulnerabilities, told beside.
-import type { Advisory } from '@preventive/upstream/advisories.js'
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
-import { isExactVersion } from '@preventive/upstream/semver.js'
-import { type Severity, npmMalwareAdvisory } from '../risk/index.js'
+import type { Severity } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import type { NpmVersionDocument } from './npm-packages.ts'
 import { type Lru, lru } from './lru.ts'
@@ -33,9 +31,10 @@ import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
 import { type LockedPackage, lockedPackages } from './locked-packages.ts'
 import { type Queue, queue } from './queue.ts'
 import { type DownloadsSource, readyingDownloads } from './scan-downloads.ts'
-import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
+import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
+import { type AdvisoryRow, type Audit, type AuditSource, auditLockfile } from './repository-risk-audit.ts'
 
-export { highestSeverity } from './repository-risk-assess.ts'
+export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 
 // The formats of npm's ecosystem, as findRepoLockfiles names them, and those
 // of them read here.
@@ -65,7 +64,7 @@ export interface OpenedRepository {
   recheck(): Promise<void>
 }
 
-export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
+export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends AuditSource {
   repos(): Promise<R[]>
   open(repo: R): Promise<OpenedRepository>
   // Whether a team lists a package's scope, its own packages.
@@ -77,8 +76,6 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // malware alone, its package taken down by npm; an NpmRiskError where
   // nothing tells of it (npm-risk.ts npmRiskRemoved).
   removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
-  // npm's registry's advisories of these packages' versions, asked at once.
-  advisories(packages: { name: string; versions: string[] }[], signal: AbortSignal): Promise<Advisory[]>
   // Where risk lines are kept beyond this instance, as RiskCaches keeps them
   // in it (npm-kept.ts riskLineStore, the database's).
   risks?: KeptStore<RiskLine>
@@ -89,17 +86,16 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // where the last stopped on whichever instance answers the next.
   listings?: KeptStore<ListedLockfile[]>
   lockfiles?: KeptStore<LockfileRead>
-  // Where a lockfile's advisories, or why they couldn't be had, are kept
-  // beyond this instance, by its blob, as RiskCaches keeps them in it.
-  audits?: KeptStore<Audit>
+  // Where a scan answered in parts keeps, from one part to the next, the
+  // repositories it told whole (`partMs`): the next tells none of them again,
+  // nor asks GitHub of them, but looks up their packages' risks as their
+  // lockfiles are kept (`lockfiles`), as the reader has the rest already.
+  progress?: { read(): Promise<ScanProgress | null>; write(progress: ScanProgress): Promise<void> } | undefined
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
 }
 
-type AdvisoryRow = Advisory & { malware: boolean }
-// A lockfile's advisories, or why they couldn't be had.
-type Audit = AdvisoryRow[] | RiskFailure
 
 
 // A risk line is of npm's package of its name and version, or, with an
@@ -116,6 +112,10 @@ export type RepositoryRiskLine =
   // The scan stopped for its part's time (repositoryRiskLines `partMs`), what
   // it told kept: to be asked again, from where it stopped.
   | { type: 'continue' }
+
+// The repositories a scan answered in parts told whole by a part's end, by
+// id, each with its lockfiles' keys (`${format}\0${sha}`) of those read.
+export interface ScanProgress { repos: [id: number, lockfiles: string[]][] }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 type LockfileRead = { packages: LockedPackage[] } | RiskFailure
@@ -141,11 +141,6 @@ export const riskCaches = (): RiskCaches => ({
   risks: lru(50_000),
   advisories: lru(50_000, kept => Array.isArray(kept.audit) ? kept.audit.length + 1 : 1),
 })
-export const RISK_KEPT_MS = 60 * 60_000
-// How long a lockfile's advisories that couldn't be had are told so, rather
-// than asked again: a scan's next parts don't wait on an audit that failed,
-// as by timing out, again and again.
-const AUDIT_FAILED_KEPT_MS = 10 * 60_000
 // How long the source's `listings` and `lockfiles` are read for: what
 // GitHub has at a commit or a blob doesn't change, how it is read here may.
 export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
@@ -167,6 +162,8 @@ interface Scan {
   seen: Map<string, boolean>
   dev: Map<string, AssessedPackage>
   stale: AssessedPackage[]
+  // The repositories told whole, this part or one before (ScanProgress).
+  told: Map<number, string[]>
 }
 
 // A package as a scan meets it: by its name, version and a mirror's integrity.
@@ -322,42 +319,12 @@ async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
 
 type AdvisoriesLine = Extract<RepositoryRiskLine, { type: 'advisories' }>
 
-// Whether a lockfile's audit kept `at` is told as it is: its advisories
-// within RISK_KEPT_MS, why they couldn't be had within AUDIT_FAILED_KEPT_MS.
-const isFreshAudit = ({ at, audit }: { at: number; audit: Audit }) => Date.now() - at < (Array.isArray(audit) ? RISK_KEPT_MS : AUDIT_FAILED_KEPT_MS)
-
-// A lockfile's advisories line: npm's registry's advisories of its packages
-// of the registry or a mirror, by its blob as kept, else asked at once and
-// kept; null where it locks none, or once the scan stops.
+// A lockfile's advisories line (repository-risk-audit.ts auditLockfile);
+// null where it locks none, or once the scan stops.
 async function readAdvisories(scan: Scan, { repo, path, format, packages }: LockfileLine & { packages: LockedPackage[] }, sha: string): Promise<AdvisoriesLine | null> {
+  const audit = await auditLockfile(scan.source, scan.caches.advisories, scan.signal, `${format}\0${sha}`, packages)
   const at = { type: 'advisories', repo, path } as const
-  const told = (audit: Audit) => Array.isArray(audit) ? { ...at, advisories: audit } : { ...at, ...audit }
-  const key = `${format}\0${sha}`
-  let kept = scan.caches.advisories.get(key)
-  if (!kept || !isFreshAudit(kept)) {
-    const stored = await scan.source.audits?.read(key)
-    kept = stored ? { at: stored.at, audit: stored.value } : undefined
-  }
-  if (kept && isFreshAudit(kept)) { scan.caches.advisories.set(key, kept); return told(kept.audit) }
-  const asked = new Map<string, Set<string>>()
-  for (const { name, version, source } of packages) {
-    if ((source !== 'registry' && source !== 'mirror') || !isNpmPackageName(name) || !isExactVersion(version)) continue
-    if (!asked.has(name)) asked.set(name, new Set())
-    asked.get(name)!.add(version)
-  }
-  if (asked.size === 0) return null
-  let audit: Audit
-  try {
-    audit = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
-      .map(advisory => ({ ...advisory, malware: npmMalwareAdvisory(advisory) }))
-  } catch (error) {
-    if (scan.signal.aborted) return null
-    audit = failureOf(error)
-  }
-  const now = Date.now()
-  scan.caches.advisories.set(key, { at: now, audit })
-  await scan.source.audits?.write(key, audit, now)
-  return told(audit)
+  return audit === null ? null : Array.isArray(audit) ? { ...at, advisories: audit } : { ...at, ...audit }
 }
 
 // A repository's line, its lockfiles or why they couldn't be listed, and
@@ -387,15 +354,33 @@ async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
     const advisories = 'packages' in line ? await readAdvisories(scan, line, listed.lockfiles[at]!.sha) : null
     if (advisories) scan.lines.add(advisories)
   }
+  if (scan.signal.aborted) return
+  scan.told.set(repo.repoId, lockfiles.flatMap((line, at) => 'packages' in line ? [`${line.format}\0${listed.lockfiles[at]!.sha}`] : []))
 }
 
-// Each repository, a repository at a time.
+// A repository an earlier part told whole, its packages looked up as its
+// lockfiles are kept, GitHub asked nothing of it: false where one isn't.
+async function lookUpTold(scan: Scan, keys: string[]) {
+  const reads: LockedPackage[][] = []
+  for (const key of keys) {
+    const read = scan.caches.lockfiles.get(key) ?? (await scan.source.lockfiles?.read(key))?.value
+    if (!read || !('packages' in read)) return false
+    reads.push(read.packages)
+  }
+  for (const packages of reads) assessLater(scan, packages)
+  return true
+}
+
+// Each repository, a repository at a time, but those an earlier part told
+// whole (ScanProgress).
 async function readRepositories(scan: Scan) {
   const repos = await scan.source.repos()
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
+  for (const [id, keys] of (await scan.source.progress?.read())?.repos ?? []) scan.told.set(id, keys)
   for (const repo of repos) {
     if (scan.signal.aborted) return
-    await readRepository(scan, repo)
+    const keys = scan.told.get(repo.repoId)
+    if (!keys || !await lookUpTold(scan, keys)) await readRepository(scan, repo)
   }
 }
 
@@ -420,7 +405,8 @@ function leftOver(scan: Scan): AssessedPackage[][] {
 // `caches` (RiskCaches), the instance's own unless given. Given `partMs`, it
 // stops once that long, as a function time-limited must (Vercel's), the work
 // under way given up on, its last line `continue`, for its reader to ask
-// again: those it assessed are kept, and told at once then.
+// again: those it assessed are kept, and told at once then, and the
+// repositories it told whole kept as its source's `progress`.
 export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source: RepositoryRiskSource<R>, signal: AbortSignal, caches = shared,
   { partMs = null }: { partMs?: number | null } = {}): AsyncGenerator<RepositoryRiskLine> {
   const part = new AbortController(), stopped = new AbortController()
@@ -430,7 +416,7 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   // none waited for: the work under way, such as a request to GitHub, which
   // isn't given up on at once, outlasting it.
   const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
-  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [] }
+  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map() }
   const failed: unknown[] = []
   void (async () => {
     try {
@@ -458,7 +444,10 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
       yield line
     }
     if (done || signal.aborted) return
-    if (part.signal.aborted) yield { type: 'continue' }
+    if (part.signal.aborted) {
+      await source.progress?.write({ repos: [...scan.told] })
+      yield { type: 'continue' }
+    }
     else if (failed.length > 0) throw failed[0]
   } finally {
     // A GitHub request under way isn't waited on: it settles on its own.
