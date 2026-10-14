@@ -1728,7 +1728,13 @@ control. A version shows in the bundle view with four tabs:
   nothing of the open version imports, as the Overview tells
   (`plain-crypto-js`, which axios 1.14.1 added to run its postinstall), their
   names and ranges in its tooltip, one that was another kind of dependency
-  before not new; an open version under two weeks old, as on
+  before not new, tinted as risk grades them by their packages: red for one
+  first published since the version compared with (`new package, 18 hours
+  old`), or whose range installs a version published since with install
+  scripts, not its package's latest (`installs 3.0.1 (its latest 4.0.0),
+  published since 1.0.0, running its install scripts`), orange where that version has install scripts, yellow for one
+  among npm's top 20,000 (`npm's top 200`), as a dependency named for
+  another's peer is, or for those all kept, else orange; an open version under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they

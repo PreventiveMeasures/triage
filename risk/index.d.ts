@@ -114,6 +114,13 @@ export interface DependencyRisk {
   uncounted?: true
   created?: string
   gap?: number
+  // For one nothing imports, the version its spec installs (registry.js
+  // npmPublicFacts): its package's latest beside it, when it was published,
+  // whether it has install scripts, and whether that was since the version
+  // compared with (`new`).
+  installs?: { version: string; latest: string | null; published: string | null; scripts: boolean; new: boolean }
+  // Where its package was looked up and npm has none of it for anyone.
+  missing?: true
 }
 
 // A version's risk as one number (risk/npm/score.js): what its findings call

@@ -99,6 +99,11 @@ test('a dependency nothing of a version imports is one no code file names as an 
   assert.equal(unimported({ 'index.js': null }, 'dep'), true, 'a file that isn\'t text')
   assert.equal(unimported({ 'index.js': '' }, 'react-dom', {}, 'peer'), false, 'not a peer dependency')
   assert.equal(unimported({ 'index.js': '' }, '@types/node'), false, 'nor types')
+  assert.equal(unimported({ 'index.js': 'var __awaiter = function () {}\n' }, 'tslib'), false, 'nor TypeScript\'s helpers, inlined')
+  const aliased = (name, range) => npmDependencyUnimported(version({ 'index.js': '' }), { name, kind: null, range })
+  assert.deepEqual([aliased('tslib', '^2.6.0'), aliased('tslib', 'npm:tslib@^2.6.0'), aliased('tslib', 'npm:attacker@1.0.0'), aliased('tslib', 'github:attacker/tslib'),
+    aliased('@types/node', 'npm:attacker@1.0.0'), aliased('@types/node', '^22.0.0')], [false, false, true, true, true, false],
+  'each where npm installs that package from its registry, not another under its name')
   // DefinitelyTyped's stub, once a package has types of its own, depending
   // on it with no code: not that package from the registry.
   const stub = (types, files = STUB_FILES) => ({ ...version(files), npm: { name: types, version: '2.0.0', manifest: {} } })
