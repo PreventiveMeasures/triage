@@ -113,9 +113,11 @@ export type RepositoryRiskLine =
   // it told kept: to be asked again, from where it stopped.
   | { type: 'continue' }
 
-// The repositories a scan answered in parts told whole by a part's end, by
-// id, each with its lockfiles' keys (`${format}\0${sha}`) of those read.
-export interface ScanProgress { repos: [id: number, lockfiles: string[]][] }
+// The repositories a scan answered in parts told whole by a part's end: each
+// by its id, its name and a team's directories in it then, and its
+// lockfiles' keys (`${format}\0${sha}`) of those read.
+export interface ScanProgress { repos: ToldRepository[] }
+interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[] }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 type LockfileRead = { packages: LockedPackage[] } | RiskFailure
@@ -144,6 +146,8 @@ export const riskCaches = (): RiskCaches => ({
 // How long the source's `listings` and `lockfiles` are read for: what
 // GitHub has at a commit or a blob doesn't change, how it is read here may.
 export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
+// How long a part's progress, written as it ends (`progress`), is waited on.
+const PROGRESS_WRITE_MS = 5000
 // How many kept risk lines are read of the source's `risks` at once.
 const KEPT_READ = 500
 const shared = riskCaches()
@@ -163,7 +167,7 @@ interface Scan {
   dev: Map<string, AssessedPackage>
   stale: AssessedPackage[]
   // The repositories told whole, this part or one before (ScanProgress).
-  told: Map<number, string[]>
+  told: Map<number, ToldRepository>
 }
 
 // A package as a scan meets it: by its name, version and a mirror's integrity.
@@ -355,14 +359,19 @@ async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
     if (advisories) scan.lines.add(advisories)
   }
   if (scan.signal.aborted) return
-  scan.told.set(repo.repoId, lockfiles.flatMap((line, at) => 'packages' in line ? [`${line.format}\0${listed.lockfiles[at]!.sha}`] : []))
+  scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
+    lockfiles: lockfiles.flatMap((line, at) => 'packages' in line ? [`${line.format}\0${listed.lockfiles[at]!.sha}`] : []) })
 }
 
-// A repository an earlier part told whole, its packages looked up as its
-// lockfiles are kept, GitHub asked nothing of it: false where one isn't.
-async function lookUpTold(scan: Scan, keys: string[]) {
+// Whether an earlier part told `repo` whole, by its name and a team's
+// directories in it as they are now, its packages then looked up as its
+// lockfiles are kept, GitHub asked nothing of it: not where one isn't. It is
+// told as read then, its default branch's head not asked again.
+async function toldBefore(scan: Scan, repo: RepositoryRiskRepo) {
+  const told = scan.told.get(repo.repoId)
+  if (!told || told.name !== repo.fullName || JSON.stringify(told.paths) !== JSON.stringify(repo.paths ?? null)) return false
   const reads: LockedPackage[][] = []
-  for (const key of keys) {
+  for (const key of told.lockfiles) {
     const read = scan.caches.lockfiles.get(key) ?? (await scan.source.lockfiles?.read(key))?.value
     if (!read || !('packages' in read)) return false
     reads.push(read.packages)
@@ -376,11 +385,10 @@ async function lookUpTold(scan: Scan, keys: string[]) {
 async function readRepositories(scan: Scan) {
   const repos = await scan.source.repos()
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
-  for (const [id, keys] of (await scan.source.progress?.read())?.repos ?? []) scan.told.set(id, keys)
+  for (const told of (await scan.source.progress?.read())?.repos ?? []) scan.told.set(told.id, told)
   for (const repo of repos) {
     if (scan.signal.aborted) return
-    const keys = scan.told.get(repo.repoId)
-    if (!keys || !await lookUpTold(scan, keys)) await readRepository(scan, repo)
+    if (!await toldBefore(scan, repo)) await readRepository(scan, repo)
   }
 }
 
@@ -445,7 +453,11 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
     }
     if (done || signal.aborted) return
     if (part.signal.aborted) {
-      await source.progress?.write({ repos: [...scan.told] })
+      // Not waited on past PROGRESS_WRITE_MS, within what Vercel's limit
+      // leaves past the part's: the next part then goes on from less.
+      let timer
+      await Promise.race([source.progress?.write({ repos: [...scan.told.values()] }), new Promise(resolve => { timer = setTimeout(resolve, PROGRESS_WRITE_MS) })])
+      clearTimeout(timer)
       yield { type: 'continue' }
     }
     else if (failed.length > 0) throw failed[0]

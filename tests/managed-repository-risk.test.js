@@ -507,13 +507,34 @@ test('a scan in parts goes on past the repositories a part before told whole, as
   })
   const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
   assert.deepEqual([first.at(-1), risksOf(first).map(line => line.name)], [{ type: 'continue' }, ['is-number']])
-  assert.deepEqual(kept, { repos: [[1, ['pnpm\u00001:pnpm-lock.yaml']]] }, 'the repository told whole')
+  assert.deepEqual(kept, { repos: [{ id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }] }, 'the repository told whole')
   // Another instance: its own caches empty.
   const again = Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress })
   const lines = await Array.fromAsync(repositoryRiskLines(again, new AbortController().signal, riskCaches(), { partMs: 5000 }))
   assert.deepEqual(lines.map(line => line.type), ['repos', 'risk', 'risk', 'done'], 'none of its lines told again but its packages\' risks')
   assert.deepEqual(risksOf(lines).map(line => line.name), ['is-number', 'left-pad'])
   assert.deepEqual([again.opened, again.listed, again.read], [[], [], []], 'GitHub asked nothing')
+})
+
+test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since', async () => {
+  const told = { id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }
+  const stores = { lockfiles: lineStore() }
+  await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores)))
+  for (const [then, why] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'], [{}, 'as it was']]) {
+    const progress = { read: () => Promise.resolve({ repos: [{ ...told, ...then }] }), write: () => Promise.resolve() }
+    const source = Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores, { progress })
+    await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 5000 }))
+    assert.deepEqual(source.opened, why === 'as it was' ? [] : [1], why)
+  }
+})
+
+test('a part ends, telling continue, though its progress isn\'t written within PROGRESS_WRITE_MS', async () => {
+  const progress = { read: () => Promise.resolve(null), write: () => new Promise(() => {}) }
+  const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })
+  const started = Date.now()
+  const lines = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { progress }), new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.equal(lines.at(-1).type, 'continue')
+  assert.ok(Date.now() - started < 8000)
 })
 
 test('what a scan read of GitHub is kept where the source keeps it, beyond an instance, for a day: a part on another goes on from it', async t => {
