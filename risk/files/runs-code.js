@@ -1,15 +1,17 @@
 // What a file's code can do beyond itself, for a reviewer: run a string as
 // code (eval, Function with new or without, node:vm, Module's _compile) or
 // other programs (child_process), reach for credentials (a credential file's
-// path, a token's name) or the whole environment, publish to npm (`npm
-// publish`, `/-/whoami`, a registry PUT), run a shell command fetching or
-// handing off code (`curl … https://…`, `| sh`, `powershell -…`, rundll32,
-// osascript, `/dev/tcp/`), and name a place code runs from again later (a
-// shell's rc file, LaunchAgents, systemd's user units,
-// `.claude/settings.json`, `.vscode/tasks.json`), as a file's stamps say
-// (stamps.js) and a version's findings name what is new to a file. A shell
-// script (`.sh`, `.bat`, `.ps1` …, or a shell's hashbang) is read whole for
-// the last two, its text its commands.
+// path, a token's name, `gh auth token`, the cloud's instance metadata, the
+// GitHub Actions runner's process or another process's memory, trufflehog)
+// or the whole environment, publish to npm (`npm publish`, `/-/whoami`, a
+// registry PUT), run a shell command fetching or handing off code (`curl …
+// https://…`, `| sh`, `powershell -…`, rundll32, osascript, `/dev/tcp/`),
+// and name a place code runs from again later (a shell's rc file,
+// LaunchAgents, systemd's user units, `.claude/settings.json`,
+// `.vscode/tasks.json`), as a file's stamps say (stamps.js) and a version's
+// findings name what is new to a file. A shell script (`.sh`, `.bat`, `.ps1`
+// …, or a shell's hashbang) is read whole for the last two and the
+// credentials a command reaches for, its text its commands.
 // A quick read, not a parse: a script's code with its strings, regular
 // expressions and comments set aside as script.js tells them, its
 // strings read for the paths, names and commands they hold, a module by the
@@ -59,7 +61,10 @@ const COPY = String.raw`(?:\{${GAP}\.\.\.${GAP})?`
 const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}$.])(?:JSON${GAP}\.${GAP}stringify|URLSearchParams)${GAP}\(${GAP}${COPY}${ENV}`
   + String.raw`|(?=Object)(?<![\p{ID_Continue}$.])Object${GAP}\.${GAP}(?:values|entries)${GAP}\(${GAP}${COPY}${ENV}(?!${PICKED})`
 // What a shell command, and a place code runs from again later, may say
-// (SHELL, PERSISTENCE).
+// (SHELL, PERSISTENCE), and what of the credentials is told in any case:
+// trufflehog (TRUFFLEHOG), GCP's metadata host, and a string naming gh
+// (`'gh'`, `'/usr/bin/gh'`, `'GH.EXE'`) as a program run with its arguments
+// apart is, whatever is between them (`'gh', ['auth', /* … */ 'token']`).
 // A shell, as a hashbang or a pipe names it (`#!/bin/ksh`, `| fish`,
 // BusyBox's `ash`, `| powershell`); after a pipe, by its path or env's too (`| /bin/sh`,
 // `| /usr/bin/env bash`), env's options, their values, and settings before
@@ -67,11 +72,18 @@ const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}
 const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
 const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
 const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
-  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode`
+  + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode|trufflehog|metadata\.google\.internal|["'\x60\/\\]gh(?:\.exe)?["'\x60]`
+// What says one of the credentials a command, an endpoint or a process holds
+// (HOLDS' gh-token, cloud-metadata, runner-worker and process-memory), as
+// code and its strings may say it, in the case it is written: `gh auth
+// token`'s command, lowercase as gh reads it, the metadata endpoint's
+// address, `Runner.Worker` and `/proc/`; what is told in any case is
+// SHELL_OR_PLACE's.
+const SAYS_CREDENTIALS = String.raw`auth(?:[^\S\n]|[\\^\x60]\r?\n)+token|169\.254\.169\.254|Runner\.Worker|\/proc\/`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
-const SAYS_CODE = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
+const SAYS_CODE = new RegExp(String.raw`eval|Function${FUNCTION_CALLED}|vm["'\x60]|_compile|child_process|\.(?:npmrc|ssh|aws)|_TOKEN|${SAYS_CREDENTIALS}|(?:stringify|values|entries|URLSearchParams)${GAP}\(${GAP}(?:\{${GAP}\.\.\.${GAP})?process${GAP}\.${GAP}env|publish|whoami|registry\.(?:npmjs\.org|yarnpkg\.com)`, 'u')
 const SAYS_ANY = { test: text => SAYS_CODE.test(text) || SAYS_SHELL_OR_PLACE.test(text) }
 
 // A name read as one, not as a property's (`vm.eval`, `vm . eval`, a spread's
@@ -122,12 +134,15 @@ const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${nam
 // `.sshd`); a token's name where it is read, the string the name alone (a
 // key, `process.env['GITHUB_TOKEN']`) or the name expanded (a shell's or
 // .npmrc's `$GITHUB_TOKEN`, `${NPM_TOKEN}`, cmd's `%NPM_TOKEN%`), not where
-// text names it (`requires a token in GITHUB_TOKEN`); a command publishing (`npm publish`, `pnpm
+// text names it (`requires a token in GITHUB_TOKEN`); a credential a
+// command, an endpoint or a process holds (`gh auth token`, the cloud's
+// metadata endpoint, `Runner.Worker`, `/proc/<pid>/mem`, trufflehog, as
+// HOLDS tells them); a command publishing (`npm publish`, `pnpm
 // publish …`, options before it as npm takes them, `npm --tag next publish`)
 // or the registry's who-am-I, a publisher's first step with a token. And the
 // registry, where a PUT request is one publishing (REGISTRY_URL).
 // Told first of a string by what any of them says.
-const HOLDS_CODE = /\.(?:npmrc|ssh|aws)|_TOKEN|publish|whoami|registry\./u
+const HOLDS_CODE = new RegExp(String.raw`\.(?:npmrc|ssh|aws)|_TOKEN|${SAYS_CREDENTIALS}|publish|whoami|registry\.`, 'u')
 const HOLDS_ANY = { test: text => HOLDS_CODE.test(text) || SAYS_SHELL_OR_PLACE.test(text) }
 // Before a token's name as a key, its absence told or the token dropped, as
 // TOKEN_NAME tells of one as a name (`!process.env['GITHUB_TOKEN']`,
@@ -219,16 +234,65 @@ const SHELL = String.raw`(?<![\w.-])(?:curl|wget)(?:\.exe)?${APART}(?:(?!(?:curl
 const SEPARATOR = String.raw`(?:\\?\/|\\{1,2})`
 const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile)(?![\w-])|(?<=[\/\\])(?<!\.[\w-]*[\/\\])\.profile(?![\w-])|(?<![\w-])Launch(?:Agents|Daemons)(?![\w-])|systemd${SEPARATOR}user(?![\w-])|fish${SEPARATOR}(?:config\.fish|conf\.d)(?![\w-])`
   + String.raw`|(?<![\w$])\$profile(?![\w-])|(?<![\w.-])Microsoft\.\w+_profile\.ps1(?![\w-])|(?:PowerShell|\$pshome)${SEPARATOR}profile\.ps1(?![\w-])|systemctl${OPTIONS}${APART}+--user${OPTIONS}${APART}+enable(?![\w-])|systemctl${OPTIONS}${APART}+enable(?:${APART}+[^\s;|&]+){0,6}?${APART}+--user(?![\w-])|(?<![\w.-])\.claude${SEPARATOR}settings(?:\.local)?\.json|(?<![\w.-])\.vscode${SEPARATOR}tasks\.json`
+// Credentials a command, an endpoint or a process holds, as recent npm
+// malware reached for them: the GitHub CLI printing its token (`gh auth
+// token`, by its path too, `gh.exe`, its name in any case as Windows runs
+// it, `GH.EXE`, its line continued as a shell command's, `gh auth \⏎
+// token`), not its other commands (`gh auth status`); the cloud's
+// instance metadata endpoint, AWS's, Azure's and GCP's
+// (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`,
+// in any case as DNS reads it), as a host whole (HOST_START, HOST_END): not
+// an address or a host either starts or ends (`169.254.169.2540`,
+// `foo-169.254.169.254`, `169.254.169.254.example.com`,
+// `metadata.google.internal.example.com`; a trailing dot,
+// `metadata.google.internal.`, its host still), nor in a URL's path or
+// userinfo (`https://example.com/169.254.169.254`,
+// `https://169.254.169.254@example.com`; WHATWG's `\@` a path's, its host
+// the address still), nor Azure's instance metadata
+// (`169.254.169.254/metadata/instance/compute`, after a port too, `:80`, its
+// slashes escaped too, `\/`), a machine's region and size, not its
+// identity's token, as msal asks it; the GitHub Actions runner's process
+// (`Runner.Worker`, `Runner.Worker.exe`, `GitHub.Runner.Worker`), whose
+// memory holds a job's secrets, not in another name (`MyRunner.Worker`,
+// `Runner.Workers`) nor case (`runner.worker`); another process's memory, by
+// its pid's digits or a glob (`/proc/1234/mem`, `/proc/*/mem`,
+// `/proc/[0-9]*/mem`) or a substitution (`/proc/${pid}/mem`, a shell's
+// `$pid`, `$(pgrep …)` and backticks, Python's `{pid}`, a format's `%d`),
+// not a process's own (`/proc/self/mem`) nor what else /proc tells of one
+// (`/proc/1234/status`); and trufflehog, a scanner for secrets, in any case
+// (`TruffleHog`), not in another name (`trufflehogs`, `TRUFFLEHOG_VERSION`).
+const GH_TOKEN = String.raw`(?<![\w.-])[gG][hH](?:\.[eE][xX][eE])?${APART}+auth${APART}+token(?![\w-])`
+const PID = String.raw`[\d*?[\]-]{1,20}|\$\{[^}\n]{0,100}\}|\$\([^)\n]{0,200}\)|\u0060[^\u0060\n]{0,200}\u0060|\$\w{1,64}|\{\w{0,64}\}|%d`
+// A host whole, a URL's or alone: not after a word, a dot or a hyphen, nor a
+// path's slash (`https://example.com/169.254.169.254`), a URL's two
+// (`//`, `\/\/`) its start after a scheme's colon or alone
+// (`//169.254.169.254`), not after a path's character
+// (`https://example.com//169.254.169.254`); nor before more of a name or
+// userinfo's `@` (`https://169.254.169.254@example.com`, `…:password@`).
+const HOST_START = String.raw`(?<![\w.-]|(?<![\/\\])\/|[\w.~%-](?:\\?\/){2})`
+const HOST_END = String.raw`(?![\w-]|\.[\w-]|(?::[^\s\/@'"\x60]{0,64})?@)`
+const TRUFFLEHOG = String.raw`(?<![\p{ID_Continue}$-])trufflehog(?![\p{ID_Continue}$-])`
 const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
+  ['gh-token', new RegExp(GH_TOKEN, 'gu')],
+  ['cloud-metadata', new RegExp(String.raw`${HOST_START}169\.254\.169\.254${HOST_END}(?!(?::\d{1,5})?\\?\/metadata\\?\/instance(?![\w-]))|${HOST_START}metadata\.google\.internal${HOST_END}`, 'giu')],
+  ['runner-worker', /(?<![\w$-])Runner\.Worker(?![\w$-])/gu],
+  ['process-memory', new RegExp(String.raw`\/proc\/(?:${PID})\/mem(?![\w-])`, 'gu')],
+  ['trufflehog', new RegExp(TRUFFLEHOG, 'giu')],
   ['publish', /(?<![\w-])(?:npm|pnpm|yarn)(?:\s+-{1,2}\w[\w-]*(?:=\S*|\s+(?!-)\S+)?){0,8}?\s+publish(?![\w-])|\/-\/whoami(?![\w-])/gu],
   ['shell', new RegExp(SHELL, 'giu')],
   ['persistence', new RegExp(PERSISTENCE, 'giu')],
 ]
-// What a shell script holds, read whole: its commands, and the places they
-// write to.
-const SHELL_HOLDS = HOLDS.filter(([kind]) => kind === 'shell' || kind === 'persistence')
+// What a shell script holds, read whole: its commands, the places they write
+// to, and the credentials a command, a process or its memory holds (`gh auth
+// token`, `Runner.Worker`, `/proc/<pid>/mem`, trufflehog); not the cloud's
+// metadata endpoint, whose fetching is a shell command already (`curl
+// http://169.254.169.254/…`) and which a script provisioning a machine asks
+// its region and id, nor a credential file or a token, which a script
+// publishing a package names.
+const SHELL_KINDS = new Set(['gh-token', 'runner-worker', 'process-memory', 'trufflehog', 'shell', 'persistence'])
+const SHELL_HOLDS = HOLDS.filter(([kind]) => SHELL_KINDS.has(kind))
 // A shell script, by its extension, its name a shell's startup file's
 // (`.bashrc`, `.profile`), or its hashbang: a shell's, by its path or env's,
 // env's options and settings before it (`#!/bin/ksh`, `#!/usr/bin/env -S
@@ -280,13 +344,15 @@ const OPTION = /^(["'\u0060])-/u
 const ARGUMENTS_BETWEEN = new RegExp(String.raw`^(?:[\s,[]|${COMMENT})*$`, 'u')
 const PUT = /^(["'\u0060])put\1$/iu
 const METHOD = new RegExp(String.raw`\bmethod["']?${GAP}[:=]${GAP}$`, 'u')
-// A program run with its arguments apart, by its path too (`spawn('curl',
-// ['-fsSL', 'https://…'])`, `execFile('powershell.exe', ['-NoP', '-enc',
-// …])`, `spawn('systemctl', ['--user', 'enable', …])`): its command line,
-// its arguments' strings after its name, read as a shell command is, a
+// A program run with its arguments apart, by its path too, a Windows one's
+// from its drive with spaces in it (`spawn('curl', ['-fsSL', 'https://…'])`,
+// `execFile('powershell.exe', ['-NoP', '-enc', …])`, `spawn('systemctl',
+// ['--user', 'enable', …])`, `spawnSync('gh', ['auth', 'token'])`,
+// `execFileSync('C:\\Program Files\\GitHub CLI\\gh.exe', …)`): its command
+// line, its arguments' strings after its name, read as a shell command is, a
 // variable's or a property's value between (`['-o', output, 'https://…']`,
 // `outputs[i]`, `options?.out`), its first 20 arguments, however long.
-const COMMAND = /^(["'\u0060])(?:\S*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl)(?:\.exe)?\1$/iu
+const COMMAND = /^(["'\u0060])(?:\S*[\\/]|[a-z]:[\\/][^\n]*[\\/])?(?:curl|wget|certutil|bitsadmin|powershell|pwsh|systemctl|gh)(?:\.exe)?\1$/iu
 // An argument a shell would need quoted, its separators no command's end
 // (`'Cookie: a=b; c=d'`), its own double quotes single then.
 const SEPARATES = /[;|&]/u
@@ -307,9 +373,10 @@ const TYPE_ONLY = new RegExp(String.raw`\b(?:import|export)${GAP}type\b(?!${GAP}
 
 // Each kind, in the order its tags show: its tag, what it does, its name in
 // the tag's tooltip, a row of its own where kinds share the tag (a string run
-// as code by any way, `eval`'s; a credential file or token, `credentials`'),
-// and for one marked as worse than the others' warning, `critical`: the whole
-// environment read out, publishing, and a place code runs from again later.
+// as code by any way, `eval`'s; a credential file, a token, a command, an
+// endpoint or a process, `credentials`'), and for one marked as worse than
+// the others' warning, `critical`: the whole environment read out,
+// publishing, and a place code runs from again later.
 const AS_CODE = { tag: 'eval', note: 'Runs a string as code' }
 const CREDENTIALS = { tag: 'credentials', note: 'Reaches for credentials' }
 export const RUNS_CODE = new Map([
@@ -320,6 +387,11 @@ export const RUNS_CODE = new Map([
   ['child-process', { tag: 'child_process', note: 'Runs other programs', name: 'child_process' }],
   ['credential-files', { ...CREDENTIALS, name: '.npmrc, .ssh or .aws' }],
   ['tokens', { ...CREDENTIALS, name: 'NPM_TOKEN or GITHUB_TOKEN' }],
+  ['gh-token', { ...CREDENTIALS, name: 'gh auth token' }],
+  ['cloud-metadata', { ...CREDENTIALS, name: '169.254.169.254 or metadata.google.internal' }],
+  ['runner-worker', { ...CREDENTIALS, name: 'Runner.Worker' }],
+  ['process-memory', { ...CREDENTIALS, name: '/proc/<pid>/mem' }],
+  ['trufflehog', { ...CREDENTIALS, name: 'trufflehog' }],
   ['env', { tag: 'whole env', note: 'Reads out the whole environment', name: 'process.env, by JSON.stringify, Object.entries or values, URLSearchParams', mark: 'critical' }],
   ['publish', { tag: 'publish', note: 'Publishes to npm', name: 'npm publish, /-/whoami or a registry PUT', mark: 'critical' }],
   ['shell', { tag: 'shell', note: 'Runs shell commands fetching or handing off code', name: 'curl or wget a URL, | sh, powershell -…, iex, rundll32, osascript, /dev/tcp' }],
@@ -389,7 +461,9 @@ function read(code, base, at) {
       const after = code.slice(index + token.length, index + token.length + 20)
       return !KEY_SET.test(after) && (!KEY_ENDS.test(after) || !KEY_ABSENT.test(code.slice(Math.max(0, index - 300), index)))
     }
-    const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
+    // Each kind searched for before its places are listed, as matchAll copies
+    // its regular expression each time.
+    const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => text.search(holds) === -1 ? [] : [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
     for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
     if (text.includes('registry.') && REGISTRY_URL.test(unescaped(text).replace(URL_STRIPPED, ''))) at('registry', base + index)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
