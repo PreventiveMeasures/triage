@@ -209,6 +209,29 @@ test('ending the view, the admin role, or the admin session returns to the own s
   assert.equal((await h.request('/api/auth/session', h.own('admin'))).status, 401)
 })
 
+test('the mode probe sends the session the session probe would, sparing that request', async t => {
+  const h = await fixture(t)
+  const signedOut = await h.request('/api/config')
+  assert.deepEqual([signedOut.status, signedOut.body.mode, signedOut.body.session], [200, 'managed', null])
+  for (const options of [h.own('admin'), await h.view('viewed')]) {
+    const sent = await h.request('/api/config', options)
+    assert.deepEqual(sent.body.session, (await h.request('/api/auth/session', options)).body)
+    assert.equal(sent.headers['set-cookie'], undefined)
+  }
+  // An ended view is cleared, as the session probe clears it.
+  const viewing = await h.view('reader')
+  assert.equal((await h.request('/api/auth/view-as', { ...viewing, method: 'DELETE' })).status, 204)
+  const ended = await h.request('/api/config', viewing)
+  assert.deepEqual([ended.body.session.user.login, ended.body.session.viewer, ended.headers['set-cookie']],
+    ['admin', undefined, 'dvview=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'])
+  // A failed read leaves the session to its own request, never failing the probe.
+  t.mock.method(h.db, 'sessionWithUser', () => Promise.reject(new Error('database unavailable')))
+  const warn = t.mock.method(console, 'warn', () => {})
+  const failed = await h.request('/api/config', h.own('admin'))
+  assert.deepEqual([failed.status, failed.body.mode, Object.hasOwn(failed.body, 'session')], [200, 'managed', false])
+  assert.equal(warn.mock.callCount(), 1)
+})
+
 test('only admins open views, of other existing users, as a CSRF-checked POST', async t => {
   const h = await fixture(t)
   const start = (name, body, options = {}) => h.request('/api/auth/view-as', { ...h.own(name), method: 'POST', body, ...options })

@@ -77,11 +77,16 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
 
 // Only an explicit 404 confirms a backend-less deployment. Network errors,
 // other HTTP errors, and invalid configuration leave the protocol unknown.
-export async function probeServerInfo(): Promise<ServerInfo | 'standalone' | null> {
+// A managed server's `session` passes through unchecked for the managed
+// client's first session probe; it is never cached.
+export async function probeServerInfo(): Promise<(ServerInfo & { session?: unknown }) | 'standalone' | null> {
   try {
     const res = await fetch(CONFIG_PATH, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } })
     if (res.status === 404) return 'standalone'
-    return res.ok ? parseServerInfo(await res.json()) : null
+    if (!res.ok) return null
+    const body = await res.json()
+    const info = parseServerInfo(body)
+    return info && body.session !== undefined ? { ...info, session: body.session } : info
   } catch { return null }
 }
 

@@ -130,6 +130,23 @@ test('background session refresh retains the known identity on transient failure
   assert.equal(await probeSession(), null)
 })
 
+test('a session the server configuration sent spares the session request', async (t) => {
+  const network = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ user: { id: 'asked', login: 'asked', role: 'view' }, csrfToken: 'asked' })))
+  const sent = { user: { id: 'me', login: 'me', name: 'Me', role: 'triage' }, csrfToken: 'csrf', viewer: { id: 'admin', login: 'admin', name: null } }
+  assert.deepEqual(await probeSession({ sent: Promise.resolve(sent) }), {
+    id: 'me', login: 'me', name: 'Me', avatarUrl: null, role: 'triage', csrfToken: 'csrf', viewer: { id: 'admin', login: 'admin', name: null },
+  })
+  assert.equal(await probeSession({ fallback: { login: 'known' }, sent: Promise.resolve(null) }), null, 'signed out')
+  assert.equal(network.mock.callCount(), 0)
+  for (const unread of [undefined, {}, { user: {} }, 'session']) {
+    assert.equal((await probeSession({ sent: Promise.resolve(unread) })).login, 'asked', 'one not sent or unreadable is asked for')
+  }
+  assert.equal(network.mock.callCount(), 4)
+  setPreviewRole('admin')
+  assert.equal((await probeSession({ sent: Promise.resolve(sent) })).login, 'admin', 'a preview keeps its own identity')
+  assert.equal(network.mock.callCount(), 4)
+})
+
 test('background team refresh preserves the sidebar during an outage and clears revoked access', async (t) => {
   const fallback = [{ id: 'team', slug: 'team-slug', name: 'Known team', reports: [], bundles: [] }]
   let response = new Response('', { status: 503 })

@@ -49,7 +49,10 @@ test('public startup uses only scoped bootstrap and clears revoked access withou
       team: { id: 'team', slug: 'team', name: 'Shared workspace', permissions: { dependencies: false, security: true }, reports: [], bundles: [] },
     }))
   })
-  const session = await probeSession()
+  // The visitor's own sign-in, which the configuration may send, is never used.
+  const own = { user: { id: 'own', login: 'own', role: 'admin' }, csrfToken: 'csrf' }
+  assert.equal((await probeSession({ sent: Promise.resolve(null) })).publicShare, true)
+  const session = await probeSession({ sent: Promise.resolve(own) })
   assert.equal(session.publicShare, true)
   assert.equal(session.role, 'view')
   assert.equal(session.csrfToken, null)

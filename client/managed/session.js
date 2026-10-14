@@ -1,4 +1,4 @@
-import { managedFetch } from './request.js'
+import { getPreviewRole, managedFetch } from './request.js'
 import { getPublicShare, publicShareBootstrapPath } from './public-share.js'
 import { reportEntries } from '@preventive/report'
 import { MANAGED_PAGES } from '../../common/managed/routes.js'
@@ -25,8 +25,14 @@ async function getJson(url, fallback = null, options = {}) {
 // during background revalidation. The returned shape is what the sidebar
 // keeps on `state.managedSession` (renderAuthStatus reads `.login`; logout
 // reads `.csrfToken`). While an admin views as another user, it is that
-// user's, with the admin as `viewer`.
-export async function probeSession({ fallback = null } = {}) {
+// user's, with the admin as `viewer`. `sent` resolves to the session GET
+// /api/config sent (null signed out), sparing this request; one it did not
+// send or that cannot be read is asked for instead.
+export async function probeSession({ fallback = null, sent } = {}) {
+  const preloaded = getPublicShare() || getPreviewRole() !== null ? undefined : await sent
+  if (preloaded === null) return null
+  const session = sessionFrom(preloaded)
+  if (session !== undefined) return session
   let body
   try {
     const share = getPublicShare()
@@ -35,10 +41,15 @@ export async function probeSession({ fallback = null } = {}) {
     if (!res.ok) return fallback
     body = await res.json()
   } catch { return fallback }
+  const read = sessionFrom(body)
+  return read === undefined ? fallback : read
+}
+
+// The session a body describes, null signed out, or undefined unreadable.
+function sessionFrom(body) {
   const user = body?.user
   if (user === null) return null
-  if (user === undefined) return fallback
-  if (typeof user.login !== 'string') return fallback
+  if (user === undefined || typeof user.login !== 'string') return undefined
   return {
     id: user.id,
     login: user.login,

@@ -1911,6 +1911,16 @@ let managedSessionPending = true
 let managedTeamsPending = true
 let managedNavigationPending = false
 let managedBase = null
+// The session the startup mode probe sent, for the first managed session probe
+// in place of GET /api/auth/session. Dropped once taken, or when startup opens
+// another protocol, so no later probe takes it stale.
+let startupSession
+
+function takeStartupSession() {
+  const sent = startupSession
+  startupSession = undefined
+  return sent
+}
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
   managedHistory.reset({ force: resetNavigation })
@@ -2010,6 +2020,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (getPublicShare() && info.managed) state.serverModeSelection = 'managed'
   configureClientMode(info.mode)
   if (getPublicShare() && info.managed) setLocalMode(false)
+  if (!isManagedUiMode()) startupSession = undefined
   const changed = previousMode !== state.serverMode
   state.managed = info.managed
   // Cached mode hints omit runtime values; only a live response replaces them.
@@ -2064,7 +2075,7 @@ async function revalidateManagedSession() {
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
     const previous = state.managedSession
-    const session = await managedProbeSession({ fallback: previous })
+    const session = await managedProbeSession({ fallback: previous, sent: takeStartupSession() })
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
@@ -2395,6 +2406,13 @@ export function ensureClientMode() {
   return clientModeReady ??= detectServerModeIfUnknown().then(() => document.querySelector('app-sidebar')?.removeAttribute('inert'))
 }
 
+function probeStartupServerInfo() {
+  const probe = probeServerInfo()
+  // A probe slower than startup's wait never holds the session: it is asked for.
+  startupSession = waitForServerInfo(probe).then(info => info?.session)
+  return probe
+}
+
 async function detectServerModeIfUnknown() {
   const cached = readCachedServerInfo()
   if (cached) {
@@ -2403,14 +2421,14 @@ async function detectServerModeIfUnknown() {
     state.managed = cached.managed
     // The cache is a startup hint, not a permanent protocol binding. Today's
     // advertisement replaces it; a failed probe still permits local access.
-    void probeServerInfo().then((info) => {
+    void probeStartupServerInfo().then((info) => {
       if (info && info !== 'standalone') return applyServerInfo(info)
       return undefined
     }).catch((err) => console.warn('server mode revalidation:', err))
     return
   }
   setLandingModePending(!hasStandaloneProbeHint())
-  const probe = probeServerInfo()
+  const probe = probeStartupServerInfo()
   const info = await waitForServerInfo(probe, hasStandaloneProbeHint() ? 0 : 3000)
   // A sync frame or another tab may have confirmed the mode while pending.
   // Adopt it into state as well: the initial e2e default is not confirmation.
