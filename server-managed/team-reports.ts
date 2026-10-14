@@ -4,7 +4,8 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { Buffer } from 'node:buffer'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '@preventive/report'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
-import { filterReportData, linkedIdLookup, projectFinding, revalidationLinks } from '../common/managed/report-filter.ts'
+import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
+import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -107,9 +108,9 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   const groups = reports.flatMap(report => groupsOf(report.data).map(group => group.map(f => projectFinding(f, report.data as Finding)!)))
   // Unknown IDs can connect known findings. App findings link to the inputs
   // they revalidated in other reports, as the App view counts them.
-  stampSecurityGroups(groups, { linkedIds: linkedIdLookup([
+  stampSecurityGroups(groups, { linkedIds: securityLinks([
     ...globalLinks, ...reports.flatMap(report => linksOf(report.data) ?? []), ...revalidationLinks(groups.flat()),
-  ]) })
+  ]).linkedIds })
   const securityIds = new Set(groups.flat().filter(f => f['isSecurity'] === true).map(f => String(f['id'])))
   const allIds = new Set<string>(), visible: Visibility = new Map()
   for (let i = 0; i < reports.length; i++) {

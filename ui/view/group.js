@@ -1,6 +1,6 @@
 import { automaticFixFor } from './managed-issues.js'
 import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
-import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, reportRowsForFindingIds, state } from '#client/index.js'
+import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, state } from '#client/index.js'
 import { stampSecurityGroups } from '@preventive/report'
 import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
@@ -12,6 +12,7 @@ import { matchesRunFilters } from './filters.js'
 import { mergeReportGroups } from '../../common/workspace-groups.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { getLinksPreview } from './links-preview.js'
+import { securityStampOptions } from './security-stamp.js'
 import { mergeLinkedWorkspaceGroups } from '../../common/linked-workspace-groups.js'
 import { splitRevalidationInputs } from '../../common/revalidation-input-groups.js'
 import { tabKey } from '../../common/finding-filters.js'
@@ -610,10 +611,8 @@ function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false
       || groupCache.merges !== merges || groupCache.mergeCount !== merges.length
       || groupCache.securityLinksTick !== state.linksTick || groupCache.findingIndexTick !== state.findingIndexTick
       || groupCache.managed !== managed) {
-    stampSecurityGroups(reports.flatMap((r) => r.groups ?? []), {
-      linkedIds: duplicatesOf,
-      knownRows: reportRowsForFindingIds,
-    })
+    const groups = reports.flatMap((r) => r.groups ?? [])
+    stampSecurityGroups(groups, securityStampOptions(groups))
     groupCache = { reports: [...reports], merges, mergeCount: merges.length, managed,
       securityLinksTick: state.linksTick, findingIndexTick: state.findingIndexTick }
   }

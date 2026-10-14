@@ -15,6 +15,7 @@ export {
   reportsForFindingByPackage,
   reportsForFindingByRepo,
   reportsForFindingId,
+  reportRowsCitingFindingIds,
   reportRowsForFindingIds,
   subscribeToBundleFindingIndex,
 } from './bundle-finding-index.js'

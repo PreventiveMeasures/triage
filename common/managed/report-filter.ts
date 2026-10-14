@@ -3,6 +3,7 @@
 // access is per finding: App, own source, and the own-source organizations stay.
 import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { readManagedReport } from './report-content.ts'
+import { revalidationLinks, securityLinks } from '../security-links.js'
 
 export interface ViewerPermissions {
   dependencies: boolean
@@ -34,34 +35,6 @@ function npmScope(finding: Finding, fromPath = false): string | null {
     }
   }
   return typeof name === 'string' ? /^(@[^/\s]+)\/[^/\s]+$/u.exec(name)?.[1] ?? null : null
-}
-
-// Links as the security graph reads them. A star per link is enough for
-// transitive propagation, without a quadratic expansion for large links.
-export function linkedIdLookup(links: Iterable<readonly string[]>): (id: string) => Iterable<string> {
-  const edges = new Map<string, Set<string>>()
-  const connect = (a: string, b: string) => {
-    if (!edges.has(a)) edges.set(a, new Set())
-    edges.get(a)!.add(b)
-  }
-  for (const ids of links) {
-    for (const id of ids.slice(1)) { connect(ids[0]!, id); connect(id, ids[0]!) }
-  }
-  return id => edges.get(id) ?? []
-}
-
-// An App finding can name the source findings it revalidated only by ID, in
-// another row or report. The reader counts those as represented by it, so they
-// are one issue for security too: hiding one side alone would leave the App
-// answer to a hidden security finding, or a source row without its App row.
-export function revalidationLinks(findings: Iterable<Finding>): string[][] {
-  const links: string[][] = []
-  for (const finding of findings) {
-    const inputs = finding['revalidateInputs']
-    if (typeof finding['id'] !== 'string' || !Array.isArray(inputs)) continue
-    links.push([finding['id'], ...inputs.filter((id): id is string => typeof id === 'string' && id !== '')])
-  }
-  return links
 }
 
 // Parsed projections keep run inheritance and derived flags out of cached
@@ -108,7 +81,7 @@ export function filterReportData(data: unknown, perms: ViewerPermissions, repo?:
     entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: projectFinding(original, report) })),
   }))
   const groups = entries.map(({ members }) => members.flatMap(({ finding }) => finding ? [finding] : []))
-  if (!perms.security) stampSecurityGroups(groups, { linkedIds: linkedIdLookup(revalidationLinks(groups.flat())) })
+  if (!perms.security) stampSecurityGroups(groups, { linkedIds: securityLinks(revalidationLinks(groups.flat())).linkedIds })
   const githubOrgs = new Set<string>(), npmScopes = new Set<string>()
   const addOrgs = (finding: Finding) => {
     const github = githubOrg(finding), npm = npmScope(finding)

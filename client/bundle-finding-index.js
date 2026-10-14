@@ -1,6 +1,7 @@
 import { stampIndexedFindings, usesReportIgnore } from './ignored-triage.js'
 import { isManagedUiMode, loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
+import { dropReportRows, indexReportRow } from './bundle-finding-rows.js'
+export { findingTitleForId, reportRowsCitingFindingIds, reportRowsForFindingIds, reportsForFindingId } from './bundle-finding-rows.js'
 // OPFS-wide finding index — loads every report stored in OPFS
 // (not just the currently-active state.reports) and caches its
 // findings under two complementary indexes:
@@ -45,32 +46,7 @@ const byPackage = new Map()
 // without any repo signal aren't indexed here — there's nothing
 // to bucket them under.
 const byRepo = new Map()
-// Finding id → `{ reports }`, a Map of report name → { title, rows }.
-// Rows retain member ids/titles and source/revalidation metadata, shared by every member's index entry;
-// they preserve the report's card boundaries without retaining its full parse.
-// Unlike the three buckets above this one is
-// keyed by the finding's OWN id rather than by something about its
-// file, so it answers for every finding an id could name — including
-// the ones with no `fileHash` and no package path, which the other
-// indexes have nothing to file under. The Links view asks it where the
-// findings a links file names actually live, and what they are CALLED,
-// which are questions about ids and nothing else.
-//
-// The title is stored as a string rather than by holding the finding:
-// keeping a reference to every finding on disk would pin every
-// report's whole parse in memory for the sake of one heading.
-//
-// It hangs off the REPORT rather than the id, even though one title
-// per id would be smaller, because a title has to be one some report
-// on this device actually wrote. An explicit `title` is not part of
-// what the id is derived from, so two reports carrying the same id can
-// word it differently — and pinning the first one seen would leave the
-// Links view printing a heading no report still holds once that report
-// is deleted or overwritten. Keyed this way the question can't arise:
-// a title is dropped by the same `reports.delete` that drops the
-// report it came from.
-const byId = new Map()
-// Reverse index: which (hash, key), (pkg, key), (repo, key) and id
+// Reverse index: which (hash, key), (pkg, key) and (repo, key)
 // entries did each report contribute? Lets `invalidateName` prune
 // precisely on a file delete / overwrite without re-scanning
 // every report. Audit round-8 H1.
@@ -232,44 +208,6 @@ export function reportsForFindingByRepo(repo, finding) {
   return set ? [...set] : []
 }
 
-// The OPFS reports carrying the finding with this id, by name. Takes
-// an ID, not a finding object, because its caller (the Links view)
-// holds nothing but ids — a links file names findings and describes
-// none of them. Empty when the id names nothing the user has, which
-// is exactly what that view has to be able to say out loud.
-export function reportsForFindingId(id) {
-  return isManagedUiMode() ? [...new Set(managedRowsForIds([id]).map(row => row.report))] : [...byId.get(id)?.reports.keys() ?? []]
-}
-
-// What the finding with this id is called — its own `title`, or the
-// first line of its description where the report wrote no title
-// (`findingTitle`, the same reading every other surface names a
-// finding by). Empty string when no report on this device carries it,
-// so a caller can print it unguarded.
-//
-// The first non-empty one across the reports holding it: they normally
-// agree, and where they don't, any of them is a heading some report
-// here really wrote, which is the property that matters.
-export function findingTitleForId(id) {
-  if (isManagedUiMode()) return managedTitleForId(id)
-  for (const { title } of byId.get(id)?.reports.values() ?? []) if (title) return title
-  return ''
-}
-
-// Each original report row containing at least one requested id, once.
-// Overlapping rows stay distinct: [A,B] and [A,C] are different cards even
-// though both contain A. The returned objects belong to the read-only index.
-export function reportRowsForFindingIds(ids) {
-  if (isManagedUiMode()) return managedRowsForIds(ids)
-  const rows = new Set()
-  for (const id of ids) {
-    for (const report of byId.get(id)?.reports.values() ?? []) {
-      for (const row of report.rows) rows.add(row)
-    }
-  }
-  return [...rows]
-}
-
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
 // back to a (severity, description, file, line, fileHash) tuple
 // when the report doesn't carry ids (older / hand-rolled inputs).
@@ -283,22 +221,10 @@ function findingDedupeKey(f) {
 function rememberContribution(name, kind, ref) {
   let entry = contributionsByName.get(name)
   if (!entry) {
-    entry = { hash: [], pkg: [], repo: [], id: [] }
+    entry = { hash: [], pkg: [], repo: [] }
     contributionsByName.set(name, entry)
   }
   entry[kind].push(ref)
-}
-
-// Keep the title and original rows for each report carrying this id.
-// Returns true for a new report so attribution changes repaint the views.
-function indexFindingById(f, name, row) {
-  let entry = byId.get(f.id)
-  if (!entry) byId.set(f.id, entry = { reports: new Map() })
-  const existing = entry.reports.get(name)
-  if (existing) { existing.rows.add(row); return false }
-  entry.reports.set(name, { title: findingTitle(f), rows: new Set([row]) })
-  rememberContribution(name, 'id', f.id)
-  return true
 }
 
 // Hash-keyed bucket update. Returns true when the bucket gained
@@ -418,8 +344,10 @@ function invalidateName(name) {
   const contrib = contributionsByName.get(name)
   contributionsByName.delete(name)
   indexed.delete(name)
-  if (!contrib) return false
-  let dirty = false
+  // Rows are tracked by name in bundle-finding-rows.js, contributions or not.
+  const rowsDropped = dropReportRows(name)
+  if (!contrib) return rowsDropped
+  let dirty = rowsDropped
   for (const { hash, key } of contrib.hash) {
     const bucket = byHash.get(hash)
     if (!bucket) continue
@@ -485,17 +413,6 @@ function invalidateName(name) {
     if (rBucket._keyReports.size === 0) byRepo.delete(repo)
     else recomputeBucketReports(rBucket)
   }
-  // Id index — flat, so the prune is too: drop this report from each
-  // id it contributed, and drop the id itself once no report carries
-  // it any more (an id nobody holds must read as "not in any of your
-  // reports", not as an empty set of holders). Its title and original
-  // row memberships are dropped with the report.
-  for (const id of contrib.id) {
-    const entry = byId.get(id)
-    if (!entry) continue
-    if (entry.reports.delete(name)) dirty = true
-    if (entry.reports.size === 0) byId.delete(id)
-  }
   return dirty
 }
 
@@ -560,10 +477,11 @@ async function indexOne(name) {
         // report-marker fallback ingest resolves into `_source`.
         members: members.map((f) => {
           const source = f.source ?? data.source ?? null
-          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity, ...(f.file ? { file: f.file, _depsDirectory: f._depsDirectory } : {}) }
+          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity,
+            ...(f.file ? { file: f.file, _depsDirectory: f._depsDirectory } : {}), ...(Array.isArray(f.revalidateInputs) ? { revalidateInputs: [...f.revalidateInputs] } : {}) }
         }),
       }
-      for (const f of members) if (indexFindingById(f, name, row)) added = true
+      if (indexReportRow(name, row)) added = true
     }
     // Mid-flight `invalidateName` detection (audit round-12 M-B).
     // `onFileMutated` runs synchronously when `saveFile` /

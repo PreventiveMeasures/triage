@@ -4,6 +4,7 @@ import { isManagedUiMode, state } from '../state.ts'
 import { collectDuplicates } from '../linked-findings.js'
 import { dependencyDirectory } from '../dependency-paths.js'
 import { findingTitle, inheritReportMeta, isAppFinding, reportEntries } from '@preventive/report'
+import { revalidationLinks } from '../../common/security-links.js'
 
 let workspace = null
 export function clearManagedWorkspace() { workspace = null }
@@ -12,7 +13,7 @@ export function managedWorkspace() {
     && workspace?.userId === state.managedSession?.id && workspace?.role === state.managedSession?.role ? workspace : null
 }
 export function setManagedWorkspace(teamId, reports) {
-  const byId = new Map(), duplicates = new Map(), links = [], rows = []
+  const byId = new Map(), citedBy = new Map(), duplicates = new Map(), links = [], rows = []
   collectDuplicates(reports.links ?? [], duplicates)
   for (const report of reports) {
     const data = report.data
@@ -39,15 +40,23 @@ export function setManagedWorkspace(teamId, reports) {
         if (!byId.has(f.id)) byId.set(f.id, [])
         byId.get(f.id).push(row)
       }
+      for (const id of revalidationLinks(members).flatMap(([, ...inputs]) => inputs)) {
+        if (!citedBy.has(id)) citedBy.set(id, new Set())
+        citedBy.get(id).add(row)
+      }
     }
   }
-  workspace = { teamId, userId: state.managedSession?.id, role: state.managedSession?.role, links, rows, byId, duplicates }
+  workspace = { teamId, userId: state.managedSession?.id, role: state.managedSession?.role, links, rows, byId, citedBy, duplicates }
   state.linksTick++
   state.findingIndexTick++
 }
 export function managedRowsForIds(ids) {
   const active = managedWorkspace()
   return [...new Set(ids.flatMap(id => active?.byId.get(id) ?? []))]
+}
+export function managedRowsCitingIds(ids) {
+  const active = managedWorkspace()
+  return [...new Set(ids.flatMap(id => [...active?.citedBy.get(id) ?? []]))]
 }
 export function managedTitleForId(id) {
   for (const row of managedRowsForIds([id])) {

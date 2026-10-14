@@ -1,7 +1,8 @@
 // Load the requested finding's report row for an in-place Links preview. Keep the
 // Links file and loaded reports unchanged; the card uses the usual ID-keyed
 // triage store and the original report's source/bundle metadata.
-import { computeLinkHint, duplicatesOf, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
+import { computeLinkHint, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
+import { securityStampOptions } from './security-stamp.js'
 import { store } from '@rray/frontend/state-management'
 import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 
@@ -67,14 +68,13 @@ export async function openLinksPreview(id, reportName, rowIndex, managedReportId
       ...workspacesHoldingReport(reportName).map((w) => computeLinkHint('workspace', w.id)),
     ])
     if (active()) {
-      stampSecurityGroups([group], {
-        linkedIds: duplicatesOf,
-        knownRows: (ids) => [
-          ...reportRowsForFindingIds(ids),
-          ...state.reports.flatMap((r) => r.groups ?? [])
-            .filter((members) => members.some((f) => ids.includes(f.id))).map((members) => ({ members })),
-        ],
-      })
+      // Loaded rows holding an id, or citing one among their revalidation inputs.
+      const names = (f, ids) => ids.includes(f.id) || (Array.isArray(f.revalidateInputs) && f.revalidateInputs.some((input) => ids.includes(input)))
+      stampSecurityGroups([group], securityStampOptions([group], (ids) => [
+        ...reportRowsForFindingIds(ids),
+        ...state.reports.flatMap((r) => r.groups ?? [])
+          .filter((members) => members.some((f) => names(f, ids))).map((members) => ({ members })),
+      ]))
       preview.group = group
       state.activeTabByGroup.set(group[0].id, id)
     }
