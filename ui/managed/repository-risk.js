@@ -325,9 +325,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       const repo = this._repos.get(line.id)
       if (!repo) return
       if (line.error) { Object.assign(repo, { error: line.error, detail: line.detail ?? null }); return }
-      if (repo.commit && repo.commit !== line.commit) this._forget(repo)
+      // Its lockfiles told again as they were, but where its default branch
+      // moved on between parts, or a team's directories in it changed:
+      // what those no longer listed told forgotten.
+      const moved = repo.commit !== null && repo.commit !== line.commit
+      const listed = new Set(moved ? [] : line.lockfiles.map(({ path }) => path))
+      this._forget([...repo.lockfiles?.keys() ?? []].filter(path => !listed.has(path)).map(path => `${repo.fullName}/${path}`))
       Object.assign(repo, { commit: line.commit, error: null, detail: null })
-      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, repo.lockfiles?.get(lockfile.path) ?? { ...lockfile, packages: null, error: null }]))
+      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, (!moved && repo.lockfiles?.get(lockfile.path)) || { ...lockfile, packages: null, error: null }]))
     } else if (line.type === 'lockfile') {
       const repo = this._repos.get(line.repo)
       const lockfile = repo?.lockfiles?.get(line.path)
@@ -350,15 +355,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // A repository told again at another commit, as its default branch moved
-  // on between parts: what its lockfiles told forgotten, as they may lock
-  // other packages now, and the packages and advisories no other lockfile
-  // tells with them.
-  _forget(repo) {
-    const of = `${repo.fullName}/`
+  // What lockfiles no longer told (`usedIn`, a repository's name and a path)
+  // told forgotten: the packages and advisories no other lockfile tells with
+  // them, and malware no advisory left tells.
+  _forget(usedIn) {
+    if (usedIn.length === 0) return
     for (const rows of [this._packages, this._advisories]) {
       for (const [key, row] of rows) {
-        for (const used of row.usedIn) if (used.startsWith(of)) row.usedIn.delete(used)
+        for (const used of usedIn) row.usedIn.delete(used)
         if (row.usedIn.size === 0) rows.delete(key)
       }
     }
@@ -366,7 +370,6 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       const ids = [...row.malware ?? []].filter(id => this._advisories.has(`${id}\0${row.name}`))
       row.malware = ids.length > 0 ? new Set(ids) : undefined
     }
-    repo.lockfiles = null
   }
 
   // A lockfile's advisories, each kept once by its id and package: npm

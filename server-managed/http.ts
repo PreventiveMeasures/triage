@@ -128,7 +128,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { SCAN_READ_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
+import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -1453,6 +1453,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     // on from where the last stopped, on whichever instance answers the next.
     listings: scanReadStore(deps.db, 'listings', SCAN_READ_KEPT_MS, deps.config.debug),
     lockfiles: scanReadStore(deps.db, 'lockfiles', SCAN_READ_KEPT_MS, deps.config.debug),
+    // And each lockfile's advisories, for as long as a scan tells them.
+    audits: scanReadStore(deps.db, 'advisories', RISK_KEPT_MS, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's
     // audit is bounded on its own, for one npm doesn't answer to fail alone and

@@ -89,6 +89,9 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // where the last stopped on whichever instance answers the next.
   listings?: KeptStore<ListedLockfile[]>
   lockfiles?: KeptStore<LockfileRead>
+  // Where a lockfile's advisories are kept beyond this instance, by its
+  // blob, as RiskCaches keeps them in it, each read for RISK_KEPT_MS.
+  audits?: KeptStore<AdvisoryRow[]>
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
@@ -319,8 +322,13 @@ type AdvisoriesLine = Extract<RepositoryRiskLine, { type: 'advisories' }>
 async function readAdvisories(scan: Scan, { repo, path, format, packages }: LockfileLine & { packages: LockedPackage[] }, sha: string): Promise<AdvisoriesLine | null> {
   const at = { type: 'advisories', repo, path } as const
   const key = `${format}\0${sha}`
-  const kept = scan.caches.advisories.get(key)
-  if (kept && Date.now() - kept.at < RISK_KEPT_MS) return { ...at, advisories: kept.rows }
+  const fresh = (kept?: { at: number } | null) => kept && Date.now() - kept.at < RISK_KEPT_MS
+  let kept = scan.caches.advisories.get(key)
+  if (!fresh(kept)) {
+    const stored = await scan.source.audits?.read(key)
+    if (stored && fresh(stored)) scan.caches.advisories.set(key, kept = { at: stored.at, rows: stored.value })
+  }
+  if (kept && fresh(kept)) return { ...at, advisories: kept.rows }
   const asked = new Map<string, Set<string>>()
   for (const { name, version, source } of packages) {
     if ((source !== 'registry' && source !== 'mirror') || !isNpmPackageName(name) || !isExactVersion(version)) continue
@@ -331,7 +339,9 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
   try {
     const rows = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
       .map(advisory => ({ ...advisory, malware: npmMalwareAdvisory(advisory) }))
-    scan.caches.advisories.set(key, { at: Date.now(), rows })
+    const now = Date.now()
+    scan.caches.advisories.set(key, { at: now, rows })
+    await scan.source.audits?.write(key, rows, now)
     return { ...at, advisories: rows }
   } catch (error) {
     return scan.signal.aborted ? null : { ...at, ...failureOf(error) }

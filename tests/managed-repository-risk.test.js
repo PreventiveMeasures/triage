@@ -7,7 +7,7 @@ import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { SCAN_READ_KEPT_MS, highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError, githubUnreachable } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
@@ -500,6 +500,24 @@ test('what a scan read of GitHub is kept where the source keeps it, beyond an in
   const later = Object.assign(sourceOf(onePnpmRepo, assess), stores)
   await Array.fromAsync(scan(later))
   assert.deepEqual([later.listed, later.read], [[1], ['pnpm-lock.yaml']], 'a day on, listed and read again')
+})
+
+test('a lockfile\'s advisories are kept where the source keeps them, beyond an instance, for an hour', async t => {
+  const audits = lineStore()
+  const assess = () => Promise.resolve(noneFound)
+  const advisories = { 'left-pad': [{ id: 'GHSA-1', severity: 'high', title: 'Bad', range: '<2', versions: ['1.3.0'] }] }
+  const first = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  const told = (await Array.fromAsync(scan(first))).filter(line => line.type === 'advisories')
+  assert.equal(first.audited.length, 1)
+  assert.equal(audits.writes.length, 1)
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(again))).filter(line => line.type === 'advisories'), told)
+  assert.deepEqual(again.audited, [], 'npm asked nothing')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + RISK_KEPT_MS })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  await Array.fromAsync(scan(later))
+  assert.equal(later.audited.length, 1, 'an hour on, asked again')
 })
 
 test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {

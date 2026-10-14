@@ -248,3 +248,15 @@ test('parts telling lockfiles\' advisories alone go on, as they find more', asyn
   assert.equal(page._state, 'done')
   assert.equal(asked.count, 5)
 })
+
+test('a lockfile a later part no longer lists, at the same commit, as a team\'s directories changed, has what it told forgotten', async t => {
+  partsServed(t, [
+    [...repoAt('a', 'package-lock.json', 'web/package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]),
+      lockfileAt('web/package-lock.json', [locked('debug', '4.4.0'), locked('ms', '2.1.3')]), { type: 'continue' }],
+    [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), { type: 'done' }],
+  ])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._packages.values()].map(row => [`${row.name}@${row.version}`, [...row.usedIn]]), [['debug@4.4.0', ['org/one/package-lock.json']]])
+  assert.deepEqual([...page._repos.get(1).lockfiles.keys()], ['package-lock.json'])
+})
