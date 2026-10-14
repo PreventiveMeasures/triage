@@ -920,6 +920,18 @@ test('a new dependency nothing imports whose package npm has none of for anyone,
   assert.deepEqual([unused.severity, unused.dependencies[0].level, unused.dependencies[0].missing], ['high', 'is-top', true], 'unpublished or taken down, its downloads counted all the same')
 })
 
+test('a dependency nothing imports that the version compared with named by another spec, graded by its new one as a new one is, not kept', async t => {
+  const meta = (dependencies, scripts = {}) => ({ dependencies, scripts })
+  const before = version('respec', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ 'old-lib': '^1.0.0' }), ago(30))
+  const after = version('respec', '1.1.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ 'old-lib': '^3.0.0' }), ago(20))
+  const lib = [version('old-lib', '1.0.0', { 'package.json': '{}' }, meta({}), ago(3000)), version('old-lib', '3.0.0', { 'package.json': '{}' }, meta({}), ago(2000)),
+    version('old-lib', '4.0.0', { 'package.json': '{}' }, meta({}), ago(400)), version('old-lib', '3.0.1', { 'package.json': '{}', 'setup.js': '' }, meta({}, { postinstall: 'node setup.js' }), ago(25))]
+  npm(t, [{ name: 'respec', versions: [before, after] }, { name: 'old-lib', versions: lib, latest: '4.0.0' }])
+  const unused = (await assessNpm('respec', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
+  assert.deepEqual([unused.severity, unused.dependencies[0].was, unused.dependencies[0].installs?.version], ['critical', '^1.0.0', '3.0.1'],
+    'its spec moved from ^1.0.0 to ^3.0.0, installing a 3.0.1 published since with a postinstall')
+})
+
 test('the version a dependency\'s spec installs, as npm picks it: a tag it names, else latest where that satisfies it, else the highest, one not deprecated first', async () => {
   const doc = { name: 'lib', 'dist-tags': { latest: '4.0.0', next: '5.0.0-rc.1' }, time: { '3.0.0': ago(900), '3.1.0': ago(30), '3.2.0': ago(10), '4.0.0': ago(400), '5.0.0-rc.1': ago(5) },
     versions: { '3.0.0': { version: '3.0.0' }, '3.1.0': { version: '3.1.0', scripts: { postinstall: 'node x.js' } }, '3.2.0': { version: '3.2.0', deprecated: 'broken' },
@@ -928,6 +940,7 @@ test('the version a dependency\'s spec installs, as npm picks it: a tag it names
   assert.deepEqual(await installs('^3.0.0'), { version: '3.1.0', latest: '4.0.0', published: ago(30), scripts: true }, 'the highest 3.x not deprecated, latest 4.0.0 not satisfying it')
   assert.deepEqual(await Promise.all(['^4.0.0', '*', '', 'next', 'npm:lib@~3.0.0', 'npm:lib'].map(async spec => (await installs(spec)).version)),
     ['4.0.0', '4.0.0', '4.0.0', '5.0.0-rc.1', '3.0.0', '4.0.0'], 'latest where it satisfies; a tag; an alias by its own range')
+  assert.equal((await installs(' NPM:lib@~3.0.0 ')).version, '3.0.0', 'an alias as specs.js npmAlias reads one, its case and spaces aside')
   assert.deepEqual(await Promise.all(['^9.0.0', 'github:a/b', 'https://example.com/lib.tgz'].map(installs)), [null, null, null], 'none satisfying it, nor a spec that is no range')
   assert.deepEqual(await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(doc) }), { created: ago(900) }, 'none asked without a spec')
 })

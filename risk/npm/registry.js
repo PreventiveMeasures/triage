@@ -35,6 +35,7 @@ import { advisories } from '@preventive/upstream/advisories.js'
 import { getTarball } from '@preventive/upstream/npm.js'
 import { compareVersions, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { npmVersionManifest } from './manifest.js'
+import { npmAlias } from './specs.js'
 import { npmPlaceholder } from './malware.js'
 import { npmOldVersion } from './old-version.js'
 import { npmTarballVersion } from './tarball.js'
@@ -254,13 +255,14 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
 }
 
 // The version of a package's document npm installs for a dependency's spec
-// (`spec`, an alias's by its own range, `npm:name@^1`), as npm picks one:
+// (`spec`, an alias's by its own range, `npm:name@^1`, as specs.js npmAlias
+// reads one), as npm picks one:
 // the tag it names, else its `latest` where that satisfies it, else the
 // highest that does, one not deprecated first; null for none, or for a spec
 // that is no range nor tag (a URL, a repository).
 function installedVersion(doc, spec) {
-  const alias = spec.startsWith('npm:') ? spec.slice(4) : null
-  const range = alias === null ? spec : alias.lastIndexOf('@') > 0 ? alias.slice(alias.lastIndexOf('@') + 1) : ''
+  const alias = npmAlias(spec)
+  const range = (alias ? alias.spec : String(spec)).trim()
   const tags = plainObject(doc['dist-tags']) ? doc['dist-tags'] : {}, versions = plainObject(doc.versions) ? doc.versions : {}
   if (Object.hasOwn(tags, range) && Object.hasOwn(versions, tags[range])) return tags[range]
   if (validRange(range || '*') === null) return null
