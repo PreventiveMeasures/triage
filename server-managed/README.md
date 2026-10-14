@@ -1464,7 +1464,7 @@ landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. The
 `/npm` page lists the reader's last ten searches that opened, newest first,
 under its search, each to open again or remove; they are kept in the
 browser's `localStorage` per signed-in user, a convenience, not access
-control. A version shows in the bundle view with four tabs:
+control. A version shows in the bundle view with these tabs:
 
 - **Overview**: its header names the package beside a picker of its
   versions, as wide as the version shown, listing them as Compare's pickers
@@ -1680,6 +1680,11 @@ control. A version shows in the bundle view with four tabs:
   files are asked for all at once, in one request, the first time one is
   wanted (see `GET /api/npm/pretty` below). The formatted copy has lines of
   its own, so line links and marks stay on the file as published.
+- **Search**: the bundle Search across the version's text files (a file that
+  isn't text has none to match), each match with the lines around it, case
+  and regular expressions as toggles, a result opening its file beside the
+  results, its pretty-print toggle there as in Code;
+  `/npm/<name>@<version>/search`.
 - **Treemap**: the files by size, as for bundles, colored by the top-most
   directories that tell them apart, as package colors can't tell one
   package's files apart: below the directories every file shares, each

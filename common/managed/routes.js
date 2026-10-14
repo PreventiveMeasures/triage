@@ -82,11 +82,11 @@ export function managedRoutePath(route) {
 }
 
 // The npm viewer: its lookup page, or a package version's Overview, Code,
-// Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
+// Search, Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
 // its file by number and its lines in the fragment, as a bundle's Code
 // does: `/code/<file>#L4`. Compare names the version compared with, then
 // its mode past the Overview: `/compare/<version>/code` or `/diff`.
-export const NPM_TABS = new Set(['overview', 'code', 'compare', 'review', 'treemap'])
+export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
@@ -114,7 +114,7 @@ function parseNpmRoute(path, hash) {
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
       ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}) }
   }
-  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
+  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|search|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
   if (match[1] == null) return { view: 'npm' }
   if (!isNpmPackageName(match[1]) || (match[2] != null && !isNpmPackageSpec(match[2]))) return null
