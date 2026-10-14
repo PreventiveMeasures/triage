@@ -72,9 +72,10 @@ const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})
   + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode|trufflehog`
 // What says one of the credentials a command, an endpoint or a process holds
 // (HOLDS' gh-token, cloud-metadata, runner-worker and process-memory), as
-// code and its strings may say it: `gh auth token` with its arguments apart
-// too (`'auth', 'token'`).
-const SAYS_CREDENTIALS = String.raw`auth\W{1,8}token|169\.254\.169\.254|metadata\.google\.internal|Runner\.Worker|\/proc\/`
+// code and its strings may say it: `gh auth token`, and a string naming gh
+// (`'gh'`, `'/usr/bin/gh'`), as a program run with its arguments apart is,
+// whatever is between them (`'gh', ['auth', /* … */ 'token']`).
+const SAYS_CREDENTIALS = String.raw`auth[^\S\n]+token|["'\x60\/\\]gh(?:\.exe)?["'\x60]|169\.254\.169\.254|metadata\.google\.internal|Runner\.Worker|\/proc\/`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
@@ -235,8 +236,9 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // status`); the cloud's instance metadata endpoint, AWS's, Azure's and GCP's
 // (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`),
 // not an address it starts (`169.254.169.2540`) nor Azure's instance metadata
-// (`169.254.169.254/metadata/instance/compute`), a machine's region and
-// size, not its identity's token, as msal asks it; the GitHub Actions runner's
+// (`169.254.169.254/metadata/instance/compute`, its slashes escaped too,
+// `\/`), a machine's region and size, not its identity's token, as msal asks
+// it; the GitHub Actions runner's
 // process (`Runner.Worker`, `Runner.Worker.exe`, `GitHub.Runner.Worker`),
 // whose memory holds a job's secrets, not in another name (`MyRunner.Worker`,
 // `Runner.Workers`) nor case (`runner.worker`); another process's memory, by
@@ -253,7 +255,7 @@ const HOLDS = [
   ['credential-files', /(?<![\w$.-])\.(?:npmrc|ssh|aws)(?![\w-])/gu],
   ['tokens', new RegExp(String.raw`^["'\u0060]${TOKEN_VAR}["'\u0060]$|(?:\$\{?|%)${TOKEN_VAR}(?![\p{ID_Continue}$])`, 'gu')],
   ['gh-token', new RegExp(GH_TOKEN, 'gu')],
-  ['cloud-metadata', /(?<![\w.])169\.254\.169\.254(?!\.?\d|\/metadata\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-])/gu],
+  ['cloud-metadata', /(?<![\w.])169\.254\.169\.254(?!\.?\d|\\?\/metadata\\?\/instance(?![\w-]))|(?<![\w.-])metadata\.google\.internal(?![\w-])/gu],
   ['runner-worker', /(?<![\w$-])Runner\.Worker(?![\w$-])/gu],
   ['process-memory', new RegExp(String.raw`\/proc\/(?:${PID})\/mem(?![\w-])`, 'gu')],
   ['trufflehog', new RegExp(TRUFFLEHOG, 'giu')],
