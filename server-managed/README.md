@@ -926,7 +926,25 @@ lockfile locks them too. It answers Brotli-encoded ndjson as it goes
 (`repository-risk.ts` names each line): the repositories, then each
 repository's lockfiles (`findRepoLockfiles`), each npm, pnpm or Yarn 1
 lockfile's packages (`@preventive/lockfile`), and each package's risk, with
-`done` last; a response without `done` was cut short. Repositories are read one
+`done` last; a response without `done` was cut short. On a serverless
+deployment (Vercel, whose function answers within 300 seconds), a scan stops
+after 270 seconds, the work under way given up on and not waited for, its
+last line `continue`
+in place of `done`: the page asks again at once, keeping what it found (but
+a repository's lockfiles', where its default branch moved on between parts,
+or a team's directories in it changed, a repository's no longer listed or
+renamed, and
+a lockfile's advisories audited again otherwise), and
+the next part tells what the last assessed as kept, going on from where it
+stopped, a hundred parts at most, or until three parts in a row find nothing
+more. The repositories a part told whole are kept for the next
+(`repository-risk/progress` rows, by the admin, the id the page gives the scan
+and its scope, for a day, written as a part ends and waited on five seconds
+at most): it tells none of them again, nor asks GitHub of them, as the page
+has them already, but looks up their packages' risks as their lockfiles are
+kept, so a scan of more repositories than a part reaches goes on past them.
+One renamed since, or whose team's directories changed, is read again; one
+whose default branch moved on is told as the scan read it. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
 any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
@@ -951,7 +969,9 @@ devDependencies alone apart from the rest, as each lockfile tells it so far:
 a later lockfile that needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
-kept by the lockfile's blob for an hour), and told in an `advisories` line,
+kept by the lockfile's blob for an hour, in the instance's memory and the
+database, `repository-risk/advisories` rows, and one that failed, as by timing
+out, ten minutes, for a scan's next parts not to wait on it again), and told in an `advisories` line,
 each advisory with whether it is of malware, as risk tells it
 (`npmMalwareAdvisory`): OSV's of a malicious package (`MAL-…`), or one such a
 record names, GitHub's CWE-506, embedded malicious code, or a title
@@ -983,8 +1003,10 @@ lockfile's as it is read, those kept already and unscoped ones, asked 128 at a
 time in one lookup (risk's `npmReadyDownloads`); and scoped ones, which the
 API answers only one by one, one at a time at the pace it allows, while the
 assessors go on with the others. Public packages' downloads are kept in the
-database (`npm-risk.ts`), a day's for two days, so that another instance, or
-a scan again that day, asks the API for none of them again; a scoped one a
+database (`npm-risk.ts`), for a week, as risk tells them that long (the tier
+they put a package in, the most of its latest six weeks', hardly moves in
+one), so that another instance, or a scan again that week, asks the API for
+none of them again; a scoped one a
 scan readies on its own only where the API counts some, as it counts public
 packages alone, so that a private one's none is never kept with them. One refused as busy (`npm-busy`), or that npm asked to ask later
 (risk's `upstream-busy`), is asked again after a wait, so a
@@ -995,15 +1017,19 @@ shows the score in its Risk column, red from 75, orange from 50, yellow from
 tell of it too, and lists the riskiest first. A package's risk that still fails tells
 its code, and, where risk failed, risk's `detail` of what it asked of npm and
 how that failed. A package's risk line is kept (`repository-risk/lines` rows of
-`managed_upstream_cache`, and the instance's memory) for a month: each
+`managed_upstream_cache`, and the instance's memory) for good: each
 lockfile's packages are looked up as it is read, and those kept told at once,
 however old, one kept within the hour as it is and an older one, or one kept
 before risk told a score, as stale (`stale: { assessedAt }`), dimmed on the
 page and said so; those with none kept are assessed first, and the stale ones
 only after, each line told again once assessed, or, where that fails, the
-stale one kept, its tooltip saying why. Scans keep in the instance's memory a
-repository's lockfiles as listed at a commit and a lockfile's packages by its
-blob, so a scan again asks GitHub only for each repository's head and access.
+stale one kept, its tooltip saying why. Scans keep a repository's lockfiles
+as listed at a commit and a lockfile's packages by its blob, in the
+instance's memory and for a day in the database (`repository-risk/listings`
+and `repository-risk/lockfiles` rows, as the lockfiles' packages, private
+repositories' among them, are kept in memory, told only once the reader's
+access is checked), so a scan again, or its next part on another instance,
+asks GitHub only for each repository's head and access.
 The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or

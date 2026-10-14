@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request } from 'node:http'
 import { test } from 'node:test'
-import { setImmediate } from 'node:timers/promises'
+import { setTimeout as delay, setImmediate } from 'node:timers/promises'
 import { brotliDecompressSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
+import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, highestSeverity, repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { GithubApiError, githubUnreachable } from '../server-managed/github-errors.ts'
 import { NpmPackageError } from '../server-managed/npm-packages.ts'
@@ -466,6 +466,136 @@ test('a risk line kept before risk told a score is told stale, then assessed aga
   assert.deepEqual(assessed.toSorted(), ['is-number', 'is-number', 'left-pad', 'left-pad'])
 })
 
+test('a scan given a part\'s time stops once past it, its last line continue, and one again goes on from what it kept', async () => {
+  const risks = lineStore()
+  const assessed = []
+  // One within a part's time, the other past it, given up on as the scan stops, as risk's are.
+  const assess = ({ name }, _teamScoped, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { assessed.push(name); resolve(noneFound) }, name === 'left-pad' ? 0 : 200)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+  })
+  const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { risks }), new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.deepEqual(first.at(-1), { type: 'continue' })
+  assert.ok(!first.some(line => line.type === 'done'))
+  assert.deepEqual(risksOf(first).map(line => line.name), ['left-pad'], 'what was assessed within the part told')
+  assessed.length = 0
+  const again = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { risks }), new AbortController().signal, riskCaches(), { partMs: 5000 }))
+  assert.deepEqual(again.at(-1), { type: 'done' })
+  assert.deepEqual(risksOf(again).map(line => line.name), ['is-number', 'left-pad'])
+  assert.ok(!assessed.includes('left-pad'), 'what the first part kept told again as kept')
+})
+
+test('a scan whose part\'s time is up while GitHub is still being asked tells what it found and continue at once, not waiting on it', async () => {
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve(noneFound))
+  // Opening the repository outlasts the part, as a request to GitHub given no signal may.
+  const opening = source.open
+  source.open = async repo => { await delay(1000); return opening(repo) }
+  const started = Date.now()
+  const lines = await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.ok(Date.now() - started < 500, 'not waiting on GitHub')
+  assert.deepEqual(lines.map(line => line.type), ['repos', 'continue'])
+})
+
+test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {
+  const stores = { lockfiles: lineStore(), risks: lineStore() }
+  let kept = null
+  const progress = { read: () => Promise.resolve(kept && { at: Date.now(), value: kept }), write: value => { kept = structuredClone(value); return Promise.resolve() } }
+  // left-pad's assessment outlasts the first part, given up on as the scan stops.
+  const assess = ({ name }, _teamScoped, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { resolve(noneFound) }, name === 'left-pad' && kept === null ? 1000 : 0)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+  })
+  const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
+  assert.deepEqual([first.at(-1), risksOf(first).map(line => line.name)], [{ type: 'continue' }, ['is-number']])
+  assert.deepEqual(kept, { repos: [{ id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }] }, 'the repository told whole')
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), stores, { progress })
+  const lines = await Array.fromAsync(repositoryRiskLines(again, new AbortController().signal, riskCaches(), { partMs: 5000 }))
+  assert.deepEqual(lines.map(line => line.type), ['repos', 'risk', 'risk', 'done'], 'none of its lines told again but its packages\' risks')
+  assert.deepEqual(risksOf(lines).map(line => line.name), ['is-number', 'left-pad'])
+  assert.deepEqual([again.opened, again.listed, again.read], [[], [], []], 'GitHub asked nothing')
+})
+
+test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since, or that part was a day before', async () => {
+  const told = { id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }
+  const stores = { lockfiles: lineStore() }
+  await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores)))
+  for (const [then, why, at = Date.now()] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'],
+    [{}, 'kept a day before', Date.now() - SCAN_READ_KEPT_MS], [{}, 'as it was']]) {
+    const progress = { read: () => Promise.resolve({ at, value: { repos: [{ ...told, ...then }] } }), write: () => Promise.resolve() }
+    const source = Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores, { progress })
+    await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 5000 }))
+    assert.deepEqual(source.opened, why === 'as it was' ? [] : [1], why)
+  }
+})
+
+test('a scan\'s progress keeps only the repositories still listed, one no longer listed read again should it be once more', async () => {
+  const written = []
+  const progress = { read: () => Promise.resolve({ at: Date.now(), value: { repos: [{ id: 2, name: 'org/two', paths: null, lockfiles: [] }] } }), write: value => { written.push(value); return Promise.resolve() } }
+  const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })
+  await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
+  assert.deepEqual(written.map(({ repos }) => repos.map(({ id }) => id)), [[1]])
+})
+
+test('a part ends, telling continue, though its progress isn\'t written within PROGRESS_WRITE_MS', async () => {
+  const progress = { read: () => Promise.resolve(null), write: () => new Promise(() => {}) }
+  const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })
+  const started = Date.now()
+  const lines = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { progress }), new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.equal(lines.at(-1).type, 'continue')
+  assert.ok(Date.now() - started < 8000)
+})
+
+test('what a scan read of GitHub is kept where the source keeps it, beyond an instance, for a day: a part on another goes on from it', async t => {
+  const stores = { listings: lineStore(), lockfiles: lineStore() }
+  const assess = () => Promise.resolve(noneFound)
+  const first = sourceOf(onePnpmRepo, assess)
+  const told = await Array.fromAsync(scan(Object.assign(first, stores)))
+  assert.deepEqual([first.listed, first.read], [[1], ['pnpm-lock.yaml']])
+  assert.deepEqual([stores.listings.writes.length, stores.lockfiles.writes.length], [1, 1])
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), stores)
+  assert.deepEqual(await Array.fromAsync(scan(again)), told)
+  assert.deepEqual([again.opened, again.listed, again.read], [[1], [], []], 'opened, as access is checked, and nothing listed or read again')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + SCAN_READ_KEPT_MS })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess), stores)
+  await Array.fromAsync(scan(later))
+  assert.deepEqual([later.listed, later.read], [[1], ['pnpm-lock.yaml']], 'a day on, listed and read again')
+})
+
+test('a lockfile\'s advisories are kept where the source keeps them, beyond an instance, for an hour', async t => {
+  const audits = lineStore()
+  const assess = () => Promise.resolve(noneFound)
+  const advisories = { 'left-pad': [{ id: 'GHSA-1', severity: 'high', title: 'Bad', range: '<2', versions: ['1.3.0'] }] }
+  const first = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  const told = (await Array.fromAsync(scan(first))).filter(line => line.type === 'advisories')
+  assert.equal(first.audited.length, 1)
+  assert.equal(audits.writes.length, 1)
+  // Another instance: its own caches empty.
+  const again = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(again))).filter(line => line.type === 'advisories'), told)
+  assert.deepEqual(again.audited, [], 'npm asked nothing')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + RISK_KEPT_MS })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess, { advisories }), { audits })
+  await Array.fromAsync(scan(later))
+  assert.equal(later.audited.length, 1, 'an hour on, asked again')
+})
+
+test('a lockfile\'s advisories that couldn\'t be had are told so beyond an instance for a while, a scan\'s next parts not waiting on them again', async t => {
+  const audits = lineStore()
+  const assess = () => Promise.resolve(noneFound)
+  const first = Object.assign(sourceOf(onePnpmRepo, assess, { advisoriesFail: true }), { audits })
+  const told = (await Array.fromAsync(scan(first))).filter(line => line.type === 'advisories')
+  assert.deepEqual(told.map(line => line.error), ['upstream-unavailable'])
+  const again = Object.assign(sourceOf(onePnpmRepo, assess, { advisoriesFail: true }), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(again))).filter(line => line.type === 'advisories'), told)
+  assert.deepEqual(again.audited, [], 'npm asked nothing')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60_000 })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(later))).filter(line => line.type === 'advisories').map(line => line.advisories), [[]], 'ten minutes on, asked again')
+  assert.equal(later.audited.length, 1)
+})
+
 test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {
   const risks = lineStore()
   const order = []
@@ -638,6 +768,9 @@ test('repository risk is answered to admins alone, as lines', async t => {
   assert.equal(answer.status, 200)
   assert.equal(answer.headers['content-type'], 'application/x-ndjson')
   assert.deepEqual(answer.text.split('\n').filter(Boolean).map(line => JSON.parse(line)), [{ type: 'repos', repos: [] }, { type: 'done' }])
+  for (const id of ['8f14e45f-ceea-467f-a8c1-5d0e9f4e3b1a', 'not one/of ours']) {
+    assert.equal((await ask({ query: `?scan=${encodeURIComponent(id)}` })).text, answer.text, 'a scan\'s id, or one not taken as such, answered alike')
+  }
   assert.equal((await ask({ signedIn: false })).status, 401)
   assert.equal((await ask({ method: 'POST' })).status, 405)
   const manager = await server(t, 'manage')

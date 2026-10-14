@@ -136,6 +136,13 @@ export function ago(at, now = Date.now()) {
   return Math.abs(hours) < 48 ? relative.format(hours, 'hour') : relative.format(Math.round(hours / 24), 'day')
 }
 
+// How many parts a scan is asked in at most, where the server answers in
+// parts (`continue`): 100 of 270s each, some seven hours.
+const MAX_PARTS = 100
+// How many parts running may tell nothing more (_told) before a scan stops,
+// as one that goes no further wouldn't finish in MAX_PARTS either.
+const MAX_IDLE_PARTS = 3
+
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
 // Lines come faster than a table this long redraws: draw at most this often.
@@ -192,6 +199,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._tab = 'packages'
     this._scan = null
     this._drawTimer = null
+    // The parts a scan has been asked in so far (MAX_PARTS).
+    this._parts = 0
     // SCOPES', and the team's or repository's id it names.
     this._scope = 'all'
     this._target = ''
@@ -221,8 +230,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // each { path, format, packages, error, detail }.
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
-    // dev: whether every lockfile locks it as only devDependencies need it,
-    // risk, malware: Set of advisory ids where npm's advisories name it }.
+    // neededIn: Set of those of usedIn that lock it as more than
+    // devDependencies need, dev: whether none does, risk, malware: Set of
+    // advisory ids where npm's advisories name it }.
     this._packages = new Map()
     // By id and package: an advisory, its versions locked and where (Sets).
     this._advisories = new Map()
@@ -236,20 +246,32 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Scans what is chosen anew, its lines drawn as they come.
   async start() {
     if (this._state === 'running' || (this._scope !== 'all' && !this._target)) return
-    const params = new URLSearchParams(this._scope === 'all' ? {} : { [this._scope]: this._target })
+    // The scan's id, for its parts to go on past the repositories those
+    // before told whole (repository-risk.ts ScanProgress).
+    const params = new URLSearchParams({ ...this._scope === 'all' ? {} : { [this._scope]: this._target }, scan: crypto.randomUUID() })
     this._reset()
     this._error = null
     this._state = 'running'
     const scan = new AbortController()
     this._scan = scan
-    let done = false
+    this._parts = 0
     try {
-      await streamRisk(params, scan.signal, line => {
-        if (line.type === 'done') done = true
-        this._apply(line)
-        this._draw()
-      })
-      if (!done) throw new Error('The scan ended before it finished. Try again.')
+      // A part at a time where the server answers in parts (`continue`), as a
+      // serverless deployment's time-limited function does: each asked again
+      // from where the last stopped, what it told kept here.
+      for (let ended = 'continue', idle = 0; ended === 'continue';) {
+        if (++this._parts > MAX_PARTS) throw new Error(`Stopped after ${formatCount.format(MAX_PARTS)} parts. Scan again to go on from where it stopped.`)
+        ended = null
+        const told = this._told()
+        await streamRisk(params, scan.signal, line => {
+          if (line.type === 'done' || line.type === 'continue') ended = line.type
+          this._apply(line)
+          this._draw()
+        })
+        if (ended === null) throw new Error('The scan ended before it finished. Try again.')
+        idle = this._told() > told ? 0 : idle + 1
+        if (ended === 'continue' && idle >= MAX_IDLE_PARTS) throw new Error(`Stopped: the last ${formatCount.format(MAX_IDLE_PARTS)} parts found nothing more. Scan again to try once more.`)
+      }
       this._state = 'done'
     } catch (err) {
       if (scan.signal.aborted || err?.name === 'AbortError') return
@@ -285,28 +307,64 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._drawTimer ??= setTimeout(() => { this._drawTimer = null; this.requestUpdate() }, DRAW_MS)
   }
 
+  // How much of the scan is told: repositories and lockfiles read or failed,
+  // lockfiles' advisories told or failed, and packages' risks told other
+  // than stale.
+  _told() {
+    let told = 0
+    for (const repo of this._repos.values()) {
+      if (repo.lockfiles || repo.error) told++
+      for (const lockfile of repo.lockfiles?.values() ?? []) told += Number(lockfile.packages !== null || Boolean(lockfile.error)) + Number(Boolean(lockfile.advisories || lockfile.advisoriesError))
+    }
+    for (const row of this._packages.values()) if (row.risk && !row.risk.stale) told++
+    return told
+  }
+
   _apply(line) {
+    // A scan's next part tells its repositories and lockfiles again: those
+    // told already kept as they are until told otherwise.
     if (line.type === 'repos') {
-      for (const { id, fullName } of line.repos) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
+      // Those no longer listed, as disconnected or no longer the team's, or
+      // listed by another name, as renamed, forgotten.
+      const listed = new Map(line.repos.map(({ id, fullName }) => [id, fullName]))
+      const gone = [...this._repos.values()].filter(repo => listed.get(repo.id) !== repo.fullName)
+      for (const repo of gone) this._repos.delete(repo.id)
+      this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)))
+      for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
-      if (line.error) { Object.assign(repo, { error: line.error, detail: line.detail ?? null }); return }
-      repo.commit = line.commit
-      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, { ...lockfile, packages: null, error: null }]))
+      // One that fails where a part before read it, as its access is
+      // withdrawn: what its lockfiles told forgotten.
+      if (line.error) {
+        const told = [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
+        Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null })
+        this._forget(told)
+        return
+      }
+      // Its lockfiles told again as they were, but where its default branch
+      // moved on between parts, or a team's directories in it changed:
+      // what those no longer listed told forgotten.
+      const moved = repo.commit !== null && repo.commit !== line.commit
+      const listed = new Set(moved ? [] : line.lockfiles.map(({ path }) => path))
+      const gone = [...repo.lockfiles?.keys() ?? []].filter(path => !listed.has(path)).map(path => `${repo.fullName}/${path}`)
+      Object.assign(repo, { commit: line.commit, error: null, detail: null })
+      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, (!moved && repo.lockfiles?.get(lockfile.path)) || { ...lockfile, packages: null, error: null }]))
+      this._forget(gone)
     } else if (line.type === 'lockfile') {
       const repo = this._repos.get(line.repo)
       const lockfile = repo?.lockfiles?.get(line.path)
       if (!lockfile) return
       if (line.error) { Object.assign(lockfile, { error: line.error, detail: line.detail ?? null }); return }
-      lockfile.packages = line.packages.length
+      Object.assign(lockfile, { packages: line.packages.length, error: null, detail: null })
       const usedIn = `${repo.fullName}/${line.path}`
       for (const pkg of line.packages) {
         const key = packageKey(pkg)
         let row = this._packages.get(key)
-        if (!row) this._packages.set(key, row = { ...pkg, dev: true, usedIn: new Set(), risk: null })
-        row.dev &&= pkg.dev === true
+        if (!row) this._packages.set(key, row = { ...pkg, usedIn: new Set(), neededIn: new Set(), risk: null })
         row.usedIn.add(usedIn)
+        if (pkg.dev !== true) row.neededIn.add(usedIn)
+        row.dev = row.neededIn.size === 0
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
@@ -316,17 +374,48 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
-  // A lockfile's advisories, each kept once by its id and package: npm
-  // answers one a range it covers, here its ranges and versions together,
-  // and malware if any says so (npm-insights.ts merges them alike). Malware's
-  // marked on the packages of the versions it names.
+  // What lockfiles no longer listed told (`usedIn`, a repository's name and
+  // a path) forgotten: the packages no other lockfile tells, and the
+  // advisories as those listed tell them.
+  _forget(usedIn) {
+    if (usedIn.length === 0) return
+    for (const [key, row] of this._packages) {
+      for (const used of usedIn) { row.usedIn.delete(used); row.neededIn.delete(used) }
+      if (row.usedIn.size === 0) this._packages.delete(key)
+      row.dev = row.neededIn.size === 0
+    }
+    this._readvise()
+  }
+
+  // Each listed lockfile's advisories, as it told them last, told anew.
+  _readvise() {
+    this._advisories = new Map()
+    for (const row of this._packages.values()) row.malware = undefined
+    for (const repo of this._repos.values()) {
+      for (const [path, lockfile] of repo.lockfiles ?? []) if (lockfile.advisories) this._advise(`${repo.fullName}/${path}`, lockfile.advisories)
+    }
+  }
+
+  // A lockfile's advisories, kept as it told them: told again otherwise, as
+  // a scan over an hour long audits it again (repository-risk.ts
+  // RISK_KEPT_MS), they replace those it told before.
   _applyAdvisories(line) {
     const repo = this._repos.get(line.repo)
     const lockfile = repo?.lockfiles?.get(line.path)
     if (!lockfile) return
     if (line.error) { lockfile.advisoriesError = line.error; return }
-    const usedIn = `${repo.fullName}/${line.path}`
-    for (const { range, versions, ...advisory } of line.advisories) {
+    const before = lockfile.advisories
+    Object.assign(lockfile, { advisories: line.advisories, advisoriesError: null })
+    if (!before) this._advise(`${repo.fullName}/${line.path}`, line.advisories)
+    else if (JSON.stringify(before) !== JSON.stringify(line.advisories)) this._readvise()
+  }
+
+  // Advisories a lockfile (`usedIn`) tells, each kept once by its id and
+  // package: npm answers one a range it covers, here its ranges and versions
+  // together, and malware if any says so (npm-insights.ts merges them
+  // alike). Malware's marked on the packages of the versions it names.
+  _advise(usedIn, advisories) {
+    for (const { range, versions, ...advisory } of advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
       if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set() })
@@ -424,7 +513,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
     // Packages' counts, those of devDependencies alone apart where there are any.
     const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
-    const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
+    const state = this._state === 'running' && this._parts > 1 ? `Scanning, part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
       packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
       ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],

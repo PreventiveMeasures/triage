@@ -9,12 +9,11 @@
 // - `risk/npm/versions`, what a version's document says, which npm never
 //   changes once published: a public package's in the database's upstream
 //   cache table, shared by every instance; a private one's in memory.
-// - `risk/npm/downloads`, a package's downloads a day, which risk keys by the
-//   days they count, so a day: a public package's in the database too, so
-//   that another instance, or this one restarted, asks npm's downloads API,
-//   which answers some 40 lookups a minute, none of them again that day,
-//   each removed two days on (npm-kept.ts pruneKept); a private one's in
-//   memory.
+// - `risk/npm/downloads`, a package's downloads a day, which risk tells as
+//   kept for a week: a public package's in the database too, so that another
+//   instance, or this one restarted, asks npm's downloads API, which answers
+//   some 40 lookups a minute, none of them again that week, each removed a
+//   day past it (npm-kept.ts pruneKept); a private one's in memory.
 // - `risk/npm/packages`, `risk/npm/public` and `risk/npm/advisories`, kept an
 //   hour or a day by risk itself: in memory.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
@@ -71,9 +70,9 @@ function remember(key: string, value: unknown) {
 
 const hashed = (type: string, key: string) => `risk/${createHash('sha256').update(`${type}\0${key}`).digest('hex')}`
 // What of a public package is kept in the database, and for how long its
-// downloads are, a day's for a day more.
+// downloads are: risk's week, and a day more.
 const IN_DATABASE = new Set(['risk/npm/versions', 'risk/npm/downloads'])
-const DOWNLOADS_KEPT_MS = 2 * 24 * 60 * 60_000
+const DOWNLOADS_KEPT_MS = 8 * 24 * 60 * 60_000
 
 export interface NpmRiskStores {
   db: UpstreamCacheStore

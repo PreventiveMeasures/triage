@@ -145,3 +145,172 @@ test('the progress line counts packages only devDependencies need apart from the
   page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
   assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 3 of 3 lockfiles · 2 of 3 non-dev and 0 of 1 dev packages assessed · 2 non-dev and 0 dev flagged · 1 non-dev and 0 dev stale')
 })
+
+test('a scan the server answers in parts is asked again from where it stopped, what it told kept, until done', async t => {
+  const parts = [
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+      { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+      { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'ms', version: '2.1.3', source: 'registry' }] },
+      { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [] },
+      { type: 'continue' }],
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+      { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+      { type: 'risk', name: 'ms', version: '2.1.3', published: null, severity: null, score: 3, findings: [] },
+      { type: 'done' }],
+  ]
+  const asked = []
+  t.mock.method(globalThis, 'fetch', url => {
+    asked.push(String(url))
+    return Promise.resolve(new Response(parts[asked.length - 1].map(line => JSON.stringify(line)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } }))
+  })
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(asked.filter(url => url.includes('/api/admin/repositories/risk')).length, 2)
+  assert.equal(page._state, 'done')
+  assert.equal(page._error, null)
+  assert.deepEqual([...page._packages.values()].map(row => [row.name, row.risk?.score]), [['debug', 0], ['ms', 3]], 'the first part\'s kept')
+  assert.equal(page._repos.get(1).lockfiles.get('package-lock.json').packages, 2, 'its lockfile as the first part read it')
+})
+
+test('a scan whose parts go on finding nothing more stops, rather than asking again until MAX_PARTS', async t => {
+  const part = [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry' }] },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [], stale: { assessedAt: 1 } },
+    { type: 'continue' }]
+  let asked = 0
+  t.mock.method(globalThis, 'fetch', url => {
+    if (String(url).includes('/api/admin/repositories/risk')) asked++
+    return Promise.resolve(new Response(part.map(line => JSON.stringify(line)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } }))
+  })
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(asked, 4, 'the first part, then three finding nothing more')
+  assert.equal(page._state, 'stopped')
+  assert.match(page._error, /last 3 parts found nothing more/u)
+  assert.equal(page._packages.get('debug@4.4.0\0').risk.stale.assessedAt, 1, 'what was told kept')
+})
+
+// The server answering a scan's parts, one a request, as ndjson; how many
+// were asked.
+function partsServed(t, parts) {
+  const asked = { count: 0 }
+  t.mock.method(globalThis, 'fetch', url => {
+    if (!String(url).includes('/api/admin/repositories/risk')) return Promise.resolve(Response.json({ teams: [], repositories: [] }))
+    const part = parts[Math.min(asked.count++, parts.length - 1)]
+    return Promise.resolve(new Response(part.map(line => JSON.stringify(line)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } }))
+  })
+  return asked
+}
+const lockfileAt = (path, packages) => ({ type: 'lockfile', repo: 1, path, format: 'npm', ...Array.isArray(packages) ? { packages } : { error: packages } })
+const repoAt = (commit, ...paths) => [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+  { type: 'repo', id: 1, commit: commit.repeat(40), lockfiles: paths.map(path => ({ path, format: 'npm' })) }]
+const locked = (name, version) => ({ name, version, source: 'registry' })
+const advised = (path, advisories) => ({ type: 'advisories', repo: 1, path, ...Array.isArray(advisories) ? { advisories } : { error: advisories } })
+
+test('a repository told again at another commit, its branch moved on between parts, tells only what that commit locks', async t => {
+  const malware = { id: 'GHSA-xxxx', name: 'debug', severity: 'critical', title: 'Malware in debug', range: '4.4.0', versions: ['4.4.0'], malware: true }
+  partsServed(t, [
+    [...repoAt('a', 'package-lock.json', 'old/package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0'), locked('ms', '2.1.3')]),
+      lockfileAt('old/package-lock.json', [locked('ms', '2.1.3')]), advised('package-lock.json', [malware]), { type: 'continue' }],
+    [...repoAt('b', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.1')]), advised('package-lock.json', []), { type: 'done' }],
+  ])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(page._state, 'done')
+  assert.deepEqual([...page._packages.values()].map(row => [`${row.name}@${row.version}`, [...row.usedIn], row.malware]),
+    [['debug@4.4.1', ['org/one/package-lock.json'], undefined]], 'what the earlier commit locked forgotten')
+  assert.equal(page._advisories.size, 0)
+  assert.deepEqual([...page._repos.get(1).lockfiles.keys()], ['package-lock.json'])
+})
+
+test('a lockfile, or its advisories, that a part couldn\'t read and a later one did is told read', async t => {
+  partsServed(t, [
+    [...repoAt('a', 'package-lock.json', 'web/package-lock.json'), lockfileAt('package-lock.json', 'github-unreachable'),
+      lockfileAt('web/package-lock.json', [locked('ms', '2.1.3')]), advised('web/package-lock.json', 'upstream-unavailable'), { type: 'continue' }],
+    [...repoAt('a', 'package-lock.json', 'web/package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]),
+      lockfileAt('web/package-lock.json', [locked('ms', '2.1.3')]), advised('package-lock.json', []), advised('web/package-lock.json', []), { type: 'done' }],
+  ])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  const lockfiles = page._repos.get(1).lockfiles
+  assert.deepEqual([lockfiles.get('package-lock.json').error, lockfiles.get('package-lock.json').packages], [null, 1])
+  assert.equal(lockfiles.get('web/package-lock.json').advisoriesError, null)
+})
+
+test('parts telling lockfiles\' advisories alone, or why they couldn\'t be had, go on, as they find more', async t => {
+  const paths = ['a/package-lock.json', 'b/package-lock.json', 'c/package-lock.json']
+  const read = [...repoAt('a', ...paths), ...paths.map(path => lockfileAt(path, [locked('ms', '2.1.3')]))]
+  for (const advisories of [[], 'upstream-unavailable']) {
+    t.mock.restoreAll()
+    const asked = partsServed(t, [[...read, { type: 'continue' }], ...paths.map(path => [...read, advised(path, advisories), { type: 'continue' }]), [...read, { type: 'done' }]])
+    const page = new (customElements.get('managed-admin-repo-risk'))()
+    await page.start()
+    assert.equal(page._error, null)
+    assert.equal(page._state, 'done')
+    assert.equal(asked.count, 5)
+  }
+})
+
+test('a lockfile a later part no longer lists, at the same commit, as a team\'s directories changed, has what it told forgotten', async t => {
+  partsServed(t, [
+    [...repoAt('a', 'package-lock.json', 'web/package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]),
+      lockfileAt('web/package-lock.json', [locked('debug', '4.4.0'), locked('ms', '2.1.3')]), { type: 'continue' }],
+    [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), { type: 'done' }],
+  ])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._packages.values()].map(row => [`${row.name}@${row.version}`, [...row.usedIn]]), [['debug@4.4.0', ['org/one/package-lock.json']]])
+  assert.deepEqual([...page._repos.get(1).lockfiles.keys()], ['package-lock.json'])
+})
+
+test('a lockfile\'s advisories told again otherwise, as audited again over an hour on, replace those it told', async t => {
+  const malware = { id: 'GHSA-xxxx', name: 'debug', severity: 'critical', title: 'Malware in debug', range: '4.4.0', versions: ['4.4.0'], malware: true }
+  const vulnerable = { id: 'GHSA-yyyy', name: 'ms', severity: 'high', title: 'ReDoS', range: '<3', versions: ['2.1.3'], malware: false }
+  const read = [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0'), locked('ms', '2.1.3')])]
+  partsServed(t, [[...read, advised('package-lock.json', [malware, vulnerable]), { type: 'continue' }],
+    [...read, advised('package-lock.json', [vulnerable]), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._advisories.keys()], ['GHSA-yyyy\0ms'], 'the one withdrawn forgotten')
+  assert.equal(page._packages.get('debug@4.4.0\0').malware, undefined, 'and its malware')
+})
+
+test('a repository a later part no longer lists, as disconnected or no longer the team\'s, has what it told forgotten', async t => {
+  const one = [...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), advised('package-lock.json', [])]
+  const two = [{ type: 'repo', id: 2, commit: 'b'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 2, path: 'package-lock.json', format: 'npm', packages: [locked('ms', '2.1.3')] }]
+  partsServed(t, [[{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }, { id: 2, fullName: 'org/two' }] }, ...one.slice(1), ...two, { type: 'continue' }],
+    [...one, { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._repos.keys()], [1])
+  assert.deepEqual([...page._packages.values()].map(row => row.name), ['debug'])
+})
+
+test('a repository a later part lists by another name, as renamed, is told by it', async t => {
+  const read = name => [{ type: 'repos', repos: [{ id: 1, fullName: name }] }, { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    lockfileAt('package-lock.json', [locked('debug', '4.4.0')])]
+  partsServed(t, [[...read('org/one'), { type: 'continue' }], [...read('org/uno'), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(page._repos.get(1).fullName, 'org/uno')
+  assert.deepEqual([...page._packages.values()].map(row => [...row.usedIn]), [['org/uno/package-lock.json']])
+})
+
+test('a package a later part no longer has a lockfile need otherwise than devDependencies is tagged dev', async t => {
+  const read = (...paths) => [...repoAt('a', ...paths), lockfileAt('package-lock.json', [{ ...locked('eslint', '9.0.0'), dev: true }]),
+    ...paths.includes('web/package-lock.json') ? [lockfileAt('web/package-lock.json', [locked('eslint', '9.0.0')])] : []]
+  partsServed(t, [[...read('package-lock.json', 'web/package-lock.json'), { type: 'continue' }], [...read('package-lock.json'), { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['eslint', true]])
+})
+
+test('a repository a later part fails to read, as its access is withdrawn, has what it told before forgotten', async t => {
+  partsServed(t, [[...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), advised('package-lock.json', []), { type: 'continue' }],
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] }, { type: 'repo', id: 1, error: 'no-repository' }, { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([page._repos.get(1).error, page._repos.get(1).lockfiles, page._packages.size], ['no-repository', null, 0])
+})

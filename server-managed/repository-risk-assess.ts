@@ -14,6 +14,12 @@ import type { RepositoryRiskLine } from './repository-risk.ts'
 export const BUSY_RETRIES = 20
 export const BUSY_WAIT_MS = 1000
 
+// How long a package's risk line, or a lockfile's advisories, is told as it
+// is: after it, a risk line is told stale and assessed again, as risk tells
+// again what of a package changes in time, and advisories asked again, as npm
+// publishes them (repository-risk.ts).
+export const RISK_KEPT_MS = 60 * 60_000
+
 // The most severe of `findings`, or null for none.
 export function highestSeverity(findings: readonly { severity: Severity }[]): Severity | null {
   return SEVERITIES.find(severity => findings.some(finding => finding.severity === severity)) ?? null

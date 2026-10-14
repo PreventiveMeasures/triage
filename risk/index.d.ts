@@ -149,8 +149,8 @@ export function assessNpm(name: string, version: string, options?: AssessNpmOpti
 
 // Readies, at once, the downloads assessNpm asks of each of these packages
 // that can be, kept in `cache` as it keeps them, so that their assessments
-// ask npm none: those kept already, and unscoped ones, asked of npm 128 at a
-// time. `ready` is told each once its downloads are kept; the rest (scoped
+// ask npm none: those kept within a week, and unscoped ones, asked of npm 128
+// at a time. `ready` is told each once its downloads are kept; the rest (scoped
 // ones, which npm answers only one by one) are left for npmReadyDownload.
 // npm asking to be asked later is thrown as an NpmRiskError
 // (`upstream-busy`), those readied by then told.
