@@ -151,7 +151,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
@@ -2626,12 +2626,15 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true, scopes: (await deps.db.listTeamNpmScopes())[teamId] ?? [] })
 }
 
-// Who reads npm packages now: a session with workspace access, its role and
-// the npm scopes of its visible teams. Null for none.
-async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
+// Who reads npm packages now: a session with workspace access, its role and,
+// where they count for any of `names` it is asked about (npmScopesCount), the
+// npm scopes of its visible teams, else none: none are read for an unscoped
+// package, an admin or a manager, or an answer checked again that is public.
+// Null for none.
+async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined, names: readonly string[]): Promise<NpmReader | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null || !roleAtLeast(s.user.role, 'view')) return null
-  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
+  return { role: s.user.role, scopes: new Set(npmScopesCount(s.user.role, names) ? await deps.db.listUserNpmScopes(s.user.id) : []), userId: s.user.id }
 }
 
 // What a registry read found, or a 404 for the package (handleNpm's catch
@@ -2648,7 +2651,7 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
-    const reader = await npmReader(deps, cookie)
+    const reader = await npmReader(deps, cookie, reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []]))
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     const documents = new Map<string, Promise<NpmVersionDocument | null>>()
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
@@ -2662,7 +2665,7 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
     const packages = await Promise.all(reviews.map(review => Promise.all([
       read(review.package, review.version), ...(review.basePackage ? [read(review.basePackage, review.baseVersion!)] : []),
     ])))
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, packages.flat().flatMap(doc => doc?.private ? [doc.name] : []))
     if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
   } catch (error) {
@@ -2772,7 +2775,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
-    const reader = await npmReader(deps, cookie)
+    const reader = await npmReader(deps, cookie, [context.package, ...context.basePackage ? [context.basePackage] : []])
     if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     const kept = npmVersionStore(deps.db, deps.config.debug)
     const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal, kept)
@@ -2803,7 +2806,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     }
     const limit = change?.action === 'publish' && change.final && change.final.status !== 'reject'
       ? await npmReviewPublicationLimit(deps, reader, doc, controller.signal) : 'accept'
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, [doc, base].flatMap(item => item?.private ? [item.name] : []))
     if (!current || current.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
     if ([doc, base].some(item => item?.private && !canReadPrivateNpm(current, item.name))) { sendJson(res, 404, { error: 'package-not-found' }); return }
     if (!change) {
@@ -2846,7 +2849,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   }
   const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
   if (path === NPM_RENAME_DIFF_PATH && params.has('path') && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const reader = await npmReader(deps, cookie)
+  const reader = await npmReader(deps, cookie, [name])
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -2854,7 +2857,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // A reader who lost their session, or their private access to an answer
   // that needed it, while the registry was asked gets nothing.
   const recheck = async (isPrivate: boolean) => {
-    const current = await npmReader(deps, cookie)
+    const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
     if (current == null) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
     if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
     return !res.destroyed
@@ -2975,7 +2978,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (!(await recheck(isPrivate))) return
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await sendLines(res, lines, async () => {
-        const current = await npmReader(deps, cookie)
+        const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
         return current != null && (!isPrivate || canReadPrivateNpm(current, name))
       })
       return
