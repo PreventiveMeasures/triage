@@ -37,7 +37,7 @@ import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm, npmReadyDownload, npmReadyDownloads } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import { loadNpmTarball } from './npm-loads.ts'
-import { NpmPackageError, type NpmVersionDocument, readNpmPackument, readNpmVersion } from './npm-packages.ts'
+import { NpmPackageError, type NpmVersionDocument, npmTokenReads, readNpmPackument, readNpmVersion } from './npm-packages.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
 import { pruneKept } from './npm-kept.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
@@ -199,8 +199,9 @@ async function bounded(spare: boolean, assess: () => Promise<NpmAssessment>): Pr
 // by npm, as a scan's (`spare`), and its advisories of malware, npm's and,
 // where anyone can read its package, OSV's, which alone has some of those
 // npm removed (nx's), a private package's name never sent to OSV. Its
-// package's document read anonymously, else with npm's token where the
-// reader may have it (`privileged`), and kept as a private package's is; no
+// package's document read anonymously, else with npm's token alone where
+// that reads more for this reader (`privileged`, npmTokenReads), and kept as
+// a private package's is; no
 // tarball read, nothing of the version being left. Spare, within
 // MAX_SPARE_ASSESSMENTS as a scan's others are. An NpmRiskError where
 // nothing tells of it.
@@ -210,7 +211,9 @@ export function npmRiskRemoved(name: string, version: string,
     const open = await readNpmPackument(name, false, signal)
     return assessNpm(name, version, { minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE, popularity: false, downloads: false, dependencies: false,
       osv: open !== null, cache: npmRiskCache(stores, false), signal,
-      packument: (read, { authorized }) => read === name && open ? Promise.resolve(open) : readNpmPackument(read, privileged && authorized, signal),
+      packument: (read, { authorized }) => read === name
+        ? open || !npmTokenReads(name, privileged && authorized) ? Promise.resolve(open) : readNpmPackument(name, true, signal, { anonymous: false })
+        : readNpmPackument(read, privileged && authorized, signal),
       tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
   })
 }

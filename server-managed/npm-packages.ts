@@ -43,7 +43,7 @@ export class NpmPackageError extends Error {
 }
 
 // Who reads, as the session has it now: the role, and the scopes of the
-// visible teams they are a member of.
+// visible teams they are a member of, where those count (npmScopesCount).
 export interface NpmReader { role: Role; scopes: ReadonlySet<string>; userId: string }
 
 // Whether a reader may have a package read with the server's token.
@@ -53,7 +53,18 @@ export function canReadPrivateNpm(reader: NpmReader, name: string): boolean {
   return scope !== null && reader.scopes.has(scope)
 }
 
+// Whether a reader's team scopes count for any of `names`, as
+// canReadPrivateNpm reads them: a scoped one, read by someone below manager.
+export const npmScopesCount = (role: Role, names: readonly string[]): boolean =>
+  role !== 'admin' && role !== 'manage' && names.some(name => npmPackageScope(name) !== null)
+
 export const npmToken = () => process.env['NPM_TOKEN'] || null
+
+// Whether a read of `name` that npm answers none anonymously is asked again
+// with the server's token: by a reader with private access (`privileged`),
+// where there is a token and the package is scoped, as npm's private packages
+// always are. Else the anonymous answer is the reader's.
+export const npmTokenReads = (name: string, privileged: boolean): boolean => privileged && npmToken() !== null && npmPackageScope(name) !== null
 
 function registryUrl(name: string, spec?: string): string {
   return `${NPM_REGISTRY}/${name}${spec === undefined ? '' : `/${encodeURIComponent(spec)}`}`
@@ -138,16 +149,17 @@ async function publicWholeDocument(name: string, url: string, { limit, signal }:
   return json
 }
 
-// Asked anonymously first: a reader without private access stops there. One
-// with it asks again with the token, where there is one and the package is
-// scoped (npm's private packages always are), and the answer is private. A
-// whole document (`whole`) anyone may read is kept (publicWholeDocument).
-async function readDocument(name: string, url: string, privileged: boolean, { whole = false, ...options }: { accept: string; limit: number; signal: AbortSignal; whole?: boolean }) {
-  const open = whole ? await publicWholeDocument(name, url, options) : await registryDocument(url, { ...options, token: null })
+// Asked anonymously first, unless its caller knows npm has none for anyone
+// (`anonymous` false): a reader without private access stops there. One
+// with it asks again with the token where npmTokenReads says so, and the
+// answer is private. A whole document (`whole`) anyone may read is kept
+// (publicWholeDocument).
+async function readDocument(name: string, url: string, privileged: boolean,
+  { whole = false, anonymous = true, ...options }: { accept: string; limit: number; signal: AbortSignal; whole?: boolean; anonymous?: boolean }) {
+  const open = anonymous ? whole ? await publicWholeDocument(name, url, options) : await registryDocument(url, { ...options, token: null }) : null
   if (open) return { json: open, private: false }
-  const token = npmToken()
-  if (!privileged || !token || npmPackageScope(name) === null) return null
-  const json = await registryDocument(url, { ...options, token })
+  if (!npmTokenReads(name, privileged)) return null
+  const json = await registryDocument(url, { ...options, token: npmToken() })
   return json ? { json, private: true } : null
 }
 
@@ -244,10 +256,12 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
 // A package's whole document as npm has it for this reader, for risk
 // (npm-risk.ts), within the bounds and budget every document read here is
 // held to; null where npm has none for this reader, or the name is none npm
-// takes.
-export function readNpmPackument(name: string, privileged: boolean, signal: AbortSignal): Promise<Record<string, unknown> | null> {
+// takes. With `anonymous` false, where npm is known to have none for anyone,
+// it is asked only with the token (readDocument).
+export function readNpmPackument(name: string, privileged: boolean, signal: AbortSignal, { anonymous = true } = {}): Promise<Record<string, unknown> | null> {
   if (!isNpmPackageName(name)) return Promise.resolve(null)
-  return withDocumentBudget(PACKUMENT_BYTES, async () => (await readDocument(name, registryUrl(name), privileged, { accept: 'application/json', limit: PACKUMENT_BYTES, signal, whole: true }))?.json ?? null)
+  return withDocumentBudget(PACKUMENT_BYTES, async () => (await readDocument(name, registryUrl(name), privileged,
+    { accept: 'application/json', limit: PACKUMENT_BYTES, signal, whole: true, anonymous }))?.json ?? null)
 }
 
 const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))

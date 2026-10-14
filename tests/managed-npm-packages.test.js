@@ -353,6 +353,21 @@ test('a version npm removed is told of by OSV\'s malware where anyone can read i
   assert.ok(!calls.some(({ url }) => url === OSV), 'its name never left for OSV')
 })
 
+test('a removed version\'s package npm has none of anonymously is asked of npm again only where its token reads more', async t => {
+  withToken(t)
+  const calls = registry(t, [])
+  const db = { getUpstreamCacheEntry: () => Promise.resolve(null), setUpstreamCacheEntry: () => Promise.resolve() }
+  const removed = (name, privileged) => npmRiskRemoved(name, '1.0.0', { db, teamScoped: false, privileged, signal: new AbortController().signal })
+  const missing = error => error instanceof NpmRiskError && error.code === 'package-not-found'
+  const asked = name => calls.filter(({ url }) => url === `${REGISTRY}/${name}`).map(({ auth }) => auth)
+  await assert.rejects(removed('nowhere', true), missing)
+  assert.deepEqual(asked('nowhere'), [null], 'an unscoped one: anonymously, once')
+  await assert.rejects(removed('@acme/nowhere', false), missing)
+  assert.deepEqual(asked('@acme/nowhere'), [null], 'a scoped one, for a reader without private access: anonymously, once')
+  await assert.rejects(removed('@acme/hidden', true), missing)
+  assert.deepEqual(asked('@acme/hidden'), [null, 'Bearer server-token'], 'for one with it: then with the token')
+})
+
 test('a private version is read with the token for admins and managers only, even with its tarball cached', async t => {
   const h = await setup(t)
   withToken(t)
@@ -411,6 +426,26 @@ test('a team listing the scope lets its members read it, while the team is visib
   await h.db.setTeamHidden('team', false, Date.now())
   assert.equal((await set([])).status, 200)
   assert.equal((await h.send(packagePath('@acme/secret', '2.0.0'))).status, 404)
+})
+
+test('a reader\'s team scopes are read only where they count: a scoped package read below manager, and again only for a private answer', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('open-lib', '1.0.0', { 'index.js': '' }), packageOf('@acme/open', '1.0.0', { 'index.js': '' }),
+    { ...packageOf('@acme/secret', '1.0.0', { 'index.js': 'secret' }), private: true }])
+  assert.equal((await h.send('/api/admin/teams/set-npm-scopes', 'admin', { method: 'POST', body: { teamId: 'team', scopes: ['@acme'] } })).status, 200)
+  const listScopes = h.db.listUserNpmScopes.bind(h.db)
+  let reads = 0
+  t.mock.method(h.db, 'listUserNpmScopes', user => { reads++; return listScopes(user) })
+  const readsOf = async (name, who) => {
+    reads = 0
+    assert.equal((await h.send(packagePath(name, '1.0.0'), who)).status, 200, `${name}, read by ${who}`)
+    return reads
+  }
+  assert.equal(await readsOf('open-lib', 'triage'), 0, 'an unscoped package')
+  assert.equal(await readsOf('@acme/secret', 'manage'), 0, 'a manager')
+  assert.equal(await readsOf('@acme/open', 'triage'), 1, 'a public scoped one: as it is asked of npm, its public answer not')
+  assert.equal(await readsOf('@acme/secret', 'triage'), 2, 'a private one: again before it is answered')
 })
 
 test('without a token, private packages stay closed to every role', async t => {

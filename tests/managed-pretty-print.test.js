@@ -179,6 +179,18 @@ test('a public npm version\'s files that need it are pretty-printed in one reque
   assert.deepEqual(linesOf(await h.send(npmPretty('lib', '1.0.0'))), linesOf(first), 'and read from there')
 })
 
+test('a public npm version\'s files are pretty-printed without reading the reader\'s team scopes a line, nor at all for an unscoped package', async t => {
+  const h = await setup(t)
+  registry(t, ['lib', '@acme/lib'].map(name => packageOf(name, '1.0.0', { 'a.min.js': long, 'b.min.js': long })))
+  const listScopes = h.db.listUserNpmScopes.bind(h.db)
+  let reads = 0
+  t.mock.method(h.db, 'listUserNpmScopes', user => { reads++; return listScopes(user) })
+  assert.equal(linesOf(await h.send(npmPretty('lib', '1.0.0'))).length, 2)
+  assert.equal(reads, 0, 'an unscoped one')
+  assert.equal(linesOf(await h.send(npmPretty('@acme/lib', '1.0.0'))).length, 2)
+  assert.equal(reads, 1, 'a scoped one: as it is asked of npm alone')
+})
+
 test('maintenance removes the public npm copies of earlier versions, once a process, the current ones kept', async t => {
   const h = await setup(t)
   registry(t, [packageOf('lib', '1.0.0', { 'lib.min.js': long })])
