@@ -179,13 +179,13 @@ test('a dependency nothing imports graded by its package: one kept yellow, a new
   const graded = (rows, added, compared = true) => npmAssessmentOf({ findings: [{ id: 'held-unused-deps', severity: 'high', dependencies: rows }], files: {},
     dependencies: { added: [], changed: [], ...compared ? { held: [] } : {} } }, [], added).findings[0]
   const severities = (rows, added, compared) => graded(rows, added, compared).dependencies.map(({ name, severity }) => `${name} ${severity}`)
-  assert.deepEqual(severities([row('tslib'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true })],
+  assert.deepEqual(severities([row('debug'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true })],
     [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: 50_000, level: 'is-low' }, { ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]),
-  ['tslib moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical'],
+  ['debug moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical'],
   'kept from the version compared with; new: a peer\'s or a tool\'s, as popular as react; past the top 20,000; its package not told; first published since')
-  assert.equal(graded([row('tslib'), row('fresh', { added: true })], [{ ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]).severity, 'critical',
+  assert.equal(graded([row('debug'), row('fresh', { added: true })], [{ ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]).severity, 'critical',
     'the finding as its most severe')
-  assert.equal(graded([row('tslib')], []).severity, 'moderate', 'all kept: yellow')
+  assert.equal(graded([row('debug')], []).severity, 'moderate', 'all kept: yellow')
   assert.deepEqual(severities([row('react'), row('tiny')], [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: null, level: 'is-unpopular' }], false),
     ['react moderate', 'tiny high'], 'a version alone, none kept: each by its package')
   assert.deepEqual(severities([row('react')], [], false), ['react high'], 'nor its package told: orange, as before')

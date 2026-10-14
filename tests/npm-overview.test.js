@@ -686,8 +686,8 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   answers.told['peer@1.1.0'] = { react: { tier: 200, level: 'is-solid' } }
   assert.equal(unusedChip(await badges(depending('peer', '1.0.0', {}), depending('peer', '1.1.0', { react: '^19.0.0' }))),
     'is-moderate | Imported by nothing of 1.1.0: react ^19.0.0 (npm\'s top 200); new since 1.0.0: react')
-  assert.equal(unusedChip(await badges(depending('tslib-kept', '1.0.0', { tslib: '^2.0.0' }), depending('tslib-kept', '1.1.0', { tslib: '^2.0.0' }))),
-    'is-moderate | Imported by nothing of 1.1.0: tslib ^2.0.0', 'kept from 1.0.0')
+  assert.equal(unusedChip(await badges(depending('debug-kept', '1.0.0', { debug: '^4.0.0' }), depending('debug-kept', '1.1.0', { debug: '^4.0.0' }))),
+    'is-moderate | Imported by nothing of 1.1.0: debug ^4.0.0', 'kept from 1.0.0')
 
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.
