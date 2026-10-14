@@ -103,6 +103,24 @@ test('a version alone: what it holds, its files stamped, too new under the minim
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW + 14 * DAY, downloads: false })).includes('too-new'), 'none once old enough')
 })
 
+test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const before = version('auth', '1.0.0', { 'package.json': '{}', 'lib/run.js': "require('child_process').exec(cmd)\n", 'lib/rc.js': "readFileSync(join(homedir(), '.npmrc'))\n" }, meta, ago(60))
+  const after = version('auth', '1.1.0', { 'package.json': '{}', 'lib/run.js': "require('child_process').exec(cmd)\nconst token = process.env.NPM_TOKEN\n",
+    'lib/rc.js': "readFileSync(join(homedir(), '.npmrc'))\n" }, meta, ago(40))
+  npm(t, [{ name: 'auth', versions: [before, after] }])
+  const alone = await assessNpm('auth', '1.1.0', { now: NOW, downloads: false })
+  assert.deepEqual(alone.findings.filter(({ id }) => id.startsWith('held-')), [
+    { id: 'held-runs-code', severity: 'high', files: [{ path: 'lib/run.js', found: { 'child-process': [1] } }] },
+    { id: 'held-credentials', severity: 'high', files: [{ path: 'lib/rc.js', found: { 'credential-files': [1] } }, { path: 'lib/run.js', found: { tokens: [2] } }] },
+  ], 'one file\'s kinds told apart')
+  const { findings } = await assessNpm('auth', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(({ id }) => id.startsWith('held-')), [
+    { id: 'held-runs-code', severity: 'high', files: [{ path: 'lib/run.js', found: { 'child-process': [1] } }] },
+    { id: 'held-credentials', severity: 'critical', files: [{ path: 'lib/rc.js', found: { 'credential-files': [1] } }, { path: 'lib/run.js', found: { tokens: [2] }, added: { tokens: [2] } }] },
+  ], 'the token new to lib/run.js red under credentials, the child_process it kept orange')
+})
+
 test('the services a version\'s files name, a finding a hosts\' tag at its severity; against the version before, those new to a file marked, a level higher', async t => {
   const before = version('hosted', '1.0.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\n' }, { dependencies: {} }, ago(30))
   const after = version('hosted', '1.1.0', { 'package.json': '{}', 'lib/a.js': 'get("https://api.ipify.org")\npost("https://webhook.site/x")\n',

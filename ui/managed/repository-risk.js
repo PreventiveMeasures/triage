@@ -31,6 +31,7 @@ const FINDING_LABELS = {
   popularity: 'Unpopular',
   'held-install-scripts': 'Install scripts',
   'held-runs-code': 'Runs code',
+  'held-credentials': 'Credentials',
   'held-exfiltration': 'Exfiltration host',
   'held-remote': 'Remote host',
   'held-ip-lookup': 'IP lookup',
