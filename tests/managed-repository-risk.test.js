@@ -528,6 +528,14 @@ test('a repository a part before told whole is read again where it is renamed, o
   }
 })
 
+test('a scan\'s progress keeps only the repositories still listed, one no longer listed read again should it be once more', async () => {
+  const written = []
+  const progress = { read: () => Promise.resolve({ repos: [{ id: 2, name: 'org/two', paths: null, lockfiles: [] }] }), write: value => { written.push(value); return Promise.resolve() } }
+  const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })
+  await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
+  assert.deepEqual(written.map(({ repos }) => repos.map(({ id }) => id)), [[1]])
+})
+
 test('a part ends, telling continue, though its progress isn\'t written within PROGRESS_WRITE_MS', async () => {
   const progress = { read: () => Promise.resolve(null), write: () => new Promise(() => {}) }
   const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })

@@ -385,7 +385,9 @@ async function toldBefore(scan: Scan, repo: RepositoryRiskRepo) {
 async function readRepositories(scan: Scan) {
   const repos = await scan.source.repos()
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
-  for (const told of (await scan.source.progress?.read())?.repos ?? []) scan.told.set(told.id, told)
+  // Those still listed: one no longer is read again should it be once more.
+  const listed = new Set(repos.map(repo => repo.repoId))
+  for (const told of (await scan.source.progress?.read())?.repos ?? []) if (listed.has(told.id)) scan.told.set(told.id, told)
   for (const repo of repos) {
     if (scan.signal.aborted) return
     if (!await toldBefore(scan, repo)) await readRepository(scan, repo)

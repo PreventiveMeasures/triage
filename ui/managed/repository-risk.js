@@ -334,7 +334,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
-      if (line.error) { Object.assign(repo, { error: line.error, detail: line.detail ?? null }); return }
+      // One that fails where a part before read it, as its access is
+      // withdrawn: what its lockfiles told forgotten.
+      if (line.error) {
+        const told = [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
+        Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null })
+        this._forget(told)
+        return
+      }
       // Its lockfiles told again as they were, but where its default branch
       // moved on between parts, or a team's directories in it changed:
       // what those no longer listed told forgotten.

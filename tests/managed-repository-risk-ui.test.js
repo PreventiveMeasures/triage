@@ -306,3 +306,11 @@ test('a package a later part no longer has a lockfile need otherwise than devDep
   await page.start()
   assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['eslint', true]])
 })
+
+test('a repository a later part fails to read, as its access is withdrawn, has what it told before forgotten', async t => {
+  partsServed(t, [[...repoAt('a', 'package-lock.json'), lockfileAt('package-lock.json', [locked('debug', '4.4.0')]), advised('package-lock.json', []), { type: 'continue' }],
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] }, { type: 'repo', id: 1, error: 'no-repository' }, { type: 'done' }]])
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.deepEqual([page._repos.get(1).error, page._repos.get(1).lockfiles, page._packages.size], ['no-repository', null, 0])
+})
