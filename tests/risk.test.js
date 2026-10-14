@@ -958,6 +958,9 @@ test('the version a dependency\'s spec installs, as npm picks it: a tag it names
   const deprecatedLatest = { name: 'lib', 'dist-tags': { latest: '2.0.0' }, time: { '1.0.0': ago(90), '2.0.0': ago(30) },
     versions: { '1.0.0': { version: '1.0.0', scripts: { postinstall: 'node x.js' } }, '2.0.0': { version: '2.0.0', deprecated: 'broken' } } }
   assert.equal((await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(deprecatedLatest) }, '*')).installs.version, '1.0.0', 'not a latest deprecated')
+  const prereleased = { name: 'lib', 'dist-tags': { latest: '2.0.0-beta.1' }, time: { '2.0.0-beta.1': ago(30) }, versions: { '2.0.0-beta.1': { version: '2.0.0-beta.1' } } }
+  assert.deepEqual(await Promise.all(['*', '', 'npm:lib', '^2.0.0'].map(async spec => (await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(prereleased) }, spec)).installs?.version ?? null)),
+    ['2.0.0-beta.1', '2.0.0-beta.1', '2.0.0-beta.1', null], 'a prerelease latest for any range, as npm takes it, not for one it doesn\'t satisfy')
   assert.deepEqual(await Promise.all(['^9.0.0', 'github:a/b', 'https://example.com/lib.tgz'].map(installs)), [null, null, null], 'none satisfying it, nor a spec that is no range')
   assert.deepEqual(await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(doc) }), { created: ago(900) }, 'none asked without a spec')
 })
