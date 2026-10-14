@@ -354,6 +354,7 @@ function lineStore() {
   const rows = new Map(), writes = []
   return { rows, writes,
     read: key => Promise.resolve(rows.get(key) ?? null),
+    readMany: keys => Promise.resolve(new Map(keys.flatMap(key => rows.has(key) ? [[key, rows.get(key)]] : []))),
     write(key, value, at) { writes.push(key); rows.set(key, { at, value: structuredClone(value) }); return Promise.resolve() } }
 }
 
@@ -375,15 +376,36 @@ test('risk lines are kept where the source keeps them, beyond an instance, for a
   assert.equal(assessed.length, 4, 'an hour on, assessed again')
 })
 
-test('a risk line kept before risk told a score is assessed again', async () => {
+test('a risk line kept before risk told a score is told stale, then assessed again', async () => {
   const risks = lineStore()
   const assessed = []
   const assess = ({ name }) => { assessed.push(name); return Promise.resolve(noneFound) }
   await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks })))
   for (const kept of risks.rows.values()) delete kept.value.score
   const again = Object.assign(sourceOf(onePnpmRepo, assess), { risks })
-  assert.deepEqual(risksOf(await Array.fromAsync(scan(again))).map(line => [line.name, line.score]), [['is-number', 0], ['left-pad', 0]])
+  const told = (await Array.fromAsync(scan(again))).filter(line => line.type === 'risk')
+  assert.deepEqual(told.slice(0, 2).map(line => [line.score, typeof line.stale?.assessedAt]), [[undefined, 'number'], [undefined, 'number']], 'told at once, stale')
+  assert.deepEqual(told.slice(2).map(line => [line.name, line.score, line.stale]).toSorted(), [['is-number', 0, undefined], ['left-pad', 0, undefined]])
   assert.deepEqual(assessed.toSorted(), ['is-number', 'is-number', 'left-pad', 'left-pad'])
+})
+
+test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {
+  const risks = lineStore()
+  const order = []
+  const assess = ({ name }) => { order.push(`assess ${name}`); return Promise.resolve(noneFound) }
+  await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks })))
+  // Two hours on, is-number's line gone (as a package new to the lockfile).
+  const assessedAt = risks.rows.get([...risks.rows.keys()].find(key => key.startsWith('left-pad@'))).at
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 2 * 60 * 60_000 })
+  risks.rows.delete([...risks.rows.keys()].find(key => key.startsWith('is-number@')))
+  order.length = 0
+  const told = []
+  for await (const line of scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks }))) if (line.type === 'risk') told.push(line)
+  assert.deepEqual(told.map(line => `${line.stale ? 'stale' : 'told'} ${line.name}`), ['stale left-pad', 'told is-number', 'told left-pad'])
+  assert.deepEqual(told[0].stale, { assessedAt }, 'when it was assessed')
+  assert.deepEqual(order, ['assess is-number', 'assess left-pad'], 'the one with none kept first')
+  const lines = await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks }), undefined, riskCaches()))
+  assert.ok(lines.filter(line => line.type === 'risk').every(line => !line.stale), 'once assessed again, fresh')
 })
 
 // A repository whose lockfile locks two unscoped packages and a scoped one.

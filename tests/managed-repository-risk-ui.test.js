@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findingsOf, malwareOf, malwareSaid, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -64,4 +64,33 @@ test('a package’s risk score is risk’s, malware’s 100 as npm’s advisorie
   assert.equal(scoreOf(row(null)), null, 'not yet told')
   assert.equal(scoreOf(row({ error: 'upstream-unavailable' })), null)
   assert.equal(scoreOf(row({ error: 'integrity-mismatch' }, true)), null, 'not npm\'s artifact')
+})
+
+test('a risk kept and gone stale is told, dimmed and said so, until assessed again; one that couldn\'t be keeps it, saying why', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'running'
+  const assessedAt = Date.now() - 3 * 24 * 60 * 60_000
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry' }] },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'high', score: 54, findings: [{ id: 'publisher', severity: 'high' }], stale: { assessedAt } },
+  ]) page._apply(line)
+  const text = () => templateText(page.render())
+  assert.match(text(), /<tr class=is-stale>/u)
+  assert.match(text(), /risk-high>54<\/span><span class="risk-stale" data-tooltip=Assessed 3 days ago; to be assessed again once the rest are>stale/u)
+  assert.match(text(), /· 1 stale/u)
+  page._apply({ type: 'risk', name: 'debug', version: '4.4.0', error: 'upstream-unavailable', detail: 'fetch failed' })
+  assert.match(text(), /risk-high>54<[^]*couldn’t be assessed again: npm unavailable: fetch failed>stale/u, 'the stale risk kept')
+  page._apply({ type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [] })
+  assert.doesNotMatch(text(), /is-stale|risk-stale/u, 'assessed again, fresh')
+})
+
+test('a risk line told as kept is stale where it says so, an error of one stale its own', () => {
+  const stale = { assessedAt: 1 }
+  assert.equal(riskOf({ severity: null, score: 0, findings: [], published: null }, null).stale, null)
+  assert.deepEqual(riskOf({ error: 'integrity-mismatch', stale }, null), { error: 'integrity-mismatch', detail: null, stale })
+  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
+  const now = Date.parse('2026-10-14T12:00:00Z')
+  assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
 })

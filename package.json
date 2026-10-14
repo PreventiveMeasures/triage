@@ -165,6 +165,7 @@
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
     "server-managed/repository-risk.ts",
+    "server-managed/repository-risk-assess.ts",
     "server-managed/scan-downloads.ts",
     "server-managed/session.ts",
     "server-managed/slugs.ts",
