@@ -115,8 +115,8 @@ export type RepositoryRiskLine =
 
 // The repositories a scan answered in parts told whole by a part's end: each
 // by its id, its name and a team's directories in it then, and its
-// lockfiles' keys (lockfileKey) of those read; `read`, LOCKFILE_READ then.
-export interface ScanProgress { read?: number; repos: ToldRepository[] }
+// lockfiles' keys (`${format}\0${sha}`) of those read.
+export interface ScanProgress { repos: ToldRepository[] }
 interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[] }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
@@ -146,12 +146,6 @@ export const riskCaches = (): RiskCaches => ({
 // How long the source's `listings` and `lockfiles` are read for: what
 // GitHub has at a commit or a blob doesn't change, how it is read here may.
 export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
-// How a lockfile's packages are read (lockedPackages), counted up as they
-// tell more of each, so that none kept as read before is taken, nor a part's
-// progress naming them: 2 tells which only devDependencies need (`dev`).
-const LOCKFILE_READ = 2
-// A lockfile's packages' key, as kept: by its format and blob, as read now.
-const lockfileKey = (format: LockfileFormat, sha: string) => `${format}\0${sha}\0${LOCKFILE_READ}`
 // How long a part's progress, written as it ends (`progress`), is waited on.
 const PROGRESS_WRITE_MS = 5000
 // How many kept risk lines are read of the source's `risks` at once.
@@ -282,7 +276,7 @@ async function readLockfile({ source, caches }: Scan, repo: number, opened: Open
   const at = { type: 'lockfile', repo, path, format } as const
   if (!READ_FORMATS.has(format)) return { ...at, error: 'unsupported-format' }
   try {
-    return { ...at, ...await keptRead(caches.lockfiles, source.lockfiles, lockfileKey(format, sha), async (): Promise<LockfileRead> => {
+    return { ...at, ...await keptRead(caches.lockfiles, source.lockfiles, `${format}\0${sha}`, async (): Promise<LockfileRead> => {
       const text = await opened.file(path)
       try { return { packages: lockedPackages(format, text) } } catch (error) {
         return { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
@@ -366,7 +360,7 @@ async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
   }
   if (scan.signal.aborted) return
   scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
-    lockfiles: lockfiles.flatMap((line, at) => 'packages' in line ? [lockfileKey(line.format, listed.lockfiles[at]!.sha)] : []) })
+    lockfiles: lockfiles.flatMap((line, at) => 'packages' in line ? [`${line.format}\0${listed.lockfiles[at]!.sha}`] : []) })
 }
 
 // Whether an earlier part told `repo` whole, by its name and a team's
@@ -393,10 +387,9 @@ async function readRepositories(scan: Scan) {
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
   // Those still listed: one no longer is read again should it be once more.
   const listed = new Set(repos.map(repo => repo.repoId))
-  // Those within SCAN_READ_KEPT_MS, as their lockfiles are kept that long,
-  // and read as they are now.
+  // Those within SCAN_READ_KEPT_MS, as their lockfiles are kept that long.
   const kept = await scan.source.progress?.read()
-  const progress = kept && Date.now() - kept.at < SCAN_READ_KEPT_MS && kept.value.read === LOCKFILE_READ ? kept.value.repos : []
+  const progress = kept && Date.now() - kept.at < SCAN_READ_KEPT_MS ? kept.value.repos : []
   for (const told of progress) if (listed.has(told.id)) scan.told.set(told.id, told)
   for (const repo of repos) {
     if (scan.signal.aborted) return
@@ -468,7 +461,7 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
       // Not waited on past PROGRESS_WRITE_MS, within what Vercel's limit
       // leaves past the part's: the next part then goes on from less.
       let timer
-      await Promise.race([source.progress?.write({ read: LOCKFILE_READ, repos: [...scan.told.values()] }), new Promise(resolve => { timer = setTimeout(resolve, PROGRESS_WRITE_MS) })])
+      await Promise.race([source.progress?.write({ repos: [...scan.told.values()] }), new Promise(resolve => { timer = setTimeout(resolve, PROGRESS_WRITE_MS) })])
       clearTimeout(timer)
       yield { type: 'continue' }
     }

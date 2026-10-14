@@ -1030,10 +1030,7 @@ instance's memory and for a day in the database (`repository-risk/listings`
 and `repository-risk/lockfiles` rows, as the lockfiles' packages, private
 repositories' among them, are kept in memory, told only once the reader's
 access is checked), so a scan again, or its next part on another instance,
-asks GitHub only for each repository's head and access. A lockfile's packages
-are kept as they are read (`LOCKFILE_READ`, counted up as they tell more of
-each, as `dev`): one kept as read before, and a part's progress naming it,
-isn't taken, and the lockfile is read again.
+asks GitHub only for each repository's head and access.
 The database keeps public versions'
 documents for a day, of only the fields `readNpmVersion` reads of them
 (`npm-kept.ts`, `managed_upstream_cache`), so that a scan after a restart, or
