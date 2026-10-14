@@ -27,6 +27,9 @@ export interface UpstreamCacheStore {
   // Key → value for those of `keys` that are kept.
   getUpstreamCacheEntries(keys: string[]): Promise<Map<string, string>>
   setUpstreamCacheEntry(key: string, value: string, cachedAt: number): Promise<void>
+  // Each of `entries` (key, value), as setUpstreamCacheEntry keeps one, in one
+  // statement: the last of a key given twice.
+  setUpstreamCacheEntries(entries: [key: string, value: string][], cachedAt: number): Promise<void>
   // Removes those under `prefix` (no LIKE wildcard in it) kept before `before`;
   // how many.
   deleteUpstreamCacheEntries(prefix: string, before: number): Promise<number>
@@ -40,6 +43,8 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
     ON CONFLICT (cache_key) DO UPDATE SET value = excluded.value, cached_at = excluded.cached_at
     WHERE managed_upstream_cache.cached_at <= excluded.cached_at`)
   const remove = db.prepare('DELETE FROM managed_upstream_cache WHERE cache_key LIKE ? AND cached_at < ?')
+  // setUpstreamCacheEntries's, by how many it keeps at once.
+  const setMany = new Map<number, ReturnType<ManagedSql['prepare']>>()
   return {
     async getUpstreamCacheEntry(key) {
       const row = await get.get(key) as { value: string } | undefined
@@ -52,6 +57,17 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
     },
     async setUpstreamCacheEntry(key, value, cachedAt) {
       await set.run(key, value, cachedAt)
+    },
+    async setUpstreamCacheEntries(entries, cachedAt) {
+      const rows = [...new Map(entries)]
+      if (rows.length === 0) return
+      let many = setMany.get(rows.length)
+      if (!many) {
+        setMany.set(rows.length, many = db.prepare(`INSERT INTO managed_upstream_cache (cache_key, value, cached_at) VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}
+          ON CONFLICT (cache_key) DO UPDATE SET value = excluded.value, cached_at = excluded.cached_at
+          WHERE managed_upstream_cache.cached_at <= excluded.cached_at`))
+      }
+      await many.run(...rows.flatMap(([key, value]) => [key, value, cachedAt]))
     },
     async deleteUpstreamCacheEntries(prefix, before) {
       return Number((await remove.run(`${prefix}%`, before)).changes)

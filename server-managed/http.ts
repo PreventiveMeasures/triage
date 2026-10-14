@@ -158,7 +158,7 @@ import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-revi
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
-import { npmRisk, npmRiskRemoved } from './npm-risk.ts'
+import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskRemoved } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
@@ -1404,7 +1404,14 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
   const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
   const scopes = new Map<string, Promise<boolean>>()
+  const teamScoped = (name: string) => {
+    const scope = npmPackageScope(name)
+    if (scope === null) return Promise.resolve(false)
+    if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
+    return scopes.get(scope)!
+  }
   const versions = npmVersionStore(deps.db, deps.config.debug)
+  const stores = { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug }
   const lines = repositoryRiskLines({
     repos: () => Promise.resolve(repos),
     async open(repo) {
@@ -1418,20 +1425,24 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         recheck: async () => { await reader.recheckAccess() },
       }
     },
-    teamScoped(name) {
-      const scope = npmPackageScope(name)
-      if (scope === null) return Promise.resolve(false)
-      if (!scopes.has(scope)) scopes.set(scope, deps.db.hasTeamNpmScope(scope))
-      return scopes.get(scope)!
+    teamScoped,
+    // Each package's downloads readied before it is assessed
+    // (scan-downloads.ts), so that none waits on npm's downloads API; a
+    // team's own not asked, as risk asks none of theirs.
+    downloads: {
+      async atOnce(names, ready, signal) {
+        const asked: string[] = []
+        for (const name of names) if (await teamScoped(name)) ready(name); else asked.push(name)
+        await npmReadyScanDownloads(asked, ready, stores, signal)
+      },
+      one: (name, signal) => npmReadyScanDownload(name, stores, signal),
     },
     // Public versions' documents kept in the database (npm-kept.ts), as the
     // viewer keeps them: whether npm still has one, its whole document tells
     // risk.
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
-    assess: (doc, teamScoped, signal) => npmRisk(doc, 'pick', { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
-      teamScoped, privileged: true, signal, spare: true }),
-    removed: (name, version, teamScoped, signal) => npmRiskRemoved(name, version, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug,
-      teamScoped, privileged: true, signal }),
+    assess: (doc, ownScope, signal) => npmRisk(doc, 'pick', { ...stores, teamScoped: ownScope, privileged: true, signal, spare: true }),
+    removed: (name, version, ownScope, signal) => npmRiskRemoved(name, version, { ...stores, teamScoped: ownScope, privileged: true, signal }),
     risks: riskLineStore(deps.db, RISK_KEPT_MS, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's

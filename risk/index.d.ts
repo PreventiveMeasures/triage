@@ -147,6 +147,25 @@ export interface NpmAssessment {
 
 export function assessNpm(name: string, version: string, options?: AssessNpmOptions): Promise<NpmAssessment>
 
+// Readies, at once, the downloads assessNpm asks of each of these packages
+// that can be, kept in `cache` as it keeps them, so that their assessments
+// ask npm none: those kept already, and unscoped ones, asked of npm 128 at a
+// time. `ready` is told each once its downloads are kept; the rest (scoped
+// ones, which npm answers only one by one) are left for npmReadyDownload.
+// npm asking to be asked later is thrown as an NpmRiskError
+// (`upstream-busy`), those readied by then told.
+// A cache that reads and writes many at once too (`readMany`, `writeMany`)
+// is read once and written once a lookup.
+export function npmReadyDownloads(names: string[], ready: (name: string) => void, options: { cache: CacheStore & {
+  readMany?(type: string, keys: string[]): Promise<Map<string, unknown>>
+  writeMany?(type: string, entries: [key: string, value: unknown][]): Promise<void>
+}; signal?: AbortSignal; now?: number }): Promise<void>
+
+// Readies the downloads assessNpm asks of a package, asked of npm on their
+// own where they aren't kept; npm asking to be asked later thrown as an
+// NpmRiskError (`upstream-busy`).
+export function npmReadyDownload(name: string, options: { cache: CacheStore; signal?: AbortSignal; now?: number }): Promise<void>
+
 // Whether an advisory is of malware rather than a vulnerability: OSV's of a
 // malicious package (`MAL-…`), or one such a record names (its `aliases`),
 // CWE-506, embedded malicious code, whatever its title, or a title naming

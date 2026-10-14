@@ -386,6 +386,52 @@ test('a risk line kept before risk told a score is assessed again', async () => 
   assert.deepEqual(assessed.toSorted(), ['is-number', 'is-number', 'left-pad', 'left-pad'])
 })
 
+// A repository whose lockfile locks two unscoped packages and a scoped one.
+const scopedRepo = { 1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }], files: { 'package-lock.json': `${JSON.stringify({
+  name: 'app', version: '1.0.0', lockfileVersion: 3, requires: true,
+  packages: {
+    '': { name: 'app', version: '1.0.0', dependencies: { 'left-pad': '^1.3.0', 'is-number': '^7.0.0', '@scope/slow': '^1.0.0' } },
+    ...Object.fromEntries(['left-pad@1.3.0', 'is-number@7.0.0', '@scope/slow@1.0.0'].map(spec => {
+      const at = spec.lastIndexOf('@'), name = spec.slice(0, at), version = spec.slice(at + 1)
+      return [`node_modules/${name}`, { version, resolved: `https://registry.npmjs.org/${name}/-/${name.split('/').at(-1)}-${version}.tgz`, integrity: sri(name) }]
+    })),
+  },
+}, null, 2)}\n` } } }
+
+test('a package is assessed once its downloads are readied, those readied at once going on while npm is waited on for another', async () => {
+  const told = []
+  const source = sourceOf(scopedRepo, ({ name }) => { told.push(`assess ${name}`); return Promise.resolve(noneFound) })
+  let busy = true
+  source.downloads = {
+    atOnce(names, ready) {
+      told.push(`at once ${names.join(' ')}`)
+      for (const name of names) if (!name.startsWith('@')) { told.push(`ready ${name}`); ready(name) }
+      return Promise.resolve()
+    },
+    one(name) {
+      if (busy) { busy = false; told.push(`busy ${name}`); return Promise.reject(new NpmRiskError('upstream-busy')) }
+      told.push(`ready ${name}`)
+      return Promise.resolve()
+    },
+  }
+  const risks = risksOf(await Array.fromAsync(scan(source)))
+  assert.deepEqual(risks.map(line => [line.name, line.error ?? line.score]), [['@scope/slow', 0], ['is-number', 0], ['left-pad', 0]])
+  assert.deepEqual(told.slice(0, 3), ['at once left-pad is-number @scope/slow', 'ready left-pad', 'ready is-number'])
+  const at = what => told.indexOf(what)
+  assert.ok(at('assess left-pad') > at('ready left-pad') && at('assess @scope/slow') > at('ready @scope/slow'), 'each assessed once readied')
+  assert.ok(at('assess left-pad') < at('ready @scope/slow') && at('assess is-number') < at('ready @scope/slow'), 'not after the one npm asked to wait on')
+  assert.ok(at('busy @scope/slow') < at('ready @scope/slow'), 'asked again after a wait')
+})
+
+test('packages whose downloads couldn\'t be readied are assessed all the same, asking their own', async () => {
+  const assessed = []
+  const source = sourceOf(scopedRepo, ({ name }) => { assessed.push(name); return Promise.resolve(noneFound) })
+  source.downloads = { atOnce: () => Promise.reject(new NpmRiskError('upstream-unavailable')), one: () => Promise.reject(new NpmRiskError('upstream-unavailable')) }
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(assessed.toSorted(), ['@scope/slow', 'is-number', 'left-pad'])
+  assert.deepEqual(lines.at(-1), { type: 'done' })
+})
+
 test('a lockfile’s packages of npm’s registry or a mirror are asked of npm’s advisories at once, malware’s flagged', async () => {
   const source = sourceOf({
     1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }],
