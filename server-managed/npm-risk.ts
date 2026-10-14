@@ -81,11 +81,33 @@ export interface NpmRiskStores {
   debug?: boolean | undefined
 }
 
+// A cache that reads and writes many of a type at once too, as risk's
+// readying of downloads asks (npmReadyDownloads): one read and one write of
+// the database each, not one a key, as a request's queries take turns on its
+// connection (db-neon.ts).
+export interface NpmRiskCache extends CacheStore {
+  readMany(type: string, keys: string[]): Promise<Map<string, unknown>>
+  writeMany(type: string, entries: [key: string, value: unknown][]): Promise<void>
+}
+
 // Risk's cache for one package: `isPublic` whether anyone can read it, so
 // that what is kept of it can be shared.
-export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: boolean): CacheStore {
+export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: boolean): NpmRiskCache {
   const warn = (what: string, error: unknown) => { if (debug) console.warn(`managed: risk cache ${what} failed:`, error) }
-  return {
+  const cache: NpmRiskCache = {
+    async readMany(type, keys) {
+      if (!isPublic || !IN_DATABASE.has(type)) return new Map(await Promise.all(keys.map(async key => [key, await cache.read(type, key)] as const)))
+      try {
+        const found = await db.getUpstreamCacheEntries(keys.map(key => `${type}/${key}`))
+        return new Map(keys.map(key => { const value = found.get(`${type}/${key}`); return [key, value === undefined ? null : JSON.parse(value)] }))
+      } catch (error) { warn('read', error); return new Map() }
+    },
+    async writeMany(type, entries) {
+      if (!isPublic || !IN_DATABASE.has(type)) { for (const [key, value] of entries) await cache.write(type, key, value); return }
+      const at = Date.now()
+      try { await db.setUpstreamCacheEntries(entries.map(([key, value]) => [`${type}/${key}`, JSON.stringify(value)]), at) } catch (error) { warn('write', error); return }
+      if (type === 'risk/npm/downloads') await pruneKept(db, `${type}/`, DOWNLOADS_KEPT_MS, at, error => { warn('prune', error) })
+    },
     async read(type, key) {
       if (type === 'npm/tarballs') return null
       try {
@@ -108,6 +130,7 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
       remember(`${isPublic ? '' : 'private\0'}${type}\0${key}`, value)
     },
   }
+  return cache
 }
 
 // A version's tarball as the viewer's loads read it (npm-loads.ts), its bytes

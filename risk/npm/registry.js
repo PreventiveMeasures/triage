@@ -302,29 +302,38 @@ export async function npmDownloads(name, context) {
 export async function npmReadyDownloads(names, ready, { cache, signal, now = Date.now() }) {
   const context = { cache, signal, now }
   const range = rangeAt(now)
+  const keyOf = name => `${name}@${range}`
   const unique = [...new Set(names)]
   const unscoped = []
   const ask = async part => {
     const json = await askNpm(`${DOWNLOADS}/${range}/${part.join(',')}`, {}, BULK_DOWNLOADS_BYTES, `${part.length} packages' downloads`, context)
-    for (const name of part) {
-      if (!json || !Object.hasOwn(json, name)) continue
-      await cache.write('risk/npm/downloads', `${name}@${range}`, downloadsOf(json[name]))
-      ready(name)
-    }
+    const answered = part.filter(name => json && Object.hasOwn(json, name))
+    await keepMany(cache, answered.map(name => [keyOf(name), downloadsOf(json[name])]))
+    for (const name of answered) ready(name)
   }
   // Those kept read BULK_DOWNLOADS at a time, the rest asked as they fill a
   // lookup.
   for (let at = 0; at < unique.length; at += BULK_DOWNLOADS) {
     const part = unique.slice(at, at + BULK_DOWNLOADS)
-    const held = await Promise.all(part.map(async name => await cache.read('risk/npm/downloads', `${name}@${range}`) != null))
-    for (const [i, name] of part.entries()) {
-      if (held[i]) ready(name)
+    const held = await keptMany(cache, part.map(keyOf))
+    for (const name of part) {
+      if (held.get(keyOf(name)) != null) ready(name)
       else if (!name.startsWith('@')) unscoped.push(name)
     }
     while (unscoped.length >= BULK_DOWNLOADS) await ask(unscoped.splice(0, BULK_DOWNLOADS))
   }
   // A lookup of one is answered as that package's own, not by its name.
   if (unscoped.length > 1) await ask(unscoped)
+}
+
+// Downloads kept under each of `keys`, by key, and many kept at once: in one
+// read and one write where the cache reads and writes many at once
+// (`readMany`, `writeMany`), else a key at a time.
+const keptMany = async (cache, keys) => cache.readMany ? await cache.readMany('risk/npm/downloads', keys)
+  : new Map(await Promise.all(keys.map(async key => [key, await cache.read('risk/npm/downloads', key)])))
+const keepMany = async (cache, entries) => {
+  if (cache.writeMany) await cache.writeMany('risk/npm/downloads', entries)
+  else for (const [key, value] of entries) await cache.write('risk/npm/downloads', key, value)
 }
 
 // Readies the downloads assessNpm asks of a package, asked of npm on their

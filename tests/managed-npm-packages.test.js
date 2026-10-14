@@ -16,7 +16,7 @@ import { npmVersionFields } from '../server-managed/npm-manifest.ts'
 import { npmVersionStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
-import { npmReadyScanDownload, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
+import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
@@ -461,6 +461,27 @@ test('risk\'s downloads of a public package are kept in the database, for anothe
   t.mock.timers.enable({ apis: ['Date'], now: now + 3 * DAY })
   await npmRiskCache({ db }, true).write('risk/npm/downloads', 'is-number@2026-08-01:2026-10-13', counted)
   assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'three days on, the first removed as another is written')
+})
+
+test('a scan reads the database once and writes it once a lookup of npm\'s downloads, as a request\'s queries take turns', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const queries = []
+  const counted = Object.assign(Object.create(db), {
+    getUpstreamCacheEntries: keys => { queries.push(`read ${keys.length}`); return db.getUpstreamCacheEntries(keys) },
+    getUpstreamCacheEntry: key => { queries.push('read 1'); return db.getUpstreamCacheEntry(key) },
+    setUpstreamCacheEntries: (entries, at) => { queries.push(`write ${entries.length}`); return db.setUpstreamCacheEntries(entries, at) },
+    setUpstreamCacheEntry: (key, value, at) => { queries.push('write 1'); return db.setUpstreamCacheEntry(key, value, at) },
+  })
+  t.mock.method(globalThis, 'fetch', input => Promise.resolve(Response.json(Object.fromEntries(String(input).split('/').at(-1).split(',')
+    .map(name => [name, { package: name, start: '2026-08-01', end: '2026-08-01', downloads: [{ day: '2026-08-01', downloads: 5 }] }])))))
+  const names = Array.from({ length: 130 }, (_, i) => `pkg-${i}`)
+  const ready = []
+  await npmReadyScanDownloads(names, name => { ready.push(name) }, { db: counted }, new AbortController().signal)
+  assert.deepEqual(queries, ['read 128', 'write 128', 'read 2', 'write 2'])
+  assert.equal(ready.length, 130)
+  queries.length = 0
+  await npmReadyScanDownloads(names, () => {}, { db: counted }, new AbortController().signal)
+  assert.deepEqual(queries, ['read 128', 'read 2'], 'again, all kept: read alone')
 })
 
 test('a scan keeps a scoped package\'s downloads where public ones are only where npm counts some, never a private one\'s none', async t => {

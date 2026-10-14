@@ -154,7 +154,12 @@ export function assessNpm(name: string, version: string, options?: AssessNpmOpti
 // ones, which npm answers only one by one) are left for npmReadyDownload.
 // npm asking to be asked later is thrown as an NpmRiskError
 // (`upstream-busy`), those readied by then told.
-export function npmReadyDownloads(names: string[], ready: (name: string) => void, options: { cache: CacheStore; signal?: AbortSignal; now?: number }): Promise<void>
+// A cache that reads and writes many at once too (`readMany`, `writeMany`)
+// is read once and written once a lookup.
+export function npmReadyDownloads(names: string[], ready: (name: string) => void, options: { cache: CacheStore & {
+  readMany?(type: string, keys: string[]): Promise<Map<string, unknown>>
+  writeMany?(type: string, entries: [key: string, value: unknown][]): Promise<void>
+}; signal?: AbortSignal; now?: number }): Promise<void>
 
 // Readies the downloads assessNpm asks of a package, asked of npm on their
 // own where they aren't kept; npm asking to be asked later thrown as an
