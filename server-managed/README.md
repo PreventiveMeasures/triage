@@ -926,7 +926,12 @@ lockfile locks them too. It answers Brotli-encoded ndjson as it goes
 (`repository-risk.ts` names each line): the repositories, then each
 repository's lockfiles (`findRepoLockfiles`), each npm, pnpm or Yarn 1
 lockfile's packages (`@preventive/lockfile`), and each package's risk, with
-`done` last; a response without `done` was cut short. On a serverless
+`done` last; a response without `done` was cut short. A lockfile the reader
+refuses is told so (`lockfile-unreadable`), but for a test's fixture or
+example: one under a directory of tests (`test`, `tests`, `__tests__` and
+such) and in one of fixtures or examples inside it (`fixture(s)`,
+`example(s)`), which a test may keep unreadable on purpose, is read like the
+rest but left out where it is refused. On a serverless
 deployment (Vercel, whose function answers within 300 seconds), a scan stops
 after 270 seconds, the work under way given up on and not waited for, its
 last line `continue`
