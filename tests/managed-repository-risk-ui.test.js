@@ -95,7 +95,7 @@ test('a risk line told as kept is stale where it says so, an error of one stale 
   assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
 })
 
-test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed after the rest, but malware; their advisories after the rest too', () => {
+test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed after the rest, but malware; their advisories toggled apart, malware\'s shown either way', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'done'
   const advisory = (id, name, severity, versions, malware = false) => ({ id, name, title: id, severity, url: null, range: null, versions, malware })
@@ -121,10 +121,37 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   const text = templateText(page.render())
   assert.match(text, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need it[^>]*>dev<\/span>/u)
   assert.doesNotMatch(text, />mocha<\/a><span class="risk-dev"/u)
-  assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-left-pad', false], ['GHSA-eslint', true]],
-    'malware first, then those of versions needed, however less severe')
+  assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-left-pad', false]],
+    'production\'s, malware first though only devDependencies need it')
   page._tab = 'advisories'
-  assert.match(templateText(page.render()), />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need the versions it affects[^>]*>dev</u)
+  assert.doesNotMatch(templateText(page.render()), />eslint<\/a>/u)
+  page._kind = 'development'
+  assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-eslint', true]], 'development\'s, malware among them')
+  const advisories = templateText(page.render())
+  assert.match(advisories, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need these versions[^>]*>dev</u)
+  assert.match(advisories, /aria-label="Which advisories">[^]*?aria-pressed=false[^]*?>Production \(2\)<\/button>[^]*?aria-pressed=true[^]*?>Development \(2\)<\/button><\/div><input type="search"/u,
+    'beside the search, each saying how many')
+})
+
+test('an advisory is shown with the versions of each kind it affects, and the lockfiles that told it of them: those production takes, whatever its lockfile doesn\'t say, or those only devDependencies need', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const debug = versions => ({ type: 'advisories', repo: 1, advisories: [{ id: 'GHSA-debug', name: 'debug', title: 'ReDoS', severity: 'moderate', url: null,
+    range: '<4.5.0', versions, malware: false }] })
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }, { path: 'yarn.lock', format: 'yarn' }] },
+    { type: 'lockfile', repo: 1, path: 'pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'debug', version: '4.3.4', source: 'registry' },
+      { name: 'debug', version: '2.6.9', source: 'registry', dev: true }] },
+    { type: 'lockfile', repo: 1, path: 'web/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry', dev: true }] },
+    // Yarn 1's lockfile says nothing of what devDependencies alone need.
+    { type: 'lockfile', repo: 1, path: 'yarn.lock', format: 'yarn', packages: [{ name: 'debug', version: '2.6.9', source: 'registry' }] },
+    { ...debug(['2.6.9', '4.3.4']), path: 'pnpm-lock.yaml' }, { ...debug(['4.4.0']), path: 'web/pnpm-lock.yaml' }, { ...debug(['2.6.9']), path: 'yarn.lock' },
+  ]) page._apply(line)
+  const shown = () => page._advisoryRows().map(row => [row.id, [...row.versions], row.dev, [...row.usedIn]])
+  assert.deepEqual(shown(), [['GHSA-debug', ['2.6.9', '4.3.4'], false, ['org/one/pnpm-lock.yaml', 'org/one/yarn.lock']]])
+  page._kind = 'development'
+  assert.deepEqual(shown(), [['GHSA-debug', ['4.4.0'], true, ['org/one/web/pnpm-lock.yaml']]], 'not the lockfiles of the other versions')
 })
 
 test('the progress line counts packages only devDependencies need apart from the rest, where there are any, one a later lockfile needs otherwise among the rest', () => {
