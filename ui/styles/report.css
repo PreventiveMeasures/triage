@@ -2646,6 +2646,8 @@ body.report-fullscreen {
 
   &:hover { color: var(--text); }
   &.active { color: var(--accent); border-bottom-color: var(--accent); }
+  /* An npm version's, while it opens. */
+  &:disabled:not(.active) { color: var(--muted); }
   &.bundles-tab-action {
     color: var(--accent);
     &:hover { color: var(--text); }
@@ -3969,17 +3971,15 @@ a.npm-compare-publisher {
     border: 0; border-radius: var(--ui-radius, 6px);
     font: inherit; font-size: .85rem; font-weight: 600; cursor: default;
   }
-  & :disabled { opacity: .6; }
 }
-/* Where the search says it's opening a package, or why it didn't: a line
-   kept for it, so the recent searches under it stay put. */
+/* Why the last package didn't open: a line kept for it, so the recent
+   searches under it stay put. */
 .npm-lookup-message {
   min-height: 1.5em; margin-top: .75rem;
   font-size: .85rem; line-height: 1.5;
 
   & p { margin: 0; }
 }
-.npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
 /* Recent searches, under the search: each opens again, or is removed. */
 .npm-lookup-recent {
@@ -3994,7 +3994,7 @@ a.npm-compare-publisher {
   }
   & button { padding: .25rem .5rem; color: var(--text); background: none; border: 0; font: inherit; font-size: .8rem; }
   & .npm-lookup-recent-open { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  & .npm-lookup-recent-open:hover:not(:disabled) { color: var(--accent); }
+  & .npm-lookup-recent-open:hover { color: var(--accent); }
   & .npm-lookup-recent-remove { padding-left: .1rem; color: var(--muted); line-height: 1; }
   & .npm-lookup-recent-remove:hover { color: var(--critical); }
   & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--ui-radius, 6px); }

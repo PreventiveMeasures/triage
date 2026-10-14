@@ -42,6 +42,7 @@ import {
   refreshBundleGraphTopPkgs,
   renderBundleSourceModal,
   renderBundlesList,
+  renderNpmOpening,
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
@@ -52,7 +53,7 @@ import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
-import { renderNpmLookup } from './npm-package.js'
+import { npmPackageInput, renderNpmLookup } from './npm-package.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
@@ -1883,12 +1884,14 @@ function renderImpl() {
     document.title = 'DeepView — my reviews'
     return
   }
-  // The npm viewer's lookup page; a package it opens shows as a bundle.
+  // The npm viewer's lookup page; a package it opens shows as a bundle, its
+  // header already while it opens, in the slot it then shows in.
   if (state.currentView === 'npm') {
-    const slot = ensureReportSlot('npm-slot')
-    if (slot) litRender(renderNpmLookup(), slot)
+    const opening = state.npmOpening
+    const slot = ensureReportSlot(opening ? 'bundles-slot' : 'npm-slot')
+    if (slot) litRender(opening ? renderNpmOpening(opening) : renderNpmLookup(), slot)
     showReport()
-    document.title = 'DeepView — npm packages'
+    document.title = opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages'
     return
   }
   // Packages view — cross-report aggregation by package, fed by

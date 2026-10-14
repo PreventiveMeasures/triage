@@ -138,9 +138,11 @@ export interface State {
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
-  // The npm lookup page: what it was asked for, whether that is opening,
-  // and why it did not.
-  npmLookup: { input: string; pending: boolean; error: string | null }
+  // The npm lookup page: what it was asked for, and why it did not open.
+  npmLookup: { input: string; error: string | null }
+  // The npm version opening, as its route names it, while its page shows
+  // its header (render-bundle.js renderNpmOpening).
+  npmOpening: { name: string; spec: string | null; tab: string } | null
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
@@ -658,7 +660,8 @@ export const state: State = store<State>({
   // has the sources to read it from, and dropped with any other bundle or
   // tab.
   bundleCodeFileRequest: null,
-  npmLookup: { input: '', pending: false, error: null },
+  npmLookup: { input: '', error: null },
+  npmOpening: null,
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',

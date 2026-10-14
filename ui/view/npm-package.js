@@ -50,6 +50,9 @@ export function parseNpmPackageInput(text) {
   return { name, spec }
 }
 
+// A package as typed, `spec` its version or dist-tag where it names one.
+export const npmPackageInput = (name, spec = null) => spec == null ? name : `${name}@${spec}`
+
 // The file a package's Code tab opens on: what `main` names, resolved as
 // require would for the usual spellings, else `module`, else `index.js`.
 export function npmPackageEntries(manifest, paths) {
@@ -301,9 +304,12 @@ export function navigateToNpm(packageName = null, packageSpec = null, bundleTab 
     : { view: 'npm', packageName, packageSpec, bundleTab, ...fields })
 }
 
-function showLookup(lookup) {
+// The lookup page, or a version opening (`opening`, render-bundle.js
+// renderNpmOpening).
+function showNpmPage(lookup, opening = null) {
   state.currentView = 'npm'
   state.npmLookup = lookup
+  state.npmOpening = opening
   state.currentManagedTeam = null
   state.currentManagedReport = null
   document.body.classList.remove('report-fullscreen')
@@ -311,17 +317,17 @@ function showLookup(lookup) {
 }
 
 // Open a `/npm` route: the lookup page, or a package version, which replaces
-// whatever bundle was shown. Answers the route the page ends on, the version
-// exact, or false. A version that fails to open leaves the lookup page saying
-// why, at `/npm`.
+// whatever bundle was shown, its header showing while it opens. Answers the
+// route the page ends on, the version exact, or false. A version that fails
+// to open leaves the lookup page saying why, at `/npm`.
 export async function openNpmRoute(route, isCurrent, renderSidebar) {
   const { packageName: name, packageSpec: spec = null, bundleTab: tab = 'overview' } = route
   if (name == null) {
-    showLookup({ input: state.npmLookup?.input ?? '', pending: false, error: null })
+    showNpmPage({ input: state.npmLookup?.input ?? '', error: null })
     renderSidebar()
     return { view: 'npm' }
   }
-  const input = `${name}${spec == null ? '' : `@${spec}`}`
+  const input = npmPackageInput(name, spec)
   const shown = state.currentView === 'bundles' && state.bundleDetails?.npm
   // Another tab of the version shown, as Back gives, keeps it.
   let entry = shown && state.bundles?.[0]?.npm?.name === name && state.bundles[0].npm.version === spec ? state.bundles[0] : null
@@ -330,14 +336,14 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     // Another version keeps the one shown until it opens.
     const kept = spec != null && sessionKept().has(`${name}@${spec}`)
     if (!shown && !kept) {
-      showLookup({ input, pending: true, error: null })
+      showNpmPage({ input, error: null }, { name, spec, tab })
       renderSidebar()
     }
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false
       searching = null
-      showLookup({ input, pending: false, error: err.message })
+      showNpmPage({ input, error: err.message })
       return { view: 'npm' }
     }
     if (!isCurrent() || !isManagedUiMode()) return false
@@ -364,7 +370,8 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: compareModeOf(route.compareMode) }
   } else if (compared) state.bundleCompare = compared
   state.bundleDetails = details
-  state.npmLookup = { input: entry.name, pending: false, error: null }
+  state.npmLookup = { input: entry.name, error: null }
+  state.npmOpening = null
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.reports = []
@@ -402,7 +409,7 @@ export function forgetNpmSearch(search) {
 export function searchNpm(text) {
   const parsed = parseNpmPackageInput(text)
   if (!parsed) {
-    state.npmLookup = { input: text ?? '', pending: false, error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
+    state.npmLookup = { input: text ?? '', error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
     render()
     return
   }
@@ -418,7 +425,7 @@ function submitLookup(event) {
 // The lookup page: a package to open, why the last one did not, and the
 // recent searches to open again or remove.
 export function renderNpmLookup() {
-  const lookup = state.npmLookup ?? { input: '', pending: false, error: null }
+  const lookup = state.npmLookup ?? { input: '', error: null }
   const privileged = ['admin', 'manage'].includes(state.managedSession?.role)
   const recent = npmRecentSearches()
   return html`<section class="npm-lookup" aria-labelledby="npm-lookup-title">
@@ -430,17 +437,16 @@ export function renderNpmLookup() {
       ${privileged ? nothing : 'You can open public packages, and private ones in npm scopes your teams list.'}</p>
     <form class="npm-lookup-form" @submit=${submitLookup}>
       <input name="package" type="text" aria-label="Package" autocomplete="off" spellcheck="false" maxlength="500"
-        placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''} ?disabled=${lookup.pending}>
-      <button type="submit" ?disabled=${lookup.pending}>Open</button>
+        placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''}>
+      <button type="submit">Open</button>
     </form>
     <div class="npm-lookup-message">
-      <p class="npm-lookup-status" role="status">${lookup.pending ? `Opening ${lookup.input}…` : nothing}</p>
       ${lookup.error ? html`<p class="npm-lookup-error" role="alert">${lookup.error}</p>` : nothing}
     </div>
     ${recent.length > 0 ? html`<section class="npm-lookup-recent" aria-labelledby="npm-lookup-recent-title">
       <h2 id="npm-lookup-recent-title">Recent searches</h2>
       <ul>${recent.map(search => html`<li>
-        <button type="button" class="npm-lookup-recent-open" ?disabled=${lookup.pending} @click=${() => searchNpm(search)}>${search}</button>
+        <button type="button" class="npm-lookup-recent-open" @click=${() => searchNpm(search)}>${search}</button>
         <button type="button" class="npm-lookup-recent-remove" aria-label=${`Remove ${search} from recent searches`}
           @click=${() => forgetNpmSearch(search)}>×</button>
       </li>`)}</ul>

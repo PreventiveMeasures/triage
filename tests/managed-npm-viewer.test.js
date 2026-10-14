@@ -47,7 +47,7 @@ beforeEach(() => {
   // A session of its own each, so nothing kept from another test answers.
   state.managedSession = { id: `session-${++session}`, role: 'view' }
   Object.assign(state, { currentView: 'findings', bundles: [], bundleDetails: null, selectedBundle: null, bundleDetailsTab: 'overview',
-    bundleSourceFile: null, bundleCodeFileRequest: null, npmLookup: { input: '', pending: false, error: null }, reports: [], currentManagedTeam: 'team' })
+    bundleSourceFile: null, bundleCodeFileRequest: null, npmLookup: { input: '', error: null }, npmOpening: null, reports: [], currentManagedTeam: 'team' })
   globalThis.document = { body: { classList: { remove() {} } }, querySelector: () => null }
 })
 
@@ -230,7 +230,8 @@ test('a version shows as a bundle of its files, sized by their bytes, text alone
 
 test('opening a version shows it in the bundle view, and its route names the exact version', async () => {
   const rendered = []
-  const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: null, bundleTab: 'code', file: 2, line: 4 }, () => true, () => rendered.push(state.currentView))
+  const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: null, bundleTab: 'code', file: 2, line: 4 }, () => true,
+    () => rendered.push([state.currentView, state.npmOpening]))
   assert.deepEqual(requests, [['@scope/pkg', 'latest']])
   assert.equal(state.currentView, 'bundles')
   assert.equal(state.selectedBundle, 'sha512-pkg')
@@ -239,13 +240,18 @@ test('opening a version shows it in the bundle view, and its route names the exa
   assert.equal(state.currentManagedTeam, null)
   assert.equal(state.bundles[0].npm.version, '1.2.3')
   assert.equal(managedRoutePath(route), '/npm/@scope/pkg@1.2.3/code/2#L4')
-  assert.deepEqual(rendered, ['npm', 'bundles'], 'the lookup page says what opens meanwhile')
+  assert.deepEqual(rendered, [['npm', { name: '@scope/pkg', spec: null, tab: 'code' }], ['bundles', null]],
+    'its header shows meanwhile, on the tab its route names')
   // Another tab of the version shown keeps it, without asking again.
   const details = state.bundleDetails
   const overview = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'overview' }, () => true, () => {})
   assert.equal(requests.length, 1)
   assert.equal(state.bundleDetails, details)
   assert.equal(managedRoutePath(overview), '/npm/@scope/pkg@1.2.3')
+  answer = () => Promise.resolve({ ...data, version: '2.0.0', integrity: 'sha512-other' })
+  rendered.length = 0
+  await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '2.0.0' }, () => true, () => rendered.push([state.currentView, state.npmOpening]))
+  assert.deepEqual(rendered, [['bundles', null]], 'another version keeps the one shown until it opens')
 })
 
 test('a version that fails to open leaves the lookup page saying why', async () => {
@@ -253,20 +259,22 @@ test('a version that fails to open leaves the lookup page saying why', async () 
   const route = await openNpmRoute({ view: 'npm', packageName: 'missing', packageSpec: '1.0.0', bundleTab: 'overview' }, () => true, () => {})
   assert.deepEqual(route, { view: 'npm' })
   assert.equal(state.currentView, 'npm')
-  assert.deepEqual(state.npmLookup, { input: 'missing@1.0.0', pending: false, error: 'No such package version, or it is not available to you.' })
+  assert.deepEqual(state.npmLookup, { input: 'missing@1.0.0', error: 'No such package version, or it is not available to you.' })
+  assert.equal(state.npmOpening, null)
   // A navigation that moved on meanwhile takes nothing over.
   state.currentView = 'findings'
   assert.equal(await openNpmRoute({ view: 'npm', packageName: 'missing', bundleTab: 'overview' }, () => false, () => {}), false)
-  assert.equal(state.currentView, 'npm', 'only the lookup page it showed while loading')
+  assert.equal(state.currentView, 'npm')
+  assert.deepEqual(state.npmOpening, { name: 'missing', spec: null, tab: 'overview' }, 'only the page it showed while opening')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openNpmRoute({ view: 'npm', packageName: 'missing', bundleTab: 'overview' }, () => true, () => {}), false)
 })
 
 test('the lookup page keeps what it was last asked for', async () => {
-  state.npmLookup = { input: 'lodash', pending: false, error: 'old' }
+  state.npmLookup = { input: 'lodash', error: 'old' }
   assert.deepEqual(await openNpmRoute({ view: 'npm' }, () => true, () => {}), { view: 'npm' })
   assert.equal(state.currentView, 'npm')
-  assert.deepEqual(state.npmLookup, { input: 'lodash', pending: false, error: null })
+  assert.deepEqual(state.npmLookup, { input: 'lodash', error: null })
 })
 
 test('history commits a dist-tag link at the version it opened', async () => {
