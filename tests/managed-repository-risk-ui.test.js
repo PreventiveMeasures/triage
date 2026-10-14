@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findingsOf, malwareOf, malwareSaid } from '../ui/managed/repository-risk.js'
+import { findingsOf, malwareOf, malwareSaid, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -27,25 +27,41 @@ test('a package’s Malware is told once, of npm’s advisories and of its packa
   assert.deepEqual(malwareSaid(row(new Set(['GHSA-2v46-p5h4-248w']), { error: 'package-not-found' })), ['GHSA-2v46-p5h4-248w'], 'the advisories\' alone')
 })
 
-test('a package is told by its findings alone, without a risk of its own; lockfiles a line a repository, all in the page’s scroll pane', () => {
+test('a package is told by its risk score, in its level’s color, and its findings; lockfiles a line a repository, all in the page’s scroll pane', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'done'
   for (const line of [
     { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }, { id: 2, fullName: 'org/two' }] },
     { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }] },
     { type: 'repo', id: 2, error: 'github-unreachable', detail: 'listing its lockfiles: TimeoutError: The operation was aborted due to timeout, after 30.0s' },
-    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'chalk', version: '5.6.1', source: 'registry' }, { name: 'left-pad', version: '1.3.0', source: 'registry' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' },
+      { name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'chalk', version: '5.6.1', source: 'registry' }] },
     { type: 'lockfile', repo: 1, path: 'web/pnpm-lock.yaml', format: 'pnpm', error: 'lockfile-unreadable', detail: 'not YAML' },
-    { type: 'risk', name: 'chalk', version: '5.6.1', published: null, severity: 'critical', findings: [{ id: 'held-exfiltration', severity: 'critical' }, { id: 'too-new', severity: 'high' }] },
+    { type: 'risk', name: 'chalk', version: '5.6.1', published: null, severity: 'critical', score: 62, findings: [{ id: 'held-exfiltration', severity: 'critical' }, { id: 'too-new', severity: 'high' }] },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'high', score: 7, findings: [{ id: 'publisher', severity: 'high' }] },
     { type: 'risk', name: 'left-pad', version: '1.3.0', error: 'upstream-unavailable', detail: 'fetch failed' },
   ]) page._apply(line)
   const text = templateText(page.render())
   assert.match(text, /<div class="manage-list">[\s\S]*Lockfiles[\s\S]*<th class="risk-findings-column">Findings<\/th>/u, 'lockfiles, then the results, in one scroll pane')
-  assert.doesNotMatch(text, /<th>Risk<\/th>|>Critical</u, 'no risk told of a package, nor a finding\'s severity as one')
+  assert.match(text, />Risk<\/span><\/th><th class="risk-findings-column">Findings/u)
+  assert.match(text, /<span class=risk-score risk-high>62<\/span>/u, 'orange from 50')
+  assert.match(text, /<span class=risk-score risk-low>7<\/span>/u, 'plain under 25, however severe its findings')
+  assert.deepEqual(page._rows().map(row => row.name), ['chalk', 'debug', 'left-pad'], 'the riskiest first, one that couldn\'t be told after')
   assert.equal(text.split('>org/one<').length - 1, 1, 'a repository named once, its lockfiles beside it')
-  assert.match(text, /package-lock\.json<\/span><span class="risk-lockfile-meta">npm · 2 packages/u)
+  assert.match(text, /package-lock\.json<\/span><span class="risk-lockfile-meta">npm · 3 packages/u)
   assert.match(text, /data-tooltip=not YAML>Unreadable/u)
   assert.match(text, /data-tooltip=listing its lockfiles: TimeoutError[^>]*>GitHub unreachable/u)
   assert.match(text, />Exfiltration host<\/li>[\s\S]*>Too new<\/li>/u)
   assert.match(text, /data-tooltip=fetch failed>npm unavailable/u, 'a package risk couldn\'t be told of says why where its findings are')
+})
+
+test('a package’s risk score is risk’s, malware’s 100 as npm’s advisories tell it too, and none where it isn’t told', () => {
+  const row = (risk, malware) => ({ name: 'chalk', version: '5.6.1', source: 'registry', risk, ...malware ? { malware: new Set(['GHSA-2v46-p5h4-248w']) } : {} })
+  assert.equal(scoreOf(row({ severity: 'high', score: 38, findings: [] })), 38)
+  assert.equal(scoreOf(row({ severity: null, score: 0, findings: [] })), 0)
+  assert.equal(scoreOf(row({ severity: 'high', score: 38, findings: [] }, true)), 100, 'npm\'s advisories of malware')
+  assert.equal(scoreOf(row({ error: 'version-not-found' }, true)), 100, 'npm deleted the version, as it does malware\'s')
+  assert.equal(scoreOf(row(null)), null, 'not yet told')
+  assert.equal(scoreOf(row({ error: 'upstream-unavailable' })), null)
+  assert.equal(scoreOf(row({ error: 'integrity-mismatch' }, true)), null, 'not npm\'s artifact')
 })

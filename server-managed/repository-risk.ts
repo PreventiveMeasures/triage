@@ -72,7 +72,7 @@ export interface OpenedRepository {
   recheck(): Promise<void>
 }
 
-type Assessment = { published: string | null; findings: { id: string; severity: Severity; takenDown?: unknown }[] }
+type Assessment = { published: string | null; findings: { id: string; severity: Severity; takenDown?: unknown }[]; score: { score: number } }
 
 export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   repos(): Promise<R[]>
@@ -100,13 +100,14 @@ type AdvisoryRow = Advisory & { malware: boolean }
 type RiskFailure = { error: string; detail?: string }
 
 // A risk line is of npm's package of its name and version, or, with an
-// `integrity`, of a mirror's that its lockfiles hold to it.
+// `integrity`, of a mirror's that its lockfiles hold to it; its `score` risk's
+// of it, out of 100 (assessNpm `score`, risk/npm/score.js).
 export type RepositoryRiskLine =
   | { type: 'repos'; repos: { id: number; fullName: string }[] }
   | ({ type: 'repo'; id: number } & ({ commit: string; lockfiles: { path: string; format: LockfileFormat }[] } | RiskFailure))
   | ({ type: 'lockfile'; repo: number; path: string; format: LockfileFormat } & ({ packages: LockedPackage[] } | RiskFailure))
   | ({ type: 'risk'; name: string; version: string; integrity?: string }
-    & ({ published: string | null; severity: Severity | null; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
+    & ({ published: string | null; severity: Severity | null; score: number; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | { type: 'done' }
 
@@ -198,9 +199,9 @@ async function assess({ source, signal }: Scan, pkg: AssessedPackage, teamScoped
     try {
       const read = doc ??= await documentOf(source, pkg, signal)
       if (!(read instanceof NpmPackageError) && pkg.integrity !== undefined && !pkg.integrity.split(/\s+/u).includes(read.dist.integrity)) return { ...at, error: 'integrity-mismatch' }
-      const { published, findings } = read instanceof NpmPackageError ? await removedOf(source, pkg, teamScoped, signal, read) : await assessedOf(source, pkg, teamScoped, signal, read)
+      const { published, findings, score } = read instanceof NpmPackageError ? await removedOf(source, pkg, teamScoped, signal, read) : await assessedOf(source, pkg, teamScoped, signal, read)
       const told = findings.map(({ id, severity, takenDown }) => ({ id, severity, ...takenDown === true ? { takenDown: true as const } : {} }))
-      return { ...at, published, severity: highestSeverity(told), findings: told }
+      return { ...at, published, severity: highestSeverity(told), score: score.score, findings: told }
     } catch (error) {
       if (signal.aborted) return null
       if (!isBusy(error) || attempt >= BUSY_RETRIES) return { ...at, ...failureOf(error) }
@@ -243,7 +244,8 @@ async function assessed(scan: Scan, pkg: AssessedPackage): Promise<RiskLine | nu
   try { teamScoped = await scan.source.teamScoped(pkg.name) } catch (error) { return { type: 'risk', ...pkg, ...failureOf(error) } }
   const key = `${pkg.name}@${pkg.version}\0${pkg.integrity ?? ''}\0${teamScoped}`
   const kept = scan.caches.risks.get(key) ?? await keptLine(scan, key)
-  if (kept && Date.now() - kept.at < RISK_KEPT_MS) return kept.line
+  // One kept before risk told a score (assessNpm `score`) is asked again.
+  if (kept && Date.now() - kept.at < RISK_KEPT_MS && ('error' in kept.line || typeof kept.line.score === 'number')) return kept.line
   const line = await assess(scan, pkg, teamScoped)
   if (line && (!('error' in line) || line.error === 'integrity-mismatch')) {
     const at = Date.now()

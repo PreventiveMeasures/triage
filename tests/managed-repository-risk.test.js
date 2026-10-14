@@ -159,6 +159,8 @@ function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false, gone
 // A scan's lines, read with caches of its own unless given.
 const scan = (source, signal = new AbortController().signal, caches = riskCaches()) => repositoryRiskLines(source, signal, caches)
 
+// An assessment that finds nothing, its score none (assessNpm `score`).
+const noneFound = { published: null, findings: [], score: { score: 0 } }
 const onePnpmRepo = { 1: { fullName: 'org/one', lockfiles: [{ path: 'pnpm-lock.yaml', format: 'pnpm' }], files: { 'pnpm-lock.yaml': pnpmLockfile } } }
 const risksOf = lines => lines.filter(line => line.type === 'risk').toSorted((a, b) => a.name.localeCompare(b.name) || (a.integrity ?? '').localeCompare(b.integrity ?? ''))
 
@@ -174,7 +176,8 @@ test('a scan tells each repository’s lockfiles and packages, and each registry
     await setImmediate()
     if (name === 'is-number') throw new NpmRiskError('package-not-found')
     return { published: '2020-01-01T00:00:00.000Z', findings: name === 'left-pad'
-      ? [{ id: 'deprecated', severity: 'critical', message: 'use padStart' }, { id: 'popularity', severity: 'high', tier: 30000 }] : [] }
+      ? [{ id: 'deprecated', severity: 'critical', message: 'use padStart' }, { id: 'popularity', severity: 'high', tier: 30000 }] : [],
+    score: { score: name === 'left-pad' ? 60 : 0 } }
   })
   const lines = await Array.fromAsync(scan(source))
   const of = type => lines.filter(line => line.type === type)
@@ -196,9 +199,9 @@ test('a scan tells each repository’s lockfiles and packages, and each registry
   assert.deepEqual(source.versions.toSorted(), ['is-number@7.0.0', 'left-pad@1.3.0', 'mirrored@2.0.0'])
   assert.deepEqual(risksOf(lines), [
     { type: 'risk', name: 'is-number', version: '7.0.0', error: 'package-not-found' },
-    { type: 'risk', name: 'left-pad', version: '1.3.0', published: '2020-01-01T00:00:00.000Z', severity: 'critical',
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: '2020-01-01T00:00:00.000Z', severity: 'critical', score: 60,
       findings: [{ id: 'deprecated', severity: 'critical' }, { id: 'popularity', severity: 'high' }] },
-    { type: 'risk', name: 'mirrored', version: '2.0.0', integrity: sri('mirrored'), published: '2020-01-01T00:00:00.000Z', severity: null, findings: [] },
+    { type: 'risk', name: 'mirrored', version: '2.0.0', integrity: sri('mirrored'), published: '2020-01-01T00:00:00.000Z', severity: null, score: 0, findings: [] },
   ])
 })
 
@@ -213,17 +216,17 @@ test('a mirror’s copy of a package npm’s registry gives too is held to npm�
   const source = sourceOf({
     ...onePnpmRepo,
     2: { fullName: 'org/two', lockfiles: [{ path: 'package-lock.json', format: 'npm' }], files: { 'package-lock.json': tampered } },
-  }, () => Promise.resolve({ published: null, findings: [] }))
+  }, () => Promise.resolve(noneFound))
   assert.deepEqual(risksOf(await Array.fromAsync(scan(source))), [
-    { type: 'risk', name: 'is-number', version: '7.0.0', published: null, severity: null, findings: [] },
-    { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, findings: [] },
+    { type: 'risk', name: 'is-number', version: '7.0.0', published: null, severity: null, score: 0, findings: [] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] },
     { type: 'risk', name: 'left-pad', version: '1.3.0', integrity: sri('tampered'), error: 'integrity-mismatch' },
   ])
 })
 
 test('a repository whose lockfiles can’t be listed is told so, and the rest are read', async () => {
   const source = sourceOf({ 1: { fullName: 'org/limited', lockfilesError: 'github-rate-limited' }, 2: onePnpmRepo[1] },
-    () => Promise.resolve({ published: null, findings: [] }))
+    () => Promise.resolve(noneFound))
   const lines = await Array.fromAsync(scan(source))
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(({ id, error }) => [id, error]), [[1, 'github-rate-limited'], [2, undefined]])
   assert.deepEqual(lines.at(-1), { type: 'done' })
@@ -252,7 +255,7 @@ test('a repository whose access is gone once it is read tells nothing of it', as
 test('an assessment refused as busy is asked again, its version read once', async () => {
   let asked = 0
   const source = sourceOf(onePnpmRepo, ({ name }) => name === 'left-pad' && asked++ === 0
-    ? Promise.reject(new NpmPackageError(429, 'npm-busy')) : Promise.resolve({ published: null, findings: [] }))
+    ? Promise.reject(new NpmPackageError(429, 'npm-busy')) : Promise.resolve(noneFound))
   const risks = risksOf(await Array.fromAsync(scan(source)))
   assert.equal(asked, 2)
   assert.deepEqual(source.versions.toSorted(), ['is-number@7.0.0', 'left-pad@1.3.0'])
@@ -264,7 +267,7 @@ test('a package npm asks to ask later is asked again; risk\'s failure told with 
   const source = sourceOf(onePnpmRepo, ({ name }) => {
     if (name === 'left-pad' && asked++ === 0) return Promise.reject(new NpmRiskError('upstream-busy', 'npm answered 429 for left-pad\'s downloads'))
     if (name === 'is-number') return Promise.reject(new NpmRiskError('upstream-unavailable', 'npm couldn\'t be asked for is-number: fetch failed'))
-    return Promise.resolve({ published: null, findings: [] })
+    return Promise.resolve(noneFound)
   })
   const risks = risksOf(await Array.fromAsync(scan(source)))
   assert.equal(asked, 2)
@@ -306,14 +309,14 @@ test('a scan stopped ends its lines at once and gives up the assessments under w
 test('a team’s repository is read for the lockfiles in its directories, or above them', async () => {
   const paths = ['pnpm-lock.yaml', 'packages/pnpm-lock.yaml', 'packages/app/pnpm-lock.yaml', 'packages/app/deep/pnpm-lock.yaml', 'packages/other/pnpm-lock.yaml', 'packages/application/pnpm-lock.yaml']
   const source = sourceOf({ 1: { fullName: 'org/mono', paths: ['packages/app'], lockfiles: paths.map(path => ({ path, format: 'pnpm' })),
-    files: Object.fromEntries(paths.map(path => [path, pnpmLockfile])) } }, () => Promise.resolve({ published: null, findings: [] }))
+    files: Object.fromEntries(paths.map(path => [path, pnpmLockfile])) } }, () => Promise.resolve(noneFound))
   const repo = (await Array.fromAsync(scan(source))).find(line => line.type === 'repo')
   assert.deepEqual(repo.lockfiles.map(({ path }) => path), paths.slice(0, 4))
 })
 
 test('a scan again reads what one before it kept: lockfiles by commit and blob, and a package’s risk and a lockfile’s advisories for the hour', async () => {
   const caches = riskCaches()
-  const source = sourceOf(onePnpmRepo, () => Promise.resolve({ published: null, findings: [] }))
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve(noneFound))
   const first = await Array.fromAsync(scan(source, undefined, caches))
   assert.deepEqual([source.listed.length, source.read.length, source.versions.length, source.audited.length], [1, 1, 2, 1])
   for (const asked of [source.opened, source.listed, source.read, source.versions, source.audited]) asked.length = 0
@@ -329,18 +332,18 @@ test('a scan again reads what one before it kept: lockfiles by commit and blob, 
 })
 
 test('a version npm has no document of is told as risk tells one it removed: malware where its package was taken down, else not on npm', async () => {
-  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] }
+  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }], score: { score: 100 } }
   const source = sourceOf(onePnpmRepo, assert.fail, { gone: { 'left-pad@1.3.0': takenDown, 'is-number@7.0.0': null } })
   assert.deepEqual(risksOf(await Array.fromAsync(scan(source))), [
     { type: 'risk', name: 'is-number', version: '7.0.0', error: 'package-not-found' },
-    { type: 'risk', name: 'left-pad', version: '1.3.0', published: '2018-04-09T01:10:45.796Z', severity: 'critical', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: '2018-04-09T01:10:45.796Z', severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
   ])
 })
 
 test('a version whose document was kept, but that risk finds npm since removed, is told as one npm removed', async () => {
-  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }] }
+  const takenDown = { published: '2018-04-09T01:10:45.796Z', findings: [{ id: 'malware', severity: 'critical', takenDown: true }], score: { score: 100 } }
   const source = sourceOf(onePnpmRepo, ({ name, version }) => name === 'left-pad'
-    ? Promise.reject(new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)) : Promise.resolve({ published: null, findings: [] }))
+    ? Promise.reject(new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)) : Promise.resolve(noneFound))
   source.removed = (name, version) => Promise.resolve({ ...takenDown, name, version })
   assert.deepEqual(risksOf(await Array.fromAsync(scan(source))).map(line => [line.name, line.error ?? line.severity]), [['is-number', null], ['left-pad', 'critical']])
 })
@@ -357,7 +360,7 @@ function lineStore() {
 test('risk lines are kept where the source keeps them, beyond an instance, for as long as a scan keeps them', async t => {
   const risks = lineStore()
   const assessed = []
-  const assess = ({ name }) => { assessed.push(name); return Promise.resolve({ published: null, findings: [] }) }
+  const assess = ({ name }) => { assessed.push(name); return Promise.resolve(noneFound) }
   const first = risksOf(await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks }))))
   assert.deepEqual(assessed.toSorted(), ['is-number', 'left-pad'])
   assert.equal(risks.writes.length, 2)
@@ -372,11 +375,22 @@ test('risk lines are kept where the source keeps them, beyond an instance, for a
   assert.equal(assessed.length, 4, 'an hour on, assessed again')
 })
 
+test('a risk line kept before risk told a score is assessed again', async () => {
+  const risks = lineStore()
+  const assessed = []
+  const assess = ({ name }) => { assessed.push(name); return Promise.resolve(noneFound) }
+  await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, assess), { risks })))
+  for (const kept of risks.rows.values()) delete kept.value.score
+  const again = Object.assign(sourceOf(onePnpmRepo, assess), { risks })
+  assert.deepEqual(risksOf(await Array.fromAsync(scan(again))).map(line => [line.name, line.score]), [['is-number', 0], ['left-pad', 0]])
+  assert.deepEqual(assessed.toSorted(), ['is-number', 'is-number', 'left-pad', 'left-pad'])
+})
+
 test('a lockfile’s packages of npm’s registry or a mirror are asked of npm’s advisories at once, malware’s flagged', async () => {
   const source = sourceOf({
     1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }],
       files: { 'package-lock.json': npmLockfile, 'web/pnpm-lock.yaml': pnpmLockfile } },
-  }, () => Promise.resolve({ published: null, findings: [] }), { advisories: {
+  }, () => Promise.resolve(noneFound), { advisories: {
     'left-pad': [{ id: 'GHSA-left-pad', title: 'Malware in left-pad', severity: 'high', cwe: ['CWE-506'], versions: ['1.3.0'] }],
     'is-number': [{ id: 'GHSA-is-number', title: 'ReDoS in is-number', severity: 'moderate', cwe: ['CWE-1333'], versions: ['7.0.0', '6.0.0'] }],
   } })
@@ -395,7 +409,7 @@ test('a lockfile’s packages of npm’s registry or a mirror are asked of npm�
 })
 
 test('a lockfile whose advisories npm doesn’t answer is told so, and the scan goes on', async () => {
-  const source = sourceOf(onePnpmRepo, () => Promise.resolve({ published: null, findings: [] }), { advisoriesFail: true })
+  const source = sourceOf(onePnpmRepo, () => Promise.resolve(noneFound), { advisoriesFail: true })
   const lines = await Array.fromAsync(scan(source))
   assert.deepEqual(lines.find(line => line.type === 'advisories'), { type: 'advisories', repo: 1, path: 'pnpm-lock.yaml', error: 'upstream-unavailable' })
   assert.deepEqual(lines.at(-1), { type: 'done' })
