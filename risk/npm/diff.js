@@ -30,14 +30,18 @@ const treeData = (content, at) => typeof content === 'string' ? `\0text\0${conte
 // capital, as a lowercase word (`index-client.js`, `lodash.debounce.js`) has
 // neither. Its hash the last 8 or more characters (`vendor-react-DQ4mN2sx`'s
 // stem `vendor-react`), or, `whole`, all from its first separator on, as a
-// longer hash may hold a `-` (`index-AbCdEf12-GhIjKl34`'s stem `index`).
+// longer hash may hold a `-` (`index-AbCdEf12-GhIjKl34`'s stem `index`): 16
+// or more characters, as only a longer hash is, none of its parts a
+// lowercase word, as a chunk's name is (`vendor-react-DQ4mN2sx`'s `react`),
+// its length in its key, as a build writes its hashes alike.
 const HASHED_NAME = /^(.+)[-.]([\w-]{8,32})((?:\.[A-Za-z\d]+)+)$/u
 const WHOLE_HASHED_NAME = /^(.+?)[-.]([\w-]{8,32})((?:\.[A-Za-z\d]+)+)$/u
+const WORD_PART = /(?:^|-)[a-z]{3,}(?=-|$)/u
 function hashedKey(path, whole = false) {
   const at = path.lastIndexOf('/') + 1
   const [, stem, hash, extension] = (whole ? WHOLE_HASHED_NAME : HASHED_NAME).exec(path.slice(at)) ?? []
-  if (!hash || !/[\dA-Z]/u.test(hash)) return null
-  return `${path.slice(0, at)}${stem}\0${extension}`
+  if (!hash || !/[\dA-Z]/u.test(hash) || (whole && (hash.length < 16 || WORD_PART.test(hash)))) return null
+  return `${path.slice(0, at)}${stem}\0${whole ? hash.length : ''}\0${extension}`
 }
 
 // `onlyOther`, the files the open version (`other`) adds, `{ path }` each, and

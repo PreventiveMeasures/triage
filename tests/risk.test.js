@@ -738,19 +738,21 @@ test('a build\'s content-hashed file paired with the one it replaces by its name
   const module = 'export function mod() { return 42 }\n'.repeat(20)
   const base = side({ 'assets/index-CyWAfh-p.js': 'one', 'main.3f2a9c1b.js': 'two', 'recorder/mod-CwYYHbcZ.js': module,
     'chunk-Ab12cd34.js': 'three', 'chunk-Ef56gh78.js': 'four', 'lodash.debounce.js': 'five', 'long/index-AbCdEf12-GhIjKl34.js': 'eleven',
-    'vendor/vendor-react-DQ4mN2sx.js': 'twelve', 'vendor/vendor-lodash-Bx7kP0qa.js': 'thirteen' })
+    'vendor/vendor-react-DQ4mN2sx.js': 'twelve', 'vendor/vendor-lodash-Bx7kP0qa.js': 'thirteen', 'swap/vendor-react-DQ4mN2sx.js': 'seventeen',
+    'swap-dom/vendor-react-dom-AbCd1234.js': 'eighteen' })
   const other = side({ 'assets/index-hRvO4yU2.js': 'six', 'main.9d8e7f6a.js': 'seven', 'recorder/mod-CVQWJZAA.js': `${module}// changed\n`, 'dashboard/mod-CQ8RZGBm.js': module,
     'chunk-Gh90ij12.js': 'eight', 'chunk-Kl34mn56.js': 'nine', 'lodash.throttle.js': 'ten', 'long/index-Zy98XwVu-TsRq7654.js': 'fourteen',
-    'vendor/vendor-react-Hm3sT9wE.js': 'fifteen', 'vendor/vendor-lodash-Ny2cR5vb.js': 'sixteen' })
+    'vendor/vendor-react-Hm3sT9wE.js': 'fifteen', 'vendor/vendor-lodash-Ny2cR5vb.js': 'sixteen', 'swap/vendor-lodash-Ny2cR5vb.js': 'nineteen',
+    'swap-dom/vendor-lodash-es-XyZw5678.js': 'twenty' })
   assert.deepEqual(npmFilesDiff(base, other), {
-    onlyOther: ['chunk-Gh90ij12.js', 'chunk-Kl34mn56.js', 'lodash.throttle.js'].map(path => ({ path })),
+    onlyOther: ['chunk-Gh90ij12.js', 'chunk-Kl34mn56.js', 'lodash.throttle.js', 'swap/vendor-lodash-Ny2cR5vb.js', 'swap-dom/vendor-lodash-es-XyZw5678.js'].map(path => ({ path })),
     changed: [{ path: 'assets/index-hRvO4yU2.js', renamedFrom: 'assets/index-CyWAfh-p.js', modified: true }, { path: 'main.9d8e7f6a.js', renamedFrom: 'main.3f2a9c1b.js', modified: true },
       { path: 'recorder/mod-CVQWJZAA.js', renamedFrom: 'recorder/mod-CwYYHbcZ.js', modified: true },
       { path: 'vendor/vendor-react-Hm3sT9wE.js', renamedFrom: 'vendor/vendor-react-DQ4mN2sx.js', modified: true },
       { path: 'vendor/vendor-lodash-Ny2cR5vb.js', renamedFrom: 'vendor/vendor-lodash-Bx7kP0qa.js', modified: true },
       { path: 'long/index-Zy98XwVu-TsRq7654.js', renamedFrom: 'long/index-AbCdEf12-GhIjKl34.js', modified: true },
       { path: 'dashboard/mod-CQ8RZGBm.js', renamedFrom: 'recorder/mod-CwYYHbcZ.js', modified: false }],
-  }, 'Vite\'s and webpack\'s, chunks named after a module each by its own, a longer hash with a `-` whole; one paired by its name a copy\'s by its content too; not two by one name, nor a word')
+  }, 'Vite\'s and webpack\'s, chunks named after a module each by its own, a longer hash with a `-` whole; one paired by its name a copy\'s by its content too; not two by one name, nor a word, nor one chunk for another')
 })
 
 test('a content-hashed file rebuilt large, holding what it held, is neither new code nor large code', async t => {
