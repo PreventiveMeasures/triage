@@ -110,11 +110,16 @@ const typesStubOf = ({ json, npm }, name, spec) => npm?.name === typesOf(name) &
 // DefinitelyTyped (`@types/`), imported by another name, where no one else
 // publishes; nor tslib, TypeScript's helpers, which a package compiled
 // with them inlined names all the same, as a third of popular packages
-// naming a dependency nothing imports do; nor the package a stub of
+// naming a dependency nothing imports do; each where npm installs that
+// package from its registry (installsAs), not another under its name
+// (`"tslib": "npm:other@1"`, a repository); nor the package a stub of
 // DefinitelyTyped's types of it depends on (typesStubOf), with no code to
 // import it.
+const installsAs = (name, spec) => npmRegistrySpec(spec) ? npmAlias(spec)?.name ?? name : null
 export function npmDependencyUnimported(details, { name, kind, range, to }) {
-  if (!details?.json || kind === 'peer' || name.startsWith('@types/') || name === 'tslib' || typesStubOf(details, name, to ?? range)) return false
+  const installs = installsAs(name, to ?? range)
+  if (!details?.json || kind === 'peer' || (name.startsWith('@types/') && installs?.startsWith('@types/')) || (name === 'tslib' && installs === 'tslib')
+    || typesStubOf(details, name, to ?? range)) return false
   const { whole, parts, commands } = importsOf(details)
   return !whole.has(name) && ![...name.slice(1).matchAll(/[-/]/gu)].some(({ index }) => parts.has(name.slice(0, index + 2)))
     && !commands.some(command => commandNames(command, name))
