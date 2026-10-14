@@ -13,7 +13,7 @@ import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
 import { SEVERITIES } from '../files/stamps.js'
-import { npmFoundAdded, npmRunsCodeFlags, npmRunsCodeWithout } from '../files/runs-code.js'
+import { CREDENTIAL_TAGS, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeTagged, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
 import { npmFilesDiff } from './diff.js'
 import { npmInstallScripts } from './install-scripts.js'
@@ -21,7 +21,8 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 
 // What the open version does to its files that calls for a look, as red
 // findings: code that runs beyond itself (runs-code.js), new to a file it
-// adds or changes, the kinds with their lines (`runs-code`); a service under
+// adds or changes, the kinds with their lines (`runs-code`), those reaching
+// for credentials apart (CREDENTIAL_TAGS, `credentials`); a service under
 // one of the hosts' tags new to a file it adds or changes (hosts.js
 // npmExfiltration), a finding a tag a level higher than its own
 // (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
@@ -33,7 +34,7 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // the one compared with's was text, or no code, or none (npmBinaryCode,
 // `binary-code`). Then in orange what any of its files runs beyond itself that
 // `runs-code` doesn't name, kept from the version compared with
-// (`kept-runs-code`). A renamed file by its old path; one renamed alone,
+// (`kept-runs-code`, `kept-credentials`). A renamed file by its old path; one renamed alone,
 // unchanged, holds what it held. A file become unreadable calls for less
 // where its source map was rebuilt with it (`rebuilt`, rebuiltWithMap), as a
 // build minifies a file and writes its map together, and in a `major`
@@ -51,8 +52,11 @@ function npmFileFindings(base, other, files, major) {
   const exfiltration = gained('exfiltration'), runsCode = gained('runsCode')
   const flagged = new Set(runsCode.flatMap(row => npmRunsCodeFlags(row.added).map(({ name }) => name)))
   const kept = [...bundleFilesAsMap(other).keys()].map(path => ({ path, found: npmRunsCodeWithout(npmVersionFileRisk(other, path).runsCode, flagged) })).filter(row => row.found)
+  // Code that runs beyond itself, or of the kinds reaching for credentials.
+  const ofKinds = (rows, key, of) => rows.map(row => ({ ...row, [key]: of(row[key], CREDENTIAL_TAGS) })).filter(row => row[key])
   return [
-    { id: 'runs-code', severity: 'critical', files: runsCode },
+    { id: 'runs-code', severity: 'critical', files: ofKinds(runsCode, 'added', npmRunsCodeWithout) },
+    { id: 'credentials', severity: 'critical', files: ofKinds(runsCode, 'added', npmRunsCodeTagged) },
     ...[...HOST_TAGS.keys()].map(tag => {
       const rows = exfiltration.map(row => ({ path: row.path, added: npmHostsTagged(row.added, tag) })).filter(row => row.added)
       return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
@@ -65,7 +69,8 @@ function npmFileFindings(base, other, files, major) {
       .map(row => ({ path: row.path, obfuscation: after(row).readability.obfuscation })) },
     { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability) && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability))
       .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
-    { id: 'kept-runs-code', severity: 'high', files: kept },
+    { id: 'kept-runs-code', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeWithout) },
+    { id: 'kept-credentials', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeTagged) },
   ].filter(finding => finding.files.length > 0)
 }
 

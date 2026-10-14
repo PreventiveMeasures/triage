@@ -581,12 +581,20 @@ export function npmFoundAdded(found, was) {
 // a tag kinds share once: `eval, child_process`.
 export const npmRunsCodeKinds = founds => [...new Set([...RUNS_CODE].filter(([kind]) => founds.some(found => found.has(kind))).map(([, { tag }]) => tag))].join(', ')
 
-// What `found` holds (npmRunsCode's) but the kinds whose tags `tags` names,
-// each with its lines; null for none.
-export function npmRunsCodeWithout(found, tags) {
-  const kept = new Map([...found ?? []].filter(([kind]) => !tags.has(RUNS_CODE.get(kind).tag)))
-  return kept.size > 0 ? kept : null
+// What `found` holds (npmRunsCode's) but the kinds whose tags `tags` names
+// (npmRunsCodeWithout), or of those kinds alone (npmRunsCodeTagged), each
+// with its lines; null for none.
+function npmRunsCodeOf(found, kept) {
+  const of = new Map([...found ?? []].filter(([kind]) => kept(RUNS_CODE.get(kind).tag)))
+  return of.size > 0 ? of : null
 }
+export const npmRunsCodeWithout = (found, tags) => npmRunsCodeOf(found, tag => !tags.has(tag))
+export const npmRunsCodeTagged = (found, tags) => npmRunsCodeOf(found, tag => tags.has(tag))
+
+// The kinds that reach for credentials, by their tag: a version's finding of
+// their own (risk/npm/held.js `held-credentials`), apart from the code its
+// files run beyond themselves.
+export const CREDENTIAL_TAGS = new Set([CREDENTIALS.tag])
 
 // Its tags as a file's flags (file-flags.js), in their order, each once: a
 // warning's (`high`), or for one marked worse, `critical`; none for none.

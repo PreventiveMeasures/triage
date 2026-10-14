@@ -23,7 +23,7 @@ import { compact, npmLastMonth, npmMonthSaid, npmTierName } from './npm-download
 import { READABILITY, npmFileFlagTags, npmFileReadabilityOf, npmLabelMark, npmListedReadabilityTag, npmObfuscationFound, npmReadabilityLabels } from './file-readability.js'
 import { npmRisk } from './npm-risk.js'
 import { fileRiskOf, npmFilesRisk } from './file-risk.js'
-import { npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
+import { npmCredentialsSaid, npmFileRunsCode, npmRunsCodeKinds, npmRunsCodeSaid, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationNames, npmExfiltrationSaid, npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
 import { HOST_TAGS, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.js'
 import { npmHostFinding } from '../../risk/npm/held.js'
@@ -563,7 +563,7 @@ export const npmCompareFiles = {
 // raised it.
 const FINDING_LABELS = new Map([['malware', 'Malware'], ['deprecated', 'Deprecated'], ['publisher', 'Publisher'], ['provenance-lost', 'Provenance lost'],
   ['held-install-scripts', 'Install scripts'], ['held-non-registry-deps', 'Non-registry deps'], ['held-unused-deps', 'Unused deps'], ['held-runs-code', 'Runs code'],
-  ['held-exfiltration', 'Exfiltration'], ['held-remote', 'Remote'], ['held-ip-lookup', 'IP lookup'], ['held-obfuscated', 'Obfuscated'], ['large-code', 'Large new code'],
+  ['held-credentials', 'Credentials'], ['held-exfiltration', 'Exfiltration'], ['held-remote', 'Remote'], ['held-ip-lookup', 'IP lookup'], ['held-obfuscated', 'Obfuscated'], ['large-code', 'Large new code'],
   ['now-unreadable', 'Now unreadable'], ['binary-code', 'Binary code'], ['new-hosts', 'New hosts'], ['popularity', 'Few downloads']])
 const SCORE_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-moderate', low: 'is-low' }
 // How long a version has been out, roughly: `7 years`, `3 months`, `20 days`.
@@ -766,7 +766,8 @@ const TIP_FILES = 8
 // (risk/npm/held.js, combined.js), each in its severity's color, orange as a
 // file's tags are, or red where it changed (SEVERITY_CHIPS): what any of them
 // runs beyond itself, the kinds alone named, as its files' tags are, red
-// where a file runs one anew; the services under a hosts' tag (hostBadges);
+// where a file runs one anew; the credentials any reaches for, red where a
+// file reaches for one anew; the services under a hosts' tag (hostBadges);
 // a large code file it adds; a file become unreadable, its longest line
 // before and now (unreadableBadge); an obfuscator's fingerprint, red
 // where it is new to a file; and a code file it adds or changes that isn't
@@ -778,6 +779,7 @@ function fileBadges(sides, found) {
   return [
     listBadge(tinted('held-runs-code', 'npm-files-runs'), 'Runs code', rows('held-runs-code'), row => npmRunsCodeSaid(row.found, row.added),
       npmRunsCodeKinds(rows('held-runs-code').map(row => row.found)), null, false),
+    listBadge(tinted('held-credentials', 'npm-files-credentials'), 'Credentials', rows('held-credentials'), row => npmCredentialsSaid(row.found, row.added)),
     ...hostBadges(found),
     fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
     unreadableBadge(found.get('now-unreadable')),

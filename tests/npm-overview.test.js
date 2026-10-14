@@ -847,6 +847,25 @@ test('Compare flags what code any file of the open version runs beyond itself, i
     'red for child_process new to lib/b.js, the eval it kept beside it')
 })
 
+test('Compare flags the credentials any file of the open version reaches for apart from the code it runs, each by its name, red where a file reaches for one anew', async () => {
+  const version = (ver, files) => held({ integrity: `credentials@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
+    npm: { name: 'credentials', version: ver } })
+  const badges = async (base, other) => {
+    npmCompareBadges(base, other); other.risk(); await new Promise(resolve => { setImmediate(resolve) }); return rendered(npmCompareBadges(base, other))
+  }
+  const chips = shown => [...shown.matchAll(/<li><span class=npm-extension ([^\n]*?npm-files-(?:runs|credentials))[^]*?<\/li>/gu)].map(([chip, classes]) => `${classes} | ${
+    [...chip.matchAll(/compare-tip-path">([^<]+)<\/span><span class="compare-tip-said">([^<]+)</gu)].map(([, path, said]) => `${path}: ${said}`).join('; ')} | ${
+    /<span(?: class="sr-only")?>([^<]+)<\/span>(?:<span class="npm-extension-count">([^<]+)<\/span>)?\s*<\/span><\/li>$/u.exec(chip).slice(1).filter(Boolean).join(' ')}`)
+  const base = version('1.0.0', { 'lib/auth.js': "const rc = readFileSync(join(homedir(), '.npmrc'))\n", 'lib/run.js': 'module.exports = x => eval(x)\n' })
+  const other = version('1.1.0', { 'lib/auth.js': "const rc = readFileSync(join(homedir(), '.npmrc'))\nconst token = process.env.NPM_TOKEN\n", 'lib/run.js': 'module.exports = x => eval(x)\n',
+    'lib/gh.js': "execSync('gh auth token')\n" })
+  assert.deepEqual(chips(await badges(base, other)), ['is-warn npm-held-file npm-files-runs | lib/run.js: eval (line 1) | Runs code eval',
+    'is-critical npm-held-file npm-files-credentials | lib/auth.js: .npmrc, .ssh or .aws (line 1), NPM_TOKEN or GITHUB_TOKEN (line 2, new); lib/gh.js: gh auth token (line 1, new) | Credentials 2'],
+    'eval kept, in orange; a token and gh\'s new, in red, under Credentials rather than Runs code')
+  assert.deepEqual(chips(await badges(other, base)), ['is-warn npm-held-file npm-files-runs | lib/run.js: eval (line 1) | Runs code eval',
+    'is-warn npm-held-file npm-files-credentials | lib/auth.js: .npmrc, .ssh or .aws (line 1) | Credentials'], 'the other way, nothing new: in orange')
+})
+
 test('Compare flags the hosts the open version\'s code names that the one compared with named in none of its, and the services a file names, a level higher where new to it', async () => {
   const version = (ver, files) => held({ integrity: `hosts@${ver}`, kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) },
     npm: { name: 'hosts', version: ver } })

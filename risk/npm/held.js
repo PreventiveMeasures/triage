@@ -7,6 +7,7 @@ import { npmDownloadTier, npmTierLevel, npmTierLow } from './downloads.js'
 import { npmInstallScripts } from './install-scripts.js'
 import { npmTooNew } from './release.js'
 import { HOST_TAGS, npmHostsTagged } from '../files/hosts.js'
+import { CREDENTIAL_TAGS, npmRunsCodeTagged, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmVersionFileRisk } from './files.js'
 
 // What npm says of a version and of its package, told fresh as it changes in
@@ -39,7 +40,8 @@ export function npmVersionFindings({ deprecated, published, minimumReleaseAge, n
 // orange, as its files' tags are: the scripts npm runs installing it
 // (install-scripts.js, `held-install-scripts`, `[script, command]` each); and
 // its files, each with what it holds, that run code beyond themselves
-// (`held-runs-code`), name a service under one of the hosts' tags, at the
+// (`held-runs-code`), reach for credentials (runs-code.js CREDENTIAL_TAGS,
+// `held-credentials`), name a service under one of the hosts' tags, at the
 // tag's severity (hosts.js HOST_TAGS: `held-exfiltration` red, `held-remote`
 // orange, `held-ip-lookup` yellow), or bear an obfuscator's fingerprint
 // (`held-obfuscated`).
@@ -49,7 +51,8 @@ export function npmHeldFindings(version) {
   const holding = of => reads.map(({ path, read }) => ({ path, found: of(read) })).filter(row => row.found)
   return [
     ...scripts.length > 0 ? [{ id: 'held-install-scripts', severity: 'high', scripts }] : [],
-    { id: 'held-runs-code', severity: 'high', files: holding(read => read.runsCode) },
+    { id: 'held-runs-code', severity: 'high', files: holding(read => npmRunsCodeWithout(read.runsCode, CREDENTIAL_TAGS)) },
+    { id: 'held-credentials', severity: 'high', files: holding(read => npmRunsCodeTagged(read.runsCode, CREDENTIAL_TAGS)) },
     ...[...HOST_TAGS].map(([tag, severity]) => ({ id: `held-${npmHostFinding(tag)}`, severity, files: holding(read => npmHostsTagged(read.exfiltration, tag)) })),
     { id: 'held-obfuscated', severity: 'high', files: holding(read => read.readability.obfuscation) },
   ].filter(finding => !finding.files || finding.files.length > 0)

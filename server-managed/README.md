@@ -1493,7 +1493,9 @@ control. A version shows in the bundle view with four tabs:
   new): its deprecation, its install scripts (named, their commands in the
   tooltip), dependencies from elsewhere than npm's registry or imported by
   nothing of it, in orange what any of its files runs beyond itself (the
-  kinds alone, `eval, child_process`, `Runs code` heading its tooltip), the
+  kinds alone, `eval, child_process`, `Runs code` heading its tooltip) and
+  the credentials any reaches for (`Credentials`, each file's by their
+  names in its tooltip: `NPM_TOKEN or GITHUB_TOKEN (line 7)`), the
   hosts its files name, a chip for each tag
   (Exfiltration in red, Remote in orange, IP lookup in yellow, the services
   named), and an obfuscator's fingerprint, each listing its files and their
@@ -1626,9 +1628,11 @@ control. A version shows in the bundle view with four tabs:
   its tooltip; in red, though their tags on the files say little of one
   alone or warn of it in orange, code that runs beyond itself new to a file
   the open version adds or changes (the kinds alone, as the file's tags say
-  them: eval, child_process, credentials, whole env, publish, shell,
-  persistence, `Runs code` heading its tooltip), its tooltip listing each file with its new kinds and their lines,
+  them: eval, child_process, whole env, publish, shell, persistence,
+  `Runs code` heading its tooltip), its tooltip listing each file with its new kinds and their lines,
   each way a string runs as code by its own name (`Function (line 2)`); a
+  credential new to a file it adds or changes, under `Credentials`, each by
+  its name (`NPM_TOKEN or GITHUB_TOKEN (line 7, new)`); a
   host new to a file the open version adds or changes, a chip for each tag a
   level higher than the tag's own (`Exfiltration` and `Remote` in red, `IP
   lookup` in orange, the services named: `webhook.site`), its tooltip

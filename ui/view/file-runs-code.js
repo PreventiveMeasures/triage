@@ -43,6 +43,12 @@ export const onlyLine = lineLists => {
 // (`data-bundle-view-source`, events.js), scrolled to it: none without one.
 export const opensAt = (path, line) => line === undefined ? { path: nothing, line: nothing } : { path, line }
 
+// The kinds reaching for credentials a file holds, each by its own name with
+// its lines, those new to it (`added`) so said: `.npmrc, .ssh or .aws (line
+// 2), NPM_TOKEN or GITHUB_TOKEN (line 7, new)`.
+export const npmCredentialsSaid = (found, added = null) => [...found].map(([kind, lines]) =>
+  `${RUNS_CODE.get(kind).name} (${linesNote(lines)}${added?.has(kind) ? ', new' : ''})`).join(', ')
+
 // A file's tags, one for the kinds it holds (npmRunsCode) that share it, its
 // tooltip a list as Compare's chips' are: what the tag tells, then a row for
 // each kind, its name and lines; with `was`, the kinds the file held as the

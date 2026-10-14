@@ -25,12 +25,15 @@ const higher = (a, b) => SEVERITIES[Math.min(SEVERITIES.indexOf(a), SEVERITIES.i
 // scripts added or changed and what each version ran (`flagged`, `was`); a
 // dependency taken from elsewhere than npm's registry anew, its spec before
 // (`was`), or added that nothing imports (`added`). Code kept running beyond
-// itself (`kept-runs-code`) marks nothing, its files held already.
+// itself or reaching for credentials (`kept-runs-code`, `kept-credentials`)
+// marks nothing, its files held already.
 const byPath = (rows, key) => new Map(rows.map(row => [row.path, row[key]]))
 const marked = (held, rows) => ({ ...held, files: held.files.map(row => rows.has(row.path) ? { ...row, added: rows.get(row.path) } : row) })
 const FOLDS = {
   'runs-code': ['held-runs-code', (held, change) => marked(held, byPath(change.files, 'added'))],
   'kept-runs-code': ['held-runs-code', held => held],
+  credentials: ['held-credentials', (held, change) => marked(held, byPath(change.files, 'added'))],
+  'kept-credentials': ['held-credentials', held => held],
   obfuscated: ['held-obfuscated', (held, change) => marked(held, byPath(change.files, 'obfuscation'))],
   'install-scripts': ['held-install-scripts', (held, change) => ({ ...held, flagged: change.flagged, was: [...change.was] })],
   'non-registry-deps': ['held-non-registry-deps', (held, change) => {

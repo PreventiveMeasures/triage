@@ -21,7 +21,7 @@ const fileOf = ({ stamps, readability, runsCode, exfiltration, hosts }) => ({
 // keeps none of them.
 function findingOf(finding) {
   switch (finding.id) {
-    case 'held-runs-code': case 'held-exfiltration': case 'held-remote': case 'held-ip-lookup':
+    case 'held-runs-code': case 'held-credentials': case 'held-exfiltration': case 'held-remote': case 'held-ip-lookup':
       return { ...finding, files: finding.files.map(row => ({ ...row, found: mapOf(row.found), ...row.added ? { added: mapOf(row.added) } : {} })) }
     case 'popularity': return { ...finding, tier: finding.tier ?? Infinity }
     default: return finding

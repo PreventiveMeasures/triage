@@ -81,7 +81,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   Then, with or without `oldVersion`, what npm says of the version and what it holds (`npm/held.js`), as the npm Overview and Compare flag it alike, as no change hides any of it:
   - `deprecated`
   - `held-install-scripts`
-  - `held-runs-code`, `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`
+  - `held-runs-code`, `held-credentials` (the kinds reaching for credentials, apart from the code a file runs: `files/runs-code.js` `CREDENTIAL_TAGS`), `held-exfiltration` (red), `held-remote` (orange), `held-ip-lookup` (yellow), `held-obfuscated`
   - its dependencies' `held-non-registry-deps` and `held-unused-deps`, flagged against none
   - `too-new`
   - `popularity`: red where unpopular, else orange; yellow at most, whatever its tier, where an account known to publish one of npm's most downloaded packages published the version (`known`), as few download a new package such an account starts, or else, as many are published by a CI that names no account, where the version was published with provenance, as a token alone, stolen, publishes none, and the package is in a known scope (`known` with its `scope`): one of those packages' scopes (`@preventive/publishers/npm-scopes.js`), or a known account's own, `@` and its name (its `account` too), whose owner alone publishes in it
@@ -91,7 +91,7 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
   - `provenance-lost`
   - `held-install-scripts`: those added or changed (`flagged`), and what ran before (`was`)
   - `held-non-registry-deps`, `held-unused-deps`: those new (`added`), a spec before (`was`)
-  - `held-runs-code`: red where code a file runs beyond itself is new to it; `held-exfiltration`, `held-remote`, `held-ip-lookup`: a level higher where a file names a service anew under the tag (`files/hosts.js`), so red, red and orange; `held-obfuscated`: red where a file's fingerprint is new
+  - `held-runs-code`, `held-credentials`: red where code a file runs beyond itself, or a credential it reaches for, is new to it; `held-exfiltration`, `held-remote`, `held-ip-lookup`: a level higher where a file names a service anew under the tag (`files/hosts.js`), so red, red and orange; `held-obfuscated`: red where a file's fingerprint is new
   - `large-code`, `now-unreadable`; `now-unreadable` orange where each file's source map was rebuilt with it (its last line names its map, and the `.map` beside it is new or changed) or in a major release
   - `binary-code`: a JavaScript or TypeScript file (a declaration file too) added or changed that isn't text (not UTF-8, or holding a NUL), where the old version's wasn't one: no one can read it in review, yet a UTF-16 one, by its byte order mark, runs as a browser's classic script or in Windows Script Host, and TypeScript reads it
   - `new-hosts`, but for nine where packages keep their code and docs (`npm/compare.js` `ALLOWED_HOSTS`: `github.com`, `lit.dev`, MDN, …), each as written: `api.github.com` is still named, as is a repository `github.com` serves files or releases from (`github.com/owner/repo`)
