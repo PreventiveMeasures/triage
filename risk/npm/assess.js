@@ -12,7 +12,8 @@ import { NpmRiskError, npmDownloads, npmPackageFacts, npmPackageReleases, npmPub
 import { npmMalwareFinding } from './malware.js'
 import { npmKnownScope } from './manifest.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, npmAccountStanding } from './release.js'
-import { npmAddedDependency } from './new-dependency.js'
+import { npmAddedDependency, npmUnusedDependencySeverity } from './new-dependency.js'
+import { SEVERITIES } from '../files/stamps.js'
 import { npmRiskScore } from './score.js'
 
 // Which reading of a version an assessment kept (`risk/npm/assessments`) is:
@@ -206,6 +207,22 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
   return { name, version, oldVersion: old, published, ...assessment, score: npmRiskScore(assessment.findings, { published, now, tier: counted ? npmDownloadTier(counted) : null }) }
 }
 
+// The dependencies nothing of a version imports (`held-unused-deps`), each
+// graded by what risk tells of its package fresh (`added`, as
+// addedDependencies tells it; new-dependency.js
+// npmUnusedDependencySeverity), with its tier and when its package was first
+// published where told: kept from the version compared with where there was
+// one (`compared`) and it isn't marked new. The finding as its most severe.
+function unusedGraded(finding, added, compared) {
+  const told = new Map(added.map(row => [`${row.kind ?? ''}\0${row.name}`, row]))
+  const dependencies = finding.dependencies.map(row => {
+    const of = told.get(`${row.kind ?? ''}\0${row.name}`)
+    return { ...row, severity: npmUnusedDependencySeverity(of, compared && !row.added),
+      ...of?.level ? { tier: of.tier, level: of.level } : {}, ...of?.created ? { created: of.created, gap: of.gap } : {} }
+  })
+  return { ...finding, severity: SEVERITIES[Math.min(...dependencies.map(row => SEVERITIES.indexOf(row.severity)))], dependencies }
+}
+
 // An assessment of what of it holds whatever the time (`kept`,
 // npmLastingRisk's) and what is told fresh: the open version's own findings
 // (`own`, held.js npmVersionFindings, and its malware), its malware and
@@ -215,7 +232,7 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
 const FIRST = new Set(['malware', 'deprecated'])
 export function npmAssessmentOf(kept, own, added = kept.dependencies.added) {
   return {
-    findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings,
+    findings: [...own.filter(({ id }) => FIRST.has(id)), ...kept.findings.map(finding => finding.id === 'held-unused-deps' ? unusedGraded(finding, added, Boolean(kept.dependencies.held)) : finding),
       ...own.filter(({ id }) => !FIRST.has(id)).map(finding => finding.id === 'popularity' ? { ...finding, ...tierOf(finding.tier) } : finding)],
     files: kept.files,
     dependencies: { ...kept.dependencies, added },

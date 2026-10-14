@@ -16,6 +16,7 @@ import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmOldVersion } from '../risk/npm/old-version.js'
 import { npmAccountStanding } from '../risk/npm/release.js'
 import { npmCombinedFindings } from '../risk/npm/combined.js'
+import { npmAssessmentOf } from '../risk/npm/assess.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
@@ -173,6 +174,23 @@ test('what changed folded into what a version holds: the higher severity, publis
   assert.equal(npmCombinedFindings([{ id: 'held-remote', severity: 'critical', files: [] }], [{ id: 'remote', severity: 'high', files: [] }])[0].severity, 'critical', 'never lower')
 })
 
+test('a dependency nothing imports graded by its package: one kept yellow, a new one red where its package is new, yellow among the top 20,000, else orange', () => {
+  const row = (name, extra = {}) => ({ name, kind: null, range: '^1.0.0', ...extra })
+  const graded = (rows, added, compared = true) => npmAssessmentOf({ findings: [{ id: 'held-unused-deps', severity: 'high', dependencies: rows }], files: {},
+    dependencies: { added: [], changed: [], ...compared ? { held: [] } : {} } }, [], added).findings[0]
+  const severities = (rows, added, compared) => graded(rows, added, compared).dependencies.map(({ name, severity }) => `${name} ${severity}`)
+  assert.deepEqual(severities([row('tslib'), row('react', { added: true }), row('tiny', { added: true }), row('unseen', { added: true }), row('fresh', { added: true })],
+    [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: 50_000, level: 'is-low' }, { ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]),
+  ['tslib moderate', 'react moderate', 'tiny high', 'unseen high', 'fresh critical'],
+  'kept from the version compared with; new: a peer\'s or a tool\'s, as popular as react; past the top 20,000; its package not told; first published since')
+  assert.equal(graded([row('tslib'), row('fresh', { added: true })], [{ ...row('fresh'), tier: null, level: 'is-unpopular', created: '2026-10-12T00:00:00.000Z', gap: DAY }]).severity, 'critical',
+    'the finding as its most severe')
+  assert.equal(graded([row('tslib')], []).severity, 'moderate', 'all kept: yellow')
+  assert.deepEqual(severities([row('react'), row('tiny')], [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: null, level: 'is-unpopular' }], false),
+    ['react moderate', 'tiny high'], 'a version alone, none kept: each by its package')
+  assert.deepEqual(severities([row('react')], [], false), ['react high'], 'nor its package told: orange, as before')
+})
+
 test('against the version before: what it adds and changes, its publisher and provenance, and a new dependency\'s package', async t => {
   const known = publishers[0]
   const before = version('axios-like', '1.0.0', { 'package.json': '{}', 'lib/axios.js': 'require("follow-redirects")\n' },
@@ -185,7 +203,9 @@ test('against the version before: what it adds and changes, its publisher and pr
   const assessment = await assessNpm('axios-like', '1.0.1', { oldVersion: '1.0.0', now: NOW })
   assert.deepEqual(ids(assessment), ['publisher', 'provenance-lost', 'held-unused-deps'])
   assert.deepEqual(assessment.findings[0], { id: 'publisher', was: known, now: 'someone-new', wasKnown: true, nowKnown: false, wasStanding: 'known', nowStanding: 'new', severity: 'critical' })
-  assert.deepEqual(assessment.findings[2].dependencies, [{ name: 'crypto-like', kind: null, range: '^4.2.1', added: true }], 'what it holds, the one added marked')
+  assert.deepEqual(assessment.findings[2], { id: 'held-unused-deps', severity: 'critical', dependencies: [{ name: 'crypto-like', kind: null, range: '^4.2.1', added: true,
+    severity: 'critical', tier: null, level: 'is-unpopular', created: ago(20.5), gap: 0.5 * DAY }] },
+    'what it holds, the one added marked: red, its package first published since 1.0.0, as plain-crypto-js was since axios 1.14.0')
   const [added] = assessment.dependencies.added
   assert.equal(added.name, 'crypto-like')
   assert.deepEqual(added.flags.map(({ check }) => check), ['unimported'])

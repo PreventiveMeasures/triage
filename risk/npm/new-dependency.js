@@ -28,3 +28,19 @@ export function npmAddedDependency({ downloads, listed = null, published = [] },
   const created = wanted && tier !== null && listed?.created && was && open && Date.parse(listed.created) > Date.parse(was) ? listed.created : null
   return { tier, wanted, created, gap: created ? Date.parse(open) - Date.parse(created) : null }
 }
+
+// What a dependency nothing of a version imports calls for (compare.js
+// `unused-deps`), by what risk tells of its package (`told`, its row as
+// assess.js addedDependencies tells it, or none): one kept from the version
+// compared with (`kept`) yellow, as that version, risk's pick of the most
+// likely free of an attack, held it; else red where its package is new
+// since that version (`created`), as plain-crypto-js was to axios 1.14.1;
+// yellow among npm's top 20,000, as a dependency named for another's peer
+// or by a tool's config is (react, typescript, eslint), older and more
+// downloaded than the package naming it; orange past them, or where its
+// package isn't told.
+export function npmUnusedDependencySeverity(told, kept) {
+  if (kept) return 'moderate'
+  if (told?.created) return 'critical'
+  return told?.level && !npmTierLow(told.tier ?? Infinity) ? 'moderate' : 'high'
+}
