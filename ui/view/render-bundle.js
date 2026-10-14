@@ -38,7 +38,7 @@ import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './prett
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
-import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS } from '../../common/managed/routes.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
@@ -1919,9 +1919,54 @@ function renderBundleSearchView(details, entry = null) {
   </div>`
 }
 
-// One button of the bundle slide's tab strip.
-const bundleTab = (key, label, tab) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
-  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab">${label}</button>`
+// One button of the bundle slide's tab strip, inert while an npm version
+// opens.
+const bundleTab = (key, label, tab, opening = false) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
+
+// The tabs an npm version shows, each `[key, label]`: Review where a team
+// the reader is in reviews dependencies.
+const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'],
+  ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
+  ['overview', 'Overview']]
+
+// The bundle slide: its header, with the bundle's name, or an npm version's
+// with the package's versions to switch to, and its `tabs`, `tab` the one
+// open; that tab's `body` under it. An npm version opening (`opening`)
+// shows the header it will have, its versions and tabs waiting for it.
+// Both render through here, so the header stays put as the version opens.
+function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false } = {}) {
+  const { npm } = entry
+  return html`<div class="bundles-view bundles-slide-view">
+    <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
+      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      ${npm ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => navigateToNpm()}>npm</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <div class="bundles-slide-title">
+        ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
+          <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
+          : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
+      </div>
+      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
+      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening))}</div>
+    </header></bundle-slide-header>
+    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview })}>${body}</div>
+  </div>`
+}
+
+// An npm version opening (npm-package.js openNpmRoute), `spec` its version
+// or dist-tag as its route names it, `tab` the tab it opens on: its header,
+// and in its body what opens.
+export function renderNpmOpening({ name, spec, tab }) {
+  return bundleSlideView({ npm: { name, version: spec ?? 'latest' } }, tab, npmTabs(),
+    html`<div class="bundles-slide-placeholder" role="status">Opening ${npmPackageInput(name, spec)}…</div>`, { opening: true })
+}
 
 // Top-level bundle view. The header carries the bundle's filename
 // (the canonical user-facing label; integrity lives in the Overview
@@ -2004,64 +2049,38 @@ function renderBundleSlide(entry) {
   // (2) an orphan tab state where a persisted `b:<integrity> issues`
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
-  return html`<div class="bundles-view bundles-slide-view">
-    <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
-      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      ${npm ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => navigateToNpm()}>npm</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
-      <div class="bundles-slide-title">
-        ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.npm.name}>${entry.npm.name}</div>
-          <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>`
-          : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
-      </div>
-      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
-      <div class="bundles-slide-tabs" role="tablist">
-        ${showAdvisories ? bundleTab('advisories', 'Advisories', tab) : nothing}
-        ${showIssues ? bundleTab('issues', 'Issues', tab) : nothing}
-        ${npm ? nothing : bundleTab('terminal', 'Terminal', tab)}
-        ${bundleTab('treemap', 'Treemap', tab)}
-        ${npm ? nothing : bundleTab('graph', 'Graph', tab)}
-        ${bundleTab('code', 'Code', tab)}
-        ${bundleTab('search', 'Search', tab)}
-        ${canCompare ? bundleTab('compare', 'Compare', tab) : nothing}
-        ${npm && state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true)
-          ? bundleTab('review', 'Review', tab) : nothing}
-        ${bundleTab('overview', 'Overview', tab)}
-      </div>
-    </header></bundle-slide-header>
-    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>
-      ${overviewActive
-        ? renderBundleDetails(entry, details)
-        : detailsParsed
-          ? choose(tab, [
-              ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
-              ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
-              ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
-              ['code', () => renderBundleCodeView(details, entry)],
-              ['search', () => renderBundleSearchView(details, entry)],
-              ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
-                .source=${npmComparisonSource(entry)}></npm-review>`],
-              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-                .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
-              ['issues', () => renderBundleIssuesList(details)],
-              ['advisories', () => renderBundleAdvisoriesTab(details, render,
-                canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
-            ])
-          : detailsReady && details.sourceError
-            ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`
-          : detailsReady && !details.metadataOnly
-            ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
-                ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
-              </div>`
-            : html`<div class="bundles-slide-placeholder">Loading bundle…</div>`}
-    </div>
-  </div>`
+  const tabs = npm ? npmTabs() : [
+    ...showAdvisories ? [['advisories', 'Advisories']] : [],
+    ...showIssues ? [['issues', 'Issues']] : [],
+    ['terminal', 'Terminal'], ['treemap', 'Treemap'], ['graph', 'Graph'], ['code', 'Code'], ['search', 'Search'],
+    ...canCompare ? [['compare', 'Compare']] : [],
+    ['overview', 'Overview'],
+  ]
+  const body = overviewActive
+    ? renderBundleDetails(entry, details)
+    : detailsParsed
+      ? choose(tab, [
+          ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
+          ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+          ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
+          ['code', () => renderBundleCodeView(details, entry)],
+          ['search', () => renderBundleSearchView(details, entry)],
+          ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+            .source=${npmComparisonSource(entry)}></npm-review>`],
+          ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
+          ['issues', () => renderBundleIssuesList(details)],
+          ['advisories', () => renderBundleAdvisoriesTab(details, render,
+            canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
+        ])
+      : detailsReady && details.sourceError
+        ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`
+      : detailsReady && !details.metadataOnly
+        ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
+            ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
+          </div>`
+        : html`<div class="bundles-slide-placeholder">Loading bundle…</div>`
+  return bundleSlideView(entry, tab, tabs, body, { overview: overviewActive })
 }
 
 // Per-issue list of OPFS reports the finding showed up in. Up to

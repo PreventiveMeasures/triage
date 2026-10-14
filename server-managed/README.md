@@ -1464,7 +1464,9 @@ landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. The
 `/npm` page lists the reader's last ten searches that opened, newest first,
 under its search, each to open again or remove; they are kept in the
 browser's `localStorage` per signed-in user, a convenience, not access
-control. A version shows in the bundle view with these tabs:
+control. While a version opens, its header shows at once, on the tab its
+link names, its version picker and tabs waiting for it, and its body says
+what opens. A version shows in the bundle view with these tabs:
 
 - **Overview**: its header names the package beside a picker of its
   versions, as wide as the version shown, listing them as Compare's pickers

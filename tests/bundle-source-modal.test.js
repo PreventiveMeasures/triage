@@ -33,7 +33,7 @@ const { graph2 } = await import('../ui/view/graph/state.js')
 const npmPackage = await import('../ui/view/npm-package.js')
 mock.module('../ui/view/npm-package.js', { namedExports: { ...npmPackage, npmVersionList: () => ({ status: 'ready', versions: [] }),
   npmCompareSource: () => ({ choices: [], options: [] }) } })
-const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
+const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile, renderNpmOpening } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -106,6 +106,40 @@ test('an npm version has a Search tab, searching its text files as a bundle\'s S
     'its text files, one that isn\'t aside')
   state.bundleDetails = { ...details, json: { version: 3, sources: ['logo.png'], sourcesContent: [null] } }
   assert.match(renderText(renderBundlesList([entry])), /This version has no text files to search\./u, 'one whose files are all binary has files, none of them text')
+})
+
+test('an npm version opening shows its header at once, its version and tabs waiting for it, and its body says what opens', t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams, currentView: state.currentView, selectedBundle: state.selectedBundle,
+    bundles: state.bundles, bundleDetails: state.bundleDetails, bundleDetailsTab: state.bundleDetailsTab }
+  t.after(() => Object.assign(state, previous))
+  Object.assign(state, { managedSession: { role: 'view' }, managedTeams: [{ dependencyReview: true }] })
+  const at = (template, binding) => template.values[template.strings.findIndex(part => part.endsWith(binding))]
+  const tabsOf = view => templates(view).filter(template => template.strings.some(part => part.includes('role="tab"')))
+  const selectOf = view => templates(view).find(template => template.strings.some(part => part.includes('<npm-version-select')))
+
+  const opening = renderNpmOpening({ name: 'lodash', spec: '4.18.1', tab: 'code' })
+  const text = renderText(opening)
+  assert.match(text, /<span class="bundles-slide-breadcrumb">\s*<button type="button" @click=>npm<\/button>/u, 'the way back to the lookup page works meanwhile')
+  assert.match(text, /<div class="bundles-slide-name"[^>]*>lodash<\/div>/u)
+  assert.equal(at(selectOf(opening), '.version='), '4.18.1')
+  assert.equal(at(selectOf(opening), '.list='), null, 'no versions to switch to until it opens')
+  assert.deepEqual(tabsOf(opening).map(tab => [at(tab, 'data-bundle-tab="'), at(tab, 'aria-selected='), at(tab, '?disabled=')]),
+    [['treemap', 'false', true], ['code', 'true', true], ['search', 'false', true], ['compare', 'false', true], ['review', 'false', true], ['overview', 'false', true]],
+    'the tabs it will have, the one its route names open')
+  assert.match(text, /<div class=><div class="bundles-slide-placeholder" role="status">Opening lodash@4\.18\.1…<\/div><\/div>\s*<\/div>$/u)
+  const latest = renderNpmOpening({ name: 'lodash', spec: null, tab: 'overview' })
+  assert.equal(at(selectOf(latest), '.version='), 'latest')
+  assert.match(renderText(latest), /Opening lodash…/u)
+
+  // Opened, it renders through the same templates, so its header stays put.
+  const entry = { name: 'lodash@4.18.1', integrity: 'npm-opening', npm: { name: 'lodash', version: '4.18.1' } }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: null, bundleDetailsTab: 'code' })
+  const opened = renderBundlesList([entry])
+  assert.equal(templates(opened)[0].strings, templates(opening)[0].strings)
+  assert.equal(selectOf(opened).strings, selectOf(opening).strings)
+  assert.ok(at(selectOf(opened), '.list='), 'its versions to switch to')
+  assert.deepEqual(tabsOf(opened).map(tab => [at(tab, 'data-bundle-tab="'), at(tab, '?disabled=')]),
+    [['treemap', false], ['code', false], ['search', false], ['compare', false], ['review', false], ['overview', false]])
 })
 
 test('Compare and Review receive the same header chip renderer and file metadata source', t => {
