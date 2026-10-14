@@ -963,7 +963,8 @@ a later lockfile that needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour, in the instance's memory and the
-database, `repository-risk/advisories` rows), and told in an `advisories` line,
+database, `repository-risk/advisories` rows, and one that failed, as by timing
+out, ten minutes, for a scan's next parts not to wait on it again), and told in an `advisories` line,
 each advisory with whether it is of malware, as risk tells it
 (`npmMalwareAdvisory`): OSV's of a malicious package (`MAL-…`), or one such a
 record names, GitHub's CWE-506, embedded malicious code, or a title

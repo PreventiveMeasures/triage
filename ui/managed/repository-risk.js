@@ -305,12 +305,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // How much of the scan is told: repositories and lockfiles read or failed,
-  // lockfiles' advisories told, and packages' risks told other than stale.
+  // lockfiles' advisories told or failed, and packages' risks told other
+  // than stale.
   _told() {
     let told = 0
     for (const repo of this._repos.values()) {
       if (repo.lockfiles || repo.error) told++
-      for (const lockfile of repo.lockfiles?.values() ?? []) told += Number(lockfile.packages !== null || Boolean(lockfile.error)) + Number(Boolean(lockfile.advisories))
+      for (const lockfile of repo.lockfiles?.values() ?? []) told += Number(lockfile.packages !== null || Boolean(lockfile.error)) + Number(Boolean(lockfile.advisories || lockfile.advisoriesError))
     }
     for (const row of this._packages.values()) if (row.risk && !row.risk.stale) told++
     return told

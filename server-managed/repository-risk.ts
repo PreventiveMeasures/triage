@@ -89,15 +89,17 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // where the last stopped on whichever instance answers the next.
   listings?: KeptStore<ListedLockfile[]>
   lockfiles?: KeptStore<LockfileRead>
-  // Where a lockfile's advisories are kept beyond this instance, by its
-  // blob, as RiskCaches keeps them in it, each read for RISK_KEPT_MS.
-  audits?: KeptStore<AdvisoryRow[]>
+  // Where a lockfile's advisories, or why they couldn't be had, are kept
+  // beyond this instance, by its blob, as RiskCaches keeps them in it.
+  audits?: KeptStore<Audit>
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
 }
 
 type AdvisoryRow = Advisory & { malware: boolean }
+// A lockfile's advisories, or why they couldn't be had.
+type Audit = AdvisoryRow[] | RiskFailure
 
 
 // A risk line is of npm's package of its name and version, or, with an
@@ -130,16 +132,20 @@ export interface RiskCaches {
   listings: Lru<ListedLockfile[]>
   lockfiles: Lru<LockfileRead>
   risks: Lru<{ at: number; line: RiskLine }>
-  advisories: Lru<{ at: number; rows: AdvisoryRow[] }>
+  advisories: Lru<{ at: number; audit: Audit }>
 }
 export const riskCaches = (): RiskCaches => ({
   listings: lru(1000),
   // By the packages they hold, a few hundred bytes each.
   lockfiles: lru(200_000, read => 'packages' in read ? read.packages.length + 1 : 1),
   risks: lru(50_000),
-  advisories: lru(50_000, kept => kept.rows.length + 1),
+  advisories: lru(50_000, kept => Array.isArray(kept.audit) ? kept.audit.length + 1 : 1),
 })
 export const RISK_KEPT_MS = 60 * 60_000
+// How long a lockfile's advisories that couldn't be had are told so, rather
+// than asked again: a scan's next parts don't wait on an audit that failed,
+// as by timing out, again and again.
+const AUDIT_FAILED_KEPT_MS = 10 * 60_000
 // How long the source's `listings` and `lockfiles` are read for: what
 // GitHub has at a commit or a blob doesn't change, how it is read here may.
 export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
@@ -316,19 +322,23 @@ async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
 
 type AdvisoriesLine = Extract<RepositoryRiskLine, { type: 'advisories' }>
 
+// Whether a lockfile's audit kept `at` is told as it is: its advisories
+// within RISK_KEPT_MS, why they couldn't be had within AUDIT_FAILED_KEPT_MS.
+const isFreshAudit = ({ at, audit }: { at: number; audit: Audit }) => Date.now() - at < (Array.isArray(audit) ? RISK_KEPT_MS : AUDIT_FAILED_KEPT_MS)
+
 // A lockfile's advisories line: npm's registry's advisories of its packages
 // of the registry or a mirror, by its blob as kept, else asked at once and
 // kept; null where it locks none, or once the scan stops.
 async function readAdvisories(scan: Scan, { repo, path, format, packages }: LockfileLine & { packages: LockedPackage[] }, sha: string): Promise<AdvisoriesLine | null> {
   const at = { type: 'advisories', repo, path } as const
+  const told = (audit: Audit) => Array.isArray(audit) ? { ...at, advisories: audit } : { ...at, ...audit }
   const key = `${format}\0${sha}`
-  const fresh = (kept?: { at: number } | null) => kept && Date.now() - kept.at < RISK_KEPT_MS
   let kept = scan.caches.advisories.get(key)
-  if (!fresh(kept)) {
+  if (!kept || !isFreshAudit(kept)) {
     const stored = await scan.source.audits?.read(key)
-    if (stored && fresh(stored)) scan.caches.advisories.set(key, kept = { at: stored.at, rows: stored.value })
+    kept = stored ? { at: stored.at, audit: stored.value } : undefined
   }
-  if (kept && fresh(kept)) return { ...at, advisories: kept.rows }
+  if (kept && isFreshAudit(kept)) { scan.caches.advisories.set(key, kept); return told(kept.audit) }
   const asked = new Map<string, Set<string>>()
   for (const { name, version, source } of packages) {
     if ((source !== 'registry' && source !== 'mirror') || !isNpmPackageName(name) || !isExactVersion(version)) continue
@@ -336,16 +346,18 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
     asked.get(name)!.add(version)
   }
   if (asked.size === 0) return null
+  let audit: Audit
   try {
-    const rows = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
+    audit = (await scan.source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), scan.signal))
       .map(advisory => ({ ...advisory, malware: npmMalwareAdvisory(advisory) }))
-    const now = Date.now()
-    scan.caches.advisories.set(key, { at: now, rows })
-    await scan.source.audits?.write(key, rows, now)
-    return { ...at, advisories: rows }
   } catch (error) {
-    return scan.signal.aborted ? null : { ...at, ...failureOf(error) }
+    if (scan.signal.aborted) return null
+    audit = failureOf(error)
   }
+  const now = Date.now()
+  scan.caches.advisories.set(key, { at: now, audit })
+  await scan.source.audits?.write(key, audit, now)
+  return told(audit)
 }
 
 // A repository's line, its lockfiles or why they couldn't be listed, and

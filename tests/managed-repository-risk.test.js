@@ -531,6 +531,21 @@ test('a lockfile\'s advisories are kept where the source keeps them, beyond an i
   assert.equal(later.audited.length, 1, 'an hour on, asked again')
 })
 
+test('a lockfile\'s advisories that couldn\'t be had are told so beyond an instance for a while, a scan\'s next parts not waiting on them again', async t => {
+  const audits = lineStore()
+  const assess = () => Promise.resolve(noneFound)
+  const first = Object.assign(sourceOf(onePnpmRepo, assess, { advisoriesFail: true }), { audits })
+  const told = (await Array.fromAsync(scan(first))).filter(line => line.type === 'advisories')
+  assert.deepEqual(told.map(line => line.error), ['upstream-unavailable'])
+  const again = Object.assign(sourceOf(onePnpmRepo, assess, { advisoriesFail: true }), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(again))).filter(line => line.type === 'advisories'), told)
+  assert.deepEqual(again.audited, [], 'npm asked nothing')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60_000 })
+  const later = Object.assign(sourceOf(onePnpmRepo, assess), { audits })
+  assert.deepEqual((await Array.fromAsync(scan(later))).filter(line => line.type === 'advisories').map(line => line.advisories), [[]], 'ten minutes on, asked again')
+  assert.equal(later.audited.length, 1)
+})
+
 test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {
   const risks = lineStore()
   const order = []

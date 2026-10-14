@@ -238,15 +238,18 @@ test('a lockfile, or its advisories, that a part couldn\'t read and a later one 
   assert.equal(lockfiles.get('web/package-lock.json').advisoriesError, null)
 })
 
-test('parts telling lockfiles\' advisories alone go on, as they find more', async t => {
+test('parts telling lockfiles\' advisories alone, or why they couldn\'t be had, go on, as they find more', async t => {
   const paths = ['a/package-lock.json', 'b/package-lock.json', 'c/package-lock.json']
   const read = [...repoAt('a', ...paths), ...paths.map(path => lockfileAt(path, [locked('ms', '2.1.3')]))]
-  const asked = partsServed(t, [[...read, { type: 'continue' }], ...paths.map(path => [...read, advised(path, []), { type: 'continue' }]), [...read, { type: 'done' }]])
-  const page = new (customElements.get('managed-admin-repo-risk'))()
-  await page.start()
-  assert.equal(page._error, null)
-  assert.equal(page._state, 'done')
-  assert.equal(asked.count, 5)
+  for (const advisories of [[], 'upstream-unavailable']) {
+    t.mock.restoreAll()
+    const asked = partsServed(t, [[...read, { type: 'continue' }], ...paths.map(path => [...read, advised(path, advisories), { type: 'continue' }]), [...read, { type: 'done' }]])
+    const page = new (customElements.get('managed-admin-repo-risk'))()
+    await page.start()
+    assert.equal(page._error, null)
+    assert.equal(page._state, 'done')
+    assert.equal(asked.count, 5)
+  }
 })
 
 test('a lockfile a later part no longer lists, at the same commit, as a team\'s directories changed, has what it told forgotten', async t => {
