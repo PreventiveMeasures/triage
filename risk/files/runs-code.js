@@ -79,7 +79,7 @@ const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})
 // token`'s command, lowercase as gh reads it, the metadata endpoint's
 // address, `Runner.Worker` and `/proc/`; what is told in any case is
 // SHELL_OR_PLACE's.
-const SAYS_CREDENTIALS = String.raw`auth[^\S\n]+token|169\.254\.169\.254|Runner\.Worker|\/proc\/`
+const SAYS_CREDENTIALS = String.raw`auth(?:[^\S\n]|[\\^\x60]\r?\n)+token|169\.254\.169\.254|Runner\.Worker|\/proc\/`
 // Any of RUNS_CODE, as a text may say it: a shell command or a place in any
 // case, as Windows' are written (`PowerShell`, `RUNDLL32`).
 const SAYS_SHELL_OR_PLACE = new RegExp(SHELL_OR_PLACE, 'iu')
@@ -237,7 +237,8 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // Credentials a command, an endpoint or a process holds, as recent npm
 // malware reached for them: the GitHub CLI printing its token (`gh auth
 // token`, by its path too, `gh.exe`, its name in any case as Windows runs
-// it, `GH.EXE`), not its other commands (`gh auth status`); the cloud's
+// it, `GH.EXE`, its line continued as a shell command's, `gh auth \⏎
+// token`), not its other commands (`gh auth status`); the cloud's
 // instance metadata endpoint, AWS's, Azure's and GCP's
 // (`http://169.254.169.254/latest/meta-data/…`, `metadata.google.internal`,
 // in any case as DNS reads it), as a host whole (HOST_START, HOST_END): not
@@ -260,7 +261,7 @@ const PERSISTENCE = String.raw`(?<![\w.-])\.(?:bashrc|zshrc|zshenv|zlogin|bash_p
 // not a process's own (`/proc/self/mem`) nor what else /proc tells of one
 // (`/proc/1234/status`); and trufflehog, a scanner for secrets, in any case
 // (`TruffleHog`), not in another name (`trufflehogs`, `TRUFFLEHOG_VERSION`).
-const GH_TOKEN = String.raw`(?<![\w.-])[gG][hH](?:\.[eE][xX][eE])?[^\S\n]+auth[^\S\n]+token(?![\w-])`
+const GH_TOKEN = String.raw`(?<![\w.-])[gG][hH](?:\.[eE][xX][eE])?${APART}+auth${APART}+token(?![\w-])`
 const PID = String.raw`[\d*?[\]-]{1,20}|\$\{[^}\n]{0,100}\}|\$\([^)\n]{0,200}\)|\u0060[^\u0060\n]{0,200}\u0060|\$\w{1,64}|\{\w{0,64}\}|%d`
 // A host whole, a URL's or alone: not after a word, a dot or a hyphen, nor a
 // path's slash (`https://example.com/169.254.169.254`), a URL's two

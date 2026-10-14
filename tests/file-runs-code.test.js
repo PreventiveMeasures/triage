@@ -148,6 +148,10 @@ test('credentials: gh auth token, the cloud\'s metadata endpoint, the Actions ru
     + 'cat /proc/$(pgrep -f Runner.Worker)/mem | strings\nfor f in /proc/[0-9]*/mem; do :; done\n./trufflehog filesystem / --json > found.json\n'),
   { 'gh-token': [2], 'runner-worker': [3, 5], 'process-memory': [4, 5, 6], trufflehog: [7] }, 'a shell script\'s commands, read whole')
   assert.deepEqual(found('setup.bat', 'for /f %%t in (\'gh auth token\') do set T=%%t\r\ntrufflehog.exe filesystem C:\\ > found.json\r\n'), { 'gh-token': [1], trufflehog: [2] }, 'a batch file\'s')
+  for (const [path, text] of [['setup.sh', 'T=$(gh auth \\\n  token)\n'], ['setup.bat', 'gh auth ^\r\n  token > t.txt\r\n'], ['setup.ps1', '$t = gh auth \u0060\n  token\n'], ['a.js', 'execSync(\'gh auth \\\n  token\')\n']]) {
+    assert.deepEqual(found(path, text), { 'gh-token': [1] }, `its line continued as a shell command's: ${path}`)
+  }
+  assert.equal(found('setup.sh', 'gh auth\ntoken\n'), null, 'not on the next line, a command of its own')
   assert.deepEqual(found('setup.sh', 'curl -s http://169.254.169.254/latest/meta-data/placement/region\necho "$NPM_TOKEN" > ~/.npmrc\n'), { shell: [1] },
     'not the cloud\'s metadata endpoint, a shell command already, as credential files and tokens are none of a shell script\'s')
   assert.equal(found('setup.sh', '# gh auth token, trufflehog, Runner.Worker, /proc/*/mem\necho ok # then gh auth token\n'), null, 'nor its comments')
@@ -438,6 +442,7 @@ test('a text reads in time as its length, what is left open read to its end', { 
     [`${"'gh', ".repeat(1e5)}\n`, null],
     [`'C:\\\\${'a b\\\\'.repeat(2e5)}curl x', 'https://x'\n`, null],
     [`"${'169.254.169.254:'.repeat(6e4)}"\n`, { 'cloud-metadata': [1] }],
+    [`"gh auth${' \\\n'.repeat(2e5)}tokens"\n`, null],
     [`"/proc/${'1'.repeat(1e6)}/mem"\n`, null],
     [`"${'/proc/1'.repeat(2e5)}/mem"\n`, { 'process-memory': [1] }],
     [`"${'/proc/$('.repeat(1.5e5)}"\n`, null],
