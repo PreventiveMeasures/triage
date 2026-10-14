@@ -3687,11 +3687,13 @@ a.npm-socket-score {
 /* The version's risk score (npm-overview.js scoreBadge), first among its
    chips: its ring in its level's color, its chip red or orange as the
    findings it sums are (`is-critical`, `is-warn`), yellow as a fair Socket
-   score is where moderate, and plain where low. */
+   score is where moderate, and plain where low; the default cursor over it,
+   as over a label, not text's. */
 .npm-risk-score {
   align-items: center; gap: .25rem;
   padding: .05rem .35rem .05rem .25rem;
   font-weight: 600;
+  cursor: default;
 
   &.is-critical { --meter: var(--critical); }
   &.is-warn { --meter: var(--high); }
