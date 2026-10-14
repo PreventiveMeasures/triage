@@ -90,7 +90,7 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends Audi
   // repositories it told whole (`partMs`): the next tells none of them again,
   // nor asks GitHub of them, but looks up their packages' risks as their
   // lockfiles are kept (`lockfiles`), as the reader has the rest already.
-  progress?: { read(): Promise<ScanProgress | null>; write(progress: ScanProgress): Promise<void> } | undefined
+  progress?: { read(): Promise<{ at: number; value: ScanProgress } | null>; write(progress: ScanProgress): Promise<void> } | undefined
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
@@ -387,7 +387,10 @@ async function readRepositories(scan: Scan) {
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
   // Those still listed: one no longer is read again should it be once more.
   const listed = new Set(repos.map(repo => repo.repoId))
-  for (const told of (await scan.source.progress?.read())?.repos ?? []) if (listed.has(told.id)) scan.told.set(told.id, told)
+  // Those within SCAN_READ_KEPT_MS, as their lockfiles are kept that long.
+  const kept = await scan.source.progress?.read()
+  const progress = kept && Date.now() - kept.at < SCAN_READ_KEPT_MS ? kept.value.repos : []
+  for (const told of progress) if (listed.has(told.id)) scan.told.set(told.id, told)
   for (const repo of repos) {
     if (scan.signal.aborted) return
     if (!await toldBefore(scan, repo)) await readRepository(scan, repo)

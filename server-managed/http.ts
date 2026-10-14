@@ -1388,7 +1388,7 @@ async function riskRepositories(db: ManagedDb, query: URLSearchParams): Promise<
 function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
   if (scan === null || !/^[\w-]{1,64}$/u.test(scan)) return undefined
   const kept = scanReadStore<ScanProgress>(deps.db, 'progress', SCAN_READ_KEPT_MS, deps.config.debug)
-  return { read: async () => (await kept.read(key))?.value ?? null, write: (progress: ScanProgress) => kept.write(key, progress, Date.now()) }
+  return { read: () => kept.read(key), write: (progress: ScanProgress) => kept.write(key, progress, Date.now()) }
 }
 
 // GET /api/admin/repositories/risk: every connected repository's npm

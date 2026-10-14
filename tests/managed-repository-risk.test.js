@@ -499,7 +499,7 @@ test('a scan whose part\'s time is up while GitHub is still being asked tells wh
 test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {
   const stores = { lockfiles: lineStore(), risks: lineStore() }
   let kept = null
-  const progress = { read: () => Promise.resolve(kept), write: value => { kept = structuredClone(value); return Promise.resolve() } }
+  const progress = { read: () => Promise.resolve(kept && { at: Date.now(), value: kept }), write: value => { kept = structuredClone(value); return Promise.resolve() } }
   // left-pad's assessment outlasts the first part, given up on as the scan stops.
   const assess = ({ name }, _teamScoped, signal) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => { resolve(noneFound) }, name === 'left-pad' && kept === null ? 1000 : 0)
@@ -516,12 +516,13 @@ test('a scan in parts goes on past the repositories a part before told whole, as
   assert.deepEqual([again.opened, again.listed, again.read], [[], [], []], 'GitHub asked nothing')
 })
 
-test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since', async () => {
+test('a repository a part before told whole is read again where it is renamed, or a team\'s directories in it changed, since, or that part was a day before', async () => {
   const told = { id: 1, name: 'org/one', paths: null, lockfiles: ['pnpm\u00001:pnpm-lock.yaml'] }
   const stores = { lockfiles: lineStore() }
   await Array.fromAsync(scan(Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores)))
-  for (const [then, why] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'], [{}, 'as it was']]) {
-    const progress = { read: () => Promise.resolve({ repos: [{ ...told, ...then }] }), write: () => Promise.resolve() }
+  for (const [then, why, at = Date.now()] of [[{ name: 'org/old' }, 'renamed'], [{ paths: ['web'] }, 'its directories changed'],
+    [{}, 'kept a day before', Date.now() - SCAN_READ_KEPT_MS], [{}, 'as it was']]) {
+    const progress = { read: () => Promise.resolve({ at, value: { repos: [{ ...told, ...then }] } }), write: () => Promise.resolve() }
     const source = Object.assign(sourceOf(onePnpmRepo, () => Promise.resolve(noneFound)), stores, { progress })
     await Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, riskCaches(), { partMs: 5000 }))
     assert.deepEqual(source.opened, why === 'as it was' ? [] : [1], why)
@@ -530,7 +531,7 @@ test('a repository a part before told whole is read again where it is renamed, o
 
 test('a scan\'s progress keeps only the repositories still listed, one no longer listed read again should it be once more', async () => {
   const written = []
-  const progress = { read: () => Promise.resolve({ repos: [{ id: 2, name: 'org/two', paths: null, lockfiles: [] }] }), write: value => { written.push(value); return Promise.resolve() } }
+  const progress = { read: () => Promise.resolve({ at: Date.now(), value: { repos: [{ id: 2, name: 'org/two', paths: null, lockfiles: [] }] } }), write: value => { written.push(value); return Promise.resolve() } }
   const assess = (_pkg, _teamScoped, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true }) })
   await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { progress }), new AbortController().signal, riskCaches(), { partMs: 100 }))
   assert.deepEqual(written.map(({ repos }) => repos.map(({ id }) => id)), [[1]])
