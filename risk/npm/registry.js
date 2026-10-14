@@ -257,8 +257,8 @@ export async function npmVersionFiles(name, version, { manifest, published, dist
 // The version of a package's document npm installs for a dependency's spec
 // (`spec`, an alias's by its own range, `npm:name@^1`, as specs.js npmAlias
 // reads one), as npm picks one:
-// the tag it names, else its `latest` where that satisfies it, else the
-// highest that does, one not deprecated first; null for none, or for a spec
+// the tag it names, else its `latest` where that satisfies it and isn't
+// deprecated, else the highest that does, one not deprecated first; null for none, or for a spec
 // that is no range nor tag (a URL, a repository).
 function installedVersion(doc, spec) {
   const alias = npmAlias(spec)
@@ -266,7 +266,7 @@ function installedVersion(doc, spec) {
   const tags = plainObject(doc['dist-tags']) ? doc['dist-tags'] : {}, versions = plainObject(doc.versions) ? doc.versions : {}
   if (Object.hasOwn(tags, range) && Object.hasOwn(versions, tags[range])) return tags[range]
   if (validRange(range || '*') === null) return null
-  if (Object.hasOwn(versions, tags.latest) && satisfies(tags.latest, range || '*')) return tags.latest
+  if (Object.hasOwn(versions, tags.latest) && typeof versions[tags.latest]?.deprecated !== 'string' && satisfies(tags.latest, range || '*')) return tags.latest
   const matching = Object.keys(versions).filter(version => satisfies(version, range || '*'))
   const current = matching.filter(version => typeof versions[version]?.deprecated !== 'string')
   return (current.length > 0 ? current : matching).reduce((best, version) => best === null || compareVersions(version, best) > 0 ? version : best, null)

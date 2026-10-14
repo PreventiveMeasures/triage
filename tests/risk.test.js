@@ -955,6 +955,9 @@ test('the version a dependency\'s spec installs, as npm picks it: a tag it names
   const hooked = async extra => (await npmPublicFacts('hooked', { now: NOW, packument: () => Promise.resolve({ name: 'hooked', 'dist-tags': { latest: '1.0.0' }, time: { '1.0.0': ago(30) },
     versions: { '1.0.0': { version: '1.0.0', ...extra } } }) }, '^1.0.0')).installs.scripts
   assert.deepEqual(await Promise.all([{}, { gypfile: true }, { hasInstallScript: true }].map(hooked)), [false, true, true], 'node-gyp\'s for a binding.gyp, or as the registry says')
+  const deprecatedLatest = { name: 'lib', 'dist-tags': { latest: '2.0.0' }, time: { '1.0.0': ago(90), '2.0.0': ago(30) },
+    versions: { '1.0.0': { version: '1.0.0', scripts: { postinstall: 'node x.js' } }, '2.0.0': { version: '2.0.0', deprecated: 'broken' } } }
+  assert.equal((await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(deprecatedLatest) }, '*')).installs.version, '1.0.0', 'not a latest deprecated')
   assert.deepEqual(await Promise.all(['^9.0.0', 'github:a/b', 'https://example.com/lib.tgz'].map(installs)), [null, null, null], 'none satisfying it, nor a spec that is no range')
   assert.deepEqual(await npmPublicFacts('lib', { now: NOW, packument: () => Promise.resolve(doc) }), { created: ago(900) }, 'none asked without a spec')
 })
