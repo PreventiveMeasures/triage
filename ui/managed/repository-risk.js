@@ -3,7 +3,9 @@
 // tells of each, as the server finds them (GET /api/admin/repositories/risk,
 // server-managed/repository-risk.ts); npm's advisories of them on a tab of
 // their own, those of malware a package's risk too. Those only devDependencies
-// need are tagged so and listed after the rest. Opened by its URL alone,
+// need are tagged so and listed after the rest; advisories are shown of the
+// versions production takes or of those, toggled, malware's either way.
+// Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '@preventive/report'
@@ -70,6 +72,9 @@ const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only ad
 
 // What a scan reads: every connected repository, a team's, or one.
 const SCOPES = [['all', 'All repositories'], ['team', 'Team'], ['repo', 'Repository']]
+// Up to how many teams are chosen among as buttons, as the scope is; more in
+// a list.
+const TEAM_BUTTONS = 5
 
 const SOURCE_LABELS = { registry: 'npm', mirror: 'Mirror', git: 'Git', tarball: 'Tarball', file: 'File' }
 const assessable = source => source === 'registry' || source === 'mirror'
@@ -115,7 +120,14 @@ const FILTERS = {
 const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
 // What a package's dev tag, or an advisory's, tells.
 const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest, and listed after them unless it is malware.'
-const ADVISORY_DEV_SAID = 'Only devDependencies need the versions it affects, in every lockfile that locks them: an install without them leaves them out. Listed after the rest.'
+const ADVISORY_DEV_SAID = 'Only devDependencies need these versions, in every lockfile that locks them: an install without them leaves them out.'
+// The advisories shown, by the versions they affect: those some lockfile
+// needs as more than devDependencies do, or doesn't tell (Yarn 1's), or those
+// only devDependencies need. Malware's are shown either way.
+const KINDS = {
+  production: ['Production', 'Advisories of versions an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware’s are shown either way.'],
+  development: ['Development', 'Advisories of versions only devDependencies need, in every lockfile that locks them. Malware’s are shown either way.'],
+}
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
 // A package row's risk as its line tells it, `stale` where the line is one
@@ -184,7 +196,7 @@ function rank(row) {
 }
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
-  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true }, _tab: { state: true },
+  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _query: { state: true }, _tab: { state: true },
     _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
@@ -194,6 +206,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._state = 'idle'
     this._error = null
     this._filter = 'all'
+    // The advisories' KINDS shown.
+    this._kind = 'production'
     this._query = ''
     // packages or advisories.
     this._tab = 'packages'
@@ -217,7 +231,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Scans `scope` (SCOPES) and `target` from now on, what was found of
   // another put away; not while a scan is under way.
   _choose(scope, target = '') {
-    if (this._state === 'running') return
+    // The one chosen chosen again keeps what was found of it.
+    if (this._state === 'running' || (scope === this._scope && target === this._target)) return
     this._scope = scope
     this._target = target
     this._reset()
@@ -418,11 +433,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     for (const { range, versions, ...advisory } of advisories) {
       const key = `${advisory.id}\0${advisory.name}`
       let row = this._advisories.get(key)
-      if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set() })
+      if (!row) this._advisories.set(key, row = { ...advisory, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() })
       if (range) row.ranges.add(range)
       for (const version of versions) row.versions.add(version)
       row.malware ||= advisory.malware
       row.usedIn.add(usedIn)
+      // The versions each lockfile told it of, for those of one kind alone
+      // to name only their lockfiles (_advisoryKinds).
+      const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
+      for (const version of versions) told.add(version)
       if (!row.malware) continue
       for (const pkg of this._packages.values()) {
         if (assessable(pkg.source) && pkg.name === row.name && row.versions.has(pkg.version)) (pkg.malware ??= new Set()).add(row.id)
@@ -451,15 +470,50 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
 
-  // Advisories by their package, malware first, then those of versions more
-  // than devDependencies need (`dev` where none is), then the most severe.
-  _advisoryRows() {
+  // Each of KINDS' advisories, by their package: each with the versions of
+  // that kind it affects and the lockfiles that told it of them, `dev` where
+  // only devDependencies need them; a version is development's where every
+  // package locked of it is `dev`.
+  // Malware's are of both, with all their versions, `dev` where all are.
+  _advisoryKinds() {
+    const devOnly = new Map()
+    for (const row of this._packages.values()) {
+      const key = `${row.name}@${row.version}`
+      if (assessable(row.source)) devOnly.set(key, (devOnly.get(key) ?? true) && row.dev)
+    }
+    const kinds = { production: [], development: [] }
+    for (const row of this._advisories.values()) {
+      const versions = [...row.versions]
+      const dev = versions.filter(version => devOnly.get(`${row.name}@${version}`) === true)
+      const needed = versions.filter(version => devOnly.get(`${row.name}@${version}`) !== true)
+      if (row.malware) {
+        const all = { ...row, dev: needed.length === 0 }
+        kinds.production.push(all)
+        kinds.development.push(all)
+        continue
+      }
+      // Each kind's versions, and the lockfiles that told it of them.
+      const of = shown => ({ ...row, versions: new Set(shown),
+        usedIn: new Set([...row.versionsIn].filter(([, told]) => shown.some(version => told.has(version))).map(([usedIn]) => usedIn)) })
+      if (needed.length > 0) kinds.production.push({ ...of(needed), dev: false })
+      if (dev.length > 0) kinds.development.push({ ...of(dev), dev: true })
+    }
+    return kinds
+  }
+
+  // The advisories of the kind shown (`_kind`) searched for, malware first,
+  // then the most severe.
+  _advisoryRows(kinds = this._advisoryKinds()) {
     const query = this._query.trim().toLowerCase()
-    const needed = new Set([...this._packages.values()].filter(row => assessable(row.source) && !row.dev).map(row => `${row.name}@${row.version}`))
-    return [...this._advisories.values()].filter(row => !query || row.name.toLowerCase().includes(query))
-      .map(row => ({ ...row, dev: ![...row.versions].some(version => needed.has(`${row.name}@${version}`)) }))
-      .toSorted((a, b) => Number(b.malware) - Number(a.malware) || Number(a.dev) - Number(b.dev) || severityRank(a.severity) - severityRank(b.severity)
+    return kinds[this._kind].filter(row => !query || row.name.toLowerCase().includes(query))
+      .toSorted((a, b) => Number(b.malware) - Number(a.malware) || severityRank(a.severity) - severityRank(b.severity)
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  }
+
+  // Which of KINDS' advisories are shown, each with how many there are.
+  _kindToggle(kinds) {
+    return html`<div class="risk-scope" role="group" aria-label="Which advisories">${Object.entries(KINDS).map(([kind, [label, said]]) => html`<button type="button"
+      aria-pressed=${this._kind === kind} data-tooltip=${said} @click=${() => { this._kind = kind }}>${label} (${formatCount.format(kinds[kind].length)})</button>`)}</div>`
   }
 
   render() {
@@ -488,22 +542,34 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <span class="result-count">${count === total ? '' : `${formatCount.format(count)} of `}${formatCount.format(total)} ${what}</span>`
   }
 
-  // A team's chosen from a list, and a repository with the picker the other
-  // pages share, by owner and searchable.
+  // A team's chosen with _teamPicker, and a repository with the picker the
+  // other pages share, by owner and searchable.
   _scopeBar() {
     const running = this._state === 'running'
     const loading = this._choices ? '' : 'Loading…'
     return html`<div class="risk-scope-bar">
       <div class="risk-scope" role="group" aria-label="What to scan">${SCOPES.map(([scope, label]) => html`<button type="button"
         aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._choose(scope)}>${label}</button>`)}</div>
-      ${this._scope === 'team' ? html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
-        <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
-        ${(this._choices?.teams ?? []).map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${team.hidden ? `${team.name} (hidden)` : team.name}</option>`)}
-      </select>` : nothing}
+      ${this._scope === 'team' ? this._teamPicker(running, loading) : nothing}
       ${this._scope === 'repo' ? html`<repository-selector label="Which repository" placeholder=${loading || 'Choose a repository…'} ?disabled=${running || !this._choices}
         .options=${(this._choices?.repos ?? []).map(repo => ({ value: String(repo.repoId), label: repo.fullName }))} .value=${this._target || null}
         @repository-change=${event => this._choose('repo', event.detail.value)}></repository-selector>` : nothing}
     </div>`
+  }
+
+  // A team, chosen as the scope is among a few (TEAM_BUTTONS), else from a
+  // list.
+  _teamPicker(running, loading) {
+    const teams = this._choices?.teams ?? []
+    const name = team => team.hidden ? `${team.name} (hidden)` : team.name
+    if (teams.length > 0 && teams.length <= TEAM_BUTTONS) {
+      return html`<div class="risk-scope" role="group" aria-label="Which team">${teams.map(team => html`<button type="button"
+        aria-pressed=${team.id === this._target} ?disabled=${running} @click=${() => this._choose('team', team.id)}>${name(team)}</button>`)}</div>`
+    }
+    return html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
+      <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
+      ${teams.map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${name(team)}</option>`)}
+    </select>`
   }
 
   _progress() {
@@ -614,13 +680,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _advisoryTable() {
-    const rows = this._advisoryRows()
+    const kinds = this._advisoryKinds()
+    const rows = this._advisoryRows(kinds)
     const failed = [...this._repos.values()].flatMap(repo => [...repo.lockfiles?.values() ?? []]
       .filter(lockfile => lockfile.advisoriesError).map(lockfile => `${repo.fullName}/${lockfile.path}`))
+    const none = this._kind === 'production' ? 'npm has no advisories of the versions an install for production takes.' : 'npm has no advisories of the versions only devDependencies need.'
     return html`<section class="risk-section" aria-label="Advisories">
-      ${this._resultsHead(this._search(rows.length, this._advisories.size, 'advisories'))}
+      ${this._resultsHead(html`${this._kindToggle(kinds)}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
-      ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : 'npm has no advisories of these packages.'}</p>` : html`<div class="link-table"><table>
+      ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : none}</p>` : html`<div class="link-table"><table>
         <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
         <tbody>${rows.slice(0, MAX_ROWS).map(row => this._advisoryRow(row))}</tbody>
       </table></div>`}
