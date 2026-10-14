@@ -448,6 +448,21 @@ test('risk\'s records kept in memory are held to a length, the first kept going 
     'ten of 7 MiB: the first gone for the 64 MiB memory holds')
 })
 
+test('risk\'s downloads of a public package are kept in the database, for another instance, a private one\'s not, and removed two days on', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const counted = { start: '2026-08-01', end: '2026-10-11', days: [1, 2] }
+  await npmRiskCache({ db }, true).write('risk/npm/downloads', 'left-pad@2026-08-01:2026-10-11', counted)
+  await npmRiskCache({ db }, false).write('risk/npm/downloads', '@acme/secret@2026-08-01:2026-10-11', counted)
+  assert.deepEqual(await npmRiskCache({ db }, true).read('risk/npm/downloads', 'left-pad@2026-08-01:2026-10-11'), counted, 'read by another instance')
+  const kept = () => db.getUpstreamCacheEntries(['risk/npm/downloads/left-pad@2026-08-01:2026-10-11', 'risk/npm/downloads/@acme/secret@2026-08-01:2026-10-11',
+    'risk/npm/downloads/is-number@2026-08-01:2026-10-13']).then(rows => [...rows.keys()])
+  assert.deepEqual(await kept(), ['risk/npm/downloads/left-pad@2026-08-01:2026-10-11'], 'a private package\'s kept in memory alone')
+  t.mock.timers.enable({ apis: ['Date'], now: now + 3 * DAY })
+  await npmRiskCache({ db }, true).write('risk/npm/downloads', 'is-number@2026-08-01:2026-10-13', counted)
+  assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'three days on, the first removed as another is written')
+})
+
 test('risk against a private version is checked again for it once told', async t => {
   const h = await setup(t)
   withToken(t)

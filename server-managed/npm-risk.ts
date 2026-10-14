@@ -9,8 +9,14 @@
 // - `risk/npm/versions`, what a version's document says, which npm never
 //   changes once published: a public package's in the database's upstream
 //   cache table, shared by every instance; a private one's in memory.
-// - `risk/npm/packages`, `risk/npm/public`, `risk/npm/advisories` and
-//   `risk/npm/downloads`, kept an hour or a day by risk itself: in memory.
+// - `risk/npm/downloads`, a package's downloads a day, which risk keys by the
+//   days they count, so a day: a public package's in the database too, so
+//   that another instance, or this one restarted, asks npm's downloads API,
+//   which answers some 40 lookups a minute, none of them again that day,
+//   each removed two days on (npm-kept.ts pruneKept); a private one's in
+//   memory.
+// - `risk/npm/packages`, `risk/npm/public` and `risk/npm/advisories`, kept an
+//   hour or a day by risk itself: in memory.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
 //   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
 //   an assessment kept needs none.
@@ -28,11 +34,12 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
-import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm } from '../risk/index.js'
+import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm, npmReadyDownload, npmReadyDownloads } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import { loadNpmTarball } from './npm-loads.ts'
 import { NpmPackageError, type NpmVersionDocument, readNpmPackument, readNpmVersion } from './npm-packages.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
+import { pruneKept } from './npm-kept.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000
@@ -63,6 +70,10 @@ function remember(key: string, value: unknown) {
 }
 
 const hashed = (type: string, key: string) => `risk/${createHash('sha256').update(`${type}\0${key}`).digest('hex')}`
+// What of a public package is kept in the database, and for how long its
+// downloads are, a day's for a day more.
+const IN_DATABASE = new Set(['risk/npm/versions', 'risk/npm/downloads'])
+const DOWNLOADS_KEPT_MS = 2 * 24 * 60 * 60_000
 
 export interface NpmRiskStores {
   db: UpstreamCacheStore
@@ -79,7 +90,7 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
       if (type === 'npm/tarballs') return null
       try {
         if (isPublic && type === 'risk/npm/assessments' && npmCache) return JSON.parse((await buffer((await npmCache.open(hashed(type, key))).stream)).toString('utf8'))
-        if (isPublic && type === 'risk/npm/versions') { const value = await db.getUpstreamCacheEntry(`${type}/${key}`); return value === null ? null : JSON.parse(value) }
+        if (isPublic && IN_DATABASE.has(type)) { const value = await db.getUpstreamCacheEntry(`${type}/${key}`); return value === null ? null : JSON.parse(value) }
       } catch (error) { if (!(error instanceof CacheMissError)) warn('read', error); return null }
       return memory.get(`${isPublic ? '' : 'private\0'}${type}\0${key}`)?.value ?? null
     },
@@ -87,7 +98,12 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
       if (type === 'npm/tarballs') return
       try {
         if (isPublic && type === 'risk/npm/assessments' && npmCache) { await npmCache.put(hashed(type, key), Buffer.from(JSON.stringify(value))); return }
-        if (isPublic && type === 'risk/npm/versions') { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()); return }
+        if (isPublic && IN_DATABASE.has(type)) {
+          const at = Date.now()
+          await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), at)
+          if (type === 'risk/npm/downloads') await pruneKept(db, `${type}/`, DOWNLOADS_KEPT_MS, at, error => { warn('prune', error) })
+          return
+        }
       } catch (error) { warn('write', error); return }
       remember(`${isPublic ? '' : 'private\0'}${type}\0${key}`, value)
     },
@@ -175,3 +191,13 @@ export function npmRiskRemoved(name: string, version: string,
       tarball: () => Promise.reject(new NpmPackageError(502, 'upstream-invalid')) })
   })
 }
+
+// What a scan readies before assessing its packages (repository-risk.ts):
+// their downloads, as risk asks them, kept where a public package's are
+// (npmRiskCache), so that their assessments wait on npm's downloads API for
+// none. At once, those kept and unscoped ones, in bulk; each other one on its
+// own (npmReadyScanDownload).
+export const npmReadyScanDownloads = (names: string[], ready: (name: string) => void, stores: NpmRiskStores, signal: AbortSignal) =>
+  npmReadyDownloads(names, ready, { cache: npmRiskCache(stores, true), signal })
+export const npmReadyScanDownload = (name: string, stores: NpmRiskStores, signal: AbortSignal) =>
+  npmReadyDownload(name, { cache: npmRiskCache(stores, true), signal })

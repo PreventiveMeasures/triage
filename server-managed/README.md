@@ -963,9 +963,17 @@ read its package, OSV's (nx's malicious versions have OSV's alone), and the
 page says so in its tooltip; one nothing tells of is told as not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
 the server, leaving the rest to readers, and without asking npm of each
 dependency's package, nor of the version's advisories, which a lockfile's are
-asked at once. One refused as busy (`npm-busy`), or that npm asked to ask later
-(risk's `upstream-busy`, as npm's downloads API answers 429 past a burst of
-requests, a hundred or so, for some seconds), is asked again after a wait, so a
+asked at once. A package's downloads, which risk asks of npm's downloads API
+for its popularity and score, and which that API answers some 40 lookups a
+minute of before answering 429 for a while, are readied before it is assessed
+(`scan-downloads.ts`), so that no assessment waits on that API: at once, each
+lockfile's as it is read, those kept already and unscoped ones, asked 128 at a
+time in one lookup (risk's `npmReadyDownloads`); and scoped ones, which the
+API answers only one by one, one at a time at the pace it allows, while the
+assessors go on with the others. Public packages' downloads are kept in the
+database (`npm-risk.ts`), a day's for two days, so that another instance, or
+a scan again that day, asks the API for none of them again. One refused as busy (`npm-busy`), or that npm asked to ask later
+(risk's `upstream-busy`), is asked again after a wait, so a
 large scan goes at the pace npm allows. A package's risk line carries its
 findings and risk's `score` of it, out of 100 (risk/npm/score.js); the page
 shows the score in its Risk column, red from 75, orange from 50, yellow from

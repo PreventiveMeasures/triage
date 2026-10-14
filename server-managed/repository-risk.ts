@@ -31,6 +31,8 @@ import { type Lru, lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
 import { type LockedPackage, lockedPackages } from './locked-packages.ts'
+import { type Queue, queue } from './queue.ts'
+import { type DownloadsSource, type ReadyingDownloads, readyingDownloads } from './scan-downloads.ts'
 
 // The formats of npm's ecosystem, as findRepoLockfiles names them, and those
 // of them read here.
@@ -91,6 +93,9 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> {
   // Where risk lines are kept beyond this instance, as RiskCaches keeps them
   // in it (npm-kept.ts riskLineStore, the database's).
   risks?: KeptStore<RiskLine>
+  // Readies npm's downloads of packages before they are assessed
+  // (scan-downloads.ts); without it, each assessment asks its own.
+  downloads?: DownloadsSource
 }
 
 type AdvisoryRow = Advisory & { malware: boolean }
@@ -150,29 +155,6 @@ export const riskCaches = (): RiskCaches => ({
 export const RISK_KEPT_MS = 60 * 60_000
 const shared = riskCaches()
 
-// Items in the order they are added, each taken once by whichever reader asks
-// first: none once closed and all taken, or once `signal` aborts.
-interface Queue<T> { add(item: T): void; close(): void; take(): Promise<T | undefined> }
-function queue<T>(signal: AbortSignal): Queue<T> {
-  const items: T[] = []
-  const waiting: (() => void)[] = []
-  let closed = false
-  const wake = () => { for (const resolve of waiting.splice(0)) resolve() }
-  signal.addEventListener('abort', wake, { once: true })
-  return {
-    add(item) { items.push(item); wake() },
-    close() { closed = true; wake() },
-    async take() {
-      for (;;) {
-        if (signal.aborted) return undefined
-        const item = items.shift()
-        if (item !== undefined || closed) return item
-        await new Promise<void>(resolve => { waiting.push(resolve) })
-      }
-    },
-  }
-}
-
 // A package to assess: npm's of its name and version, or, with an
 // `integrity`, a mirror's held to it.
 interface AssessedPackage { name: string; version: string; integrity?: string }
@@ -183,9 +165,11 @@ interface Scan {
   signal: AbortSignal
   lines: Queue<RepositoryRiskLine>
   // Packages to assess, and those already asked for, by name, version and a
-  // mirror's integrity.
+  // mirror's integrity; those whose downloads are readied first, where the
+  // source readies them.
   pending: Queue<AssessedPackage>
   seen: Set<string>
+  readying: ReadyingDownloads<AssessedPackage> | null
 }
 
 // A package's risk line, its version's document kept and the assessment asked
@@ -290,14 +274,18 @@ async function readLockfile({ caches }: Scan, repo: number, opened: OpenedReposi
 }
 
 // A lockfile's packages of npm's registry or a mirror not yet seen this scan,
-// given to the assessors.
+// given to the assessors, once their downloads are readied where the source
+// readies them.
 function assessLater(scan: Scan, packages: LockedPackage[]) {
+  const fresh: AssessedPackage[] = []
   for (const { name, version, source, integrity } of packages) {
     const key = `${name}@${version}\0${integrity ?? ''}`
     if ((source !== 'registry' && source !== 'mirror') || version === null || scan.seen.has(key) || !isNpmPackageName(name) || !isNpmPackageSpec(version)) continue
     scan.seen.add(key)
-    scan.pending.add({ name, version, ...integrity === undefined ? {} : { integrity } })
+    fresh.push({ name, version, ...integrity === undefined ? {} : { integrity } })
   }
+  if (scan.readying) scan.readying.add(fresh)
+  else for (const pkg of fresh) scan.pending.add(pkg)
 }
 
 // A repository opened and its lockfiles of npm's ecosystem listed, as kept
@@ -397,12 +385,17 @@ async function readRepositories(scan: Scan) {
 export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source: RepositoryRiskSource<R>, signal: AbortSignal, caches = shared): AsyncGenerator<RepositoryRiskLine> {
   const stopped = new AbortController()
   const running = AbortSignal.any([signal, stopped.signal])
-  const scan: Scan = { source, caches, signal: running, lines: queue(signal), pending: queue(running), seen: new Set() }
+  const scan: Scan = { source, caches, signal: running, lines: queue(signal), pending: queue(running), seen: new Set(), readying: null }
+  scan.readying = source.downloads ? readyingDownloads(source.downloads, running, pkg => { scan.pending.add(pkg) }, { busy: isBusy, retries: BUSY_RETRIES, waitMs: BUSY_WAIT_MS }) : null
   const failed: unknown[] = []
   void (async () => {
     const assessors = Array.from({ length: MAX_SPARE_ASSESSMENTS }, () => assessor(scan))
     try {
-      try { await readRepositories(scan) } finally { scan.pending.close() }
+      // Stopped at once where reading fails, the downloads being readied with it.
+      try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally {
+        await scan.readying?.close()
+        scan.pending.close()
+      }
       await Promise.all(assessors)
       if (!running.aborted) scan.lines.add({ type: 'done' })
     } catch (error) {
