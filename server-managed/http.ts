@@ -1351,6 +1351,10 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
 // go idle, unread or with no line to send, before the scan is stopped.
 const REPO_RISK_RECHECK_MS = 10_000
 const REPO_RISK_IDLE_MS = 5 * 60_000
+// A scan's part on a serverless deployment, within its function's 300s
+// (vercel.managed.json): past it the scan stops, its last line `continue`,
+// and the page asks again, from where it stopped (repository-risk.ts).
+const REPO_RISK_PART_MS = 270_000
 
 // The repositories a scan of risk reads, by its query: every connected one;
 // a team's (`team`, its id), each in the team's directories of it; or one
@@ -1456,7 +1460,7 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
       if (audited.status !== 200) throw new NpmPackageError(502, audited.body.error)
       return audited.body
     },
-  }, controller.signal)
+  }, controller.signal, undefined, { partMs: deps.config.serverless ? REPO_RISK_PART_MS : null })
   let checked = Date.now()
   await sendLines(res, lines, async () => {
     if (deps.isShuttingDown()) return false

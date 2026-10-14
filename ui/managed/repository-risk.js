@@ -136,6 +136,10 @@ export function ago(at, now = Date.now()) {
   return Math.abs(hours) < 48 ? relative.format(hours, 'hour') : relative.format(Math.round(hours / 24), 'day')
 }
 
+// How many parts a scan is asked in at most, where the server answers in
+// parts (`continue`): 100 of 270s each, some seven hours.
+const MAX_PARTS = 100
+
 // How many package rows are drawn at most, the riskiest first.
 const MAX_ROWS = 1000
 // Lines come faster than a table this long redraws: draw at most this often.
@@ -192,6 +196,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._tab = 'packages'
     this._scan = null
     this._drawTimer = null
+    // The parts a scan has been asked in so far (MAX_PARTS).
+    this._parts = 0
     // SCOPES', and the team's or repository's id it names.
     this._scope = 'all'
     this._target = ''
@@ -242,14 +248,21 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._state = 'running'
     const scan = new AbortController()
     this._scan = scan
-    let done = false
+    this._parts = 0
     try {
-      await streamRisk(params, scan.signal, line => {
-        if (line.type === 'done') done = true
-        this._apply(line)
-        this._draw()
-      })
-      if (!done) throw new Error('The scan ended before it finished. Try again.')
+      // A part at a time where the server answers in parts (`continue`), as a
+      // serverless deployment's time-limited function does: each asked again
+      // from where the last stopped, what it told kept here.
+      for (let ended = 'continue'; ended === 'continue';) {
+        if (++this._parts > MAX_PARTS) throw new Error(`Stopped after ${formatCount.format(MAX_PARTS)} parts. Scan again to go on from where it stopped.`)
+        ended = null
+        await streamRisk(params, scan.signal, line => {
+          if (line.type === 'done' || line.type === 'continue') ended = line.type
+          this._apply(line)
+          this._draw()
+        })
+        if (ended === null) throw new Error('The scan ended before it finished. Try again.')
+      }
       this._state = 'done'
     } catch (err) {
       if (scan.signal.aborted || err?.name === 'AbortError') return
@@ -286,14 +299,16 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _apply(line) {
+    // A scan's next part tells its repositories and lockfiles again: those
+    // told already kept as they are until told otherwise.
     if (line.type === 'repos') {
-      for (const { id, fullName } of line.repos) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
+      for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
       if (line.error) { Object.assign(repo, { error: line.error, detail: line.detail ?? null }); return }
-      repo.commit = line.commit
-      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, { ...lockfile, packages: null, error: null }]))
+      Object.assign(repo, { commit: line.commit, error: null, detail: null })
+      repo.lockfiles = new Map(line.lockfiles.map(lockfile => [lockfile.path, repo.lockfiles?.get(lockfile.path) ?? { ...lockfile, packages: null, error: null }]))
     } else if (line.type === 'lockfile') {
       const repo = this._repos.get(line.repo)
       const lockfile = repo?.lockfiles?.get(line.path)
@@ -424,7 +439,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
     // Packages' counts, those of devDependencies alone apart where there are any.
     const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
-    const state = { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
+    const state = this._state === 'running' && this._parts > 1 ? `Scanning, part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
       packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
       ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],

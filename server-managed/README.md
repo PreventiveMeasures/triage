@@ -926,7 +926,12 @@ lockfile locks them too. It answers Brotli-encoded ndjson as it goes
 (`repository-risk.ts` names each line): the repositories, then each
 repository's lockfiles (`findRepoLockfiles`), each npm, pnpm or Yarn 1
 lockfile's packages (`@preventive/lockfile`), and each package's risk, with
-`done` last; a response without `done` was cut short. Repositories are read one
+`done` last; a response without `done` was cut short. On a serverless
+deployment (Vercel, whose function answers within 300 seconds), a scan stops
+after 270 seconds, the work under way given up on, its last line `continue`
+in place of `done`: the page asks again at once, keeping what it found, and
+the next part tells what the last assessed as kept, going on from where it
+stopped, a hundred parts at most. Repositories are read one
 at a time with the admin's own GitHub access, through the same gate as browsing
 them, which is checked again once a repository's lockfiles are read and before
 any of them is told. A repository GitHub isn't reached for (`github-unreachable`)

@@ -145,3 +145,29 @@ test('the progress line counts packages only devDependencies need apart from the
   page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
   assert.equal(progress(), 'Scanning · 1 of 1 repositories read · 3 of 3 lockfiles · 2 of 3 non-dev and 0 of 1 dev packages assessed · 2 non-dev and 0 dev flagged · 1 non-dev and 0 dev stale')
 })
+
+test('a scan the server answers in parts is asked again from where it stopped, what it told kept, until done', async t => {
+  const parts = [
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+      { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+      { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'ms', version: '2.1.3', source: 'registry' }] },
+      { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [] },
+      { type: 'continue' }],
+    [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+      { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+      { type: 'risk', name: 'ms', version: '2.1.3', published: null, severity: null, score: 3, findings: [] },
+      { type: 'done' }],
+  ]
+  const asked = []
+  t.mock.method(globalThis, 'fetch', url => {
+    asked.push(String(url))
+    return Promise.resolve(new Response(parts[asked.length - 1].map(line => JSON.stringify(line)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } }))
+  })
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  await page.start()
+  assert.equal(asked.filter(url => url.includes('/api/admin/repositories/risk')).length, 2)
+  assert.equal(page._state, 'done')
+  assert.equal(page._error, null)
+  assert.deepEqual([...page._packages.values()].map(row => [row.name, row.risk?.score]), [['debug', 0], ['ms', 3]], 'the first part\'s kept')
+  assert.equal(page._repos.get(1).lockfiles.get('package-lock.json').packages, 2, 'its lockfile as the first part read it')
+})

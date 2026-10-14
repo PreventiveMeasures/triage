@@ -466,6 +466,25 @@ test('a risk line kept before risk told a score is told stale, then assessed aga
   assert.deepEqual(assessed.toSorted(), ['is-number', 'is-number', 'left-pad', 'left-pad'])
 })
 
+test('a scan given a part\'s time stops once past it, its last line continue, and one again goes on from what it kept', async () => {
+  const risks = lineStore()
+  const assessed = []
+  // One within a part's time, the other past it, given up on as the scan stops, as risk's are.
+  const assess = ({ name }, _teamScoped, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { assessed.push(name); resolve(noneFound) }, name === 'left-pad' ? 0 : 200)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
+  })
+  const first = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { risks }), new AbortController().signal, riskCaches(), { partMs: 50 }))
+  assert.deepEqual(first.at(-1), { type: 'continue' })
+  assert.ok(!first.some(line => line.type === 'done'))
+  assert.deepEqual(risksOf(first).map(line => line.name), ['left-pad'], 'what was assessed within the part told')
+  assessed.length = 0
+  const again = await Array.fromAsync(repositoryRiskLines(Object.assign(sourceOf(onePnpmRepo, assess), { risks }), new AbortController().signal, riskCaches(), { partMs: 5000 }))
+  assert.deepEqual(again.at(-1), { type: 'done' })
+  assert.deepEqual(risksOf(again).map(line => line.name), ['is-number', 'left-pad'])
+  assert.ok(!assessed.includes('left-pad'), 'what the first part kept told again as kept')
+})
+
 test('kept risk lines are told at once however old, an old one stale; those with none kept assessed first, the stale ones after', async t => {
   const risks = lineStore()
   const order = []

@@ -101,6 +101,9 @@ export type RepositoryRiskLine =
     & ({ published: string | null; severity: Severity | null; score: number; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | { type: 'done' }
+  // The scan stopped for its part's time (repositoryRiskLines `partMs`), what
+  // it told kept: to be asked again, from where it stopped.
+  | { type: 'continue' }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 type LockfileRead = { packages: LockedPackage[] } | RiskFailure
@@ -374,10 +377,15 @@ function leftOver(scan: Scan): AssessedPackage[][] {
 // under way given up on, where `signal` aborts or the lines are no longer read. A failure of
 // a repository, a lockfile or a package is told in its line; one of the scan
 // itself is thrown, the lines before it told. What it reads is kept in
-// `caches` (RiskCaches), the instance's own unless given.
-export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source: RepositoryRiskSource<R>, signal: AbortSignal, caches = shared): AsyncGenerator<RepositoryRiskLine> {
-  const stopped = new AbortController()
-  const running = AbortSignal.any([signal, stopped.signal])
+// `caches` (RiskCaches), the instance's own unless given. Given `partMs`, it
+// stops once that long, as a function time-limited must (Vercel's), the work
+// under way given up on, its last line `continue`, for its reader to ask
+// again: those it assessed are kept, and told at once then.
+export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source: RepositoryRiskSource<R>, signal: AbortSignal, caches = shared,
+  { partMs = null }: { partMs?: number | null } = {}): AsyncGenerator<RepositoryRiskLine> {
+  const part = new AbortController(), stopped = new AbortController()
+  const parting = partMs === null ? undefined : setTimeout(() => { part.abort() }, partMs)
+  const running = AbortSignal.any([signal, stopped.signal, part.signal])
   const scan: Scan = { source, caches, signal: running, lines: queue(signal), lookups: queue(running), seen: new Map(), dev: new Map(), stale: [] }
   const failed: unknown[] = []
   void (async () => {
@@ -400,10 +408,17 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
     } finally { scan.lines.close() }
   })()
   try {
-    for (let line = await scan.lines.take(); line !== undefined; line = await scan.lines.take()) yield line
-    if (failed.length > 0 && !signal.aborted) throw failed[0]
+    let done = false
+    for (let line = await scan.lines.take(); line !== undefined; line = await scan.lines.take()) {
+      done ||= line.type === 'done'
+      yield line
+    }
+    if (done || signal.aborted) return
+    if (part.signal.aborted) yield { type: 'continue' }
+    else if (failed.length > 0) throw failed[0]
   } finally {
     // A GitHub request under way isn't waited on: it settles on its own.
+    clearTimeout(parting)
     stopped.abort()
   }
 }
