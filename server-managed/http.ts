@@ -128,7 +128,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { RISK_LINES_KEPT_MS, repositoryRiskLines } from './repository-risk.ts'
+import { repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -1443,8 +1443,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     version: async (name, version, signal) => found(await readNpmVersion(name, version, true, signal, versions)),
     assess: (doc, ownScope, signal) => npmRisk(doc, 'pick', { ...stores, teamScoped: ownScope, privileged: true, signal, spare: true }),
     removed: (name, version, ownScope, signal) => npmRiskRemoved(name, version, { ...stores, teamScoped: ownScope, privileged: true, signal }),
-    // Kept a month, a scan telling one past RISK_KEPT_MS at once, as stale.
-    risks: riskLineStore(deps.db, RISK_LINES_KEPT_MS, deps.config.debug),
+    // Kept for good, a scan telling one past RISK_KEPT_MS at once, as stale.
+    risks: riskLineStore(deps.db, Infinity, deps.config.debug),
     // As a bundle's advisories are asked (bundle-advisories.ts), npm's registry
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's
     // audit is bounded on its own, for one npm doesn't answer to fail alone and

@@ -40,7 +40,8 @@ export async function pruneKept(db: UpstreamCacheStore, prefix: string, keptMs: 
 // Values of `type`, each read for `keptMs` after it was kept.
 function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debug: boolean): KeptStore<T> {
   const warn = (what: string, error: unknown) => { if (debug) console.warn(`managed: kept ${type} ${what} failed:`, error) }
-  const prune = (at: number) => pruneKept(db, `${type}/`, keptMs, at, error => { warn('prune', error) })
+  // Kept for good (Infinity): none removed.
+  const prune = (at: number) => keptMs === Infinity ? Promise.resolve() : pruneKept(db, `${type}/`, keptMs, at, error => { warn('prune', error) })
   // Keys of any length or character, as the database's: hashed.
   const keyOf = (key: string) => `${type}/${createHash('sha256').update(key).digest('hex')}`
   const valueOf = (row: string | null | undefined) => {
@@ -75,6 +76,6 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
   }
 }
 
-// Risk lines, each kept `keptMs`, a scan telling one older than it counts
-// as stale (repository-risk.ts).
+// Risk lines, each kept `keptMs`, for good where Infinity, a scan telling one
+// past RISK_KEPT_MS as stale (repository-risk.ts).
 export const riskLineStore = <T>(db: UpstreamCacheStore, keptMs: number, debug = false): KeptStore<T> => keptStore<T>(db, 'repository-risk/lines', keptMs, debug)

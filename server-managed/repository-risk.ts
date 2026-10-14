@@ -127,9 +127,6 @@ export const riskCaches = (): RiskCaches => ({
   advisories: lru(50_000, kept => kept.rows.length + 1),
 })
 export const RISK_KEPT_MS = 60 * 60_000
-// How long a package's risk line is kept to tell, stale, once older than
-// RISK_KEPT_MS: a month, a scan assessing it again whenever it meets it.
-export const RISK_LINES_KEPT_MS = 30 * 24 * 60 * 60_000
 // How many kept risk lines are read of the source's `risks` at once.
 const KEPT_READ = 500
 const shared = riskCaches()

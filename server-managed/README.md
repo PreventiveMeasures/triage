@@ -983,8 +983,10 @@ lockfile's as it is read, those kept already and unscoped ones, asked 128 at a
 time in one lookup (risk's `npmReadyDownloads`); and scoped ones, which the
 API answers only one by one, one at a time at the pace it allows, while the
 assessors go on with the others. Public packages' downloads are kept in the
-database (`npm-risk.ts`), a day's for two days, so that another instance, or
-a scan again that day, asks the API for none of them again; a scoped one a
+database (`npm-risk.ts`), for a week, as risk tells them that long (the tier
+they put a package in, the most of its latest six weeks', hardly moves in
+one), so that another instance, or a scan again that week, asks the API for
+none of them again; a scoped one a
 scan readies on its own only where the API counts some, as it counts public
 packages alone, so that a private one's none is never kept with them. One refused as busy (`npm-busy`), or that npm asked to ask later
 (risk's `upstream-busy`), is asked again after a wait, so a
@@ -995,7 +997,7 @@ shows the score in its Risk column, red from 75, orange from 50, yellow from
 tell of it too, and lists the riskiest first. A package's risk that still fails tells
 its code, and, where risk failed, risk's `detail` of what it asked of npm and
 how that failed. A package's risk line is kept (`repository-risk/lines` rows of
-`managed_upstream_cache`, and the instance's memory) for a month: each
+`managed_upstream_cache`, and the instance's memory) for good: each
 lockfile's packages are looked up as it is read, and those kept told at once,
 however old, one kept within the hour as it is and an older one, or one kept
 before risk told a score, as stale (`stale: { assessedAt }`), dimmed on the

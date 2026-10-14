@@ -565,8 +565,11 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
   assert.deepEqual(asked, [], 'everything kept: npm isn\'t asked')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + DAY, cache })
-  assert.deepEqual(asked.map(url => url.replace(/range\/[^/]+/u, 'range/…')).toSorted(), [`${REGISTRY}/kept`, ADVISORIES, OSV, 'https://api.npmjs.org/downloads/range/…/kept'].toSorted(),
-    'a day on, its deprecations and advisories asked again, as they are after an hour, and its downloads, another day\'s; no tarball')
+  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/kept`, ADVISORIES, OSV].toSorted(),
+    'a day on, its deprecations and advisories asked again, as they are after an hour, its downloads kept a week; no tarball')
+  asked.length = 0
+  await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + 8 * DAY, cache })
+  assert.ok(asked.some(url => /^https:\/\/api\.npmjs\.org\/downloads\/range\/[^/]+\/kept$/u.test(url)), 'a week on, its downloads asked again')
 })
 
 test('an advisory is of malware where GitHub files it as embedded malicious code, or its title says so', () => {

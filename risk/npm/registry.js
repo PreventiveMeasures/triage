@@ -50,6 +50,10 @@ const ADVISORIES_MS = 60 * 60_000
 // months' downloads a day.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const DOWNLOADS_BYTES = 1024 * 1024
+// How long a package's downloads are kept: a week, as the tier they put it in,
+// by the most of its latest six weeks' (downloads.js npmDownloadTier), hardly
+// moves in one, and npm's downloads API answers only some 40 lookups a minute.
+const DOWNLOADS_MS = 7 * DAY_MS
 // How many packages npm's downloads API answers in one lookup, unscoped ones
 // alone (it refuses a scoped one in a bulk lookup), and how much of it is read.
 const BULK_DOWNLOADS = 128
@@ -267,10 +271,10 @@ function rangeAt(now) {
 }
 
 // A package's downloads as kept, from npm's answer of them over a range of
-// days: `{ start, end, days }`, a count a day from `start`, or `{ none }`
-// where npm counts none (null).
-function downloadsOf(json) {
-  if (json === null) return { none: true }
+// days `asked` then: `{ at, start, end, days }`, a count a day from
+// `start`, or `{ at, none }` where npm counts none (null).
+function downloadsOf(json, asked) {
+  if (json === null) return { at: asked, none: true }
   const start = Date.parse(json.start)
   const length = Math.round((Date.parse(json.end) - start) / DAY_MS) + 1
   const days = Array.from({ length: Number.isSafeInteger(length) && length > 0 && length <= 400 ? length : 0 }, () => 0)
@@ -278,22 +282,24 @@ function downloadsOf(json) {
     const at = Math.round((Date.parse(row.day) - start) / DAY_MS)
     if (at >= 0 && at < days.length && Number.isSafeInteger(row.downloads)) days[at] = row.downloads
   }
-  return { start: json.start, end: json.end, days }
+  return { at: asked, start: json.start, end: json.end, days }
 }
+// Whether downloads kept are told as they are: kept within DOWNLOADS_MS.
+const freshDownloads = (held, now) => held != null && now - held.at < DOWNLOADS_MS
 
-// A package's downloads a day over rangeAt's days, `{ start, end, days }`,
-// null where npm counts none.
+// A package's downloads a day over rangeAt's days when asked, `{ start, end,
+// days }`, kept a week (DOWNLOADS_MS), null where npm counts none.
 export async function npmDownloads(name, context) {
-  const range = rangeAt(context.now)
-  const answer = await kept(context, 'risk/npm/downloads', `${name}@${range}`,
-    async () => downloadsOf(await askNpm(`${DOWNLOADS}/${range}/${encoded(name)}`, {}, DOWNLOADS_BYTES, `${name}'s downloads`, context)))
+  const answer = await kept(context, 'risk/npm/downloads', name,
+    async () => downloadsOf(await askNpm(`${DOWNLOADS}/${rangeAt(context.now)}/${encoded(name)}`, {}, DOWNLOADS_BYTES, `${name}'s downloads`, context), context.now),
+    hit => freshDownloads(hit, context.now))
   return answer.none ? null : answer
 }
 
 // Readies, at once, the downloads assessNpm asks of each of these packages
 // (`names`) that can be, kept in `cache` as npmDownloads keeps them, so that
-// their assessments ask npm none: those kept already, as they are, and
-// unscoped ones, asked of npm BULK_DOWNLOADS at a time, as its downloads API
+// their assessments ask npm none: those kept within a week (DOWNLOADS_MS), as
+// they are, and unscoped ones, asked of npm BULK_DOWNLOADS at a time, as its downloads API
 // answers them; `ready` is told each once its downloads are kept. The rest,
 // scoped ones (it answers those only one by one) and any a bulk lookup
 // didn't answer, are left for npmReadyDownload, one at a time. npm asking to
@@ -302,22 +308,21 @@ export async function npmDownloads(name, context) {
 export async function npmReadyDownloads(names, ready, { cache, signal, now = Date.now() }) {
   const context = { cache, signal, now }
   const range = rangeAt(now)
-  const keyOf = name => `${name}@${range}`
   const unique = [...new Set(names)]
   const unscoped = []
   const ask = async part => {
     const json = await askNpm(`${DOWNLOADS}/${range}/${part.join(',')}`, {}, BULK_DOWNLOADS_BYTES, `${part.length} packages' downloads`, context)
     const answered = part.filter(name => json && Object.hasOwn(json, name))
-    await keepMany(cache, answered.map(name => [keyOf(name), downloadsOf(json[name])]))
+    await keepMany(cache, answered.map(name => [name, downloadsOf(json[name], now)]))
     for (const name of answered) ready(name)
   }
   // Those kept read BULK_DOWNLOADS at a time, the rest asked as they fill a
   // lookup.
   for (let at = 0; at < unique.length; at += BULK_DOWNLOADS) {
     const part = unique.slice(at, at + BULK_DOWNLOADS)
-    const held = await keptMany(cache, part.map(keyOf))
+    const held = await keptMany(cache, part)
     for (const name of part) {
-      if (held.get(keyOf(name)) != null) ready(name)
+      if (freshDownloads(held.get(name), now)) ready(name)
       else if (!name.startsWith('@')) unscoped.push(name)
     }
     while (unscoped.length >= BULK_DOWNLOADS) await ask(unscoped.splice(0, BULK_DOWNLOADS))
