@@ -117,15 +117,17 @@ test('credentials: gh auth token, the cloud\'s metadata endpoint, the Actions ru
     + 'get(`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`)\nconst url = `http://169.254.169.254${PATH}`\n'
     + 'fetch(\'http://169.254.169.254/metadata/identity/oauth2/token?resource=x\')\nconst mapped = \'::ffff:169.254.169.254\'\n'
     + 'const escaped = \'http:\\/\\/169.254.169.254\\/metadata\\/identity\\/oauth2\\/token\'\nconst fqdn = \'http://metadata.google.internal.\'\n'
-    + 'const userinfo = \'http://user:pass@169.254.169.254:80/latest\'\nconst whatwg = \'https://169.254.169.254\\\\@trusted.example.com\'\n'), { 'cloud-metadata': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
-  'the cloud\'s instance metadata endpoint, AWS\'s, GCP\'s and Azure\'s, after userinfo, before a port, before a backslash URLs read as a slash')
+    + 'const userinfo = \'http://user:pass@169.254.169.254:80/latest\'\nconst whatwg = \'https://169.254.169.254\\\\@trusted.example.com\'\n'
+    + 'fetch(\'//169.254.169.254/latest/meta-data/\')\nconst azure = \'http://169.254.169.254:80/metadata/identity/oauth2/token\'\n'), { 'cloud-metadata': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+  'the cloud\'s instance metadata endpoint, AWS\'s, GCP\'s and Azure\'s, after userinfo or a URL\'s two slashes alone, before a port, before a backslash URLs read as a slash')
   assert.deepEqual(found('a.js', 'fetch(\'http://METADATA.GOOGLE.INTERNAL/computeMetadata/v1/instance/service-accounts/default/token\')\n'), { 'cloud-metadata': [1] },
     'GCP\'s host in any case, as DNS reads it, though the file says nothing else first')
   assert.equal(found('a.js', 'const a = \'169.254.169.2540\'\nconst b = \'10.169.254.169.254\'\nconst c = \'169.254.169.25\'\nconst d = \'169.254.169.254.1\'\n'
     + 'const e = \'metadata.google.internals\'\nconst IMDS = "http://169.254.169.254/metadata/instance/compute"\n// fetch(\'http://169.254.169.254/latest/meta-data/\')\n'
     + 'const f = \'http:\\/\\/169.254.169.254\\/metadata\\/instance\\/compute\'\nget(\'http://169.254.169.254.example.com/\')\nget(\'http://metadata.google.internal.example.com/\')\nget(\'http://foo-169.254.169.254/path\')\n'
     + 'fetch(\'https://169.254.169.254@example.com/\')\nfetch(\'https://169.254.169.254:x@example.com/\')\nfetch(\'https://example.com/169.254.169.254/info\')\n'
-    + 'fetch(\'https://metadata.google.internal@example.com/\')\nfetch(\'https://example.com/metadata.google.internal\')\n'), null,
+    + 'fetch(\'https://metadata.google.internal@example.com/\')\nfetch(\'https://example.com/metadata.google.internal\')\nfetch(\'https://example.com//169.254.169.254/info\')\n'
+    + 'const azure = \'http://169.254.169.254:80/metadata/instance/compute\'\n'), null,
     'not an address or a host it starts or ends, in a URL\'s userinfo or path, nor Azure\'s instance metadata, a machine\'s region as msal asks it, its slashes escaped or not, nor in a comment')
   assert.deepEqual(found('a.js', 'if (cmdline.includes(\'Runner.Worker\')) return pid\nexec(\'pgrep -f Runner.Worker\')\nconst exe = \'Runner.Worker.exe\'\n'
     + 'const ns = \'GitHub.Runner.Worker\'\nopenSync(`/proc/${pid}/mem`, \'r\')\nconst all = \'/proc/*/mem\'\nconst one = "/proc/1234/mem"\nconst py = "mem_path = f\'/proc/{pid}/mem\'"\nformat(\'/proc/%d/mem\', pid)\n'),
