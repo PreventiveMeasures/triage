@@ -967,8 +967,13 @@ lockfile's line; one every lockfile of the scan locks so is assessed only once
 all the rest are, the stale ones among them, as an install of no
 devDependencies leaves it out, and the page tags it `dev` and lists it after
 the rest, but for malware, which runs wherever it is installed, CI and a
-developer's machine among them; and an advisory of versions only
-devDependencies need after those of the rest, malware's first all the same.
+developer's machine among them. Its Advisories tab shows those of the
+versions an install for production takes (some lockfile needs them as more
+than devDependencies do, or doesn't say, as Yarn 1's doesn't), or, toggled
+beside the search, those of the versions only devDependencies need, each
+with the versions of its kind, tagged `dev` in the latter, and each toggle
+saying how many; an advisory of malware is shown either way, first, with
+all its versions, as is the package it names among the riskiest.
 The page's progress line counts packages assessed, flagged and stale of
 devDependencies alone apart from the rest, as each lockfile tells it so far:
 a later lockfile that needs one otherwise moves it among the rest.
