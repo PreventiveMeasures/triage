@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { templateText } from './_lit.js'
-import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers, knowProfile } from '../ui/view/github-users.js'
+import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers, knowProfile, knowingGithubUsers } from '../ui/view/github-users.js'
 
 test('GitHub logins the server names as the app\'s users show by their avatar and chosen name, a linked account as its user; others as themselves', () => {
   const answer = { items: [], users: {
@@ -75,5 +75,20 @@ test('the signed-in user\'s own profile change shows in what was kept of them: t
   assert.deepEqual(['zoe', 'zoe-work'].map(login => appUser(login)?.name ?? null), [null, null])
   assert.equal(appUser('zoe-work'), null, 'unlinked')
   assert.equal(appUser('zoe')?.id, 'zoe-id')
+  forgetGithubUsers()
+})
+
+test('an answer read across another session\'s start keeps none of its users; one read within its session keeps them', async () => {
+  forgetGithubUsers()
+  const answer = { items: [{ author: 'xan' }], users: { xan: { id: 'xan-id', login: 'xan', name: 'Xan' } } }
+  const late = Promise.withResolvers()
+  const reading = knowingGithubUsers(() => late.promise)
+  forgetGithubUsers()
+  late.resolve(answer)
+  assert.equal(await reading, answer, 'answered all the same, for its caller to discard')
+  assert.equal(appUser('xan'), null, 'the session it was read for had ended')
+  assert.equal(await knowingGithubUsers(() => Promise.resolve(answer)), answer)
+  assert.equal(appUser('xan')?.id, 'xan-id')
+  await assert.rejects(knowingGithubUsers(() => Promise.reject(new Error('offline'))), /offline/u)
   forgetGithubUsers()
 })

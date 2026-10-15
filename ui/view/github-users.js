@@ -27,8 +27,18 @@ export function knowGithubUsers(answer) {
 }
 
 // Forget them all, for another session, whose answers say who they are.
+let generation = 0
 export function forgetGithubUsers() {
   known.clear()
+  generation++
+}
+
+// What `read` answers, its users kept as knowGithubUsers keeps them, unless
+// they were forgotten while it was read: it was another session's.
+export async function knowingGithubUsers(read) {
+  const at = generation
+  const answer = await read()
+  return at === generation ? knowGithubUsers(answer) : answer
 }
 
 // How many times each user changed their avatar in this page: their avatar's

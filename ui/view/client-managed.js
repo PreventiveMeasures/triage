@@ -7,7 +7,7 @@ import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
-import { forgetGithubUsers, knowGithubUsers } from './github-users.js'
+import { forgetGithubUsers, knowingGithubUsers } from './github-users.js'
 
 let loadPromise = null
 let managedModule = null
@@ -81,24 +81,24 @@ export async function fetchRepositoryContents(repoId, ref, path, options) {
   return (await loadManagedBundle()).fetchRepositoryContents(repoId, ref, path, options)
 }
 
-export async function fetchRepositoryHistory(repoId, ref, path, options) {
-  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options))
+export function fetchRepositoryHistory(repoId, ref, path, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options))
 }
 
-export async function fetchRepositoryAgents(repoId, options) {
-  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
+export function fetchRepositoryAgents(repoId, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
 }
 
-export async function fetchRepositoryIssues(repoId, kind, options) {
-  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options))
+export function fetchRepositoryIssues(repoId, kind, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options))
 }
 
-export async function fetchRepositoryItem(repoId, number, options) {
-  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
+export function fetchRepositoryItem(repoId, number, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
 }
 
-export async function fetchRepositoryPulse(repoId, weeks, options) {
-  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
+export function fetchRepositoryPulse(repoId, weeks, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }
 
 export async function fetchNpmVersions(name, options) {
