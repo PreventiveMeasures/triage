@@ -111,6 +111,15 @@
   font: 12px/1.4 system-ui, sans-serif;
   white-space: normal;
 }
+/* Counts told apart (`tooltipContent`): a line each, its count aligned to
+   the right before what it counts, the slash of one of a total a little
+   apart; and notes beneath. */
+#styled-tooltip .tooltip-counts { display: grid; grid-template-columns: max-content max-content; gap: .1rem .5em; }
+#styled-tooltip .tooltip-count { font-variant-numeric: tabular-nums; text-align: right; }
+#styled-tooltip .tooltip-count-of, #styled-tooltip .tooltip-counts-note { color: var(--muted); }
+#styled-tooltip .tooltip-slash { margin: 0 .1em; }
+#styled-tooltip .tooltip-counts-note { max-width: 18rem; }
+#styled-tooltip .tooltip-counts + .tooltip-counts-note { margin-top: .3rem; }
 #styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) { margin-top: 12px; }
 #styled-tooltip .tooltip-package-details { display: flex; flex-wrap: wrap; column-gap: .75rem; }
 #styled-tooltip .tooltip-repo svg,
