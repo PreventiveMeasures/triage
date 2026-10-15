@@ -205,7 +205,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues, Pull requests or Agents tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues, Pull requests, Agents or Pulse tab |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1517,7 +1517,7 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 
 Admins and managers read a connected repository's files in the bundle view,
 as an npm version shows, with the Code, Search, Treemap, History, Issues,
-Pull requests and Agents tabs: from the
+Pull requests, Agents and Pulse tabs: from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1775,6 +1775,70 @@ never the texts; of the default branch's commits, only those no pull request
 merged and an agent marked. They are read as Issues are: with the reader's
 own GitHub access, only where their grants reach the whole repository, a
 token needed, and access checked again before they are sent.
+
+## Pulse
+
+The **Pulse** tab shows how the repository moves over a **Week**, **Month**,
+**Quarter** or **Year**: one, four, thirteen or fifty-two weeks to today, as
+GitHub's statistics count weeks (Sunday first, UTC), the current week the
+last of them. Its dates are named in the bar, beside **Charts** and
+**Table**, which show its charts as tables of the same figures.
+
+- **Figures**, a tile each: the default branch's commits, how many people
+  made them, the pull requests merged (and opened) and the issues closed
+  (and opened), and the lines added and removed. Commits, pull requests and
+  issues are each set beside the same days of the week a period earlier
+  ("↑ from 110 the month before"): this week's Sunday to Thursday beside
+  last week's, not the days just before, whose days of the week differ. The
+  year's commits are set beside none, GitHub counting only the last year's.
+- **Commits**, a column a week over the last year, the period's in blue, the
+  rest gray, over a scale of round counts; under them **Lines**, added above
+  a line in blue and removed below it in red, one scale for both, the weeks
+  outside the period faded; the months named under both, the year where
+  January starts.
+- **Contributors**, those who made commits in the period, as many as eight,
+  ranked by their commits in bars, each with the lines they added and
+  removed, and how many more there were; each name opens their GitHub page.
+- **When commits are made**, a cell an hour of each day of the week, Monday
+  first, the more commits the deeper its blue, as the scale under it shows;
+  in each commit's own time zone, and not only the period's, as GitHub
+  counts them.
+- **Merged** and **opened pull requests**, **closed** and **opened issues**,
+  the ten latest of each, with how many there were and, where there were
+  more, a link to all of them on GitHub; each opens its popup as an Issues
+  tile does.
+
+Each column, bar and cell names its figures on hover. A period read anew
+shows the last one read, faded, till it is. GitHub computes a repository's
+statistics when first asked, answering that it is till they are: the tab
+shows what else it read, says GitHub is still counting, and asks again five
+seconds apart, six times, then leaves **Ask again** to the reader. A
+repository of 10,000 commits or more has no lines counted, by GitHub, and
+shows none.
+
+`GET /api/admin/repositories/pulse?repoId=…&weeks=1|4|13|52` answers
+`{ weeks, since, previousSince, merged, opened, closed, created, stats,
+pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed` and
+`created` are each `{ count, previous, items }`: how many GitHub's search
+finds in the period (`since`, its first day, to today) and in the same days
+of the week a period earlier (`previousSince` on), and the ten latest, from
+one GraphQL query of eight searches, searched by the day. GitHub sorts no
+search by when a pull request was merged or an issue closed, so the fifty
+most recently updated are read and the ten latest merged or closed of them
+listed: all of them where the period holds fifty or fewer. `stats` is the default
+branch's statistics, from GitHub's `stats/commit_activity`,
+`code_frequency`, `contributors` and `punch_card`: `weeks`, a row a week of
+the last year, its commits each day and in all and its lines added and
+removed (null where GitHub counts none, `lines` false); `contributors`, as
+many as a hundred, the most commits that year first, each their weeks of it
+with any; and `punch`, commits by day of the week and hour. GitHub answering
+`202` while it computes them, each is asked again, a second and a half, then
+three, later; still computing, `stats` is null and `pending` true. The
+statistics are kept for every period, apart from the period's searches, each
+as Issues' pages are (two minutes, then answered while read again); those
+GitHub is still computing are not kept. They are read as Issues are: with
+the reader's own GitHub access, only where their grants reach the whole
+repository, a token needed, and access checked again before they are sent.
 
 # npm package viewer
 

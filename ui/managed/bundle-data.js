@@ -206,6 +206,21 @@ export function fetchRepositoryItem(repoId, number, { signal } = {}) {
   return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, response => response.json(), signal)
 }
 
+const REPOSITORY_PULSE_ERRORS = {
+  ...REPOSITORY_ISSUES_ERRORS,
+  'no-directory': 'Pulse shows only with access to the whole repository.',
+  'github-malformed': 'GitHub answered with statistics that couldn’t be read.',
+  'github-token-required': 'Reading a repository’s pulse needs your GitHub sign-in.',
+  'github-status-403': 'GitHub refused to read these. The GitHub App reading this repository needs Contents, Issues and Pull requests: read, which an owner of its installation approves.',
+  400: 'Not a repository’s pulse.',
+}
+
+// The Pulse tab's: the default branch's statistics over the last year, and
+// the pull requests and issues of the last `weeks` weeks.
+export function fetchRepositoryPulse(repoId, weeks, { signal } = {}) {
+  return request(`/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }
