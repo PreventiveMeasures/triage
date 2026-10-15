@@ -242,6 +242,33 @@ test('the pull requests squashed into the history come with it, each with its ow
   assert.equal(asked.slice(before).some(entry => entry.path === '/graphql' && /PullRequests|pullRequest\(/u.test(entry.body.query)), false)
 })
 
+test('a rebase whose commits go on past those listed is told, and kept, once they are listed', async t => {
+  const [rebased2, rebased1, r1, r2, root] = ['6', '4', 'e', '2', '1'].map(char => char.repeat(40))
+  const node = (oid, parents, messageHeadline) => ({ oid, messageHeadline, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  // #3's two commits rebased onto main, the first of them past the page read at first.
+  let history = [node(rebased2, [rebased1], 'Fix, part 2')]
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: rebased2, committedDate: '2026-10-01T00:00:00Z' } }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+      tags: { nodes: [] } }
+    : query.includes('associatedPullRequests') ? Object.fromEntries(Object.entries(variables).flatMap(([key]) => /^o\d+$/u.test(key) ? [[`c${key.slice(1)}`,
+      { associatedPullRequests: { nodes: [{ number: 3, mergeCommit: { oid: rebased2 } }] } }]] : []))
+    : query.includes('pullRequest(number') ? { p0: { headRefOid: r2, commits: { totalCount: 2, nodes: [node(r1, [root], 'Fix, part 1'), node(r2, [r1], 'Fix, part 2')].map(commit => ({ commit })) } } }
+    : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: history } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const lookups = () => asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('associatedPullRequests')).length
+  assert.equal((await request({ repoId: '1', all: 'true' })).body.pulls, undefined)
+  // Its first commit listed now, as gluing on kept pages lists it: looked up again, a rebase, none.
+  history = [node(rebased2, [rebased1], 'Fix, part 2'), node(rebased1, [root], 'Fix, part 1'), node(root, [], 'Root')]
+  const looked = lookups()
+  const again = await request({ repoId: '1', ref: 'heads/main' })
+  assert.equal(again.body.pulls, undefined)
+  assert.equal(lookups(), looked + 1, 'not kept while it couldn\'t be told')
+  await request({ repoId: '1', ref: 'heads/main' })
+  assert.equal(lookups(), looked + 1, 'kept once told')
+})
+
 test('a history is sent all the same where the pull requests squashed into it can\'t be read', async t => {
   const graphql = ({ query }) => query.includes('associatedPullRequests') || query.includes('pullRequests(') ? { errors: [{ type: 'FORBIDDEN' }] }
     : { data: { repository: query.includes('refs/heads/')

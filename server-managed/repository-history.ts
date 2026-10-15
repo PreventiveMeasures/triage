@@ -406,9 +406,13 @@ export async function squashedPulls(fullName: string, token: string, commits: Hi
       // below it on their first parents, by their subjects, its commits'
       // (one squashed is told by its commit's title too, by default, and
       // drawn as it was either way).
-      const below: (HistoryCommit | undefined)[] = [commit]
-      while (below.length < own.length && below.at(-1)) below.push(listed.get(below.at(-1)!.parents[0] ?? ''))
-      const rebased = own.length > 1 && own.toReversed().every((item, step) => below[step]?.subject === item.subject)
+      const below = [commit]
+      for (let next = listed.get(commit.parents[0] ?? ''); next && below.length < own.length; next = listed.get(next.parents[0] ?? '')) below.push(next)
+      const copies = own.toReversed().slice(0, below.length).every((item, step) => below[step]!.subject === item.subject)
+      // Its commits' copies as far as those listed go, but not all of them
+      // listed: told, and kept, once they are.
+      if (own.length > 1 && copies && below.length < own.length) continue
+      const rebased = own.length > 1 && copies
       const squashed = head !== undefined && head !== commit.sha && own.length > 0 && !own.some(item => item.sha === commit.sha) && !rebased
       const pull = squashed ? { merge: commit.sha, number, head, commits: own, more: Number(node.commits?.totalCount) > own.length } : null
       found.set(commit.sha, pull)
