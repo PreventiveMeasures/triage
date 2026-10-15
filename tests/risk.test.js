@@ -114,18 +114,22 @@ test('a file node runs as JavaScript though its name says otherwise, read as a s
   const minifiedCss = `${'.a{color:red;margin:0;padding:0}'.repeat(5)}\n`.repeat(20)
   const files = {
     'package.json': JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf' } }),
-    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire.resolve('./resolved.txt')\nrequire('./theme.min.css')\n",
+    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire.resolve('./resolved.txt')\nrequire('./theme.min.css')\n"
+      + "require('./extra.txt', 0)\nrequire(/* a */ './commented.txt')\nmodule.require('./module.txt')\n`${require('./template.txt')}`\nrequire('./esc\\x2etxt')\n"
+      + "// require('./comment.txt')\nconst said = \"require('./quoted.txt')\"\nrequire('./built' + '.txt')\n",
     'esm.mjs': "export { x } from './sub/next'\n",
     'main.dat': runs, 'cfg.conf': runs, 'data.txt': `${runs}require('./more.cfg')\n`, 'more.cfg': runs, '.gitignore': runs, 'payload': runs, 'sub/next': runs,
     'lib/package.json': '{"main":"entry.bin"}', 'lib/entry.bin': runs,
     'styles.css': runs, 'conf.json': '{}', 'resolved.txt': runs, 'unloaded.txt': runs, 'README.md': runs,
     'theme.min.css': minifiedCss, 'copy.min.css': minifiedCss,
+    'extra.txt': runs, 'commented.txt': runs, 'module.txt': runs, 'template.txt': runs, 'esc.txt': runs,
+    'comment.txt': runs, 'quoted.txt': runs, 'built.txt': runs,
   }
   npm(t, [{ name: 'loads', versions: [version('loads', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))] }])
   const assessment = await assessNpm('loads', '1.0.0', { now: NOW, downloads: false })
   assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code').files.map(({ path }) => path),
-    ['.gitignore', 'cfg.conf', 'data.txt', 'lib/entry.bin', 'main.dat', 'more.cfg', 'payload', 'sub/next'],
-    'not one `import` takes by an extension it doesn\'t know, JSON, a path only resolved, nor one nothing loads')
+    ['.gitignore', 'cfg.conf', 'commented.txt', 'data.txt', 'esc.txt', 'extra.txt', 'lib/entry.bin', 'main.dat', 'module.txt', 'more.cfg', 'payload', 'sub/next', 'template.txt'],
+    'not one `import` takes by an extension it doesn\'t know, JSON, a path only resolved, one named in a comment or a string, one built, nor one nothing loads')
   assert.deepEqual(assessment.files['.gitignore'].stamps, [{ name: 'child_process', severity: 'high' }])
   assert.deepEqual(assessment.files['unloaded.txt'].stamps, [])
   assert.deepEqual(assessment.files['theme.min.css'].stamps, [{ name: 'Minified', severity: 'notice' }], 'a stylesheet code loads read as one all the same')

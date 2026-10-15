@@ -2,20 +2,63 @@
 // npmFileRisk), and every host its scripts name: for compare.js's findings
 // and held.js's, and for the viewer, which reads its files' tags from it.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { npmIsScript } from '../files/script.js'
+import { JS_STRING_OR_COMMENT, npmIsScript } from '../files/script.js'
 import { npmFileRisk } from '../files/stamps.js'
 
 // What a version's files are kept by: its bundle where it is one, else its
 // files' list, else itself.
 const keyOf = version => version.bundle ?? version.json ?? version
 
-// A path quoted whole from `./` or `../` (or `.` or `..` alone), nothing put
-// in it: in a `require(…)` (not `require.resolve`), an `import(…)`, after an
-// `import` or `export`'s `from`, or a bare `import '…'`. Linear on any text:
-// each read from its keyword, a path to 1,024 characters.
-const RELATIVE = String.raw`\.\.?(?:\/[^'"\x60$\n]{0,1024})?`
-const REQUIRED = new RegExp(String.raw`(?<![\w$.])require\s*\(\s*(['"\x60])(${RELATIVE})\1\s*\)`, 'gu')
-const IMPORTED = new RegExp(String.raw`(?<![\w$.])(?:import\s*\(\s*(['"\x60])(${RELATIVE})\1\s*[,)]|(?:import|from)\s*(['"])(${RELATIVE})\3)`, 'gu')
+// A string's escapes as JavaScript reads them (`\x2e`, `\u002e`, `\u{2e}`, a
+// control's letter), a line continuation for nothing, any other for itself.
+const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|(\r\n|[\s\S]))/giu
+const CONTROLS = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0' }
+const unescaped = body => body.replaceAll(ESCAPE, (escape, x, u, braced, other) => {
+  if (other !== undefined) return /^(?:\r\n|[\n\r\u2028\u2029])$/u.test(other) ? '' : CONTROLS[other] ?? other
+  const code = Number.parseInt(x ?? u ?? braced, 16)
+  return code <= 0x10FFFF ? String.fromCodePoint(code) : escape
+})
+
+// A string token's value: null for a regular expression, one left open, or
+// a template with something put in it.
+function valueOf(token) {
+  const quote = token[0]
+  if (quote === '/' || token.length < 2 || token.at(-1) !== quote || (quote === '`' && token.includes('${'))) return null
+  const body = token.slice(1, -1)
+  return body.includes('\\') ? unescaped(body) : body
+}
+
+// A script's code as JS_STRING_OR_COMMENT tells it apart, linear on any
+// text: its comments dropped, each string or regular expression `0`, but a
+// relative path's (RELATIVE), a mark (`\0<index>\0`, which no text read has)
+// with its value kept (valueOf); and what a template puts in it, read as
+// code the same, once: not a template's in that.
+function codeOf(text, outer = true) {
+  const inner = [], paths = [], pieces = []
+  let last = 0
+  for (const { 0: match, 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
+    if (index > last) pieces.push(text.slice(last, index))
+    last = index + match.length
+    if (token === undefined) {
+      pieces.push(' ')
+      continue
+    }
+    if (outer && token[0] === '`' && token.includes('${')) inner.push(token.slice(1, -1))
+    const value = token[1] === '.' || token[1] === '\\' ? valueOf(token) : null
+    pieces.push(value !== null && RELATIVE.test(value) ? ` \0${paths.push(value) - 1}\0 ` : ' 0 ')
+  }
+  pieces.push(text.slice(last))
+  return [{ code: pieces.join(''), paths }, ...inner.flatMap(body => codeOf(body, false))]
+}
+
+// A loader given a string first, more arguments after it or none:
+// `require(…)` (`module.require` too, not `require.resolve`) and `import(…)`;
+// and an `import` or `export`'s `from`, or a bare `import`.
+const MARK = String.raw`\0(\d+)\0`
+const REQUIRED = new RegExp(String.raw`(?:(?<![\w$.])module\s*\.\s*|(?<![\w$.]))require\s*\(\s*${MARK}\s*[,)]`, 'gu')
+const IMPORTED = new RegExp(String.raw`(?<![\w$.])(?:import\s*\(\s*${MARK}\s*[,)]|(?:import|from)\s*${MARK})`, 'gu')
+// A relative path: from `./` or `../`, or `.` or `..` alone.
+const RELATIVE = /^\.\.?(?:\/|$)/u
 // What `require` doesn't run as JavaScript: JSON, and a native addon.
 const NOT_RUN = /\.(?:json|node)$/iu
 // A name with an extension, which `import` runs only where it knows it: not
@@ -61,8 +104,10 @@ function entriesOf(text) {
 // installs as that) and `import` one whose name has no extension
 // (`import('./payload')`); the `main` of a directory's package.json where a
 // script requires the directory; and the package's own `main` and what its
-// `exports` name, which a `require` of it runs whatever their names. Only
-// paths quoted whole: one a script builds is not followed.
+// `exports` name, which a `require` of it runs whatever their names. Only a
+// path given whole as a string, read in code (codeOf), not in a comment or
+// another string: one a script builds, or calls a loader by another name to
+// load, is not followed.
 const loadedByVersion = new WeakMap()
 export function npmLoadedScripts(version) {
   let loaded = loadedByVersion.get(keyOf(version))
@@ -87,9 +132,12 @@ export function npmLoadedScripts(version) {
   for (const [path, text] of files) if (npmIsScript(path, text)) queue.push(path)
   for (let at = 0; at < queue.length; at++) {
     const path = queue[at]
-    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', text = files.get(path)
-    for (const { 2: spec } of text.matchAll(REQUIRED)) required(joined(dir, spec))
-    for (const { 2: dynamic, 4: fixed } of text.matchAll(IMPORTED)) add(installedAs(files, joined(dir, dynamic ?? fixed)), 'import')
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    for (const { code, paths } of codeOf(files.get(path))) {
+      const pathOf = index => joined(dir, paths[index])
+      for (const { 1: index } of code.matchAll(REQUIRED)) required(pathOf(index))
+      for (const { 1: dynamic, 2: fixed } of code.matchAll(IMPORTED)) add(installedAs(files, pathOf(dynamic ?? fixed)), 'import')
+    }
   }
   loadedByVersion.set(keyOf(version), loaded)
   return loaded
