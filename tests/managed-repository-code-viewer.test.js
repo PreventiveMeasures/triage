@@ -8,7 +8,7 @@ import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const state = {}
 const contentsRequests = [], navigations = [], requests = []
-let answer = null, contents = null
+let answer = null, contents = null, refsReads = 0
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -20,10 +20,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
   fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
   fetchBrowsableRepositories: () => Promise.resolve([{ repoId: 7, fullName: 'org/repo' }, { repoId: 8, fullName: 'org/other' }]),
-  fetchRepositoryRefs: () => Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }),
+  fetchRepositoryRefs: () => { refsReads++; return Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }) },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { openRepositoryCodeRoute, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
+const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 
 const commit = 'c'.repeat(40)
@@ -173,16 +173,25 @@ test('another revision loading names itself in place of the directory shown, whi
 })
 
 test('a directory that fails to open says why at its route, and lists its directories to open instead where it is too large or has none to read', async () => {
-  answer = () => Promise.reject(Object.assign(new Error('This directory is too large to open here.'), { status: 413, code: 'directory-too-large' }))
+  // Too large, it names the commit the branch was read at, its route naming
+  // it, as History reads it, and its directories are listed there.
+  answer = () => Promise.reject(Object.assign(new Error('This directory is too large to open here.'), { status: 413, code: 'directory-too-large', commit: commit.toUpperCase() }))
   contents = () => Promise.resolve({ commit, entries: [{ name: 'src', path: 'src', type: 'dir' }, { name: 'README.md', path: 'README.md', type: 'file' }, { name: 'docs', path: 'docs', type: 'dir' }] })
   const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, path: '', bundleTab: 'treemap' }, () => true, () => {})
-  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit: null, path: '', bundleTab: 'treemap' })
-  assert.equal(managedRoutePath(route), '/manage/code/7')
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'treemap' })
+  assert.equal(managedRoutePath(route), `/manage/code/7/${commit}/treemap`)
   assert.equal(state.currentView, 'repository-code')
   assert.equal(state.repositoryCodeOpening.error, 'This directory is too large to open here.')
+  assert.equal(state.repositoryCodeOpening.commit, commit)
+  assert.equal(state.repositoryCodeOpening.code, 'directory-too-large')
   await setImmediate()
-  assert.deepEqual(contentsRequests, [[7, '', '']])
+  assert.deepEqual(contentsRequests, [[7, commit, '']])
   assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
+  // Another of its tabs fails as it did, its History showing, nothing read again.
+  assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' }, () => true, () => {}),
+    { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' })
+  assert.equal(state.repositoryCodeOpening.tab, 'history')
+  assert.equal(requests.length, 1)
 
   // Any other failure lists none.
   answer = () => Promise.reject(Object.assign(new Error('GitHub couldn’t be reached.'), { status: 502, code: 'github-unreachable' }))
@@ -199,6 +208,42 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.notEqual(state.currentView, 'bundles')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app' }, () => true, () => {}), false)
+})
+
+test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async () => {
+  repositoryRefs(7)
+  await setImmediate()
+  const read = refsReads
+  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' })
+  assert.deepEqual(requests, [], 'no files read')
+  assert.equal(state.currentView, 'repository-code')
+  assert.equal(state.repositoryCodeOpening.historyOnly, true)
+  assert.equal(state.repositoryCodeOpening.commit, commit)
+  repositoryRefs(7)
+  assert.equal(refsReads, read + 1, 'its branches and tags read again as it opens')
+  openRepositoryCodeTab(state.repositoryCodeOpening, 'code')
+  assert.deepEqual(navigations, [{ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code' }])
+  // Code, at its route, reads them.
+  await openRepositoryCodeRoute(navigations[0], () => true, () => {})
+  assert.deepEqual(requests, [[7, commit, 'packages/app']])
+  assert.equal(state.currentView, 'bundles')
+
+  // At a revision named, it opens at the commit its listing reads, named so.
+  requests.length = 0
+  const develop = 'd'.repeat(40)
+  contents = () => Promise.resolve({ commit: develop, entries: [] })
+  const named = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
+    path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
+  assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'history' })
+  assert.deepEqual(requests, [], 'no files read')
+  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
+  assert.equal(state.repositoryCodeOpening.historyOnly, true)
+  assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
+  // One its listing can't read says why.
+  contents = () => Promise.reject(Object.assign(new Error('This repository is not available to you.'), { code: 'no-repository' }))
+  assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'history' }, () => true, () => {})).commit, null)
+  assert.equal(state.repositoryCodeOpening.error, 'This repository is not available to you.')
 })
 
 test('the header opens another repository at its default branch, another revision of the directory on the same tab, and a typed one on Enter alone', () => {

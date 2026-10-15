@@ -157,7 +157,7 @@ function showOpening(opening) {
 // since has left both.
 export function repositoryCodePending(entry) {
   const pending = state.repositoryCodePending
-  return pending?.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
+  return pending && pending.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
 }
 
 // Failures a directory's own entries get past: one too large to read whole,
@@ -179,6 +179,12 @@ async function listDirectories(opening, err) {
   } catch {}
 }
 
+// Opens the directory a failed opening names on another tab, as its tabs
+// do, those of a directory too large to open its History alone can show.
+export function openRepositoryCodeTab({ repoId, repo, commit, ref, path, revision }, bundleTab) {
+  navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab, ...commit ? {} : { ref: ref ?? '', revision } })
+}
+
 // Open a `repository-code` route: the directory, which replaces whatever
 // bundle was shown, its header showing while it opens, or the directory shown
 // until it does. Answers the route the page ends on, at the commit it opened,
@@ -192,6 +198,46 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   // Another tab of the directory shown, as Back gives, keeps it.
   let entry = commit && shown && sameDirectory(shown.repository, { repoId, commit, path }) ? shown : null
   let details = entry ? state.bundleDetails : null
+  // Another tab of a directory too large to open fails as it did, its
+  // History showing all the same.
+  const failed = state.currentView === 'repository-code' ? state.repositoryCodeOpening : null
+  if (!entry && commit && failed?.code === 'directory-too-large' && sameDirectory(failed, { repoId, commit, path })) {
+    showOpening({ ...failed, tab })
+    return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+  }
+  // History reads none of its files: a directory at a commit shows it alone,
+  // its other tabs opening them; at a revision named, at the commit listing
+  // the repository's root reads it at, the directory there or not, as its
+  // history lists the commits that touched it all the same.
+  if (!entry && tab === 'history') {
+    const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
+    // Its branches and tags as they are now, for its header and History.
+    headerData.delete(`refs\0${repoId}`)
+    const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
+    const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
+    let at = commit
+    if (!at) {
+      showOpening(opening)
+      renderSidebar()
+      try {
+        const listed = await fetchRepositoryContents(repoId, routeRef(route), '', { signal: currentViewSignal() })
+        at = COMMIT.test(listed?.commit ?? '') ? listed.commit.toLowerCase() : null
+      } catch (err) {
+        if (err?.name === 'AbortError' || !isCurrent()) return false
+        showOpening({ ...opening, error: err.message, code: err?.code ?? null })
+        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+      }
+      if (!isCurrent()) return false
+      if (!at) {
+        showOpening({ ...opening, error: 'The server answered with no commit.' })
+        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+      }
+      if (revision) revisionNames.set(`${repoId}\0${at}`, revision)
+    }
+    showOpening({ ...opening, commit: at, ref: null, historyOnly: true })
+    renderSidebar()
+    return { view: 'repository-code', repoId, commit: at, path, bundleTab: tab }
+  }
   if (!entry) {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
@@ -214,9 +260,13 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       if (data?.repoId !== repoId || (commit && data.commit !== commit) || data.path !== path || !COMMIT.test(data.commit ?? '')) throw new Error('The server answered with another directory.')
     } catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false
-      showOpening({ ...opening, error: err.message })
-      void listDirectories(opening, err)
-      return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+      // One too large names the commit it was read at, its route then naming
+      // it, as History reads it.
+      const failedAt = !commit && err?.code === 'directory-too-large' && COMMIT.test(err.commit ?? '') ? err.commit.toLowerCase() : commit
+      const failure = { ...opening, commit: failedAt, error: err.message, code: err?.code ?? null }
+      showOpening(failure)
+      void listDirectories(failure, err)
+      return { view: 'repository-code', repoId, commit: failedAt, path, bundleTab: tab }
     } finally {
       // Given up, superseded or failed, the one shown is itself again.
       if (pending && state.repositoryCodePending === pending) {

@@ -171,7 +171,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or History tab |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1479,7 +1479,7 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Code, Search and Treemap tabs: from the
+as an npm version shows, with the Code, Search, Treemap and History tabs: from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1511,6 +1511,46 @@ against the tree's id as bundle builds verify theirs, and kept in upstream's
 disk cache with them. Readers asking for the same directory meanwhile share
 one load, among the npm viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
+
+## History
+
+The History tab lists commits as `git log --oneline --decorate --graph` does,
+one compact line each: its short id, the branches and tags naming it (the
+default branch's first, the revision shown marked), its subject, author and
+time, beside the graph of the lines its parents make
+(`ui/view/history-graph.js`). Commits list newest first, never a parent before
+a child of it; a merge's other parent takes a lane of its own, and lanes waiting
+on one parent join where it comes; each line keeps a color of its own, unlike
+its neighbors' where it can, the default branch's first lane and color its
+own; a parent not listed is a short dotted line on. At the repository's root
+it reads **All branches**, as `--all` adds them, else **This revision**'s, the
+commit shown first, a hundred at a time, **Older commits** reading the next; the
+commit shown is marked, and, where every branch's latest commits don't reach it,
+a link shows its own history. A directory lists the commits touching it, in a
+line, as GitHub doesn't rewrite their parents to those listed. A line opens its
+commit's code, named by the branch, else the tag, naming it. History reads
+none of the directory's files: its route at a commit opens it alone, its other
+tabs then reading them. A directory whose files fail to open shows its History
+all the same, where its commit is known (a `413 directory-too-large` names the
+commit it was read at, its route then naming it). What it read is kept for the session five minutes.
+
+`GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
+page of a revision's history, `{ commit, path, page, commits, more }`, each
+commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
+GitHub's list of commits gives them (`repository-history.ts`), with, on the
+first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
+GitHub's first page of each lists them. With `all=true`, at the root and first
+page alone, it answers `{ all, commits, branches, tags, defaultBranch, more }`
+from GraphQL: the branches' tips with their commits' times, a hundred a page
+for up to ten pages (GitHub orders heads by name alone), then, in one query,
+the latest hundred commits of the default branch and the 24 others most
+recently committed to, each commit once; every branch naming a commit listed;
+and the latest hundred tags, an annotated one by the commit it tags. `more`
+where a branch or a branch's commits are left out. GraphQL needs a token: a public repository read without one is `403
+github-token-required`, and the tab then shows the revision's history. It is
+read as the code is, with the reader's own GitHub access, only where the
+reader's grants reach the whole directory, and access is checked again before
+it is sent.
 
 
 # npm package viewer

@@ -27,6 +27,8 @@
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
 //   GET /api/admin/repositories/code?repoId=&ref=&path= → the files of a directory at a revision, within the reader's grants,
 //        Brotli-encoded | 400/401/403/404/409/413/429/502
+//   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true] → the commits a revision reaches, a page at a time,
+//        or across the most recently updated branches, with the branches and tags naming them | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -157,6 +159,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
+import { MAX_HISTORY_PAGE, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -182,6 +185,7 @@ const BROWSABLE_REPOS_PATH = '/api/admin/repositories/browsable'
 const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const REPO_CODE_PATH = '/api/admin/repositories/code'
+const REPO_HISTORY_PATH = '/api/admin/repositories/history'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -1400,16 +1404,24 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
       throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
     }))
-    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) { sendJson(res, 413, { error: 'directory-too-large' }); return }
+    // Access still held, and the same repository, before anything read is sent.
+    const fenced = async () => {
+      await reader.recheckAccess()
+      const current = await authorize()
+      if (!current) return false
+      if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return false }
+      return true
+    }
+    // Too large names the commit it was read at, for History to read.
+    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) {
+      if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
+      return
+    }
     if (res.destroyed) return
     const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
     res.once('close', load.release)
     const bytes = await load.result
-    await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    if (res.destroyed) return
+    if (!(await fenced()) || res.destroyed) return
     res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
     res.writeHead(200, {
       'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
@@ -1420,6 +1432,52 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     if (res.headersSent || res.destroyed) return
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
+    throw err
+  }
+}
+
+// GET /api/admin/repositories/history: what the code viewer's History tab
+// draws (repository-history.ts), read as browsing is, with the reader's own
+// GitHub access, within their grants as the code is. From a revision (`ref`),
+// a page at a time (`page`), the commits touching `path` where it names a
+// directory, with the branches and tags naming commits on the first page; or,
+// with `all`, across the repository's most recently updated branches, which
+// needs the whole repository and a GitHub token. Access is checked again once
+// it is read, before any of it is sent.
+async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref, path } = asked
+  const page = Number(query.get('page') ?? '1')
+  const all = query.get('all') === 'true'
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || page !== 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const authorize = async () => {
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const repo = access.repo.fullName
+    const token = reader.readToken()
+    let body: object
+    if (all) {
+      if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
+      body = { all: true, ...await repositoryAllHistory(repo, token) }
+    } else {
+      const commit = await reader.commit(ref)
+      const [history, tips] = await Promise.all([repositoryHistory(repo, token, commit, path, page), page === 1 ? repositoryRefTips(repo, token) : null])
+      body = { commit, path, page, ...history, ...tips }
+    }
+    await reader.recheckAccess()
+    const current = await authorize()
+    if (!current) return
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    sendJson(res, 200, body)
+  } catch (err) {
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
   }
 }
@@ -3401,6 +3459,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_CODE_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryCode(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_HISTORY_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryHistory(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }

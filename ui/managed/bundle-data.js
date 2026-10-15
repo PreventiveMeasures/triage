@@ -85,8 +85,11 @@ export async function request(url, errors, read, signal) {
   const response = await managedFetch(url, { credentials: 'same-origin', signal })
   signal.throwIfAborted()
   if (!response.ok) {
-    const code = (await response.json().catch(() => null))?.error ?? null
-    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code })
+    const body = await response.json().catch(() => null)
+    const code = body?.error ?? null
+    // A failure naming the commit it was read at (a directory too large) keeps it.
+    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code,
+      ...typeof body?.commit === 'string' ? { commit: body.commit } : {} })
   }
   const data = await read(response)
   signal.throwIfAborted()
@@ -140,6 +143,21 @@ export function fetchRepositoryRefs(repoId, { signal } = {}) {
 
 export function fetchRepositoryContents(repoId, ref, path, { signal } = {}) {
   return requestRepository('contents', { repoId, ref, path }, signal)
+}
+
+const REPOSITORY_HISTORY_ERRORS = {
+  ...REPOSITORY_CODE_ERRORS,
+  'no-directory': 'This directory’s history is not available to you.',
+  'github-malformed': 'GitHub answered with a history that couldn’t be read.',
+  'github-token-required': 'Reading every branch needs your GitHub sign-in.',
+  400: 'Not a repository’s history.',
+}
+
+// The History tab's commits: from a revision, a page at a time (`page`), or
+// across the repository's most recently updated branches (`all`).
+export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, signal } = {}) {
+  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {} })}`,
+    REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
 }
 
 export function fetchNpmPackage(name, version, { signal } = {}) {
