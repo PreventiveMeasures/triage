@@ -8,7 +8,7 @@ import { workspaceAppMetadata } from '../workspace-app.js'
 // its `links`. The managed server classifies each team before sending its
 // catalog, so the sidebar opens a team collapsed to its App findings at once.
 // The server backfills finding IDs before building these envelopes.
-export function managedTeamAppMetadata(workspace) {
+export function managedTeamAppMetadata(workspace, options = {}) {
   const duplicates = new Map(), reports = []
   collectDuplicates(workspace.links ?? [], duplicates)
   for (const { filename, data } of workspace) {
@@ -27,5 +27,5 @@ export function managedTeamAppMetadata(workspace) {
     }))
     reports.push({ fileName: filename, groups })
   }
-  return workspaceAppMetadata(reports, id => [...duplicates.get(id) ?? []])
+  return workspaceAppMetadata(reports, id => [...duplicates.get(id) ?? []], options)
 }

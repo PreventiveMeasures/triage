@@ -10,8 +10,11 @@
 // Readers with both permissions keep every report, empty or not.
 //
 // A team that is not App also says how many of its reports open in App mode
-// on their own. None is as uniform as an App team, and collapses like one: only
-// a team mixing App and non-App reports stays expanded.
+// on their own, and its findings for the badge it collapses to. None is as
+// uniform as an App team, and collapses like one. A team mixing App and non-App
+// reports stays expanded, and so does one whose reports each open as App but
+// whose combined workspace does not (contradicting verdicts, say): it has App
+// findings, and only expanded does it show that they fail to combine.
 import { reportEntries } from '@preventive/report'
 import { type TeamAppMetadata, managedTeamAppMetadata } from '../common/managed/team-app.js'
 import type { BlobStore } from './blob-store.ts'
@@ -88,11 +91,11 @@ async function classify(db: ManagedDb, store: BlobStore, key: string, team: User
     const restricted = access.reports.some(report => !report.permissions.dependencies || !report.permissions.security)
     const empty = restricted ? body.reports.filter(report => !hasContent(report.data)).map(report => report.id) : []
     const links = body.links ?? []
-    const app = managedTeamAppMetadata(Object.assign(body.reports, { links }))
+    const app = managedTeamAppMetadata(Object.assign(body.reports, { links }), { countFindings: true })
     if (app.appMode) return remember(db, key, { app, empty })
     const appReports = body.reports.filter(report => !isLinks(report.data)
       && managedTeamAppMetadata(Object.assign([report], { links })).appMode).length
-    return remember(db, key, { app: { appMode: false, appReports }, empty })
+    return remember(db, key, { app: { ...app, appReports }, empty })
   })().catch((error: unknown) => {
     if (error instanceof TeamReportsError && [413, 422].includes(error.status)) return remember(db, key, NO_APP)
     if (!(error instanceof TeamReportsError)) console.warn('managed: team App classification failed:', error)

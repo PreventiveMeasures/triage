@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filterManagedTeams, managedTeamCollapses } from '../ui/view/managed-sidebar.js'
+import { filterManagedTeams, managedTeamCollapses, managedTeamFindings } from '../ui/view/managed-sidebar.js'
 
 const shared = Object.freeze({ id: 'shared', filename: 'Web-App.map' })
 const teams = Object.freeze([
@@ -76,6 +76,14 @@ test('managed teams collapse when their reports are all App or none are, and lis
   assert.equal(managedTeamCollapses({ appMode: true, appFindings: 3 }, 2), true)
   assert.equal(managedTeamCollapses({ appMode: false, appReports: 0 }, 2), true, 'no report opens as App alone')
   assert.equal(managedTeamCollapses({ appMode: false, appReports: 1 }, 2), false, 'App and non-App reports mixed')
+  assert.equal(managedTeamCollapses({ appMode: false, appReports: 2 }, 2), false, 'App reports that fail to combine stay expanded, deliberately')
   assert.equal(managedTeamCollapses({ appMode: false, appReports: 0 }, 0), false, 'nothing to collapse')
   for (const app of [{ appMode: false }, null, undefined]) assert.equal(managedTeamCollapses(app, 2), false, 'unknown stays expanded')
+})
+
+test('a collapsed team\'s badge counts App findings for an App team and rows for any other', () => {
+  assert.equal(managedTeamFindings({ appMode: true, appFindings: 3 }), 3)
+  assert.equal(managedTeamFindings({ appMode: false, appReports: 0, findings: 7 }), 7)
+  assert.equal(managedTeamFindings({ appMode: false, appReports: 0, findings: 0 }), 0)
+  for (const app of [{ appMode: false, appReports: 0 }, null, undefined]) assert.equal(managedTeamFindings(app), null, 'no count sent, none shown')
 })
