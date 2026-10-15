@@ -1,10 +1,10 @@
-/* The scan's progress: its state, centered on them, then a metric each, its
-   label and count on a line, its bar beneath, wrapping where they don't
+/* The scan's progress: its state, then a metric each, its label and count on
+   a line, its bar beneath, all centered on a line, wrapping where they don't
    fit. */
 .risk-progress {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   gap: .5rem 1.5rem;
   margin: 0 0 1rem;
   color: var(--muted);
@@ -15,7 +15,6 @@
   display: inline-flex;
   align-items: center;
   gap: .4rem;
-  align-self: center;
   padding: .15rem .6rem;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -34,14 +33,16 @@
 .risk-state[data-state=done]::before { background: var(--green); }
 @keyframes risk-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .risk-state[data-state=running]::before { animation: none; } }
-/* A metric's label and count on one line, its bar and detail beneath. */
+/* A metric's label and count on one line, its bar beneath, set solid so its
+   box is what shows of it, as the state is centered on it. */
 .risk-metric {
   display: grid;
   grid-template-columns: auto auto;
   justify-content: start;
   align-items: baseline;
-  gap: .2rem .45rem;
+  gap: .35rem .45rem;
   min-width: 6rem;
+  line-height: 1;
 }
 .risk-metric-label { font-size: .7rem; letter-spacing: .02em; text-transform: uppercase; }
 .risk-metric-value { color: var(--text); font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
