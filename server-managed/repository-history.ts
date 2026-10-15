@@ -369,13 +369,14 @@ async function eachOf<T>(items: T[], parallel: number, run: (item: T) => Promise
 const notFound = (error: GraphqlError) => error?.type === 'NOT_FOUND'
 
 // The pull requests squashed into `commits`, a merged pull request's merge
-// commit of one parent where its own last commit isn't that commit as it was
-// (a rebase's), kept by each commit (`squashes`), those not yet kept looked up
-// with GraphQL, as many as MAX_SQUASH_LOOKUPS an answer.
+// commit of one parent, not one rebased (its commits copied onto the branch,
+// told by their subjects), kept by each commit (`squashes`), those not yet
+// kept looked up with GraphQL, as many as MAX_SQUASH_LOOKUPS an answer.
 export async function squashedPulls(fullName: string, token: string, commits: HistoryCommit[], squashes: Squashes,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<SquashedPull[]> {
   const [owner, name] = fullName.split('/') as [string, string]
   const single = commits.filter(commit => commit.parents.length === 1)
+  const listed = new Map(commits.map(commit => [commit.sha, commit]))
   const kept = await squashes.read(single.map(commit => commit.sha))
   const unknown = single.filter(commit => !kept.has(commit.sha)).slice(0, MAX_SQUASH_LOOKUPS)
   const merged: { commit: HistoryCommit; number: number }[] = []
@@ -400,10 +401,15 @@ export async function squashedPulls(fullName: string, token: string, commits: Hi
       if (!node) continue
       const own = (node.commits?.nodes ?? []).flatMap(item => graphCommit(item?.commit) ?? [])
       const head = typeof node.headRefOid === 'string' && SHA.test(node.headRefOid) ? node.headRefOid : own.at(-1)?.sha
-      // Rebased onto the branch, or fast-forwarded, not squashed: its last
-      // commit is the merge's own, as it was or as it is.
-      const squashed = head !== undefined && head !== commit.sha && own.length > 0 && !own.some(item => item.sha === commit.sha)
-        && own.at(-1)!.subject !== commit.subject
+      // Fast-forwarded, its last commit the merge's own; or rebased, its
+      // commits, more than one, copied onto the branch: the merge and those
+      // below it on their first parents, by their subjects, its commits'
+      // (one squashed is told by its commit's title too, by default, and
+      // drawn as it was either way).
+      const below: (HistoryCommit | undefined)[] = [commit]
+      while (below.length < own.length && below.at(-1)) below.push(listed.get(below.at(-1)!.parents[0] ?? ''))
+      const rebased = own.length > 1 && own.toReversed().every((item, step) => below[step]?.subject === item.subject)
+      const squashed = head !== undefined && head !== commit.sha && own.length > 0 && !own.some(item => item.sha === commit.sha) && !rebased
       const pull = squashed ? { merge: commit.sha, number, head, commits: own, more: Number(node.commits?.totalCount) > own.length } : null
       found.set(commit.sha, pull)
       await squashes.write(commit.sha, pull)

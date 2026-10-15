@@ -1721,9 +1721,11 @@ names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
 once, `more` but for the deepest page. With a token, a whole repository's
 answers, with `commits`, the pull requests squashed into them, `pulls`, each
 `{ merge, number, head, commits, more }`: a merged pull request whose merge
-commit, of one parent, a commit listed is, unless its own last commit's
-subject is the merge's (a rebase), its head when merged and its latest
-hundred commits, `more` where it had more; and, on a first page, the open
+commit, of one parent, a commit listed is, unless it was rebased (its
+commits, more than one, copied onto the branch: the merge and those below it
+on their first parents are theirs, by subject; one commit squashed is titled
+as that commit by default, and is drawn as it was either way), its head when
+merged and its latest hundred commits, `more` where it had more; and, on a first page, the open
 ones' heads, `openPulls`, `{ number, sha }` each, the latest hundred updated.
 GraphQL looks up, of each answer's commits of one parent not yet kept, five
 hundred at most, a hundred commits or twenty pull requests a query, four at

@@ -200,18 +200,24 @@ test('all branches reads the 25 most recently committed to, the default branch f
 })
 
 test('the pull requests squashed into the history come with it, each with its own commits and its head as merged; a rebase, a commit no pull request merged, none', async t => {
-  const [squash, rebased, direct, p1, p2, r1, open] = ['5', '6', '7', '8', '9', 'e', 'f'].map(char => char.repeat(40))
+  const [squash, rebased2, rebased1, tidy, direct, p1, p2, r1, r2, t1, open] = ['5', '6', '4', '3', '7', '8', '9', 'e', '2', '1', 'f'].map(char => char.repeat(40))
   const node = (oid, parents, messageHeadline, committedDate = '2026-10-01T00:00:00Z') => ({ oid, messageHeadline, committedDate, author: { name: 'Octo', date: committedDate, user: { login: 'octo' } },
     parents: { nodes: parents.map(parent => ({ oid: parent })) } })
-  // main: a squash of #2, a rebase of #3, a commit pushed to it, and the root; #2's branch reused since by #4, open.
-  const history = [node(squash, [rebased], 'Feature (#2)'), node(rebased, [direct], 'Fix'), node(direct, [d], 'Direct'), node(d, [], 'Root')]
-  const pullCommits = { 2: [node(p1, [d], 'Start'), node(p2, [p1], 'Finish')], 3: [node(r1, [d], 'Fix')] }
+  // main: a squash of #2; #3's two commits rebased onto it; #5's one commit
+  // squashed, titled as that commit, as GitHub does by default; a commit
+  // pushed to it, and the root. #2's branch reused since by #4, open.
+  const history = [node(squash, [rebased2], 'Feature (#2)'), node(rebased2, [rebased1], 'Fix, part 2'), node(rebased1, [tidy], 'Fix, part 1'),
+    node(tidy, [direct], 'Tidy up'), node(direct, [d], 'Direct'), node(d, [], 'Root')]
+  const pullCommits = { 2: [node(p1, [d], 'Start'), node(p2, [p1], 'Finish')], 3: [node(r1, [d], 'Fix, part 1'), node(r2, [r1], 'Fix, part 2')],
+    5: [node(t1, [d], 'Tidy up')] }
+  const merges = { [squash]: 2, [rebased2]: 3, [tidy]: 5 }
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
     ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: '2026-10-01T00:00:00Z' } },
       branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ name: 'main', target: { oid: squash, committedDate: '2026-10-01T00:00:00Z' } },
         { name: 'feature', target: { oid: open, committedDate: '2026-10-02T00:00:00Z' } }] }, tags: { nodes: [] } }
+    // The rebase's first commit was brought in by #3 too, its merge commit not.
     : query.includes('associatedPullRequests') ? Object.fromEntries(Object.entries(variables).flatMap(([key, oid]) => /^o\d+$/u.test(key) ? [[`c${key.slice(1)}`,
-      { associatedPullRequests: { nodes: oid === squash ? [{ number: 2, mergeCommit: { oid: squash } }] : oid === rebased ? [{ number: 3, mergeCommit: { oid: rebased } }] : [] } }]] : []))
+      { associatedPullRequests: { nodes: merges[oid] ? [{ number: merges[oid], mergeCommit: { oid } }] : oid === rebased1 ? [{ number: 3, mergeCommit: { oid: rebased2 } }] : [] } }]] : []))
     : query.includes('pullRequest(number') ? Object.fromEntries(Object.entries(variables).flatMap(([key, number]) => /^n\d+$/u.test(key) ? [[`p${key.slice(1)}`,
       { headRefOid: pullCommits[number].at(-1).oid, commits: { totalCount: pullCommits[number].length, nodes: pullCommits[number].map(commit => ({ commit })) } }]] : []))
     : query.includes('pullRequests(states: OPEN') ? { pullRequests: { nodes: [{ number: 4, headRefOid: open }, { number: 'x', headRefOid: open }] } }
@@ -223,7 +229,8 @@ test('the pull requests squashed into the history come with it, each with its ow
   assert.equal(status, 200)
   const shown = commit => ({ sha: commit.oid, parents: commit.parents.nodes.map(parent => parent.oid), subject: commit.messageHeadline, authorName: 'Octo', authorLogin: 'octo', authorId: null,
     committedAt: Date.parse(commit.committedDate) })
-  assert.deepEqual(body.pulls, [{ merge: squash, number: 2, head: p2, commits: pullCommits[2].map(shown), more: false }], 'a rebase, its last commit the merge\'s own as it was, none')
+  assert.deepEqual(body.pulls, [{ merge: squash, number: 2, head: p2, commits: pullCommits[2].map(shown), more: false },
+    { merge: tidy, number: 5, head: t1, commits: pullCommits[5].map(shown), more: false }], 'a rebase, its commits copied onto main, none; one commit squashed, its title its commit\'s, as it was')
   assert.deepEqual(body.openPulls, [{ number: 4, sha: open }])
   const looked = asked.filter(entry => entry.path === '/graphql' && /pullRequest|PullRequests/u.test(entry.body.query)).length
   // Asked again: each commit's pull request kept, none looked up again.
