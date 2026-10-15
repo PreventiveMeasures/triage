@@ -3593,14 +3593,18 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 .issue-meta time { flex: none; font-variant-numeric: tabular-nums; }
 .issue-number { flex: none; font-variant-numeric: tabular-nums; }
 .issue-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Labels in one line, whole while they fit, then shortened, the last first:
-   each shrinks a hundred thousand times as readily as the one before it, so
-   that one before it shrinks by less than a pixel can show, and is never cut
-   short while another can still give way. */
+/* Labels in one line, whole while they fit, then shortened, the last first,
+   to its dot alone in its border, then the one before it. Each after the
+   first is in a run of those after it, which gives way a million times as
+   readily as the label before it, so that the label shrinks by less than a
+   pixel can show, and no further than to the run's dots. */
 .issue-labels {
+  --label-dot: calc(1.15rem + 2px);
   gap: .3rem; overflow: hidden;
-  & .issue-label:nth-child(2) { flex-shrink: 100000; }
-  & .issue-label:nth-child(3) { flex-shrink: 10000000000; }
+}
+.issue-labels-rest {
+  display: flex; gap: .3rem; flex: 0 1000000 auto;
+  min-width: calc(var(--labels) * var(--label-dot) + (var(--labels) - 1) * .3rem);
 }
 .issue-branch {
   gap: .3rem;
@@ -3613,14 +3617,15 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 .issue-diff { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
+/* A label's dot in its padding, its name clipped to its content, so that the
+   label shortened to its dot, as narrow as its padding and border, shows the
+   dot alone, centered, and none of its name. */
 .issue-label {
-  min-width: 2.5rem; max-width: 9rem; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 999px;
-  overflow: hidden; color: var(--text); font-size: .68rem; line-height: 1.35; text-overflow: ellipsis;
-  &::before {
-    content: ''; display: inline-block; width: .45rem; height: .45rem; margin-right: .25rem; border-radius: 50%;
-    background: var(--label, var(--muted)); vertical-align: middle;
-  }
-  &.is-more { flex: none; min-width: 0; color: var(--muted); &::before { display: none; } }
+  flex: 0 1 auto; min-width: var(--label-dot); max-width: 9rem; padding: 0 .35rem 0 .8rem;
+  border: 1px solid var(--border); border-radius: 999px; overflow: clip; overflow-clip-margin: content-box;
+  background: radial-gradient(circle at .575rem 50%, var(--label, var(--muted)) .225rem, transparent calc(.225rem + .5px));
+  color: var(--text); font-size: .68rem; line-height: 1.35; text-indent: .25rem; text-overflow: ellipsis;
+  &.is-more { flex: none; padding-left: .35rem; background: none; color: var(--muted); text-indent: 0; }
 }
 /* A pull request's review and checks, as tall as the two are where it has
    one, that one centered, or none: its comments level with its neighbors'. */

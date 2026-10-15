@@ -46,7 +46,8 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   assert.match(text, /Closed <span class="issues-count">40<\/span>/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/12 target="_blank" rel="noopener noreferrer"/u)
   assert.match(text, /aria-label=Open[^]*Issue 12[^]*#12[^]*octo[^]*3h<\/time>/u)
-  assert.match(text, />bug<[^]*>ui<[^]*>docs<\/span><span class="issue-label is-more">\+3</u, 'three labels, then how many more')
+  assert.match(text, /data-tooltip=bug>bug<\/span><span class="issue-labels-rest" style=[^>]*>[^]*>ui<[^]*>docs<[^]*>perf<\/span>(?:<\/span>){3}<span class="issue-label is-more">\+2</u,
+    'every label GitHub sent, those after one in a run that gives way first, then how many it didn\'t send')
   assert.equal(text.split('class="issue-labels"').length - 1, 1, 'a line of labels only where there are any')
   assert.doesNotMatch(text, /issue-marks/u, 'an issue has no review or checks to hold room for')
   assert.match(text, /class="issue-comments" role="img" aria-label=4 comments data-tooltip=4 comments><svg[^]*<\/svg><span>4<\/span>/u)

@@ -10,7 +10,7 @@ import { GithubApiError } from './github-app.ts'
 import { type GraphqlError, githubGraphql } from './repository-history.ts'
 
 export const ISSUES_PAGE = 50
-const MAX_LABELS = 6
+const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
