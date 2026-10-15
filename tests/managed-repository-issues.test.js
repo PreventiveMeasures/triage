@@ -43,6 +43,8 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   }
 }
 
+// A cursor as GitHub gives one, base64url.
+const cursor = 'Y3Vyc29yOnYyOpK0MjAyNi0xMC0xNVQwODozNToxN1rOrK_u7Q=='
 const page = (nodes, { hasNextPage = false, endCursor = null, open = 3, closed = 40 } = {}) => ({ data: { repository: {
   open: { totalCount: open }, closed: { totalCount: closed }, page: { pageInfo: { hasNextPage, endCursor }, nodes },
 } } })
@@ -56,11 +58,11 @@ test('issues read a page of those open, the most recently updated first, each as
     { number: 9, title: 'Wontfix', state: 'CLOSED', stateReason: 'NOT_PLANNED', createdAt: null, updatedAt: null, closedAt: '2026-10-03T00:00:00Z',
       author: null, comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [{ name: ' ', color: 'zzz' }] } },
     { number: 'x', title: 'not an issue' }, null,
-  ], { hasNextPage: true, endCursor: 'Y3Vyc29yOjEy' }))
+  ], { hasNextPage: true, endCursor: cursor }))
   const { status, body } = await request({ repoId: '1', kind: 'issues' })
   assert.equal(status, 200)
   assert.deepEqual(body, {
-    kind: 'issues', state: 'open', counts: { open: 3, closed: 40 }, more: true, after: 'Y3Vyc29yOjEy',
+    kind: 'issues', state: 'open', counts: { open: 3, closed: 40 }, more: true, after: cursor,
     items: [
       { number: 12, title: 'Treemap labels overlap', author: 'octo', createdAt: Date.parse('2026-10-01T00:00:00Z'), updatedAt: Date.parse('2026-10-02T00:00:00Z'), closedAt: null,
         comments: 4, labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'ui', color: 'd73a4a' }], moreLabels: 1, state: 'open', reason: null },
@@ -72,8 +74,8 @@ test('issues read a page of those open, the most recently updated first, each as
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null })
   assert.match(asked[0].query, /page: issues\(states: \[OPEN\], first: 50, after: \$after, orderBy: \{ field: UPDATED_AT, direction: DESC \}\)/u)
   // Closed, on from a cursor.
-  await request({ repoId: '1', kind: 'issues', state: 'closed', after: 'Y3Vyc29yOjEy' })
-  assert.deepEqual(asked[1].variables, { owner: 'org', name: 'repo', after: 'Y3Vyc29yOjEy' })
+  await request({ repoId: '1', kind: 'issues', state: 'closed', after: cursor })
+  assert.deepEqual(asked[1].variables, { owner: 'org', name: 'repo', after: cursor })
   assert.match(asked[1].query, /page: issues\(states: \[CLOSED\]/u)
 })
 

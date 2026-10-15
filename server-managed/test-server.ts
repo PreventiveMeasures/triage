@@ -389,10 +389,11 @@ function issuesFixture(url: URL, res: ServerResponse): void {
   })
   const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open'
   const listed = all.filter(item => (item.state === 'open') === (state === 'open'))
-  const from = Number(url.searchParams.get('after') ?? '0')
+  // Cursors with a `_`, as GitHub's base64url ones can have.
+  const from = Number(/^page_(\d+)$/u.exec(url.searchParams.get('after') ?? '')?.[1] ?? '0')
   const end = from + ISSUES_FIXTURE_PAGE
   sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
-    more: end < listed.length, after: end < listed.length ? String(end) : null })
+    more: end < listed.length, after: end < listed.length ? `page_${end}` : null })
 }
 
 function historyFixture(url: URL, res: ServerResponse): void {

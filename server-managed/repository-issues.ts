@@ -15,8 +15,10 @@ const MAX_TITLE = 1000
 const MAX_NAME = 256
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const COLOR = /^[a-f\d]{6}$/iu
-// A page's cursor as GitHub gives it, to read on from.
-export const ISSUES_CURSOR = /^[A-Za-z\d+/=]{1,256}$/u
+// A page's cursor as GitHub gives it, to read on from: opaque, base64 or
+// base64url as it is now (`…rOrK_u7Q==`), passed back to GitHub alone, so any
+// printable one is, but none with spaces or control characters.
+export const ISSUES_CURSOR = /^[!-~]{1,256}$/u
 
 export type IssuesKind = 'issues' | 'pulls'
 export type IssuesState = 'open' | 'closed'
