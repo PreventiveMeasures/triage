@@ -3568,13 +3568,13 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
    row is taller than a tile's own lines, the room is under its title, its
    other lines level with its neighbors'. */
 .issue-body {
-  display: flex; gap: .3rem; flex: 1; min-width: 0; padding: .3rem .5rem .35rem .3rem;
+  display: flex; gap: .3rem; flex: 1; min-width: 0; padding: .3rem .5rem .2rem .3rem;
   color: var(--text); text-decoration: none; border-radius: inherit;
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
 .issue-rail {
   --rail-gap: .1875rem;
-  display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); flex: none; width: 1.5rem; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); flex: none; width: 1.5rem; padding-top: .1rem; color: var(--muted);
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }
 }
@@ -3584,8 +3584,16 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere;
 }
 .issue-state {
-  display: inline-flex; margin: .1rem 0 .35rem; color: var(--state);
+  display: inline-flex; margin-bottom: .35rem; color: var(--state);
   & .dotted { stroke-dasharray: 1 2.2; }
+}
+/* Where it can, the title's first line trimmed to its capitals, so that the
+   room above them is the tile's padding alone, whatever room above its
+   capitals a font keeps, and the rail's first mark, 14px, centered on them. */
+@supports (text-box: trim-start cap alphabetic) {
+  .issue-body { padding-top: .4rem; }
+  .issue-name { text-box: trim-start cap alphabetic; }
+  .issue-rail { margin-top: calc(.5cap - 7px); padding-top: 0; }
 }
 .issue-meta, .issue-labels, .issue-branch { display: flex; align-items: center; min-width: 0; white-space: nowrap; }
 .issue-meta, .issue-branch { color: var(--muted); font-size: .72rem; }
@@ -3674,7 +3682,6 @@ repository-agents { --claude: #d97757; }
   display: inline-flex; align-items: center; gap: .3rem;
   & :is(svg, img) { width: 12px; height: 12px; }
 }
-.agent-tile .issue-rail { padding-top: .1rem; }
 .agent-mark, .agent-logo { display: inline-flex; }
 .agent-mark :is(svg, img) { width: 14px; height: 14px; }
 .agent-avatar { border-radius: 3px; }
