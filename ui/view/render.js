@@ -1865,11 +1865,12 @@ function renderImpl() {
           }
         }
       }
-      // Terminal tab — lazy-load `ui/terminal.js` into the slot.
-      // The attach helper is idempotent for the same bundle
-      // (matched by `integrity`), so flipping tabs in and out
-      // preserves the running shell session.
-      if (bundleOpen && !details.metadataOnly && state.bundleDetailsTab === 'terminal') {
+      // Terminal tab — lazy-load `ui/terminal.js` into the slot, which
+      // the Code tab's terminal pane renders too. The attach helper is
+      // idempotent for the same bundle (matched by `integrity`), so
+      // flipping tabs in and out preserves the running shell session.
+      if (bundleOpen && !details.metadataOnly
+          && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'code' && state.bundleCodeTerminal)) {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
