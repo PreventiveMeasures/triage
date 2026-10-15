@@ -7,6 +7,7 @@ import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
+import { knowGithubUsers } from './github-users.js'
 
 let loadPromise = null
 let managedModule = null
@@ -74,23 +75,23 @@ export async function fetchRepositoryContents(repoId, ref, path, options) {
 }
 
 export async function fetchRepositoryHistory(repoId, ref, path, options) {
-  return (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options)
+  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options))
 }
 
 export async function fetchRepositoryAgents(repoId, options) {
-  return (await loadManagedBundle()).fetchRepositoryAgents(repoId, options)
+  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
 }
 
 export async function fetchRepositoryIssues(repoId, kind, options) {
-  return (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options)
+  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options))
 }
 
 export async function fetchRepositoryItem(repoId, number, options) {
-  return (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options)
+  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
 }
 
 export async function fetchRepositoryPulse(repoId, weeks, options) {
-  return (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options)
+  return knowGithubUsers(await (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }
 
 export async function fetchNpmVersions(name, options) {

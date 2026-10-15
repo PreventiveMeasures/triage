@@ -115,6 +115,16 @@ account's ID, or null for the sign-in account); `DELETE
 /api/auth/profile/accounts/<id>` unlinks one. Changes need same-origin access
 and CSRF. Database upgrades keep existing names as the sign-in accounts' own.
 
+A repository's activity in the code viewer (its commits, issues, pull requests,
+agents and pulse) shows a GitHub login that an approved user signs in with, or
+linked to theirs, as that user: their chosen avatar and name, the login itself
+in the tooltip. A linked account shows as its user, and Pulse counts a user's
+accounts as one contributor. The server resolves the logins each answer names
+as it sends the answer, in a `users` map by login, never kept with what is
+cached of the repository; readers are never sent a list of users. Logins match
+regardless of case. A login two users claim, which happens once one of them
+renames on GitHub, shows as the login alone.
+
 # Managed browser navigation
 
 ## Public workspace links

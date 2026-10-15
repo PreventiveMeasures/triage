@@ -21,6 +21,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   unwatchNearViewport(target) { watching.delete(target) },
 } })
 const { commentCount, filterIssues, issueState } = await import('../ui/view/repository-issues.js')
+const { knowGithubUsers } = await import('../ui/view/github-users.js')
 const Issues = customElements.get('repository-issues')
 
 let session = 0
@@ -128,6 +129,8 @@ test('the filter picks among those read by every word, in a number, title, autho
   assert.deepEqual(filterIssues(items, 'UI treemap').map(item => item.number), [12])
   assert.deepEqual(filterIssues(items, 'grace perf/').map(item => item.number), [9])
   assert.deepEqual(filterIssues(items, 'treemap grace'), [])
+  knowGithubUsers({ users: { grace: { id: 'grace-id', login: 'grace-h', name: 'Grace Hopper' } } })
+  assert.deepEqual(filterIssues(items, 'hopper').map(item => item.number), [9], 'by the name its author\'s user chose')
   answer = () => Promise.resolve({ items, counts: { open: 2, closed: 0 }, more: false })
   const view = shown('pulls')
   view.render()

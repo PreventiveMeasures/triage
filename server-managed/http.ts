@@ -46,6 +46,8 @@
 //        year, its contributors and when in the week they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
+//        History, issues, item, agents and pulse each carry `users`: the app's users the GitHub logins they name are
+//        (github-users.ts), by login
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -166,6 +168,7 @@ import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext,
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
 import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallback } from './github-link-oauth.ts'
 import type { ProfileChoice } from './github-links.ts'
+import { withAppUsers } from './github-users.ts'
 import { isBlobId } from './object-storage.ts'
 import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -1557,7 +1560,8 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
 // at, and those kept glued on (historyFrom); a later page reads on from the
 // commits `from` names. The branches and tags naming commits are kept as an
 // issue's page is (keptAnswer). Access is checked again once it is read,
-// before any of it is sent.
+// before any of it is sent, with the app's users its authors are
+// (github-users.ts).
 async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
@@ -1615,7 +1619,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     // author's time) not sent.
     const commits = (body as { commits: HistoryCommit[] }).commits.map(({ sha, parents, subject, authorName, authorLogin, committedAt }) =>
       ({ sha, parents, subject, authorName, authorLogin, committedAt }))
-    sendJson(res, 200, { ...body, commits })
+    sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits }))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1706,7 +1710,8 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
 
 // What `answer` gives of the whole of repository `repoId` (with its name and
 // a token), as readWholeRepository reads it: sent at once where it was kept,
-// else once access is checked again.
+// else once access is checked again, with the app's users it names
+// (github-users.ts), never kept with it.
 async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   answer: (fullName: string, token: string) => Promise<{ value: object; kept: boolean }>): Promise<void> {
   const authorize = async () => {
@@ -1721,12 +1726,12 @@ async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps,
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
     const answered = await answer(access.repo.fullName, token)
-    if (answered.kept) { sendJson(res, 200, answered.value); return }
+    if (answered.kept) { sendJson(res, 200, await withAppUsers(deps.db, answered.value)); return }
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, answered.value)
+    sendJson(res, 200, await withAppUsers(deps.db, answered.value))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err

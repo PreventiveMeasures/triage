@@ -22,6 +22,7 @@ import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
+import { appUser, githubUser, githubUserName } from './github-users.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -159,11 +160,19 @@ export function pulseSummary(answer, now = Date.now()) {
 }
 
 // Who made commits since `since`, by login, else name, the most first: how
-// many, and the lines they added and removed.
+// many, and the lines they added and removed. A user of the app is one
+// contributor whichever of their GitHub accounts committed, named by the one
+// listed first.
 export function periodContributors(contributors, since) {
-  return contributors.map(({ login, name, weeks }) => weeks.reduce((sum, [week, commits, additions, deletions]) => week >= since
-    ? { ...sum, commits: sum.commits + counted(commits), additions: sum.additions + counted(additions), deletions: sum.deletions + counted(deletions) } : sum,
-  { login, name, commits: 0, additions: 0, deletions: 0 })).filter(person => person.commits > 0)
+  const people = new Map()
+  for (const contributor of contributors) {
+    const { login, name, weeks } = contributor
+    const key = appUser(login)?.id ?? contributor
+    people.set(key, weeks.reduce((sum, [week, commits, additions, deletions]) => week >= since
+      ? { ...sum, commits: sum.commits + counted(commits), additions: sum.additions + counted(additions), deletions: sum.deletions + counted(deletions) } : sum,
+    people.get(key) ?? { login, name, commits: 0, additions: 0, deletions: 0 }))
+  }
+  return [...people.values()].filter(person => person.commits > 0)
     .toSorted((a, b) => b.commits - a.commits || (a.login ?? a.name).localeCompare(b.login ?? b.name))
 }
 
@@ -363,7 +372,7 @@ class RepositoryPulse extends LitElement {
     return html`<figure class="pulse-panel">
       <figcaption class="pulse-head"><h3>Contributors</h3><span>by their commits in the period</span></figcaption>
       ${people.length === 0 ? html`<p class="pulse-note">No commits in the period.</p>` : html`<ol class="pulse-ranks">${people.slice(0, TOP_CONTRIBUTORS).map(person => html`<li>
-        ${person.login ? html`<a class="pulse-rank-name" href=${profile(person.login)} target="_blank" rel="noopener noreferrer">${person.login}</a>`
+        ${person.login ? html`<a class="pulse-rank-name" href=${profile(person.login)} target="_blank" rel="noopener noreferrer">${githubUser(person.login)}</a>`
           : html`<span class="pulse-rank-name">${person.name}</span>`}
         <span class="pulse-rank-bar"><span style=${`--value: ${person.commits / top}`}></span><span class="pulse-rank-value">${number(person.commits)}</span></span>
         ${lines ? html`<span class="pulse-rank-lines">+${compact(person.additions)} −${compact(person.deletions)}</span>` : nothing}
@@ -408,7 +417,7 @@ class RepositoryPulse extends LitElement {
         <caption>Contributors in the period</caption>
         <thead><tr><th scope="col">Contributor</th><th scope="col">Commits</th>${lines ? html`<th scope="col">Added</th><th scope="col">Removed</th>` : nothing}</tr></thead>
         <tbody>${people.length === 0 ? html`<tr><td colspan="4">No commits in the period.</td></tr>` : people.map(person => html`<tr>
-          <th scope="row">${person.login ?? person.name}</th><td>${number(person.commits)}</td>
+          <th scope="row">${person.login ? githubUserName(person.login) : person.name}</th><td>${number(person.commits)}</td>
           ${lines ? html`<td>+${number(person.additions)}</td><td>−${number(person.deletions)}</td>` : nothing}</tr>`)}</tbody>
       </table>
       <table class="pulse-table is-punch">
@@ -435,7 +444,7 @@ class RepositoryPulse extends LitElement {
           target="_blank" rel="noopener noreferrer" @click=${event => this.openItem(event, items, item)}>
           <span class="issue-state" role="img" aria-label=${stateName}>${STATE_ICONS[items][stateClass]}</span>
           <span class="pulse-item-title">${item.title || '(no title)'}</span>
-          <span class="pulse-item-meta"><span>#${item.number}</span>${item.author ? html`<span>${item.author}</span>` : nothing}
+          <span class="pulse-item-meta"><span>#${item.number}</span>${item.author ? html`<span>${githubUser(item.author)}</span>` : nothing}
             ${item.at == null ? nothing : html`<time datetime=${new Date(item.at).toISOString()}>${compactTime(item.at)}</time>`}</span>
         </a></li>`
       })}</ol>`}

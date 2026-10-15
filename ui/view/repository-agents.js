@@ -18,6 +18,7 @@ import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
+import { githubUser, githubUserName } from './github-users.js'
 
 export { sessionLink }
 
@@ -129,14 +130,14 @@ function readMore(key, entry, ask) {
 }
 
 // Those of `sessions` of `agent` ('all' for every one's), and matching every
-// word of `filter`: in a title, author, branch, pull request, commit, issue
-// or session id.
+// word of `filter`: in a title, author (a login, or its user's name),
+// branch, pull request, commit, issue or session id.
 export function filterSessions(sessions, agent, filter) {
   const words = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
   return sessions.filter(session => {
     if (agent !== 'all' && !session.agents.includes(agent)) return false
     if (words.length === 0) return true
-    const text = [session.title, ...session.authors, ...session.branches, ...session.sessions, ...session.tasks,
+    const text = [session.title, ...session.authors, ...session.authors.map(githubUserName), ...session.branches, ...session.sessions, ...session.tasks,
       ...session.pulls.flatMap(pull => [`#${pull.number}`, pull.title]), ...session.commits.flatMap(commit => [commit.oid.slice(0, 7), commit.title]),
       ...session.issues.flatMap(issue => [`#${issue.number}`, issue.title])].join('\n').toLowerCase()
     return words.every(word => text.includes(word))
@@ -320,7 +321,7 @@ class RepositoryAgents extends LitElement {
         ${link ? html`<a class="issue-name" href=${link} target="_blank" rel="noopener noreferrer">${session.title || '(no title)'}</a>`
           : html`<button type="button" class="issue-name">${session.title || '(no title)'}</button>`}
         <span class="issue-meta">
-          ${session.authors[0] ? html`<span class="issue-author">${session.authors[0]}</span>` : nothing}
+          ${session.authors[0] ? html`<span class="issue-author">${githubUser(session.authors[0])}</span>` : nothing}
           ${time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing}
           <span>${tasks > 0 ? `${tasks} task${tasks === 1 ? '' : 's'}` : 'no pull request'}</span>
           ${session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>

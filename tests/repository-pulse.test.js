@@ -16,6 +16,7 @@ mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCo
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 const { niceScale, periodContributors, pulseSummary } = await import('../ui/view/repository-pulse.js')
+const { knowGithubUsers } = await import('../ui/view/github-users.js')
 const Pulse = customElements.get('repository-pulse')
 
 const DAY = 86_400_000
@@ -71,6 +72,15 @@ test('the period\'s contributors, the most commits first, and a scale\'s round t
   assert.deepEqual([niceScale(93), niceScale(7), niceScale(1), niceScale(0), niceScale(12_000)], [
     { top: 100, ticks: [0, 50, 100] }, { top: 10, ticks: [0, 5, 10] }, { top: 1, ticks: [0, 1] }, { top: 1, ticks: [0, 1] },
     { top: 15_000, ticks: [0, 5000, 10_000, 15_000] }])
+})
+
+test('a user of the app is one contributor whichever of their GitHub accounts committed', () => {
+  knowGithubUsers({ users: { mona: { id: 'mona-id', login: 'mona', name: 'Mona' }, 'mona-work': { id: 'mona-id', login: 'mona', name: 'Mona' } } })
+  const week = (commits, additions) => [[SINCE, commits, additions, 1]]
+  assert.deepEqual(periodContributors([{ login: 'mona-work', name: 'M', weeks: week(4, 10) }, { login: 'other', name: null, weeks: week(5, 1) },
+    { login: 'mona', name: 'Mona', weeks: week(2, 5) }, { login: null, name: 'Mona', weeks: week(1, 1) }], SINCE), [
+    { login: 'mona-work', name: 'M', commits: 6, additions: 15, deletions: 2 }, { login: 'other', name: null, commits: 5, additions: 1, deletions: 1 },
+    { login: null, name: 'Mona', commits: 1, additions: 1, deletions: 1 }], 'one known by name alone is no user\'s')
 })
 
 test('the pulse reads a month first: its figures beside the month before, the year\'s weeks with the period\'s marked, its contributors, when commits are made, and its lists', async t => {

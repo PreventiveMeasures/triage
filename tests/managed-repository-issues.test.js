@@ -72,6 +72,7 @@ test('issues read a page of those open, the most recently updated first, each as
       { number: 9, title: 'Wontfix', author: null, createdAt: null, updatedAt: null, closedAt: Date.parse('2026-10-03T00:00:00Z'), comments: 0, labels: [], moreLabels: 0,
         state: 'closed', reason: 'not-planned' },
     ],
+    users: {},
   })
   assert.equal(asked[0].auth, 'Bearer login-token')
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null })
@@ -190,7 +191,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
     closedAt: Date.parse(common.closedAt), comments: 2, labels: [{ name: 'bug', color: 'd73a4a' }], moreLabels: 1, state: 'merged', draft: false,
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
     body: '    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
-    commits: 4, files: 2, mergedBy: 'ada' })
+    commits: 4, files: 2, mergedBy: 'ada', users: {} })
   const issue = await item('3')
   // A description too long shortened, and the linked past those named counted, each said so.
   assert.deepEqual([issue.body.kind, issue.body.state, issue.body.reason, issue.body.body.length, issue.body.bodyShortened, issue.body.closedBy, issue.body.moreLinked],

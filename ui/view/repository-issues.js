@@ -17,6 +17,7 @@ import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
+import { githubUser, githubUserName } from './github-users.js'
 
 export { issueState }
 
@@ -97,12 +98,12 @@ function readMore(key, entry, ask) {
 }
 
 // Those of `items` matching every word of `filter`: in its number, title,
-// author, labels or branch.
+// author (its login, or its user's name), labels or branch.
 export function filterIssues(items, filter) {
   const words = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
   if (words.length === 0) return items
   return items.filter(item => {
-    const text = [`#${item.number}`, item.title, item.author ?? '', item.head ?? '', ...item.labels.map(label => label.name)].join('\n').toLowerCase()
+    const text = [`#${item.number}`, item.title, item.author ?? '', githubUserName(item.author) ?? '', item.head ?? '', ...item.labels.map(label => label.name)].join('\n').toLowerCase()
     return words.every(word => text.includes(word))
   })
 }
@@ -259,7 +260,7 @@ class RepositoryIssues extends LitElement {
         <span class="issue-name">${item.title || '(no title)'}</span>
         <span class="issue-meta">
           <span class="issue-number">#${item.number}</span>
-          <span class="issue-author">${item.author ?? 'ghost'}</span>
+          <span class="issue-author">${githubUser(item.author, item.author ?? 'ghost')}</span>
           ${time ? html`<time datetime=${time.toISOString()}>${compactTime(item.updatedAt)}</time>` : nothing}
         </span>
         ${item.labels.length > 0 || item.moreLabels > 0 ? html`<span class="issue-labels">${labelChips(item)}</span>` : nothing}
