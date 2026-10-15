@@ -39,7 +39,8 @@ export class ManagedProfile extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) this._busy = false }
   }
-  async _change(work) {
+  // `unlinked`, the login of the account the change unlinks.
+  async _change(work, unlinked = null) {
     if (this._busy || this._readOnly) return
     const key = this._key
     this._busy = true
@@ -52,7 +53,7 @@ export class ManagedProfile extends LitElement {
       this._profile = profile
       // The account control shows the displayed name and avatar too, as
       // does a repository's activity read before (github-users.js).
-      knowProfile(this.session.id, profile, avatarChanged)
+      knowProfile(this.session.id, profile, avatarChanged, unlinked)
       document.dispatchEvent(new CustomEvent('managed-profile-change', { detail: { userId: this.session.id, name: profile.name, avatarChanged } }))
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) { this._busy = false; this._pending = null } }
@@ -64,7 +65,7 @@ export class ManagedProfile extends LitElement {
     return this._change((csrfToken, options) => chooseProfileAccounts({ [kind]: id }, csrfToken, options))
   }
   _unlink(account) {
-    return this._change((csrfToken, options) => unlinkGithubAccount(account.id, csrfToken, options))
+    return this._change((csrfToken, options) => unlinkGithubAccount(account.id, csrfToken, options), account.login)
   }
   // The avatar a user id serves is the chosen one; `own` asks for the sign-in
   // account's. The revision refetches the chosen one once it changes.

@@ -109,17 +109,20 @@ test('an answer naming a login the server resolves to no one forgets what was ke
 
 test('the signed-in user\'s own profile change shows in what was kept of them: their name, a fresh avatar, an account unlinked theirs no more', () => {
   forgetGithubUsers()
-  knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'yan' }], users: {
-    zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, yan: { id: 'yan-id', login: 'yan', name: 'Yan' } } })
+  // `zoe-old`, the login Zoe signed in with before renaming on GitHub, theirs by their account's id.
+  knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'zoe-old', authorId: 1 }, { authorLogin: 'yan' }], users: {
+    zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-old': { id: 'zoe-id', login: 'zoe', name: 'Zoe' },
+    yan: { id: 'yan-id', login: 'yan', name: 'Yan' } } })
   assert.doesNotMatch(templateText(githubUser('zoe')), /\?v=/u)
   knowProfile('zoe-id', { login: 'zoe', name: ' Zoe at Work ', accounts: [{ login: 'Zoe-Work' }] }, true)
-  assert.deepEqual(['zoe', 'zoe-work', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Yan'], 'another user\'s as it was')
+  assert.deepEqual(['zoe', 'zoe-work', 'zoe-old', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Zoe at Work', 'Yan'],
+    'under every login of theirs, one before renaming too; another user\'s as it was')
   assert.match(templateText(githubUser('zoe-work')), /src=\/api\/avatar\/zoe-id\?v=1/u, 'their avatar asked for again')
   assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
-  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] })
-  assert.deepEqual(['zoe', 'zoe-work'].map(login => appUser(login)?.name ?? null), [null, null])
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, 'Zoe-Work')
+  assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.name ?? null), [null, null])
   assert.equal(appUser('zoe-work'), null, 'unlinked')
-  assert.equal(appUser('zoe')?.id, 'zoe-id')
+  assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.id), ['zoe-id', 'zoe-id'])
   forgetGithubUsers()
 })
 
@@ -144,7 +147,7 @@ test('an answer read across the signed-in user\'s profile change keeps others\' 
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' } } })
   const late = Promise.withResolvers()
   const reading = knowingGithubUsers(() => late.promise)
-  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] })
+  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] }, false, 'wil-work')
   // Read before the change was saved, as it was then.
   late.resolve({ commits: [{ authorLogin: 'wil' }, { authorLogin: 'wil-work' }, { authorLogin: 'vic' }], users: {
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' }, vic: { id: 'vic-id', login: 'vic', name: 'Vic' } } })
