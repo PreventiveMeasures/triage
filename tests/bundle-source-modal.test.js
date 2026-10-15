@@ -597,6 +597,45 @@ test('Code offers a managed bundle\'s minified code pretty-printed, after the wr
   assert.match(readable, /<span class="bundle-code-main-stats"><span>2 lines · 19 B<\/span><\/span>/u, 'nor room kept')
 })
 
+test('Code offers a lockfile in the lockfile viewer, last before the stats, which show its packages in place of its text once read', async t => {
+  t.after(() => { state.bundleSourceLockfile = false })
+  const integrity = 'sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A=='
+  const lockfile = `${JSON.stringify({ name: 'app', version: '1.0.0', lockfileVersion: 3, requires: true, packages: {
+    '': { name: 'app', version: '1.0.0', dependencies: { ms: '2.0.0' } },
+    'node_modules/ms': { version: '2.0.0', resolved: 'https://registry.npmjs.org/ms/-/ms-2.0.0.tgz', integrity },
+  } }, null, 2)}\n`
+  const sources = { 'package-lock.json': lockfile, 'broken/package-lock.json': '{\n', 'src/index.js': 'export const a = 1\n' }
+  const entry = { name: 'app.map', integrity: 'sha512-lockfile-view' }
+  const code = (file, on) => {
+    Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: file,
+      bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleSourceLockfile: on,
+      bundleDetails: { kind: 'sourcemap', integrity: entry.integrity, size: 123, json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources) } } })
+    const text = renderText(renderBundlesList([entry]))
+    return { header: text.match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1], body: text.match(/<div class="bundle-code-main-body">(.*)/su)[1] }
+  }
+  const offered = code('package-lock.json', false)
+  assert.match(offered.header, /data-bundle-source-wrap.*data-bundle-source-lockfile aria-pressed=false aria-busy=\s+aria-label="View lockfile" data-tooltip=View lockfile>.*bundle-code-main-stats/su,
+    'wrap, View lockfile, then the lines and size')
+  assert.doesNotMatch(offered.body, /<lockfile-graph/u)
+  assert.ok(!code('src/index.js', true).header.includes('data-bundle-source-lockfile'), 'other files are not offered it')
+
+  const reading = code('package-lock.json', true)
+  assert.match(reading.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=true\s+aria-label="View lockfile" data-tooltip=Reading the lockfile…>/u)
+  assert.doesNotMatch(reading.body, /<lockfile-graph/u, 'its text while it is read')
+  await import('../ui/view/lockfile-read.js')
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  const read = code('package-lock.json', true)
+  assert.match(read.body, /^\s*<lockfile-graph/u, 'its packages once read')
+  assert.doesNotMatch(read.header, /data-bundle-source-wrap|bundle-code-issue-step/u, 'nothing of the text but its stats')
+  assert.match(read.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=\s.*<span class="bundle-code-main-stats"><span>21 lines · /su)
+
+  code('broken/package-lock.json', true)
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  const broken = code('broken/package-lock.json', true)
+  assert.match(broken.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=\s+aria-label="View lockfile" data-tooltip=Couldn't read the lockfile: \S/u)
+  assert.doesNotMatch(broken.body, /<lockfile-graph/u, 'its text where it can\'t be read')
+})
+
 test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, after the wrap toggle', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }

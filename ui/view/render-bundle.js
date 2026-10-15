@@ -36,7 +36,9 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { lockfileFormat, lockfileTooltip, viewedLockfile } from './lockfile-view.js'
+import './lockfile-graph.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
@@ -667,6 +669,15 @@ function viewedSource(details, entry, path, content, fileFindings, lineFindings)
   const pretty = copy?.status === 'ready'
   return { pretty, toggle: printable ? renderPrettyToggle(copy) : nothing, content: pretty ? copy.text : content,
     fileFindings: pretty ? [] : fileFindings, lineFindings: pretty ? new Map() : lineFindings }
+}
+
+// The Code tab's View lockfile toggle, on a lockfile the lockfile viewer
+// reads, busy while its read runs and red where that failed (lockfile-view.js).
+function renderLockfileToggle(read) {
+  const status = read?.status
+  return html`<button type="button" class=${classMap({ 'bundle-source-lockfile-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
+    data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
+    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>`
 }
 
 // Auto-pick bookkeeping for the Code slide. When the pick ran
@@ -1625,9 +1636,17 @@ function textStats(text) {
 // own and three characters more (`.bundle-code-main-stats-room`), right-
 // aligned, so pressing the toggle, whose copy has more lines and bytes,
 // moves neither toggle. The stepper comes first, as a copy has no findings.
+// A lockfile has a View lockfile toggle last: once read, its packages show in
+// the lockfile viewer in place of its text, with the file's own stats and
+// none of the toggles and stepper that are of the text.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
-  const { pretty, toggle, content, fileFindings, lineFindings } = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const { pretty, toggle, fileFindings, lineFindings } = viewed
+  const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
+  const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (state.bundleSourceFile === path) render() }) : null
+  const graphed = read?.status === 'ready'
+  const content = graphed ? sourceContent : viewed.content
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1645,7 +1664,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${fileFindings.length > 0 ? html`<span
+      ${fileFindings.length > 0 && !graphed ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
       >
@@ -1666,14 +1685,16 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}
-      ${renderSourceWrapToggle()}
-      ${toggle}
+      ${graphed ? nothing : renderSourceWrapToggle()}
+      ${graphed ? nothing : toggle}
+      ${lockfile ? renderLockfileToggle(read) : nothing}
       ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-        !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
+      ${graphed ? html`<lockfile-graph .lockfile=${read.lockfile}></lockfile-graph>`
+        : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
+          !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
     </div>`
 }
 

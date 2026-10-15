@@ -5,8 +5,9 @@ import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedPackages } from './crowded-pa
 const cache = new WeakMap()
 const fileCache = new WeakMap()
 
+// A graph of packages alone has no file altitude to draw.
 export function dependencyFilesOn(graph, packagesView) {
-  return graph.nodes.length <= 100 && !packagesView
+  return !graph.packagesOnly && graph.nodes.length <= 100 && !packagesView
 }
 
 // Leave crowded packages (see crowded-packages.js) out of a network: their

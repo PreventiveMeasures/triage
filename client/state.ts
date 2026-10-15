@@ -136,6 +136,7 @@ export interface State {
   bundleSourceWrap: boolean
   bundleSourcePretty: boolean
   bundleCodeTerminal: boolean
+  bundleSourceLockfile: boolean
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
@@ -666,6 +667,9 @@ export const state: State = store<State>({
   // (render-bundle.js renderBundleCodeTerminal). Kept across bundles and tabs
   // for the page session, like the rail's width.
   bundleCodeTerminal: false,
+  // Whether the Code tab shows a lockfile's packages in the lockfile viewer
+  // rather than its text (lockfile-view.js).
+  bundleSourceLockfile: false,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab
   // has the sources to read it from, and dropped with any other bundle or
