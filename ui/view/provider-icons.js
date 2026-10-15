@@ -1,16 +1,21 @@
 import { html } from 'lit'
-import anthropic from '../provider-icons/claude.svg'
+import { CLAUDE_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import deepseek from '../provider-icons/deepseek.svg'
 import google from '../provider-icons/google.svg'
 import grok from '../provider-icons/grok.svg'
 import mistral from '../provider-icons/mistral.svg'
 import moonshot from '../provider-icons/moonshot.svg'
 import nvidia from '../provider-icons/nvidia.svg'
-import openai from '../provider-icons/openai.svg'
 import openrouter from '../provider-icons/openrouter.svg'
 import qwen from '../provider-icons/qwen.svg'
 import xiaomi from '../provider-icons/xiaomi.svg'
 import zai from '../provider-icons/zai.svg'
+
+// Claude's and OpenAI's marks, as the report stickers draw them (icons.js),
+// cropped to the mark, as large as the text, as the other providers' are.
+const mark = path => html`<svg width="1em" height="1em" fill="currentColor" style="flex:none;line-height:1" viewBox="4 5 8 8" aria-hidden="true"><path d=${path}></path></svg>`
+const anthropic = mark(CLAUDE_MARK_PATH)
+const openai = mark(OPENAI_MARK_PATH)
 
 // SVG imports are compiled into Lit html templates by the bundler.
 const icons = { anthropic, deepseek, google, mistralai: mistral, moonshot, moonshotai: moonshot, nvidia, openai, openrouter, qwen, xiaomi, 'x-ai': grok, 'z-ai': zai }

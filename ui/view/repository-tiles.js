@@ -52,9 +52,10 @@ export function issueState(kind, item) {
     : ['completed', 'Closed']
 }
 
-// Claude a burst in its orange, Codex OpenAI's mark.
+// Claude's mark in its orange, Codex OpenAI's, as the app draws them
+// elsewhere (provider-icons.js).
 const AGENT_ICONS = {
-  claude: icon(svg`<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>`),
+  claude: html`<span class="agent-logo" aria-hidden="true">${providerIcon('anthropic')}</span>`,
   codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
 }
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }

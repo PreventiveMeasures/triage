@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { build } from 'esbuild'
 import { minifyLitSource } from '../build-lit-minify.js'
 import { litSvgAsHtml } from '../build-lit-svg.js'
+import { CLAUDE_MARK_PATH, OPENAI_MARK_PATH } from '../ui/view/icons.js'
 
 test('SVG imports are Lit html templates while SVG entry points remain assets', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'lit-svg-'))
@@ -39,10 +40,17 @@ test('provider icons are embedded as templates without external SVG outputs', as
   })
   assert.equal(outputFiles.length, 1)
   const { providerIcon } = await import(`data:text/javascript,${encodeURIComponent(outputFiles[0].text)}`)
-  for (const [key, name] of Object.entries({ anthropic: 'claude', openai: 'openai', moonshot: 'moonshot', google: 'google', openrouter: 'openrouter', deepseek: 'deepseek', nvidia: 'nvidia', qwen: 'qwen', xiaomi: 'xiaomi', 'x-ai': 'grok', 'z-ai': 'zai', mistralai: 'mistral' })) {
+  for (const [key, name] of Object.entries({ moonshot: 'moonshot', google: 'google', openrouter: 'openrouter', deepseek: 'deepseek', nvidia: 'nvidia', qwen: 'qwen', xiaomi: 'xiaomi', 'x-ai': 'grok', 'z-ai': 'zai', mistralai: 'mistral' })) {
     const icon = providerIcon(key)
     assert.equal(icon._$litType$, 1)
     assert.equal(icon.strings[0], await readFile(`ui/provider-icons/${name}.svg`, 'utf8'))
+  }
+  // Anthropic's and OpenAI's, the report stickers' marks without their paper.
+  for (const [key, path] of [['anthropic', CLAUDE_MARK_PATH], ['openai', OPENAI_MARK_PATH]]) {
+    const icon = providerIcon(key)
+    assert.equal(icon._$litType$, 1)
+    assert.deepEqual(icon.values, [path])
+    assert.match(icon.strings[0], /^<svg [^>]*viewBox="4 5 8 8"[^>]*><path d=$/u)
   }
   assert.equal(providerIcon('moonshot'), providerIcon('moonshotai'))
   assert.equal(providerIcon('unknown')._$litType$, 1)
