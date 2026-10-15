@@ -78,6 +78,10 @@ const RELATIVE = /^\.\.?(?:\/|$)/u
 const NOT_RUN = /\.(?:json|node)$/u
 // The extensions `require` tries a path with that names no file.
 const TRIED = ['.js', '.json', '.node']
+// A path `require` takes as a directory's alone, never a file's: one ending
+// in `/`, or in `.` or `..` after one, or either alone, as node tells it, by
+// `/` alone, on Windows too (`./payload/`, not `.\payload\`).
+const DIRECTORY = /(?:^|\/)\.{0,2}$/u
 // A name with an extension, which `import` runs only where it knows it: not
 // `.npmignore`, nor `payload`.
 const EXTENSION = /[^/.][^/]*\.[^/]*$/u
@@ -264,13 +268,14 @@ const indexFile = (keyed, path, key) => firstNamed(keyed, path === '' ? 'index' 
 
 // The files a path `require` takes finds, the first it tries that names a
 // file: its own, one by its name and an extension (`.js`, `.json`, `.node`,
-// `payload.JSON` as a filesystem folding case finds it); else a directory's
+// `payload.JSON` as a filesystem folding case finds it), but where it takes
+// it as a directory's (`directory`, DIRECTORY); else a directory's
 // package.json `main`, found so or by its `index` and an extension; else the
 // directory's `index` so, as node falls back to it.
-function requiredFiles(files, keyed, root, path) {
+function requiredFiles(files, keyed, root, path, directory) {
   if (path === null) return []
   const key = folded(path)
-  const file = firstNamed(keyed, path, key, ['', ...TRIED])
+  const file = directory ? null : firstNamed(keyed, path, key, ['', ...TRIED])
   if (file !== null) return [file]
   const mains = keyed(path === '' ? 'package.json' : `${key}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
     .flatMap(main => [...separated(main)].map(spec => joined(root, path, spec))).filter(at => at !== null)
@@ -335,8 +340,8 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  const requires = path => { for (const file of requiredFiles(files, keyed, root, path)) add(file, 'require') }
-  requires('')
+  const requires = (path, directory) => { for (const file of requiredFiles(files, keyed, root, path, directory)) add(file, 'require') }
+  requires('', true)
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
     .flatMap(([path, text]) => entriesOf(text).targets.map(({ pattern, target }) => [path.slice(0, -'package.json'.length - 1), target, pattern && target.includes('*')]))
   if (targets.filter(([, , pattern]) => pattern).length > MAX_PATTERNS) for (const path of files.keys()) add(path, 'require')
@@ -385,7 +390,7 @@ export function npmLoadedScripts(version) {
     seen.add(key)
     if (named(value)) for (const path of subpathsOf(spec)) reach(path, by)
     if (named(value) && top.hasExports) return
-    if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
+    if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required, DIRECTORY.test(spec))
     add(urlJoined(root, from, spec), 'import')
   }
   for (let index = 0; index < queue.length; index++) {

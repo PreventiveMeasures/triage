@@ -160,6 +160,12 @@ test('a path a script writes out whole read wherever it is: whatever takes it, i
     'a template\'s escaped `\\${` its text, a raw one\'s escapes as written, `\\X2E` `X2E`; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too, by an extension `require` tries, and a lone surrogate as the U+FFFD node writes; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
 })
 
+test('a path `require` takes as a directory\'s alone, ending in `/` or in a `.` or `..` part: by its package.json `main`, not a file by its name', () => {
+  const files = { 'index.js': "require('./payload/')\nrequire('./conf/.')\nrequire('./up/x/..')\n", 'payload.json': '{}', 'payload/package.json': '{"main":"evil.txt"}', 'payload/evil.txt': 'x',
+    'conf.json': '{}', 'conf/package.json': '{"main":"run.txt"}', 'conf/run.txt': 'x', 'up.json': '{}', 'up/package.json': '{"main":"go.txt"}', 'up/go.txt': 'x', 'up/x/y.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['conf/run.txt', 'payload/evil.txt', 'up/go.txt'])
+})
+
 test('a `#` specifier a script names, as the package\'s `imports` map it, a pattern\'s naming nothing past its `*` too', () => {
   const files = { 'package.json': JSON.stringify({ imports: { '#*': './*', '#fixed': './fixed.txt' } }), 'index.js': "require('#lib/payload.txt')\nimport('#lib/data.txt')\n",
     'lib/payload.txt': 'x', 'lib/data.txt': 'x', 'lib/unnamed.txt': 'x', 'fixed.txt': 'x' }
