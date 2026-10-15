@@ -163,6 +163,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   const asked = github(t, { graphql })
   const first = await request({ repoId: '1', all: 'true' })
   assert.deepEqual(first.body.unread, [{ name: 'stale', sha: c, at: Date.parse('2020-01-01T00:00:00Z') }])
+  assert.equal(first.body.cut, false)
   assert.ok(first.body.branches.some(branch => branch.name === 'older'), 'a branch not read, its tip listed, names it')
   const later = await request({ repoId: '1', all: 'true', page: '2', from: `${c},${d},${c}` })
   assert.equal(later.status, 200)
@@ -172,6 +173,18 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', o0: c, o1: d })
   assert.match(query.body.query, /b1: object\(oid: \$o1\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
   assert.equal((await request({ repoId: '1', all: 'true', page: '100', from: c })).body.more, false, 'page 101 is no page to read')
+})
+
+test('all branches says where branches past the ten pages it lists are left out', async t => {
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-02T10:00:00Z' } }, tags: { nodes: [] },
+      branches: { pageInfo: { hasNextPage: true, endCursor: `p${variables.after ?? 0}+` }, nodes: [{ name: `b-${variables.after}`, target: { oid: a, committedDate: null } }] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const { body } = await request({ repoId: '1', all: 'true' })
+  assert.equal(body.cut, true)
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('refs/heads/')).length, 10)
 })
 
 test('a history that names no page, all branches of a directory, or reads on from what is no commit, is a bad request', async t => {

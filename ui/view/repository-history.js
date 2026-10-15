@@ -63,7 +63,8 @@ function historyRead(key, ask, settle) {
   ask(1).then(answer => {
     if (data.get(key) === loading) {
       const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
-        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, loadingMore: false, moreError: null }
+        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
+        loadingMore: false, moreError: null }
       settle?.(entry)
       data.set(key, entry)
     }
@@ -323,7 +324,7 @@ class RepositoryHistory extends LitElement {
     const { mode, key, entry, more } = this.history(this.mode())
     const ready = entry.status === 'ready'
     const branches = ready && mode === 'all' ? entry.branches.length : 0
-    const count = ready ? `${entry.commits.length}${entry.more ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
+    const count = ready ? `${entry.commits.length}${entry.more || entry.cut ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
     return html`<div class="history-bar">
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : html`<div class="history-modes" role="group" aria-label="History">
@@ -369,6 +370,7 @@ class RepositoryHistory extends LitElement {
           </li>`
         })}</ol>
       </div>
+      ${entry.cut ? html`<p class="history-note">Only the first 1,000 branches by name are read.</p>` : nothing}
       ${entry.more || entry.moreError ? html`<div class="history-more">
         ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
         <button type="button" ?disabled=${entry.loadingMore} @click=${more}>${entry.loadingMore ? 'Reading…' : 'Older commits'}</button>

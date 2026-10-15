@@ -169,7 +169,8 @@ async function tipHistories(owner: string, name: string, tips: string[], token: 
 // `--all`: the latest commits of the repository's most recently committed to
 // branches, its default branch's among them, each commit once; the branches
 // naming them and the latest tags; the branches not read, newest first, whose
-// tips none of those is (`unread`), where reading on goes; and whether any is
+// tips none of those is (`unread`), where reading on goes; whether branches
+// past those listed are left out, never to be read (`cut`); and whether any is
 // left out (`more`).
 export async function repositoryAllHistory(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
@@ -196,7 +197,7 @@ export async function repositoryAllHistory(fullName: string, token: string, fetc
   // Every branch naming a commit listed, those not read among them.
   const branches = heads.flatMap(({ name: branch, sha }) => commits.has(sha) ? [{ name: branch, sha }] : [])
   const unread = newest.slice(ALL_BRANCHES).filter(head => !commits.has(head.sha))
-  return { commits: [...commits.values()], branches, tags, defaultBranch, unread, more }
+  return { commits: [...commits.values()], branches, tags, defaultBranch, unread, cut, more }
 }
 
 // `--all` read on, its Older commits: the latest commits of each of

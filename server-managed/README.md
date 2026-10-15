@@ -1550,8 +1550,9 @@ for up to ten pages (GitHub orders heads by name alone), then, in one query,
 the latest hundred commits of the default branch and the 24 others most
 recently committed to, each commit once; every branch naming a commit listed;
 the branches not read whose tips aren't listed, `{ name, sha, at }` each,
-newest first; and the latest hundred tags, an annotated one by the commit it
-tags. `more` where a branch or a branch's commits are left out. A later page
+newest first; `cut` where branches past the thousand listed are left out,
+never to be read, the tab then saying so; and the latest hundred tags, an
+annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
 names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
 `{ all, page, commits, more }`, the latest hundred commits of each, each
 once, `more` but for the deepest page. GraphQL needs a token: a public repository read without one is `403
