@@ -64,6 +64,7 @@ import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js
 import { openBundle, selectBundle } from './bundle-load.js'
 import { installGlobalTooltipListener, installShadowTooltipListener } from './tooltip.js'
 import { bundleCommitTooltip } from './bundle-origin-links.js'
+import { revealFinding } from './finding-link-nav.js'
 
 // Boot-time install — the document-level handler for any
 // light-DOM `[data-tooltip]` element. Sidebar items live in the
@@ -2301,8 +2302,6 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (!isCurrent() || !isManagedUiMode()) return false
   if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
-    const { revealFinding } = await import('./finding-link-nav.js')
-    if (!isCurrent()) return false
     const result = await revealFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId }, {
       openManagedReport: (team, reportId) => switchToManagedTeam(team, reportId, { history: false }),
       isCurrent,

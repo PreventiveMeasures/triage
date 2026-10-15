@@ -169,12 +169,13 @@ export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }
 
-export async function openManagedIssueDialog(props) {
+// `render` is the caller's: API-only consumers (finding-link resolution
+// among them) must not load the renderer or touch the DOM, so this module
+// never imports it.
+export async function openManagedIssueDialog({ render, ...props }) {
   const isCurrent = () => state.managedSession?.id === props.session.id
     && state.managedSession?.csrfToken === props.session.csrfToken && state.currentManagedTeam === props.teamId
-  // API-only consumers (including finding-link resolution) must not load the
-  // renderer or touch the DOM until an issue dialog is actually opened.
-  const [managed, { render }] = await Promise.all([loadManagedBundle(), import('./render.js')])
+  const managed = await loadManagedBundle()
   if (!isCurrent()) return null
   return managed.openManagedIssueDialog({ ...props, isCurrent, onCreated: url => {
     if (!isCurrent()) return

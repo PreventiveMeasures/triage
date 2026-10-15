@@ -18,6 +18,7 @@ import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render, renderEmptyWorkspace } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
+import { createManagedAnnotationRead, hydrateManagedReportTriage } from './managed-triage.js'
 import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
@@ -865,8 +866,6 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // above, so overlapping findings are sent to a report that actually owns
   // them instead of silently posting them to the first report only.
   if (findings.length > 0) {
-    const { createManagedAnnotationRead, hydrateManagedReportTriage } = await import('./managed-triage.js')
-    if (isStaleLoad(gen)) return false
     const hydrate = async signal => {
       const readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)
       const results = await Promise.all(findings.flatMap(entry => [
