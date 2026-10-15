@@ -9,7 +9,7 @@
 // pull requests it opened and the commits it pushed) and the issues it
 // worked on, each opening on GitHub, and its branch. What was read is kept a
 // while, for the session that read it.
-import { LitElement, html, nothing } from 'lit'
+import { LitElement, html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { agentSessions } from '../../common/managed/agent-tasks.ts'
 import { fetchRepositoryAgents } from './client-managed.js'
@@ -163,6 +163,29 @@ const STATS = [
   ['commits', COMMIT_ICON, 'commit to the default branch without a pull request', 'commits to the default branch without a pull request'],
 ]
 
+// How much of the repository's pull requests those an entry read are, in
+// percent: all, where none are left to read; else as many as are read of the
+// numbers up to the highest read, its issues' among them, each taken for a
+// pull request, which may undercount it, short of all.
+export function pullsReadShare(entry) {
+  if (!entry.after?.pulls) return 100
+  const highest = Math.max(entry.pulls.length, ...entry.pulls.map(pull => pull.number), ...(entry.issues ?? []).map(issue => issue.number))
+  return highest > 0 ? Math.min(99, Math.floor(100 * entry.pulls.length / highest)) : 0
+}
+
+// A ring filling as `share` percent of them are read, the percent in it, a check
+// once all are, what it counts (`label`) its tooltip; pulsing while a page
+// reads (`reading`).
+function readGauge(share, label, reading) {
+  const length = 2 * Math.PI * 9
+  return html`<span class=${`history-summary read-gauge${reading ? ' is-reading' : ''}`} role="progressbar" aria-valuemin="0" aria-valuemax="100"
+    aria-valuenow=${share} aria-label=${label} data-tooltip=${label}>
+    <svg class="read-gauge-ring" viewBox="0 0 22 22" aria-hidden="true"><circle class="read-gauge-track" cx="11" cy="11" r="9"/>${share > 0
+      ? svg`<circle class="read-gauge-arc" cx="11" cy="11" r="9" transform="rotate(-90 11 11)" stroke-dasharray=${`${length * share / 100} ${length}`}/>` : nothing}</svg>
+    ${share === 100 ? html`<svg class="read-gauge-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.25 8.5 2.5 2.5 5-5.5"/></svg>`
+      : html`<span class="read-gauge-value" aria-hidden="true">${share}%</span>`}</span>`
+}
+
 // How many pull requests, branches and commits to the default branch
 // without one `agent`'s `sessions` hold.
 export function agentStats(sessions, agent) {
@@ -245,7 +268,7 @@ class RepositoryAgents extends LitElement {
         <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
         ${ready ? this.renderStats(entry) : nothing}
-        ${ready ? html`<span class="history-summary">${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read</span>` : nothing}
+        ${ready ? readGauge(pullsReadShare(entry), `${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read`, entry.loadingMore) : nothing}
       </div>
       ${ready ? this.renderSessions(entry, shown, more, picked)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>

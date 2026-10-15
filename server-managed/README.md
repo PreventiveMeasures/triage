@@ -1875,7 +1875,11 @@ end shows, beside the mark of each agent with sessions among those read
 (app agents first, Claude's and Codex's last, so theirs keep their places),
 by icon and count, the pull requests, branches and commits to the default
 branch without a pull request among its sessions, each only where there are
-any, more to read or not. Pages read on as the end of the scroll nears, as Commits'
+any, more to read or not, and after them, a ring filling as the pull requests
+are read, its percent in it (a blue check once all are), the count read its
+tooltip: all once none are left to read, else the share read of the numbers up
+to the highest read (an issue's among them), each taken for a pull request,
+which may undercount it. Pages read on as the end of the scroll nears, as Commits'
 do, the sessions made again of all read, but only while each adds a session:
 most pull requests and commits may be no agent's, so after a page adding
 none, the next waits for **More** to be clicked rather than read the whole
