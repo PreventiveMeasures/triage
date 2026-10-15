@@ -1832,8 +1832,10 @@ Commits tab reads and keeps them: each page of a hundred commits, kept by
 the commit it starts at, tells each commit's lines added and removed and
 when its author made it in their own time zone (GitHub's GraphQL API tells
 both). So a year whose commits are kept is counted from them at once, and
-once the branch moves, only the commits new since are read of GitHub. A
-year not kept yet is read five queries an answer: the tab shows what else
+once the branch moves, only the commits new since are read of GitHub. It is
+read on from as far as thirty days before the year, a commit's clock not
+always later than its parents'. A year not kept yet is read five queries an
+answer: the tab shows what else
 it read and how many of the year's commits are read so far, and asks again
 a second apart as long as each answer reads more (after five that read
 none, **Read on** is left to the reader). A year of more than 10,000

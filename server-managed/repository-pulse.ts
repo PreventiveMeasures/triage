@@ -30,6 +30,10 @@ const SEARCHED = 50
 export const YEAR_COMMITS = 10_000
 const YEAR_QUERIES = 5
 const YEAR_STARTS = 10
+// Commits are read on from as far as this before the year, a commit's clock
+// not always later than its parents': one dated before the year may have a
+// parent dated in it.
+const YEAR_SKEW_MS = 30 * DAY_MS
 const MAX_TITLE = 1000
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const SHA = /^[a-f\d]{40}$/u
@@ -157,8 +161,9 @@ export async function defaultHead(fullName: string, token: string, fetchImpl: ty
 }
 
 // The commits from `head` made since `since`, as the Commits tab reads and
-// keeps them (`pages`, historyFrom): on from the parents of those since, not
-// yet listed, YEAR_STARTS at a time, till none is left; the pages kept read
+// keeps them (`pages`, historyFrom): on from the parents of those since (or
+// as much as YEAR_SKEW_MS before), not yet listed, YEAR_STARTS at a time,
+// till none is left; the pages kept read
 // of the store, those not of GitHub, as many queries of them as
 // YEAR_QUERIES, the rest left for the next to ask (`complete` false, how
 // many are `read`); more than YEAR_COMMITS, too many (`tooMany`).
@@ -166,7 +171,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<YearCommits> {
   const found = new Map<string, HistoryCommit>()
   const tried = new Set<string>()
-  const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since
+  const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since - YEAR_SKEW_MS
   const read = () => [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since).length
   let queries = 0
   let starts = [head]

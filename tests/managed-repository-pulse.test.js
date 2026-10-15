@@ -32,12 +32,13 @@ const stats = {
   punch_card: [[0, 9, 4], [6, 23, 2], [7, 0, 9], [1, 24, 1], [2, 3, -1]],
 }
 
-// The default branch, `length` commits an hour apart from `now`, each the
-// parent of the one before, its lines and its author's time two hours east
-// of UTC; its head the first.
+// The default branch, `length` commits `step` apart (an hour) from `now`,
+// each the parent of the one before, its lines and its author's time two
+// hours east of UTC; its head the first.
 const shaOf = at => at.toString(16).padStart(40, '0')
-const chain = (length, now) => Array.from({ length }, (_, at) => ({ oid: shaOf(at), messageHeadline: `Commit ${at}`, committedDate: new Date(now - at * HOUR).toISOString(),
-  additions: at % 5, deletions: 1, author: { name: 'Ada', date: new Date(now - at * HOUR + 2 * HOUR).toISOString().replace('Z', '+02:00'), user: { login: 'ada' } },
+const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({ oid: shaOf(at), messageHeadline: `Commit ${at}`,
+  committedDate: new Date(now - at * step).toISOString(), additions: at % 5, deletions: 1,
+  author: { name: 'Ada', date: new Date(now - at * step + 2 * HOUR).toISOString().replace('Z', '+02:00'), user: { login: 'ada' } },
   parents: { nodes: at + 1 < length ? [{ oid: shaOf(at + 1) }] : [] } }))
 
 // GitHub, as the pulse reads it: each statistic answered by `answer`, the
@@ -96,20 +97,21 @@ test('a commit read with GraphQL tells the lines it adds and removes, and when i
 
 test('the year is read from the head on through the pages kept, those not kept a few queries of GitHub an answer, the rest by the next; past YEAR_COMMITS, too many', async t => {
   const now = Date.UTC(2026, 9, 15, 12)
-  const asked = github(t, { commits: chain(1200, now) })
+  const asked = github(t, { commits: chain(1200, now, DAY) })
   const kept = pages()
-  // 301 commits since: four pages, the last starting at a parent of one since.
-  const short = await yearCommits('org/repo', 'token', shaOf(0), now - 300 * HOUR, kept)
+  // 301 commits since, a day apart: four pages, the last as far as thirty
+  // days before them.
+  const short = await yearCommits('org/repo', 'token', shaOf(0), now - 300 * DAY, kept)
   assert.equal(short.complete, true)
   assert.equal(short.commits.length, 301)
   assert.equal(graphQueries(asked), 4)
-  assert.equal((await yearCommits('org/repo', 'token', shaOf(0), now - 300 * HOUR, kept)).complete, true)
+  assert.equal((await yearCommits('org/repo', 'token', shaOf(0), now - 300 * DAY, kept)).complete, true)
   assert.equal(graphQueries(asked), 4, 'all of it kept')
   // 901 since: five queries an answer, the rest by the next, those read kept.
-  const long = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * HOUR, kept)
+  const long = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
   assert.deepEqual(long, { complete: false, read: 900, tooMany: false }, 'four kept, then five read')
   assert.equal(graphQueries(asked), 9)
-  const rest = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * HOUR, kept)
+  const rest = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
   assert.deepEqual([rest.complete, rest.commits.length, graphQueries(asked)], [true, 901, 10])
   // A year past YEAR_COMMITS, its pages kept: too many to count.
   const many = memoryPages()
@@ -120,6 +122,19 @@ test('the year is read from the head on through the pages kept, those not kept a
   const none = github(t, { commits: [] })
   const counted = await yearCommits('org/repo', 'token', shaOf(0), 0, many)
   assert.deepEqual([counted.complete, counted.tooMany, counted.read > YEAR_COMMITS, graphQueries(none)], [false, true, true, 0])
+})
+
+test('a commit dated before the year whose parent is dated in it, its clock behind, is read on from all the same', async t => {
+  const now = Date.UTC(2026, 9, 15, 12)
+  const commits = chain(300, now, DAY)
+  // The last of the first page dated before the year, its parent, the first
+  // of the next, in it.
+  commits[100].committedDate = new Date(now - DAY).toISOString()
+  github(t, { commits })
+  const read = await yearCommits('org/repo', 'token', shaOf(0), now - 95 * DAY, pages())
+  assert.equal(read.complete, true)
+  assert.ok(read.commits.some(commit => commit.sha === shaOf(100)))
+  assert.equal(read.commits.length, 97)
 })
 
 test('a year counted from its commits: a week a row from its first Sunday, merges left out; its lines; contributors by login, else name; hours in each author\'s own time zone', () => {
