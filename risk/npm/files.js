@@ -22,9 +22,15 @@ const unescaped = body => body.replaceAll(ESCAPE, (escape, x, u, braced, octal, 
   return code <= 0x10FFFF ? String.fromCodePoint(code) : escape
 })
 
+// The characters a filesystem telling neither case apart (folded) takes for
+// one of a package's name, which npm keeps to ASCII: its cases, and those
+// Unicode cases into it (`ı`, `ſ`, the Kelvin sign).
+const FOLDING_INTO = { i: '\u0131', k: '\u212A', s: '\u017F' }
+const foldsInto = char => new Set([char, char.toLowerCase(), char.toUpperCase(), ...FOLDING_INTO[char.toLowerCase()] ?? ''])
+
 // Each string a text writes out that may name a file of its package, its
 // value starting `.`, with an escape, or with `first` (its name's first
-// character): from any quote no backslash escapes (an even run of them
+// character, foldsInto): from any quote no backslash escapes (an even run of them
 // before it, or none) to the next of its kind none escapes, a template's
 // across lines, the others' within their line, a line continuation aside.
 // Tried from every such quote, not only where code's tokens say a string
@@ -33,7 +39,7 @@ const unescaped = body => body.replaceAll(ESCAPE, (escape, x, u, braced, octal, 
 // a comment, or in another string, is read too. Linear on any text, each
 // quote's string read to the next quote of its kind.
 function quoted(first) {
-  const starts = String.raw`(?=[.\\${first === null ? '' : String.raw`\u{${first.codePointAt(0).toString(16)}}`}])`
+  const starts = String.raw`(?=[.\\${first === null ? '' : [...foldsInto(first)].map(char => String.raw`\u{${char.codePointAt(0).toString(16)}}`).join('')}])`
   const line = quote => String.raw`${quote}(?=${starts}((?:[^${quote}\\\n]|\\(?:\r\n|[\s\S]))*)${quote})`
   return new RegExp(String.raw`(?<=(?:^|[^\\])(?:\\\\)*)(?:${line('"')}|${line("'")}|\x60(?=${starts}((?:[^\x60\\]|\\[\s\S])*)\x60))`, 'gu')
 }
@@ -276,19 +282,23 @@ export function npmLoadedScripts(version) {
     for (const [dir, target, pattern] of targets) for (const file of exported(names, root, dir, target, pattern)) add(file, 'require')
   }
   for (const [path, text] of files) if (npmIsScript(path, text)) queue.push(path)
-  const own = root.length > 0 ? `${top.name}/` : null, seen = new Set(), strings = quoted(root.length > 0 ? top.name : null)
+  // The package's own name, as a filesystem tells it (rootOf), a path from
+  // it after a `/`, or a `\\` as on Windows.
+  const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
+    && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
+  const seen = new Set(), strings = quoted(root.length > 0 ? top.name[0] : null)
   for (let index = 0; index < queue.length; index++) {
     const path = queue[index], text = files.get(path)
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     for (const { 1: double, 2: single, 3: template, index: start } of text.matchAll(strings)) {
       const body = double ?? single ?? template, quote = text[start], value = valueOf(quote, body)
       if (value === null) continue
-      const [from, spec] = own !== null && value.startsWith(own) ? ['', `./${value.slice(own.length)}`] : [dir, value]
+      const [from, spec] = named(value) ? ['', `./${value.slice(top.name.length + 1)}`] : [dir, value]
       if (!RELATIVE.test(spec.replaceAll('\\', '/'))) continue
       const by = imported(text, quote, start, start + body.length + 2) ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
       if (seen.has(key)) continue
       seen.add(key)
-      if (by === 'require') for (const named of requiredPaths(root, from, spec)) requires(named)
+      if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
       add(urlJoined(root, from, spec), 'import')
     }
   }

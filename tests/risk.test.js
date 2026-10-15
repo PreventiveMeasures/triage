@@ -148,12 +148,12 @@ test('a path a script writes out whole read wherever it is: whatever takes it, i
   const index = [
     "require('./extra.txt', 0)", "require(/* a */ './commented.txt')", "module.require('./module.txt')", "require?.('./optional.txt')", "require(('./paren.txt'))",
     "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
-    "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require('../../@S/WHERE/folded.txt')", "require.resolve('./resolved.txt')",
+    "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require('../../@S/WHERE/folded.txt')", "require('@S/Where/named.txt')", "require('@s/where\\\\slashed.txt')", "require.resolve('./resolved.txt')",
     "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
     "require(`./tmpl\\${x}.txt`)", "require('./cased.txt')", "require('./caf\\u00e9.txt')",
     "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
   ].join('\n')
-  const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'folded', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
+  const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'folded', 'named', 'slashed', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
   const cased = ['tmpl${x}.txt', 'Cased.TXT', 'cafe\u0301.txt']
   const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
