@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { HISTORY_GLUED, historyFrom } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -63,8 +64,9 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   const asked = github(t)
   const { status, body } = await request({ repoId: '1', ref: 'heads/main' })
   assert.equal(status, 200)
+  // Its commits' parents not listed, c and d, are where it reads on.
   assert.deepEqual(body, {
-    commit: a, path: '', page: 1, more: false,
+    commit: a, path: '', page: 1, more: true,
     commits: [
       { sha: a, parents: [b, c], subject: 'Merge feature', authorName: 'octo name', authorLogin: 'octo', committedAt: Date.parse('2026-10-02T10:00:00Z') },
       { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, committedAt: Date.parse('2026-10-02T10:00:00Z') },
@@ -77,6 +79,10 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.equal(later.body.page, 2)
   assert.equal(later.body.branches, undefined)
   assert.deepEqual(asked.findLast(entry => entry.path === '/repos/org/repo/commits').query, { sha: a, per_page: '100', page: '2' })
+  // On from the commits the client names, a page from each.
+  const on = await request({ repoId: '1', ref: a, page: '2', from: `${c},${d}` })
+  assert.deepEqual([on.body.page, on.body.more], [2, true])
+  assert.deepEqual(asked.filter(entry => entry.path === '/repos/org/repo/commits').slice(-2).map(entry => entry.query.sha).toSorted(), [c, d])
 })
 
 test('a full page offers the next, but for the deepest page read', async t => {
@@ -144,6 +150,9 @@ test('all branches reads the 25 most recently committed to, the default branch f
   assert.match(queries[2].body.query, /b2: object\(oid: \$o2\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
   // A tag's target, and those of as many as four annotated tags after it.
   assert.equal(queries[0].body.query.match(/target \{ __typename oid/gu).length, 5)
+  // Asked again: its branches kept a while, each tip's page kept for good, nothing read of GitHub.
+  assert.deepEqual((await request({ repoId: '1', all: 'true' })).body, body)
+  assert.equal(asked.filter(entry => entry.path === '/graphql').length, 3)
 
   const anonymous = await fixture(t)
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })
@@ -192,9 +201,72 @@ test('a history that names no page, all branches of a directory, or reads on fro
   github(t)
   const starts = count => Array.from({ length: count }, (_, index) => index.toString(16).padStart(40, '0')).join(',')
   for (const query of [{ repoId: '1', page: '0' }, { repoId: '1', page: '1.5' }, { repoId: '1', page: '101' }, { repoId: '1', all: 'true', path: 'src' },
-    { repoId: '1', all: 'true', page: '2' }, { repoId: '1', all: 'true', from: a }, { repoId: '1', page: '2', from: a },
+    { repoId: '1', all: 'true', page: '2' }, { repoId: '1', all: 'true', from: a }, { repoId: '1', page: '1', from: a }, { repoId: '1', page: '2', path: 'src/allowed', from: a },
     { repoId: '1', all: 'true', page: '2', from: '' }, { repoId: '1', all: 'true', page: '2', from: `${a},main` }, { repoId: '1', all: 'true', page: '2', from: starts(26) }]) {
     assert.equal((await request(query)).status, 400, JSON.stringify(query))
   }
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)
+})
+
+// A linear history of 300 commits, `chain(0)` the newest, as GitHub's REST
+// list gives a page of it from any of them.
+const chain = at => at.toString(16).padStart(40, '0')
+function linear(t) {
+  const read = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+    if (url.pathname === '/repos/org/repo/branches' || url.pathname === '/repos/org/repo/tags') return Promise.resolve(Response.json([]))
+    if (url.pathname === '/repos/org/repo/commits') {
+      const top = Number.parseInt(url.searchParams.get('sha'), 16)
+      read.push(top)
+      return Promise.resolve(Response.json(Array.from({ length: Math.min(100, 300 - top) }, (_, index) => top + index)
+        .map(at => restCommit(chain(at), at < 299 ? [chain(at + 1)] : [], `Work ${at}`))))
+    }
+    return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
+  })
+  return read
+}
+
+test('a whole repository\'s history is kept a page from a commit at a time, by that commit, and where a commit read starts a page kept, that page glues on, and those after it', async t => {
+  const request = await fixture(t)
+  const read = linear(t)
+  const listed = body => body.commits.map(commit => Number.parseInt(commit.sha, 16))
+  const range = (from, to) => Array.from({ length: to - from }, (_, index) => from + index)
+  // A revision 100 commits down, then on from where its first page stops.
+  assert.deepEqual(listed((await request({ repoId: '1', ref: chain(100) })).body), range(100, 200))
+  assert.deepEqual(listed((await request({ repoId: '1', ref: chain(100), page: '2', from: chain(200) })).body), range(200, 300))
+  assert.deepEqual(read, [100, 200])
+  // The branch moved on 100 commits: their page read, the pages kept below it glued on, all 300 at once.
+  const moved = (await request({ repoId: '1', ref: chain(0) })).body
+  assert.deepEqual([listed(moved), moved.more], [range(0, 300), false])
+  assert.deepEqual(read, [100, 200, 0], 'one page read of GitHub')
+  // Kept, the revision 100 down reads nothing of GitHub, its own page and the one after it glued.
+  assert.deepEqual(listed((await request({ repoId: '1', ref: chain(100) })).body), range(100, 300))
+  assert.deepEqual(read, [100, 200, 0])
+  // A commit GitHub lists nothing from keeps no page: asked again, it is read again.
+  await request({ repoId: '1', ref: chain(400) })
+  await request({ repoId: '1', ref: chain(400) })
+  assert.deepEqual(read.slice(-2), [400, 400])
+  read.length = 3
+  // One 50 down: its page read, listing commit 100 halfway, whose page kept glues on, and the one after it.
+  assert.deepEqual(listed((await request({ repoId: '1', ref: chain(50) })).body), [...range(50, 150), ...range(150, 300)])
+  assert.deepEqual(read, [100, 200, 0, 50])
+})
+
+test('gluing stops at as many commits as it goes to, looking up fifty tops at a time, however many pages are kept', async () => {
+  // A linear history of 3000 commits, a page kept from every one of them.
+  const commit = at => ({ sha: chain(at), parents: at < 2999 ? [chain(at + 1)] : [], subject: '', authorName: null, authorLogin: null, committedAt: null })
+  const lookups = []
+  const pages = {
+    read: tops => {
+      lookups.push(tops.length)
+      return Promise.resolve(new Map(tops.map(top => [top, Array.from({ length: Math.min(100, 3000 - Number.parseInt(top, 16)) }, (_, index) => commit(Number.parseInt(top, 16) + index))])))
+    },
+    write: () => Promise.resolve(),
+  }
+  const { commits, more } = await historyFrom('org/repo', 'token', [chain(0)], pages, () => assert.fail('nothing read of GitHub'))
+  assert.equal(commits.length, HISTORY_GLUED)
+  assert.equal(more, true)
+  assert.ok(lookups.slice(1).every(count => count <= 50), JSON.stringify(lookups))
 })

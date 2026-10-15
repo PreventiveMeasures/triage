@@ -586,6 +586,12 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const ref = url.searchParams.get('ref') ?? ''
   const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
   const path = url.searchParams.get('path') ?? ''
+  // A whole repository's later pages on from the commits the client names.
+  const from = path ? null : url.searchParams.get('from')?.split(',') ?? null
+  if (from) {
+    sendJson(res, 200, { commit, path, page, commits: [...new Map(from.flatMap(sha => reaching(sha).slice(0, 100)).map(item => [item.sha, item])).values()], more: page < 100 })
+    return
+  }
   const listed = reaching(commit).filter(item => !path || commits.indexOf(item) % 3 === 0)
   sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
 }

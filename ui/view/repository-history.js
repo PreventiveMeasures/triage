@@ -81,8 +81,8 @@ function historyRead(key, ask, settle) {
 
 // This revision's history from every branch's, where that holds the commit
 // shown, read again of none: the commits it reaches among them, its history
-// going on where one has a parent not among them. Its older commits read from
-// its first page, which those it holds need not fill.
+// going on where one has a parent not among them, its older commits read on
+// from there (settleFrontier).
 export function revisionFromAll(all, commit) {
   const bySha = new Map(all.commits.map(item => [item.sha, item]))
   if (!bySha.has(commit)) return null
@@ -94,16 +94,18 @@ export function revisionFromAll(all, commit) {
     queue.push(...bySha.get(sha).parents)
   }
   const commits = all.commits.filter(item => reached.has(item.sha))
-  return { status: 'ready', until: all.until, page: 0, commits, more: commits.some(item => item.parents.some(parent => !bySha.has(parent))),
-    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, loadingMore: false, moreError: null }
+  return settleFrontier({ status: 'ready', until: all.until, page: 1, commits, more: commits.some(item => item.parents.some(parent => !bySha.has(parent))),
+    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, unread: [], loadingMore: false, moreError: null })
 }
 
-// Every branch's history read on (`settle`, as a page is read): the branches
-// not read that now name a commit listed join those naming one, and the next
-// page reads on from the commits where those listed stop, the parents not
-// listed, and from the branches not read, the newest first (a parent by its
-// child's time), as many as the first page read branches, none twice.
-function settleAll(entry) {
+// A whole repository's history read on (`settle`, as a page is read), every
+// branch's or a revision's: the branches not read that now name a commit
+// listed join those naming one, and the next page reads on from the commits
+// where those listed stop, the parents not listed, and from the branches not
+// read, the newest first (a parent by its child's time), as many as every
+// branch's first page reads branches, none twice. The server glues on what it
+// keeps of the history from each (repository-history.ts historyFrom).
+function settleFrontier(entry) {
   const listed = new Set(entry.commits.map(commit => commit.sha))
   entry.branches = [...entry.branches, ...entry.unread.flatMap(({ name, sha }) => listed.has(sha) ? [{ name, sha }] : [])]
   entry.unread = entry.unread.filter(head => !listed.has(head.sha))
@@ -115,6 +117,7 @@ function settleAll(entry) {
   entry.next = [...starts].toSorted((a, b) => b[1] - a[1]).slice(0, ALL_STARTS).map(([sha]) => sha)
   for (const sha of entry.next) entry.asked.add(sha)
   entry.more &&= entry.next.length > 0
+  return entry
 }
 
 // The next page of a history read a page at a time, after those it holds.
@@ -283,7 +286,7 @@ class RepositoryHistory extends LitElement {
     const { repoId, commit, path } = this.repository
     const key = mode === 'all' ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
     const ask = (page, held) => fetchRepositoryHistory(repoId, mode === 'all' ? '' : commit, path,
-      { page, all: mode === 'all', ...mode === 'all' && page > 1 ? { from: held.next } : {} }).then(answer => {
+      { page, all: mode === 'all', ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
       if (mode !== 'all' && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
       return checked(answer)
     })
@@ -294,7 +297,7 @@ class RepositoryHistory extends LitElement {
     const all = mode === 'revision' && !fresh(held.get(key)) ? held.get(`all\0${repoId}`) : null
     const derived = all?.status === 'ready' && fresh(all) ? revisionFromAll(all, commit) : null
     if (derived) held.set(key, derived)
-    const settle = mode === 'all' ? settleAll : null
+    const settle = mode === 'path' ? null : settleFrontier
     const entry = historyRead(key, ask, settle)
     if (mode === 'all' && entry.status === 'error' && entry.code === 'github-token-required') {
       allRefused.add(repoId)
