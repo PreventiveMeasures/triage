@@ -1005,11 +1005,14 @@ function showBundleCodeTerminal(open) {
   else document.querySelector('[data-bundle-code-terminal-toggle]')?.focus()
 }
 
-// The Code tab's terminal pane, under the code panel: the Terminal tab's own
-// terminal, attached into the slot by render.js, so one session carries
-// between the two.
+// The Code tab's terminal pane, under the code panel and a handle resizing
+// it: the Terminal tab's own terminal, attached into the slot by render.js,
+// so one session carries between the two.
 function renderBundleCodeTerminal() {
-  return html`<section class="bundle-code-terminal" aria-label="Terminal">
+  return html`<bundle-code-terminal-splitter role="separator" tabindex="0" aria-orientation="horizontal"
+      aria-label="Resize terminal" data-tooltip="Drag to resize · double-click to reset"
+    ></bundle-code-terminal-splitter>
+    <section class="bundle-code-terminal" aria-label="Terminal">
     <header class="bundle-code-terminal-bar">
       <span class="bundle-code-rail-label">Terminal</span>
       <button type="button" class="bundle-code-rail-action" aria-label="Close terminal"
