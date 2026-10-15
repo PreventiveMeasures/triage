@@ -9,9 +9,9 @@ import { test } from 'node:test'
 import './_polyfills.js'
 import { nothing } from 'lit'
 
-// Prism first: it hands the gate the token names its spans carry.
 const prism = await import('../ui/prism.js')
-const { appMarkup, isAppMarkup } = await import('../ui/view/markup.js')
+const { default: Prism } = await import('prismjs/prism.js')
+const { TOKEN_NAMES, appMarkup, isAppMarkup } = await import('../ui/view/markup.js')
 const { splitHighlightedLines } = await import('../ui/view/prism-highlight.js')
 const { controlMarkup } = await import('../ui/view/control-chars.js')
 const { markHighlighted } = await import('../ui/view/bundle-compare-code-model.js')
@@ -37,6 +37,48 @@ const CODE = [
   'public class A { String s = "<b>"; /** <p>doc</p> */ }',
   'class A; def b = "<c>" end; %w[<d> e]',
 ]
+
+// Every name and alias a token of the bundled grammars can carry, and the
+// languages' own names: what the gate's list of token names must be.
+function grammarTokenNames(languages) {
+  const names = new Set()
+  const seen = new Set()
+  const walk = (grammar) => {
+    if (!grammar || typeof grammar !== 'object' || seen.has(grammar)) return
+    seen.add(grammar)
+    for (const [name, rules] of Object.entries(grammar)) {
+      if (name === 'rest') { walk(rules); continue }
+      names.add(name)
+      for (const rule of [rules].flat()) {
+        if (rule instanceof RegExp) continue
+        for (const alias of [rule?.alias ?? []].flat()) names.add(alias)
+        walk(rule?.inside)
+      }
+    }
+  }
+  // Two kinds of token no grammar names: markup-templating's, named after
+  // the language it embeds, and the text jsx gathers between tags.
+  names.add('plain-text')
+  for (const [language, grammar] of Object.entries(languages)) {
+    // Beside the grammars, `Prism.languages` holds its helpers (`extend`…).
+    if (typeof grammar !== 'object') continue
+    names.add(language)
+    walk(grammar)
+  }
+  // A fence's `language-…` mark the gate takes by its shape.
+  return [...names].filter(name => !name.startsWith('language-')).toSorted()
+}
+
+test('the gate\'s token names are the ones Prism\'s grammars carry, no more and no fewer', () => {
+  assert.deepEqual(TOKEN_NAMES.toSorted(), grammarTokenNames(Prism.languages))
+})
+
+test('a copy of the gate Prism never loaded beside takes its colouring too, as a page left open across a deploy has', async () => {
+  // The query makes a second instance of the module, as the newer build's
+  // chunk is to the page that loads the newer Prism.
+  const { isAppMarkup: pageGate } = await import('../ui/view/markup.js?open-across-a-deploy')
+  for (const lang of LANGUAGES) for (const code of CODE) assert.ok(pageGate(prism.highlight(code, lang)), lang)
+})
 
 test('every icon the app writes is markup it may draw', async () => {
   const icons = []

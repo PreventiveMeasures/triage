@@ -21,7 +21,6 @@
 import Prism from 'prismjs/prism.js'
 import { stringifySourceLinks } from './view/prism-source-links.js'
 import { scanTemplateLiterals } from './view/prism-template-literals.js'
-import { allowTokenNames } from './view/markup.js'
 import 'prismjs/components/prism-markup.js'
 import 'prismjs/components/prism-clike.js'
 import 'prismjs/components/prism-javascript.js'
@@ -53,36 +52,6 @@ Prism.manual = true
 // After every grammar above, so each copy of the JavaScript rule is there to
 // rewire (view/prism-template-literals.js says why).
 scanTemplateLiterals(Prism)
-
-// Every name and alias a token of the grammars above can carry, and the
-// languages' own names, for view/markup.js to tell Prism's spans from
-// the app's own classes.
-allowTokenNames(tokenNames(Prism.languages))
-function tokenNames(languages) {
-  const names = new Set()
-  const seen = new Set()
-  const walk = (grammar) => {
-    if (!grammar || typeof grammar !== 'object' || seen.has(grammar)) return
-    seen.add(grammar)
-    for (const [name, rules] of Object.entries(grammar)) {
-      if (name === 'rest') { walk(rules); continue }
-      names.add(name)
-      for (const rule of [rules].flat()) {
-        if (rule instanceof RegExp) continue
-        for (const alias of [rule?.alias ?? []].flat()) names.add(alias)
-        walk(rule?.inside)
-      }
-    }
-  }
-  // Two tokens no grammar names: markup-templating's, named after the
-  // language it embeds, and the text jsx gathers between tags.
-  names.add('plain-text')
-  for (const [language, grammar] of Object.entries(languages)) {
-    names.add(language)
-    walk(grammar)
-  }
-  return names
-}
 
 // Returns highlighted HTML for `code` under `lang`, or null when
 // the language isn't loaded. Caller falls back to plain text on

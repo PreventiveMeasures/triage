@@ -33,15 +33,38 @@ const PAINT = Object.fromEntries(['fill', 'fill-opacity', 'fill-rule', 'clip-rul
   'stroke-linejoin', 'stroke-opacity', 'stroke-dasharray', 'opacity', 'transform'].map(name => [name, SVG]))
 const shape = (...names) => ({ ...PAINT, ...Object.fromEntries(names.map(name => [name, SVG])) })
 
-// Prism's token names, which ui/prism.js hands over as it loads (read off
-// its grammars, never off the code it colours), so a token's span names a
-// token and not one of the app's own classes — some of which pin an
-// element over the page. `language-…` is the markdown grammar's mark for a
-// fence's language, and no app style matches it.
-const TOKENS = new Set()
-export function allowTokenNames(names) {
-  for (const name of names) TOKENS.add(name)
-}
+// Prism's token names — every name and alias a token of the grammars
+// ui/prism.js bundles can carry, and the languages' own names — so a token's
+// span names a token and not one of the app's own classes, some of which pin
+// an element over the page. Written out here rather than read off Prism as it
+// loads: a page left open across a deploy loads the newer Prism, and the copy
+// of this module that Prism imports is the newer build's, not the one the
+// page checks with, so the page's list would stay empty and all its code be
+// drawn as text. tests/markup.test.js holds the list to the grammars.
+// `language-…` is the markdown grammar's mark for a fence's language, and no
+// app style matches it.
+export const TOKEN_NAMES = Object.freeze(`
+annotation argument-name assign-left at atom atrule attr-equals attr-name attr-value attribute
+attribute-class-name attribute-content backtick-quoted-string base-clause bash blockquote bold boolean
+builtin c cdata char class-name class-name-definition class-name-fully-qualified clike closure-params
+closure-punctuation code code-block code-language code-snippet command command-literal comment constant
+content conversion-option cpp css datetime decorator delimiter directive directive-hash doctype doctype-tag
+double-colon double-quoted-string entity environment expression file-descriptor for-or-select format-spec
+fragment-specifier front-matter front-matter-block function function-definition function-name
+function-variable generic generic-function generics global hashbang heredoc-string hr html import important
+included-cdata internal-subset interpolation interpolation-punctuation italic java javascript js json jsx
+key keyword lifetime-annotation list literal-property macro macro-name markdown markup markup-templating
+mathml md method-definition module module-declaration name named-entity namespace nowdoc-string null number
+objc objectivec operator package parameter php plain plain-text plaintext prolog property punctuation py
+python raw-string rb regex regex-delimiter regex-flags regex-literal regex-source return-type rss ruby rule
+rust scalar scope script script-punctuation selector selector-function-argument sh shebang shell
+single-quoted-string sol solidity special-attr spread ssml static static-context strike string
+string-interpolation string-literal string-property style svg symbol table table-data table-data-rows
+table-header table-header-row table-line tag template-punctuation template-string text this title
+triple-quoted-string ts tsx txt type-casting type-declaration type-definition type-hint typescript url
+url-reference value variable version webmanifest xml yaml yml
+`.trim().split(/\s+/u))
+const TOKENS = new Set(TOKEN_NAMES)
 const tokenClass = value => {
   const [first, ...rest] = value.split(' ')
   return first === 'token' && rest.every(word => TOKENS.has(word) || /^language-[\w-]+$/u.test(word))
