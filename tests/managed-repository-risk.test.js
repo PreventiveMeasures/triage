@@ -517,21 +517,26 @@ test('a test\'s fixture or example its reader refuses is read, but not told; one
     [[told[0], 'read'], [told[1], 'read'], [told[2], 'lockfile-unreadable'], [told[3], 'lockfile-unreadable']])
 })
 
-test('repositories are read READ_AHEAD at a time, as GitHub answers each slowly, each told in turn', async () => {
+test('repositories are read READ_AHEAD at a time, as GitHub answers each slowly, each told in turn, access to it checked again just before', async () => {
   const repos = Object.fromEntries(Array.from({ length: 8 }, (_, at) => [at + 1, { ...onePnpmRepo[1], fullName: `org/r${at + 1}` }]))
   const source = sourceOf(repos, () => Promise.resolve(noneFound))
   let most = 0, open = 0
   const opening = source.open
   // Each opened 20ms after it is asked, the last first, as GitHub may answer.
+  // Access to each checked again as it is told: once those before it are,
+  // their advisories asked of npm, however long ago it was read.
+  const rechecked = []
   source.open = async repo => {
     most = Math.max(most, ++open)
     await delay(20 + (8 - repo.repoId) * 5)
     open--
-    return opening(repo)
+    const opened = await opening(repo)
+    return { ...opened, recheck: () => { rechecked.push([repo.repoId, source.audited.length]); return opened.recheck() } }
   }
   const lines = await Array.fromAsync(scan(source))
   assert.equal(most, 6, 'six at a time, not one after another')
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(line => line.id), [1, 2, 3, 4, 5, 6, 7, 8], 'told in turn')
+  assert.deepEqual(rechecked, [1, 2, 3, 4, 5, 6, 7, 8].map(id => [id, id - 1]))
 })
 
 test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {

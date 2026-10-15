@@ -123,8 +123,8 @@ export const riskCaches = (): RiskCaches => ({
   advisories: lru(50_000, kept => Array.isArray(kept.audit) ? kept.audit.length + 1 : 1),
 })
 // How many repositories are read at once (repository-risk-read.ts), ahead of
-// the one told: each asks GitHub one thing after another (opening it, its
-// head, access to it again) even where all else is kept.
+// the one told: each asks GitHub one thing after another (opening it, and
+// its head) even where all else is kept.
 const READ_AHEAD = 6
 // How long a part's progress, written as it ends (`progress`), is waited on.
 const PROGRESS_WRITE_MS = 5000
@@ -266,10 +266,16 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
 
 // A repository read (repository-risk-read.ts readRepository) told: its
 // line, or why it couldn't be read, then its lockfiles', and their
-// advisories, its packages assessed meanwhile.
+// advisories, its packages assessed meanwhile. Access to it is checked again
+// just before, however long ago it was read, as GitHub may have withdrawn it.
 async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: RepositoryRead | RepositoryFailure | null) {
   if (!read || scan.signal.aborted) return
   if ('type' in read) { scan.lines.add(read); return }
+  try { await read.recheck() } catch (error) {
+    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, 'checking access to it again') })
+    return
+  }
+  if (scan.signal.aborted) return
   const { commit, lockfiles } = read
   scan.lines.add({ type: 'repo', id: repo.repoId, commit, lockfiles: lockfiles.map(({ line: { path, format } }) => ({ path, format })) })
   for (const { line } of lockfiles) {

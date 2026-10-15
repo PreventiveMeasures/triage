@@ -2,7 +2,7 @@
 // (repository-risk.ts): opened at its default branch's head, its lockfiles
 // of npm's ecosystem listed (findRepoLockfiles), those of its `paths` alone,
 // each read for its packages (@preventive/lockfile), and access to it checked
-// again once they are. A listing is kept by the commit it was listed at, and
+// again before they are told (`recheck`). A listing is kept by the commit it was listed at, and
 // a lockfile's packages by its blob, neither of which changes: in the
 // instance's memory, and the source's `listings` and `lockfiles` for
 // SCAN_READ_KEPT_MS, so that only opening a repository and checking access
@@ -46,9 +46,10 @@ export interface RepositoryReading<R extends RepositoryRiskRepo> {
   signal: AbortSignal
 }
 
-// A repository read: its commit, and its lockfiles' lines, each with its
-// blob's id.
-export interface RepositoryRead { commit: string; lockfiles: { sha: string; line: LockfileLine }[] }
+// A repository read: its commit, its lockfiles' lines, each with its blob's
+// id, and access to it to check again just before they are told
+// (OpenedRepository `recheck`), as GitHub may have withdrawn it meanwhile.
+export interface RepositoryRead { commit: string; lockfiles: { sha: string; line: LockfileLine }[]; recheck(): Promise<void> }
 
 // Whether a lockfile at `path` is of `paths` (RepositoryRiskRepo).
 function lockfileOf(path: string, paths: readonly string[] | undefined) {
@@ -102,9 +103,8 @@ async function listLockfiles<R extends RepositoryRiskRepo>(reading: RepositoryRe
   }
 }
 
-// A repository read: its lockfiles listed and read, and access to it checked
-// again once they are, as GitHub may have withdrawn it meanwhile; its line
-// telling why where that failed; null where the scan stopped. A test's
+// A repository read: its lockfiles listed and read; its line telling why
+// where that failed; null where the scan stopped. A test's
 // fixture or example its reader refuses (isTestFixture) is left out, as a
 // test may keep one so on purpose.
 export async function readRepository<R extends RepositoryRiskRepo>(reading: RepositoryReading<R>, repo: R): Promise<RepositoryRead | RepositoryFailure | null> {
@@ -116,8 +116,5 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
     const line = await readLockfile(reading, repo.repoId, listed.opened, lockfile)
     if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: lockfile.sha, line })
   }
-  try { await listed.opened.recheck() } catch (error) {
-    return reading.signal.aborted ? null : { type: 'repo', id: repo.repoId, ...failureOf(error, 'checking access to it again') }
-  }
-  return reading.signal.aborted ? null : { commit: listed.opened.commit, lockfiles }
+  return reading.signal.aborted ? null : { commit: listed.opened.commit, lockfiles, recheck: () => listed.opened.recheck() }
 }

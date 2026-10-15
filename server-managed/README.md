@@ -951,10 +951,11 @@ kept, so a scan of more repositories than a part reaches goes on past them.
 One renamed since, or whose team's directories changed, is read again; one
 whose default branch moved on is told as the scan read it. Repositories are read six
 at a time (`repository-risk-read.ts`), each told in turn, as each asks GitHub
-one thing after another (opening it and its default branch's head, and access
-to it again) even where its listing and lockfiles are kept, with the admin's
-own GitHub access, through the same gate as browsing them, which is checked
-again once a repository's lockfiles are read and before any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
+one thing after another (opening it and its default branch's head) even where
+its listing and lockfiles are kept, with the admin's own GitHub access,
+through the same gate as browsing them, which is checked again as a
+repository's turn to be told comes, however long ago it was read, and before
+any of it is told. A repository GitHub isn't reached for (`github-unreachable`)
 tells, as its line's `detail` and its row's tooltip, while doing what (opening
 it, listing its lockfiles or checking access to it again) and what failed, as
 the error and its causes tell it (a timeout, a connection closed, an answer too
