@@ -183,7 +183,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
-import { APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
+import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
   yearCommits } from './repository-pulse.ts'
@@ -1663,7 +1663,8 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   if (held && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
       repositoryRereads.add(key)
-      deps.track(readKept().catch((err: unknown) => { if (deps.config.debug) console.warn('managed: repository read failed:', err) })
+      // Its failure leaves the kept answer sent until it is a day old, so it is said.
+      deps.track(readKept().catch((err: unknown) => { console.warn('managed: repository read failed:', err) })
         .finally(() => repositoryRereads.delete(key)))
     }
     return { value: held.value as T, kept: true }
@@ -1763,7 +1764,8 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
     || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors), `agents\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors),
+    `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 
 // GET /api/admin/repositories/item: the issue or pull request numbered
