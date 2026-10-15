@@ -3313,7 +3313,7 @@ repository-code-source {
   & > .repository-code-revision { flex: 0 1 16rem; min-width: 10rem; }
 }
 .repository-code-path {
-  display: inline-flex; align-items: center; gap: .3rem; min-width: 2.5rem; flex: 0 1 auto; max-width: 18rem;
+  display: inline-flex; align-items: center; gap: .3rem; min-width: 0; flex: none; max-width: 18rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; color: var(--muted);
   white-space: nowrap; overflow: hidden;
   & > button {

@@ -1524,8 +1524,10 @@ commit shown first, a hundred at a time, **Older commits** reading the next; the
 commit shown is marked, and, where every branch's latest commits don't reach it,
 a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
-commit's code, named by the branch, else the tag, naming it. What it read is
-kept for the session five minutes.
+commit's code, named by the branch, else the tag, naming it. A directory too
+large to open shows its History all the same, at the commit its listing of
+directories read (its route then naming that commit), its other tabs saying
+why they can't open. What it read is kept for the session five minutes.
 
 `GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
 page of a revision's history, `{ commit, path, page, commits, more }`, each

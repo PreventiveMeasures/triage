@@ -389,13 +389,15 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const path = refs ? '' : url.searchParams.get('path') ?? ''
   const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'
   const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
-    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
+    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
   const commit = /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40)
   // The code viewer's read of a directory: its files as `GET
   // /api/npm/package` answers a version's, a line of text each.
   if (url.pathname.endsWith('/code')) {
+    // `vendor` stands for a directory too large to open.
+    if (path === 'vendor') { sendJson(res, 413, { error: 'directory-too-large' }); return }
     const inside = files.filter(file => file.startsWith(prefix)).toSorted()
     if (inside.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return }
     const rows = inside.map(file => {

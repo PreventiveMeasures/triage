@@ -41,7 +41,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
-import { browsableRepositories, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
+import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import './repository-history.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
@@ -1924,8 +1924,11 @@ function renderBundleSearchView(details, entry = null) {
 }
 
 // One button of the bundle slide's tab strip, inert while an npm version
-// opens.
-const bundleTab = (key, label, tab, opening = false) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+// opens; `onTab` opening its tab where no bundle is shown to switch.
+const bundleTab = (key, label, tab, opening = false, onTab = null) => onTab
+  ? html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })} aria-selected=${String(tab === key)} role="tab"
+    @click=${() => { if (key !== tab) onTab(key) }}>${label}</button>`
+  : html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
   data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
 
 // The tabs an npm version shows, each `[key, label]`: Review where a team
@@ -1942,7 +1945,7 @@ const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['se
 // open; that tab's `body` under it. An npm version opening (`opening`)
 // shows the header it will have, its versions and tabs waiting for it.
 // Both render through here, so the header stays put as the version opens.
-function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false } = {}) {
+function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false, onTab = null } = {}) {
   const { npm } = entry
   // A repository's directory opening in place of the one shown names it in the
   // header, its bar running, the one shown dimmed under it until it opens.
@@ -1971,7 +1974,7 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
-      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending)))}</div>
+      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending), onTab))}</div>
       ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
     </header></bundle-slide-header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview, 'is-pending': Boolean(pending) })}
@@ -1990,14 +1993,20 @@ export function renderNpmOpening({ name, spec, tab }) {
 // A repository's directory opening (repository-code.js
 // openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
 // body what opens, or why it didn't, with the directories it lists to open
-// instead where it has any.
+// instead where it has any. One too large to open, once its commit is known,
+// shows its History all the same, its tabs opening each.
 export function renderRepositoryCodeOpening(opening) {
-  const { repoId, commit, path, tab, repo, revision, error } = opening
+  const { repoId, commit, path, tab, repo, revision, error, code } = opening
   const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
-  return bundleSlideView({ repository: { repoId, repo, commit, path, revision } }, tab, repositoryCodeTabs(), error
-    ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
-    : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`, { opening: true })
+  const repository = { repoId, repo, commit, path, revision }
+  const historyOnly = Boolean(error && commit && code === 'directory-too-large')
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), historyOnly && tab === 'history'
+    ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repoId)}></repository-history>`
+    : error
+      ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
+      : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
+  { opening: true, onTab: historyOnly ? key => openRepositoryCodeTab(opening, key) : null })
 }
 
 // Top-level bundle view. The header carries the bundle's filename
