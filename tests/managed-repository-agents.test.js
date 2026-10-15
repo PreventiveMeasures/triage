@@ -64,6 +64,8 @@ const firstPage = () => ({ data: { repository: {
       body: 'Defaults.\n\n[Settings](https://chatgpt.com/codex/cloud/settings/general)\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68ecb1f0a2c88191' }),
     // Copilot's, opened as its account; and one describing Neo's fingerprint, quoting it.
     pullNode(50, { author: { login: 'Copilot' }, headRefName: 'copilot/move-db', body: 'Moves the database.' }),
+    // Dependabot's, opened as its app.
+    pullNode(187, { author: { login: 'dependabot' }, headRefName: 'dependabot/npm_and_yarn/ws-8.21.0', body: 'Bumps ws.' }),
     pullNode(921, { headRefName: 'claude/apps', body: `Apps.\n\n- Its fingerprint, \`🤖 Generated with [Neo](\`.\n\n${session}` }),
     null, { number: 'x' },
   ] },
@@ -90,6 +92,7 @@ const refPages = {
   'refs/heads/codex/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/codex/', 'try-lazy-trees', '2026-10-15T03:00:00Z'), null] } },
   'refs/heads/neo/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/neo/', 'try-pnpm', '2026-10-15T05:00:00Z')] } },
   'refs/heads/copilot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+  'refs/heads/dependabot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
 }
 const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
@@ -107,6 +110,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     [830, 'merged', 'neo/fix-links', null, [], { sessions: [], tasks: [], claude: true, agents: ['neo'] }],
     [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false, agents: [] }],
     [50, 'merged', 'copilot/move-db', null, [], { sessions: [], tasks: [], claude: false, agents: ['copilot'] }],
+    [187, 'merged', 'dependabot/npm_and_yarn/ws-8.21.0', null, [], { sessions: [], tasks: [], claude: false, agents: ['dependabot'] }],
     [921, 'merged', 'claude/apps', null, [], { ...sessionSignals, claude: false }],
   ], 'a fingerprint quoted is none')
   assert.deepEqual(body.pulls[0], { ...body.pulls[0], title: 'Pull 904', draft: false, author: 'ChristopherTuring', additions: 7, deletions: 2, commits: 3,
@@ -121,7 +125,8 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],
     ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']]])
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
-  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }])
+  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' },
+    { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])
   assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: null }])
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')
   const page = asked.find(query => query.query.includes('pullRequests('))
@@ -129,7 +134,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body/u)
   assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
-    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/neo/', null]])
+    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/dependabot/', null], ['refs/heads/neo/', null]])
   assert.ok(asked.every(query => query.auth === 'Bearer login-token'))
   // Asked again, kept: nothing read of GitHub's GraphQL again, branches neither.
   const reads = asked.length

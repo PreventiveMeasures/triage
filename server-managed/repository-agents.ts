@@ -36,10 +36,13 @@ const CLAUDE_EMAIL = 'noreply@anthropic.com'
 // authored by, and its branches' prefix. Their work may carry Claude's or
 // Codex's marks too, those its tools. Copilot's coding agent opens its pull
 // requests and authors its commits as its account, Copilot (198982749), on
-// `copilot/` branches.
+// `copilot/` branches; Dependabot, its GitHub App (29110), opens its pull
+// requests as `dependabot` (`dependabot[bot]` to GitHub's REST API) on
+// `dependabot/<ecosystem>/…` branches.
 export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'neo', name: 'Neo', avatar: 'app-3115942', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
   { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' },
+  { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', logins: ['dependabot', 'dependabot[bot]'], prefix: 'dependabot/' },
 ]
 // Whose branches are read, by their prefixes.
 const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]

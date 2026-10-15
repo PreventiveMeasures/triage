@@ -1795,8 +1795,9 @@ pull request merged. It is told by the links and marks the agents leave:
 - an agent known by its GitHub App or account (`APP_AGENTS` in
   `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
   its fingerprint or the logins its work is authored by: now Neo, by
-  `🤖 Generated with [Neo](` and `neo/…`, and Copilot, by its accounts,
-  `Copilot` and `copilot-swe-agent`, and `copilot/…`), by its fingerprint
+  `🤖 Generated with [Neo](` and `neo/…`; Copilot, by its accounts,
+  `Copilot` and `copilot-swe-agent`, and `copilot/…`; and Dependabot, by its
+  app's login, `dependabot`, and `dependabot/…`), by its fingerprint
   beginning a line of the same texts (one quoting it, as a review does, isn't
   its), its login authoring the pull request, commit or branch's tip, or its
   branch's prefix. It names no session, so a pull request of its is a session

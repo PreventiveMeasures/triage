@@ -5,7 +5,8 @@ import { agentBranch, agentSessions, agentSignals } from '../common/managed/agen
 const none = { sessions: [], tasks: [], claude: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
 // An agent the server knows by its app, as it tells one, and its marks.
-const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' }]
+const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' },
+  { id: 'dependabot', logins: ['dependabot', 'dependabot[bot]'], prefix: 'dependabot/' }]
 const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
   updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
@@ -33,6 +34,9 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   const copilot = { ...none, agents: ['copilot'] }
   assert.deepEqual([agentSignals(['Move the database'], apps, 'feature/db', 'Copilot'), agentSignals(['Work'], apps, null, 'copilot-swe-agent'),
     agentSignals(['Work'], apps, 'copilot/fix-db'), agentSignals(['Copilot said so'], apps, null, 'ada')], [copilot, copilot, copilot, none])
+  const dependabot = { ...none, agents: ['dependabot'] }
+  assert.deepEqual([agentSignals(['Bump ws'], apps, 'dependabot/npm_and_yarn/ws-8.21.0', 'dependabot'), agentSignals(['Bump ws'], apps, null, 'dependabot[bot]'),
+    agentSignals(['@dependabot rebase'], apps, 'feature/ws', 'ada')], [dependabot, dependabot, none])
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
