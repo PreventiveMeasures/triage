@@ -397,6 +397,14 @@ test('a declaration file is read as node runs it, its types stripped', () => {
     'a function named eval, declared, and a type-only import, both stripped')
   assert.equal(found('lib.dom.d.ts', 'interface I {\n    eval?: Values;\n}\n'), null, 'a property typed optional')
   assert.deepEqual(found('a.js', 'const run = c ? eval : f\n'), { eval: [1] }, 'eval chosen in a ternary')
+  assert.equal(found('a.js', 'navigator.credentials.get({ publicKey: { extensions: { prf: { eval: { first: salt } } } } })\n'
+    + 'const o={prf:{eval:{first:r}}}\nconst { eval: run } = vm\nouter: eval : for (;;) break outer\n'), null,
+  'eval as a key: WebAuthn\'s, minified or not, destructured, a label')
+  assert.equal(found('lib.d.ts', 'interface Extensions {\n  eval: { first: BufferSource }\n}\n'), null, 'a member typed')
+  assert.deepEqual(found('a.js', 'const o = { eval }\nconst p = { run: eval }\nconst q = c ? /* c */ window.eval : f\nconst r = c\n  ? eval\n  : f\n'),
+    { eval: [1, 2, 3, 5] }, 'eval read: a shorthand property, a value, and a ternary\'s choice, the global object\'s, a comment or a line between')
+  assert.deepEqual(found('a.js', 'new Worker(code, { eval: true })\nnew Q(A,{eval:!0}).on("error",f)\nnew Worker(file, { eval: false })\n'), { eval: [1, 2] },
+    'a worker told to run its string as code, minified or not')
 })
 
 test('what is no script runs nothing: prose, data', () => {
