@@ -177,14 +177,14 @@ function mapped(map, subpaths) {
 // `imports` to the package's own name too (`<name>/x`), read past a byte
 // order mark as node reads it; none where it is no JSON object.
 function entriesOf(text) {
-  const none = { name: null, main: null, targets: [], exports: [], imports: [] }
+  const none = { name: null, main: null, targets: [], exports: [], hasExports: false, imports: [] }
   if (typeof text !== 'string') return none
   try {
     const { name, main, exports, imports } = JSON.parse(text.replace(/^\uFEFF/u, ''))
     const subpaths = mapped(exports, key => key.startsWith('.')).filter(({ key, target }) => key.startsWith('.') && target.startsWith('./'))
     const own = mapped(imports, key => key.startsWith('#')).filter(({ key }) => key.startsWith('#'))
     const targets = [...subpaths, ...own.filter(({ target }) => target.startsWith('./'))]
-    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets, exports: subpaths, imports: own }
+    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets, exports: subpaths, hasExports: exports !== undefined && exports !== null, imports: own }
   } catch {
     return none
   }
@@ -230,19 +230,52 @@ function exported(names, root, dir, target, pattern) {
 // What a map's entries (`{ dir, key, target }` each) take `value` to, as
 // node maps a specifier through `exports` or `imports`: the target of a key
 // that is it, or of a pattern's (`#lib/*`, `./lib/*`, one `*`) it matches,
-// what it matches put in each of the target's `*`.
+// what it matches put in each of the target's `*`; EVERY for one that would
+// put in more than MAX_EXPANSION characters, which only a package written to
+// hold up its reading has (`*` thousands of times over a long specifier), and
+// whose path a URL's reading could shorten again (tabs, a query, `//`).
+const MAX_EXPANSION = 64 * 1024
+const EVERY = Symbol('every file')
 const mappedTo = (entries, value) => entries.flatMap(({ dir, key, target }) => {
   const star = key.indexOf('*')
   if (star === -1 ? key !== value : star !== key.lastIndexOf('*') || value.length < key.length || !value.startsWith(key.slice(0, star)) || !value.endsWith(key.slice(star + 1))) return []
-  return [{ dir, target: star === -1 ? target : target.replaceAll('*', value.slice(star, value.length - (key.length - star - 1))) }]
+  if (star === -1) return [{ dir, target }]
+  const sub = value.slice(star, value.length - (key.length - star - 1))
+  return [{ dir, target: (target.split('*').length - 1) * sub.length > MAX_EXPANSION ? EVERY : target.replaceAll('*', sub) }]
 })
 
-// A package's own subpath (`./x`, `.`) as its `exports` (`entries`) map it,
-// as node resolves a specifier by its own name (`<name>/x`), read as URLs;
-// with no `exports`, the path itself, as node finds the package where it is
-// installed (`root`).
-const selfResolved = (root, entries, spec) => entries.length === 0 ? [urlJoined(root, '', spec)]
-  : mappedTo(entries.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => urlJoined(root, '', target))
+// A package's own subpath (`./x`, `.`) as its `exports` map it (mappedTo), as
+// node resolves a specifier by its own name (`<name>/x`), read as URLs; with
+// no `exports` at all, the path itself, as node finds the package where it
+// is installed (`root`).
+const selfResolved = (root, { exports, hasExports }, spec) => hasExports
+  ? mappedTo(exports.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => target === EVERY ? EVERY : urlJoined(root, '', target))
+  : [urlJoined(root, '', spec)]
+
+// The path of the first of `extensions` a path (and `key`, it folded) takes
+// that names a file of a version's (`keyed`, installedOf), each a filesystem
+// tells for it its own: none at the package's top, which is no file.
+function firstNamed(keyed, path, key, extensions) {
+  const extension = path === '' ? undefined : extensions.find(each => keyed(`${key}${each}`).length > 0)
+  return extension === undefined ? null : `${path}${extension}`
+}
+const indexFile = (keyed, path, key) => firstNamed(keyed, path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)
+
+// The files a path `require` takes finds, the first it tries that names a
+// file: its own, one by its name and an extension (`.js`, `.json`, `.node`,
+// `payload.JSON` as a filesystem folding case finds it); else a directory's
+// package.json `main`, found so or by its `index` and an extension; else the
+// directory's `index` so, as node falls back to it.
+function requiredFiles(files, keyed, root, path) {
+  if (path === null) return []
+  const key = folded(path)
+  const file = firstNamed(keyed, path, key, ['', ...TRIED])
+  if (file !== null) return [file]
+  const mains = keyed(path === '' ? 'package.json' : `${key}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
+    .flatMap(main => [...separated(main)].map(spec => joined(root, path, spec))).filter(at => at !== null)
+    .map(at => firstNamed(keyed, at, folded(at), ['', ...TRIED]) ?? indexFile(keyed, at, folded(at))).filter(found => found !== null)
+  return mains.length > 0 ? mains : [indexFile(keyed, path, key)].filter(found => found !== null)
+}
 
 // The `#` specifiers each package.json of a version's files maps
 // (`imports`), each from its directory.
@@ -301,29 +334,7 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  // The path of the first of `extensions` a path (and `key`, it folded)
-  // takes that names a file, each a filesystem tells for it its own (add):
-  // none at the package's top, which is no file.
-  const first = (path, key, extensions) => {
-    const extension = path === '' ? undefined : extensions.find(each => keyed(`${key}${each}`).length > 0)
-    return extension === undefined ? null : `${path}${extension}`
-  }
-  const indexFile = (path, key) => first(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)
-  const located = (path, key) => first(path, key, ['', ...TRIED]) ?? indexFile(path, key)
-  // A path `require` takes, as it finds it, the first it tries that names a
-  // file: its own, one by its name and an extension (`.js`, `.json`,
-  // `.node`, `payload.JSON` as a filesystem folding case finds it); else a
-  // directory's package.json `main`, found so or by its `index` and an
-  // extension; else the directory's `index` so, as node falls back to it.
-  const requires = path => {
-    if (path === null) return
-    const key = folded(path)
-    const file = first(path, key, ['', ...TRIED])
-    if (file !== null) return add(file, 'require')
-    const mains = keyed(path === '' ? 'package.json' : `${key}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
-      .flatMap(main => [...separated(main)].map(spec => joined(root, path, spec))).filter(at => at !== null).map(at => located(at, folded(at))).filter(found => found !== null)
-    for (const found of mains.length > 0 ? mains : [indexFile(path, key)]) add(found, 'require')
-  }
+  const requires = path => { for (const file of requiredFiles(files, keyed, root, path)) add(file, 'require') }
   requires('')
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
     .flatMap(([path, text]) => entriesOf(text).targets.map(({ pattern, target }) => [path.slice(0, -'package.json'.length - 1), target, pattern && target.includes('*')]))
@@ -341,7 +352,14 @@ export function npmLoadedScripts(version) {
   const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
     && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
   const seen = new Set(), strings = quoted([...root.length > 0 ? foldsInto(top.name[0]) : [], ...specifiers.length > 0 ? ['#'] : []])
-  const subpathsOf = spec => selfResolved(root, top.exports, spec)
+  const subpathsOf = spec => selfResolved(root, top, spec)
+  // A path loaded, or for EVERY, every file, once (mappedTo).
+  let every = false
+  const reach = (path, by) => {
+    if (path !== EVERY) return add(path, by)
+    if (!every) for (const file of files.keys()) add(file, 'require')
+    every = true
+  }
   // A `#` specifier as the package's `imports` map it (mappedTo), to a path
   // of its own, read as a URL (urlJoined), or to its own name, as its
   // `exports` map that (subpathsOf), loaded as code takes it (`by`), once
@@ -350,9 +368,9 @@ export function npmLoadedScripts(version) {
     if (seen.has(`${by}\0#\0${value}`)) return
     seen.add(`${by}\0#\0${value}`)
     for (const { dir, target } of mappedTo(specifiers, value)) {
-      const paths = target.startsWith('./') ? [urlJoined(root, dir, target)] : named(target) ? subpathsOf(`./${target.slice(top.name.length + 1)}`)
+      const paths = target === EVERY ? [EVERY] : target.startsWith('./') ? [urlJoined(root, dir, target)] : named(target) ? subpathsOf(`./${target.slice(top.name.length + 1)}`)
         : root.length > 0 && target === top.name ? subpathsOf('.') : []
-      for (const path of paths) add(path, by)
+      for (const path of paths) reach(path, by)
     }
   }
   // A string's value from the directory `dir`, a load `import` takes where
@@ -364,7 +382,8 @@ export function npmLoadedScripts(version) {
     const by = importing() ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
     if (seen.has(key)) return
     seen.add(key)
-    if (named(value)) for (const path of subpathsOf(spec)) add(path, by)
+    if (named(value)) for (const path of subpathsOf(spec)) reach(path, by)
+    if (named(value) && top.hasExports) return
     if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
     add(urlJoined(root, from, spec), 'import')
   }

@@ -172,6 +172,15 @@ test('the package\'s own name as its `exports` map it, from code or an `imports`
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/run.txt', 'lib/self.txt'], 'not one no code names')
   const legacy = { 'package.json': JSON.stringify({ name: 'q', imports: { '#run': 'q/run.txt' } }), 'index.js': "require('#run')\n", 'run.txt': 'x', 'unnamed.txt': 'x' }
   assert.deepEqual([...npmLoadedScripts(holding(legacy))], ['run.txt'], 'with no `exports`, by its path')
+  const closed = { 'package.json': JSON.stringify({ name: 'r', exports: { '.': './index.js' } }), 'index.js': "require('r/hidden.txt')\n", 'hidden.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(closed))], [], 'nor, with `exports`, a path they don\'t name')
+})
+
+test('a map that would put more in its target than any package does has every file read as one it may load, at once', () => {
+  const files = { 'package.json': JSON.stringify({ imports: { '#*': `./${'*'.repeat(70_000)}` } }), 'index.js': "require('#abcdef')\n", 'a.txt': 'x', 'b.dat': 'x' }
+  const started = performance.now()
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['a.txt', 'b.dat'])
+  assert.ok(performance.now() - started < 2000, 'not building what 70,000 `*` would hold')
 })
 
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
