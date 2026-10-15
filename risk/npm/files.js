@@ -67,16 +67,28 @@ function interpolated(body) {
   return parts.join('\n')
 }
 
+// An identifier's escapes in code (`require`), read as its characters;
+// none for a NUL, which no identifier holds and a mark is made of.
+const IDENTIFIER_ESCAPE = /\\u(?:([\da-f]{4})|\{([\da-f]{1,6})\})/giu
+const identifiers = code => code.includes('\\u') ? code.replaceAll(IDENTIFIER_ESCAPE, (escape, u, braced) => {
+  const point = Number.parseInt(u ?? braced, 16)
+  return point > 0 && point <= 0x10FFFF ? String.fromCodePoint(point) : escape
+}) : code
+
+// A path as a loader takes it: its `\` a separator too, as on Windows.
+const separated = value => value.replaceAll('\\', '/')
+
 // A script's code as JS_STRING_OR_COMMENT tells it apart, linear on any
-// text: its comments dropped, each string or regular expression `0`, but a
-// relative path's (RELATIVE), a mark (`\0<index>\0`, which no text read has)
-// with its value kept (valueOf); and what a template puts in it
-// (interpolated), read as code the same, once: not a template's in that.
+// text: its comments dropped, its identifiers' escapes read (identifiers),
+// each string or regular expression `0`, but a relative path's (RELATIVE,
+// separated), a mark (`\0<index>\0`, which no text read has) with its value
+// kept (valueOf); and what a template puts in it (interpolated), read as code
+// the same, once: not a template's in that.
 function codeOf(text, outer = true) {
   const inner = [], paths = [], pieces = []
   let last = 0
   for (const { 0: match, 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
-    if (index > last) pieces.push(text.slice(last, index))
+    if (index > last) pieces.push(identifiers(text.slice(last, index)))
     last = index + match.length
     if (token === undefined) {
       pieces.push(' ')
@@ -84,17 +96,19 @@ function codeOf(text, outer = true) {
     }
     if (outer && token[0] === '`' && token.includes('${')) inner.push(interpolated(token.slice(1, token.length > 1 && token.at(-1) === '`' ? -1 : undefined)))
     const value = token[1] === '.' || token[1] === '\\' ? valueOf(token) : null
-    pieces.push(value !== null && RELATIVE.test(value) ? ` \0${paths.push(value) - 1}\0 ` : ' 0 ')
+    const path = value === null ? null : separated(value)
+    pieces.push(path !== null && RELATIVE.test(path) ? ` \0${paths.push(path) - 1}\0 ` : ' 0 ')
   }
-  pieces.push(text.slice(last))
+  pieces.push(identifiers(text.slice(last)))
   return [{ code: pieces.join(''), paths }, ...inner.flatMap(body => codeOf(body, false))]
 }
 
 // A loader given a string first, more arguments after it or none:
-// `require(…)` (`module.require` too, not `require.resolve`) and `import(…)`;
-// and an `import` or `export`'s `from`, or a bare `import`.
+// `require(…)` (`module.require` too, not `require.resolve`), called
+// optionally (`require?.(…)`) or not, and `import(…)`; and an `import` or
+// `export`'s `from`, or a bare `import`.
 const MARK = String.raw`\0(\d+)\0`
-const REQUIRED = new RegExp(String.raw`(?:(?<![\w$.])module\s*\.\s*|(?<![\w$.]))require\s*\(\s*${MARK}\s*[,)]`, 'gu')
+const REQUIRED = new RegExp(String.raw`(?:(?<![\w$.])module\s*\??\.\s*|(?<![\w$.]))require\s*(?:\?\.\s*)?\(\s*${MARK}\s*[,)]`, 'gu')
 const IMPORTED = new RegExp(String.raw`(?<![\w$.])(?:import\s*\(\s*${MARK}\s*[,)]|(?:import|from)\s*${MARK})`, 'gu')
 // A relative path: from `./` or `../`, or `.` or `..` alone.
 const RELATIVE = /^\.\.?(?:\/|$)/u
@@ -124,12 +138,12 @@ function installedAs(files, path) {
   return gitignore !== path && files.has(gitignore) ? gitignore : null
 }
 
-// A package.json's `main`, and the paths its `exports` name; none where it
-// is no JSON object.
+// A package.json's `main`, and the paths its `exports` name, read past a
+// byte order mark as node reads it; none where it is no JSON object.
 function entriesOf(text) {
   const leaves = value => typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(leaves) : []
   try {
-    const { main, exports } = JSON.parse(text)
+    const { main, exports } = JSON.parse(text.replace(/^﻿/u, ''))
     return { main: typeof main === 'string' && main !== '' ? main : null, exports: leaves(exports).filter(target => target.startsWith('./')) }
   } catch {
     return { main: null, exports: [] }
@@ -204,7 +218,7 @@ export function npmLoadedScripts(version) {
     const path = queue[at]
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     for (const { code, paths } of codeOf(files.get(path))) {
-      const pathOf = index => joined(dir, paths[index])
+      const pathOf = index => index in paths ? joined(dir, paths[index]) : null
       for (const { 1: index } of code.matchAll(REQUIRED)) required(pathOf(index))
       for (const { 1: dynamic, 2: fixed } of code.matchAll(IMPORTED)) add(installedAs(files, pathOf(dynamic ?? fixed)), 'import')
     }

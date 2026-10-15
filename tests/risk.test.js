@@ -114,11 +114,12 @@ test('a file node runs as JavaScript though its name says otherwise, read as a s
   const runs = "require('child_process').exec(cmd)\n"
   const minifiedCss = `${'.a{color:red;margin:0;padding:0}'.repeat(5)}\n`.repeat(20)
   const files = {
-    'package.json': JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf', './feat/*': './feat/*.txt', './raw/*': './raw/*' } }),
+    'package.json': `﻿${JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf', './feat/*': './feat/*.txt', './raw/*': './raw/*' } })}`,
     'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire.resolve('./resolved.txt')\nrequire('./theme.min.css')\n"
       + "require('./extra.txt', 0)\nrequire(/* a */ './commented.txt')\nmodule.require('./module.txt')\n`${require('./template.txt')}`\nrequire('./esc\\x2etxt')\n"
       + "// require('./comment.txt')\nconst said = \"require('./quoted.txt')\"\nrequire('./built' + '.txt')\n"
-      + "require('./up.JSON')\nrequire('./lower.json')\nrequire('./oct\\056txt')\n`docs: require('./prose.txt') ${kind}`\n`${'}' + require('./brace.txt')}`\n",
+      + "require('./up.JSON')\nrequire('./lower.json')\nrequire('./oct\\056txt')\n`docs: require('./prose.txt') ${kind}`\n`${'}' + require('./brace.txt')}`\n"
+      + "require?.('./optional.txt')\nrequ\\u0069re('./escaped-id.txt')\nrequire('.\\\\win.txt')\n",
     'esm.mjs': "export { x } from './sub/next'\n",
     'main.dat': runs, 'cfg.conf': runs, 'data.txt': `${runs}require('./more.cfg')\n`, 'more.cfg': runs, '.gitignore': runs, 'payload': runs, 'sub/next': runs,
     'lib/package.json': '{"main":"entry.bin"}', 'lib/entry.bin': runs,
@@ -127,13 +128,13 @@ test('a file node runs as JavaScript though its name says otherwise, read as a s
     'extra.txt': runs, 'commented.txt': runs, 'module.txt': runs, 'template.txt': runs, 'esc.txt': runs,
     'comment.txt': runs, 'quoted.txt': runs, 'built.txt': runs,
     'up.JSON': runs, 'lower.json': runs, 'oct.txt': runs, 'prose.txt': runs, 'brace.txt': runs, 'feat/a.txt': runs,
-    'raw/tool': runs, 'raw/LICENSE': runs, 'raw/note.txt': runs,
+    'raw/tool': runs, 'raw/LICENSE': runs, 'raw/note.txt': runs, 'optional.txt': runs, 'escaped-id.txt': runs, 'win.txt': runs,
   }
   npm(t, [{ name: 'loads', versions: [version('loads', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))] }])
   const assessment = await assessNpm('loads', '1.0.0', { now: NOW, downloads: false })
   assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code').files.map(({ path }) => path),
-    ['.gitignore', 'brace.txt', 'cfg.conf', 'commented.txt', 'data.txt', 'esc.txt', 'extra.txt', 'feat/a.txt', 'lib/entry.bin', 'main.dat', 'module.txt', 'more.cfg', 'oct.txt',
-      'payload', 'raw/tool', 'sub/next', 'template.txt', 'up.JSON'],
+    ['.gitignore', 'brace.txt', 'cfg.conf', 'commented.txt', 'data.txt', 'esc.txt', 'escaped-id.txt', 'extra.txt', 'feat/a.txt', 'lib/entry.bin', 'main.dat', 'module.txt', 'more.cfg',
+      'oct.txt', 'optional.txt', 'payload', 'raw/tool', 'sub/next', 'template.txt', 'up.JSON', 'win.txt'],
     'not one `import` takes by an extension it doesn\'t know, JSON by its lowercase name, a path only resolved, one named in a comment, a string or a template\'s text, one built, '
     + 'one an `exports` pattern naming nothing past its `*` reaches only by a name with an extension or prose\'s, nor one nothing loads')
   assert.deepEqual(assessment.files['.gitignore'].stamps, [{ name: 'child_process', severity: 'high' }])
