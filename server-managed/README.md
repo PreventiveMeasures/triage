@@ -1562,11 +1562,12 @@ on one parent join where it comes; each line keeps a color of its own, unlike
 its neighbors' where it can, the default branch's first lane and color its
 own; a parent not listed is a short dotted line on. At the repository's root
 it reads **All branches**, as `--all` adds them, else **This revision**'s, the
-commit shown first, a hundred at a time, **Older commits** reading the next.
-All branches' **Older commits** reads on from where those listed stop, their
-parents not listed and the branches not read yet, the newest 25 first (a
-parent by its child's time), a hundred commits from each, each commit once; a
-branch not read joins those named once a commit listed is its tip. Older
+commit shown first. Either's **Older commits** reads on from where those
+listed stop, their parents not listed (and, for All branches, the branches
+not read yet), the newest 25 first (a parent by its child's time), a hundred
+commits from each, each commit once; a branch not read joins those named
+once a commit listed is its tip. A directory's reads a hundred at a time,
+**Older commits** reading the next hundred. Older
 commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
@@ -1576,14 +1577,35 @@ commit's code, named by the branch, else the tag, naming it. History reads
 none of the directory's files: its route at a commit opens it alone, its other
 tabs then reading them. A directory whose files fail to open shows its History
 all the same, where its commit is known (a `413 directory-too-large` names the
-commit it was read at, its route then naming it). What it read is kept for the session five minutes.
+commit it was read at, its route then naming it). What it read is kept in
+the page for the session five minutes, and on the server for every reader:
+
+- A whole repository's history, from a revision or all branches, is read a
+  page from a commit at a time: the first hundred commits of the history
+  from that commit, kept (`managed_upstream_cache`, under
+  `repository/history`, a month) by the commit it starts at, its top. A
+  commit's history never changes, so a page kept is never read again, and a
+  branch moving on doesn't miss: only the page from its new tip is read.
+- Pages glue on: where a commit listed, or a parent of one not listed, is
+  the top of a page kept, that page joins those listed, and so on, up to two
+  thousand commits. A branch that moved on a few commits reads one page and
+  shows all the history read of it before, the pages Older commits read
+  among it.
+- The branches and tags naming commits, which move, are kept as Issues'
+  pages are: two minutes as read, then answered while they are read again.
+- A directory's history, whose commits a page from a commit doesn't list
+  alone, is read from GitHub each time.
 
 `GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
 page of a revision's history, `{ commit, path, page, commits, more }`, each
 commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
 GitHub's list of commits gives them (`repository-history.ts`), with, on the
 first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
-GitHub's first page of each lists them. With `all=true`, at the root and first
+GitHub's first page of each lists them. A whole repository's is the history
+from its commit, glued on (above), `more` where a parent is not listed; a
+later page names the commits to read on from, `from=<sha>,<sha>…`, as All
+branches' do (a later page naming none reads GitHub's page of that
+number). A directory's is GitHub's page of that number. With `all=true`, at the root and first
 page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
 from GraphQL: the branches' tips with their commits' times, a hundred a page
 for up to ten pages (GitHub orders heads by name alone), then, in one query,
