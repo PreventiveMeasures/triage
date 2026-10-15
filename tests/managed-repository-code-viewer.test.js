@@ -187,10 +187,10 @@ test('a directory that fails to open says why at its route, and lists its direct
   await setImmediate()
   assert.deepEqual(contentsRequests, [[7, commit, '']])
   assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
-  // Another of its tabs fails as it did, its History showing, nothing read again.
-  assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' }, () => true, () => {}),
-    { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' })
-  assert.equal(state.repositoryCodeOpening.tab, 'history')
+  // Another of its tabs fails as it did, its Commits showing, nothing read again.
+  assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {}),
+    { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' })
+  assert.equal(state.repositoryCodeOpening.tab, 'commits')
   assert.equal(requests.length, 1)
 
   // Any other failure lists none.
@@ -214,8 +214,8 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   repositoryRefs(7)
   await setImmediate()
   const read = refsReads
-  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
-  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' })
+  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' })
   assert.deepEqual(requests, [], 'no files read')
   assert.equal(state.currentView, 'repository-code')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
@@ -234,15 +234,15 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   const develop = 'd'.repeat(40)
   contents = () => Promise.resolve({ commit: develop, entries: [] })
   const named = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
-    path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
-  assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'history' })
+    path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
+  assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'commits' })
   assert.deepEqual(requests, [], 'no files read')
   assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
   // One its listing can't read says why.
   contents = () => Promise.reject(Object.assign(new Error('This repository is not available to you.'), { code: 'no-repository' }))
-  assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'history' }, () => true, () => {})).commit, null)
+  assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'commits' }, () => true, () => {})).commit, null)
   assert.equal(state.repositoryCodeOpening.error, 'This repository is not available to you.')
 })
 

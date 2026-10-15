@@ -3467,9 +3467,12 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
 }
 .history-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
 /* Activity's views (repository-activity.js), first in each view's bar, an
-   icon each, picked as the graph's layouts are. */
+   icon each, picked as the graph's layouts are. As tall as the buttons and
+   filter beside them, a line of their text with their padding and border,
+   alone on a line of the bar too. */
 .activity-views {
-  display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+  display: inline-flex; flex-shrink: 0; align-self: stretch; min-height: calc(1lh + .4rem + 2px); gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   & > button {
     position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 1px 6px;
     border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); cursor: default;

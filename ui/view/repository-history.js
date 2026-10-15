@@ -1,4 +1,4 @@
-// The code viewer's History tab (render-bundle.js): a repository's commits as
+// The code viewer's Commits (render-bundle.js): a repository's commits as
 // `git log --oneline --decorate --graph` lists them, from the revision shown,
 // or, at its root, across its branches as `--all` does. One compact line a
 // commit: its short id, the branches and tags naming it, its subject, author
@@ -350,7 +350,7 @@ class RepositoryHistory extends LitElement {
     const branches = ready && mode === 'all' ? entry.branches.length : 0
     const count = ready ? `${entry.commits.length}${entry.more || entry.cut ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
     return html`<div class="history-bar">
-        ${activityPicker('history')}
+        ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : html`<div class="history-modes" role="group" aria-label="History">
             <button type="button" aria-pressed=${String(mode === 'revision')} @click=${() => this.pick('revision')}>This revision</button>
