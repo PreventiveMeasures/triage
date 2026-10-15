@@ -151,12 +151,16 @@ const PACKAGE_KINDS = {
 }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
+// Whether a risk line tells what risk found: its findings, or its copy
+// differing from npm's (differs); not why it couldn't be assessed.
+const found = risk => !risk.error || risk.error === 'integrity-mismatch'
+
 // A package row's risk as its line tells it, `stale` where the line is one
 // kept and since gone stale (when it was assessed); a stale one assessed
 // again replaced, or, where that fails, kept, saying why (`refreshFailed`).
 export function riskOf(line, was) {
   const stale = line.stale ?? null
-  if (line.error && !stale && was?.stale && !was.error) return { ...was, refreshFailed: line.detail ? `${errorText(line.error)}: ${line.detail}` : errorText(line.error) }
+  if (!found(line) && !stale && was?.stale && found(was)) return { ...was, refreshFailed: line.detail ? `${errorText(line.error)}: ${line.detail}` : errorText(line.error) }
   return line.error ? { error: line.error, detail: line.detail ?? null, stale } : { severity: line.severity, score: line.score ?? null, findings: line.findings, published: line.published, stale }
 }
 

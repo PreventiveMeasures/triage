@@ -90,7 +90,11 @@ test('a risk line told as kept is stale where it says so, an error of one stale 
   const stale = { assessedAt: 1 }
   assert.equal(riskOf({ severity: null, score: 0, findings: [], published: null }, null).stale, null)
   assert.deepEqual(riskOf({ error: 'integrity-mismatch', stale }, null), { error: 'integrity-mismatch', detail: null, stale })
-  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
+  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'integrity-mismatch', detail: null, stale, refreshFailed: 'Server busy' },
+    'a stale copy differing from npm\'s kept, as findings are, where it can\'t be assessed again')
+  assert.deepEqual(riskOf({ error: 'integrity-mismatch' }, { severity: null, score: 0, findings: [], published: null, stale }), { error: 'integrity-mismatch', detail: null, stale: null },
+    'one assessed again and found to differ replaces it')
+  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'upstream-unavailable', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
   const now = Date.parse('2026-10-14T12:00:00Z')
   assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
 })
@@ -409,6 +413,11 @@ test('a mirror\'s copy differing from npm\'s is flagged critical and listed firs
   assert.deepEqual(page._rows().map(row => row.name), ['ms'], 'not among those that couldn\'t be assessed')
   page._filter = 'all'
   assert.match(templateText(page.render()), /<li class="risk-critical" data-tooltip=Its lockfile’s integrity, a mirror’s, isn’t npm’s[^>]*>Differs from npm’s<\/li>/u)
+  assert.match(templateText(page.render()), / 3 flagged/u)
+  // Told stale, then not assessed again: still flagged.
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch', stale: { assessedAt: 1 } })
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'npm-busy' })
+  assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')), 'kept where it couldn\'t be assessed again')
   assert.match(templateText(page.render()), / 3 flagged/u)
 })
 
