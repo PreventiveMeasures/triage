@@ -246,6 +246,18 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   assert.equal(state.repositoryCodeOpening.error, 'This repository is not available to you.')
 })
 
+test('Issues and Pull requests, reading none of the directory\'s files either, open alone at routes of their own', async () => {
+  for (const tab of ['issues', 'pulls']) {
+    const route = { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: tab }
+    assert.equal(managedRoutePath(route), `/manage/code/7/${commit}/${tab}`)
+    assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
+    assert.deepEqual(await openRepositoryCodeRoute(route, () => true, () => {}), route)
+    assert.deepEqual(requests, [], 'no files read')
+    assert.deepEqual([state.repositoryCodeOpening.tab, state.repositoryCodeOpening.historyOnly], [tab, true])
+  }
+  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${commit}/issues/2`)), null, 'only Code names a file')
+})
+
 test('the header opens another repository at its default branch, another revision of the directory on the same tab, and a typed one on Enter alone', () => {
   const Source = customElements.get('repository-code-source')
   const header = new Source()

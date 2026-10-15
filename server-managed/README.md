@@ -171,7 +171,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or History tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues or Pull requests tab |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1479,7 +1479,8 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Code, Search, Treemap and History tabs: from the
+as an npm version shows, with the Code, Search, Treemap, History, Issues and
+Pull requests tabs: from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1562,6 +1563,45 @@ github-token-required`, and the tab then shows the revision's history. It is
 read as the code is, with the reader's own GitHub access, only where the
 reader's grants reach the whole directory, and access is checked again before
 it is sent.
+
+## Issues and pull requests
+
+The **Issues** and **Pull requests** tabs show the repository's issues and
+pull requests as a grid of compact tiles rather than a list, filling the
+width, the most recently updated first. **Open** and **Closed** pick which,
+each with how many there are; a pull request's closed include those merged.
+A tile is two lines, a pull request's three, more only where its title or
+labels wrap: its title, in up to two lines, beside its state, an icon and a
+stripe in GitHub's colors (open green, merged and completed purple, closed
+red, draft and not planned muted); under it, its number, author and age, a
+pull request's review (approved, changes requested or review required) while
+open, its first three labels, each by a dot of its color, a pull request's
+checks (passed, failed or running) and how many comments it has; and a pull
+request's branch, the one it merges into, and its lines added and removed. A tile opens on GitHub. A
+**Filter** picks among those read by every word typed, in a tile's number,
+title, author, labels or branch. Fifty are read at a time, the next as the
+**More** button nears the end of the scroll, as History's Older commits are,
+but not while a filter picks among them, nor after a page failed. Like
+History, neither tab reads the directory's files: at a commit, each opens
+alone. What they read is kept for the session five minutes.
+
+`GET /api/admin/repositories/issues?repoId=…&kind=issues|pulls&state=open|closed[&after=…]`
+answers `{ kind, state, items, counts: { open, closed }, more, after }` from
+GraphQL (`repository-issues.ts`): a page of fifty, `after` the cursor reading
+the next where `more`. Each item is `{ number, title, author, createdAt,
+updatedAt, closedAt, comments, labels: [{ name, color }], moreLabels, state }`,
+an issue's with its `reason` (`completed`, `not-planned` or `duplicate`), a
+pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
+`deletions`, `head` and `base`, its `state` `merged` where it was. They are
+the whole repository's, so they are read only where the reader's grants
+reach all of it (`404 no-directory` otherwise), with the reader's own GitHub
+access; GraphQL needs a token (`403 github-token-required` without one). A
+nonpublic repository's are read with its GitHub App's installation, which
+lists pull requests only with **Pull requests: read** (`502
+github-status-403`, the tab saying so, where GitHub refuses them) and reads a
+pull request's checks only with **Checks: read** and **Commit statuses:
+read**, its tiles showing none where GitHub refuses those alone (see GitHub
+App setup). Access is checked again before they are sent.
 
 
 # npm package viewer
@@ -2257,10 +2297,12 @@ Use one GitHub App for sign-in and repository access: `GITHUB_CLIENT_ID` and
 `GITHUB_CLIENT_SECRET` are its user-authorization credentials; `GITHUB_APP_ID`,
 `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are its installation credentials.
 Keep **Account permissions** unset/minimal so login requests no elevated account
-access. Repository **Contents: read** and **Issues: read and write** are approved
-when connecting repositories, not added as login OAuth scopes. Existing
-installations must have their owner approve the Issues permission update; the
-issue dialog offers the installation flow when approval is missing. GitHub App
+access. Repository **Contents: read**, **Issues: read and write** and **Pull
+requests: read** are approved when connecting repositories, not added as login
+OAuth scopes; **Checks: read** and **Commit statuses: read** let the Pull
+requests tab show a pull request's checks. Existing installations must have
+their owner approve each permission update; the issue dialog offers the
+installation flow when approval is missing. GitHub App
 permissions are configured on the app, rather than requested as incremental
 OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 

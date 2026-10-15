@@ -84,8 +84,10 @@ export class RevisionSelect extends LitElement {
        repository picker's does, not where a pointer did. */
     .revision.keyboard:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     /* The name as wide as it is, a full commit's included, as far as the
-       host lets it (its widest is its max-content), else as the host is. */
-    .revision-size { display: grid; flex: 1 1 auto; align-self: stretch; min-width: 0; }
+       host lets it (its widest is its max-content), else as the host is,
+       down to as narrow as the host's least, the name then clipped as an
+       input clips it: its track sized by the name, never at least by it. */
+    .revision-size { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; align-self: stretch; min-width: 0; }
     .revision-size > input, .revision-size::after { grid-area: 1 / 1; }
     .revision-size > input { width: 100%; }
     .revision-size::after {
