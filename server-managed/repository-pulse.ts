@@ -1,15 +1,18 @@
 // What the code viewer's Pulse tab shows of a repository
 // (GET /api/admin/repositories/pulse): how its default branch moves, week by
-// week over the last year, as GitHub's statistics give it (its commits each
-// day, its lines added and removed, each contributor's commits and lines,
-// and when in the week commits are made); and, since the start of the week
-// `weeks` weeks back, and over the same days of the week `weeks` weeks
-// earlier, the pull requests merged and opened and the issues closed and
-// opened, how many and the latest of each. GitHub computes its statistics when first asked,
-// answering 202 till they are: asked again a few times, then they are told
-// pending (StatsPending), for the client to ask again.
+// week over the last year: its commits each day, the lines they add and
+// remove, who made them and when in the week, counted from its commits as
+// the Commits tab reads and keeps them (repository-history.ts historyFrom),
+// so that only those not kept yet are read of GitHub, a few queries an
+// answer, the client asking again for the rest; a year past YEAR_COMMITS is
+// counted by GitHub's statistics instead, which GitHub computes when first
+// asked and again once the default branch moves, answering 202 till they
+// are (told pending, StatsPending, for the client to ask again). And, since
+// the start of the week `weeks` weeks back, and over the same days of the
+// week `weeks` weeks earlier, the pull requests merged and opened and the
+// issues closed and opened, how many and the latest of each.
 import { GithubApiError, githubJson } from './github-app.ts'
-import { githubGraphql } from './repository-history.ts'
+import { type HistoryCommit, type HistoryPages, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 const WEEK_MS = 7 * 24 * 60 * 60_000
@@ -20,21 +23,40 @@ const LISTED = 10
 // updated, GitHub sorting by no merge or close: as many as this are read, and
 // the latest merged or closed of them listed.
 const SEARCHED = 50
-const STATS_TRIES = 3
-const STATS_WAIT_MS = 1500
+// A year of more commits than this is counted by GitHub's statistics: read a
+// page at a time, it would take a hundred queries. Of those not kept, as
+// many queries are made an answer as YEAR_QUERIES, each reading on from as
+// many commits as YEAR_STARTS.
+export const YEAR_COMMITS = 10_000
+const YEAR_QUERIES = 5
+const YEAR_STARTS = 10
+// Commits are read on from as far as this before the year, a commit's clock
+// not always later than its parents': one dated before the year may have a
+// parent dated in it.
+const YEAR_SKEW_MS = 30 * DAY_MS
 const MAX_TITLE = 1000
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
+const SHA = /^[a-f\d]{40}$/u
 
-// GitHub still computing a statistic, after asking again.
+// GitHub still computing a statistic.
 export class StatsPending extends Error {
   constructor() { super('github-stats-pending') }
 }
 
 export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null }
-// A contributor's weeks, each `[week, commits, additions, deletions]`, those
-// with any.
-export interface PulseContributor { login: string; weeks: [number, number, number, number][] }
-export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor[]; punch: number[][]; lines: boolean }
+// A contributor, by their login, else by the name their commits carry, and
+// their weeks, each `[week, commits, additions, deletions]`, those with any.
+export interface PulseContributor { login: string | null; name: string | null; weeks: [number, number, number, number][] }
+// Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
+// each commit's own time zone; `lines` false where GitHub counts none, null
+// while it is counting them.
+export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor[]; punch: number[][]; lines: boolean | null }
+// The lines added and removed a week, and each contributor's, as GitHub's
+// statistics count them, `lines` false where it counts none.
+export interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
+// The year's commits read so far: all of them (`commits`), else how many
+// (`read`), and whether past YEAR_COMMITS (`tooMany`).
+export type YearCommits = { complete: true; commits: HistoryCommit[] } | { complete: false; read: number; tooMany: boolean }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const timeOf = (value: unknown) => {
@@ -43,7 +65,7 @@ const timeOf = (value: unknown) => {
 }
 const loginOf = (author: { login?: unknown } | null | undefined) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
 const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
-const sleep = (ms: number) => new Promise(resolve => { setTimeout(resolve, ms) })
+const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
 
 // One statistic: its rows once GitHub has computed it, 'pending' while it
 // computes them (202), none for a repository with no commits (204, no body),
@@ -68,60 +90,155 @@ async function statistic(fullName: string, token: string | null, kind: string, f
   }
 }
 
+// `kinds` of GitHub's statistics, each asked once, together; any still
+// computed, StatsPending.
+async function statistics(fullName: string, token: string | null, kinds: string[], fetchImpl: typeof fetch) {
+  const read = await Promise.all(kinds.map(kind => statistic(fullName, token, kind, fetchImpl)))
+  if (read.includes('pending')) throw new StatsPending()
+  return read.map(rows => rows === 'too-large' ? null : rows as unknown[])
+}
+
 type ActivityRow = { week?: unknown; days?: unknown; total?: unknown }
 type ContributorRow = { author?: { login?: unknown } | null; weeks?: { w?: unknown; a?: unknown; d?: unknown; c?: unknown }[] }
 
-// The default branch's statistics over the last year, a week a row, the
-// oldest first: its commits each day (Sunday first, as GitHub counts weeks)
-// and in all, its lines added and removed (null where GitHub counts none,
-// `lines` false); its contributors (as many as MAX_CONTRIBUTORS, the most
-// commits that year first) and their weeks; and its commits by day of the
-// week and hour (`punch[day][hour]`).
-export async function repositoryStats(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch,
-  wait: (ms: number) => Promise<unknown> = sleep): Promise<PulseStats> {
-  const kinds = ['commit_activity', 'code_frequency', 'contributors', 'punch_card']
-  const read = new Map<string, unknown[] | 'pending' | 'too-large'>()
-  for (let attempt = 0; attempt < STATS_TRIES; attempt++) {
-    const pending = kinds.filter(kind => (read.get(kind) ?? 'pending') === 'pending')
-    if (pending.length === 0) break
-    if (attempt > 0) await wait(STATS_WAIT_MS * attempt)
-    await Promise.all(pending.map(async kind => { read.set(kind, await statistic(fullName, token, kind, fetchImpl)) }))
-  }
-  const rows = (kind: string) => {
-    const got = read.get(kind)
-    if (got === 'pending' || got === undefined) throw new StatsPending()
-    return got === 'too-large' ? null : got
-  }
-  const activity = (rows('commit_activity') ?? []) as ActivityRow[]
-  const frequency = rows('code_frequency') as unknown[][] | null
-  const contributors = (rows('contributors') ?? []) as ContributorRow[]
-  const punchRows = (rows('punch_card') ?? []) as unknown[][]
-  const lines = new Map((frequency ?? []).flatMap(row => Array.isArray(row) && Number.isSafeInteger(row[0])
-    ? [[(row[0] as number) * 1000, [count(row[1]), count(Math.abs(Number(row[2])))]] as const] : []))
-  const weeks = activity.flatMap(row => {
+// The default branch's commits over the last year as GitHub's statistics
+// count them, for a year past YEAR_COMMITS: a week a row, the oldest first,
+// its commits each day (Sunday first) and in all; its contributors (as many
+// as MAX_CONTRIBUTORS, the most commits that year first) and their weeks;
+// and its commits by day of the week and hour, in each commit's own time
+// zone. Lines are GitHub's to count apart (repositoryLines).
+export async function repositoryStats(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<PulseStats> {
+  const [activityRows = null, contributorRows = null, punchRows = null] = await statistics(fullName, token, ['commit_activity', 'contributors', 'punch_card'], fetchImpl)
+  const weeks = ((activityRows ?? []) as ActivityRow[]).flatMap(row => {
     if (!Number.isSafeInteger(row?.week)) return []
-    const week = (row.week as number) * 1000
     const days = Array.from({ length: 7 }, (_, day) => count(Array.isArray(row.days) ? row.days[day] : 0))
-    const [additions, deletions] = frequency ? lines.get(week) ?? [0, 0] : [null, null]
-    return [{ week, days, commits: count(row.total), additions, deletions }]
+    return [{ week: (row.week as number) * 1000, days, commits: count(row.total), additions: null, deletions: null }]
   }).toSorted((a, b) => a.week - b.week)
   const first = weeks[0]?.week ?? Number.POSITIVE_INFINITY
-  const year = contributors.flatMap(row => {
+  const contributors = ((contributorRows ?? []) as ContributorRow[]).flatMap(row => {
     const login = loginOf(row?.author)
     const theirs = (row?.weeks ?? []).flatMap(item => {
       const week = count(item?.w) * 1000
-      const [commits, additions, deletions] = [count(item?.c), count(item?.a), count(item?.d)]
-      return week >= first && commits + additions + deletions > 0 ? [[week, commits, additions, deletions] as [number, number, number, number]] : []
+      return week >= first && count(item?.c) > 0 ? [[week, count(item?.c), 0, 0] as [number, number, number, number]] : []
     })
-    return login && theirs.length > 0 ? [{ login, weeks: theirs, commits: theirs.reduce((sum, item) => sum + item[1], 0) }] : []
-  }).toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, weeks: theirs }) => ({ login, weeks: theirs }))
-  const punch = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
-  for (const row of punchRows) {
+    return login && theirs.length > 0 ? [{ login, name: null, weeks: theirs, commits: theirs.reduce((sum, item) => sum + item[1], 0) }] : []
+  }).toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, name, weeks: theirs }) => ({ login, name, weeks: theirs }))
+  const punch = emptyPunch()
+  for (const row of (punchRows ?? []) as unknown[][]) {
     if (Array.isArray(row) && Number.isSafeInteger(row[0]) && Number.isSafeInteger(row[1]) && punch[row[0] as number]?.[row[1] as number] !== undefined) {
       punch[row[0] as number]![row[1] as number] = count(row[2])
     }
   }
-  return { weeks, contributors: year, punch, lines: frequency !== null }
+  return { weeks, contributors, punch, lines: null }
+}
+
+// The lines added and removed each week since `since`, and each
+// contributor's, as GitHub's statistics count them; none, `lines` false,
+// where it counts none (past 10,000 commits, where it counts each
+// contributor's as none too).
+export async function repositoryLines(fullName: string, token: string | null, since: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<PulseLines> {
+  const [frequency = null, contributorRows = null] = await statistics(fullName, token, ['code_frequency', 'contributors'], fetchImpl)
+  if (frequency === null) return { weeks: [], contributors: [], lines: false }
+  const weeks = frequency.flatMap(row => Array.isArray(row) && Number.isSafeInteger(row[0]) && (row[0] as number) * 1000 >= since
+    ? [[(row[0] as number) * 1000, count(row[1]), count(Math.abs(Number(row[2])))] as [number, number, number]] : [])
+  const contributors = ((contributorRows ?? []) as ContributorRow[]).flatMap(row => {
+    const login = loginOf(row?.author)
+    const theirs = (row?.weeks ?? []).flatMap(item => count(item?.w) * 1000 >= since && count(item?.a) + count(item?.d) > 0
+      ? [[count(item?.w) * 1000, count(item?.a), count(item?.d)] as [number, number, number]] : [])
+    return login && theirs.length > 0 ? [{ login, weeks: theirs }] : []
+  })
+  return { weeks, contributors, lines: true }
+}
+
+// The default branch's head, null for a repository with none.
+export async function defaultHead(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<string | null> {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const data = await githubGraphql('query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { defaultBranchRef { target { oid } } } }',
+    { owner, name }, token, fetchImpl) as { repository?: { defaultBranchRef?: { target?: { oid?: unknown } | null } | null } | null } | null
+  if (!data?.repository) throw new GithubApiError(404, 'github-not-found')
+  const oid = data.repository.defaultBranchRef?.target?.oid
+  return typeof oid === 'string' && SHA.test(oid) ? oid : null
+}
+
+// The commits from `head` made since `since`, as the Commits tab reads and
+// keeps them (`pages`, historyFrom): on from the parents of those since (or
+// as much as YEAR_SKEW_MS before), not yet listed, YEAR_STARTS at a time,
+// till none is left; the pages kept read
+// of the store, those not of GitHub, as many queries of them as
+// YEAR_QUERIES, the rest left for the next to ask (`complete` false, how
+// many are `read`); more than YEAR_COMMITS, too many (`tooMany`).
+export async function yearCommits(fullName: string, token: string, head: string, since: number, pages: HistoryPages,
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<YearCommits> {
+  const found = new Map<string, HistoryCommit>()
+  const tried = new Set<string>()
+  const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since - YEAR_SKEW_MS
+  const read = () => [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since).length
+  let queries = 0
+  let starts = [head]
+  while (starts.length > 0) {
+    if (queries >= YEAR_QUERIES) return { complete: false, read: read(), tooMany: false }
+    const batch = starts.slice(0, YEAR_STARTS)
+    for (const sha of batch) tried.add(sha)
+    const got = await historyFrom(fullName, token, batch, pages, fetchImpl)
+    if (got.read > 0) queries++
+    for (const commit of got.commits) if (!found.has(commit.sha)) found.set(commit.sha, commit)
+    if (read() > YEAR_COMMITS) return { complete: false, read: read(), tooMany: true }
+    starts = [...new Set([...found.values()].filter(within).flatMap(commit => commit.parents))].filter(sha => !found.has(sha) && !tried.has(sha))
+  }
+  return { complete: true, commits: [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since) }
+}
+
+// The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
+// statistics count them, merges left out: a week a row, its commits each day
+// (UTC) and in all and the lines they added and removed; its contributors,
+// by login, else name (as many as MAX_CONTRIBUTORS, the most commits first),
+// and their weeks; and its commits by day of the week and hour, in each
+// author's own time zone (else UTC, where GitHub told none).
+export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
+  const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0 }))
+  const people = new Map<string, { login: string | null; name: string | null; weeks: Map<number, [number, number, number]>; commits: number }>()
+  const punch = emptyPunch()
+  for (const commit of commits) {
+    if (commit.parents.length > 1 || commit.committedAt === null || commit.committedAt < first) continue
+    const week = weeks[Math.floor((commit.committedAt - first) / WEEK_MS)]
+    if (!week) continue
+    const [additions, deletions] = [commit.additions ?? 0, commit.deletions ?? 0]
+    week.days[new Date(commit.committedAt).getUTCDay()]!++
+    week.commits++
+    week.additions += additions
+    week.deletions += deletions
+    const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
+    punch[local.getUTCDay()]![local.getUTCHours()]!++
+    const key = commit.authorLogin ? `@${commit.authorLogin}` : commit.authorName ? `=${commit.authorName}` : null
+    if (!key) continue
+    const person = people.get(key) ?? { login: commit.authorLogin, name: commit.authorName, weeks: new Map<number, [number, number, number]>(), commits: 0 }
+    const theirs = person.weeks.get(week.week) ?? [0, 0, 0]
+    person.weeks.set(week.week, [theirs[0] + 1, theirs[1] + additions, theirs[2] + deletions])
+    person.commits++
+    people.set(key, person)
+  }
+  const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, name, weeks: theirs }) => ({
+    login, name, weeks: [...theirs].toSorted(([a], [b]) => a - b).map(([week, [made, added, removed]]) => [week, made, added, removed] as [number, number, number, number]) }))
+  return { weeks, contributors, punch, lines: true }
+}
+
+// GitHub's statistics of a year past YEAR_COMMITS (repositoryStats) with
+// its `lines` added in, each week's and each contributor's, by login; null
+// while GitHub is counting them, `lines` null.
+export function withLines(stats: PulseStats, lines: PulseLines | null): PulseStats {
+  if (!lines) return { ...stats, lines: null }
+  if (!lines.lines) return { ...stats, lines: false }
+  const weekly = new Map(lines.weeks.map(([week, additions, deletions]) => [week, [additions, deletions]]))
+  const theirs = new Map(lines.contributors.map(person => [person.login, new Map(person.weeks.map(([week, additions, deletions]) => [week, [additions, deletions]]))]))
+  return {
+    ...stats,
+    weeks: stats.weeks.map(week => ({ ...week, additions: weekly.get(week.week)?.[0] ?? 0, deletions: weekly.get(week.week)?.[1] ?? 0 })),
+    contributors: stats.contributors.map(person => ({ ...person, weeks: person.weeks.map(([week, made]) => {
+      const added = person.login ? theirs.get(person.login)?.get(week) : undefined
+      return [week, made, added?.[0] ?? 0, added?.[1] ?? 0] as [number, number, number, number]
+    }) })),
+    lines: true,
+  }
 }
 
 // Where a period of `weeks` weeks starts, as GitHub's statistics count weeks:

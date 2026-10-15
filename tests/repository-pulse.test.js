@@ -43,20 +43,21 @@ const year = () => Array.from({ length: 52 }, (_, at) => {
 })
 const punch = () => Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (__, hour) => day === 2 && hour === 14 ? 12 : day === 6 ? 0 : 1))
 const stats = (more = {}) => ({ weeks: year(), contributors: [
-  { login: 'ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1], [SINCE - WEEK, 9, 9, 9]] },
-  { login: 'grace', weeks: [[SINCE - 2 * WEEK, 4, 1, 0]] },
-  { login: 'claude[bot]', weeks: [[SINCE + 2 * WEEK, 5, 2000, 10]] },
+  { login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1], [SINCE - WEEK, 9, 9, 9]] },
+  { login: 'grace', name: null, weeks: [[SINCE - 2 * WEEK, 4, 1, 0]] },
+  { login: 'claude[bot]', name: null, weeks: [[SINCE + 2 * WEEK, 5, 2000, 10]] },
+  { login: null, name: 'Alan Kay', weeks: [[SINCE + WEEK, 1, 3, 0]] },
 ], punch: punch(), lines: true, ...more })
 const item = (number, more = {}) => ({ number, title: `Item ${number}`, author: 'ada', at: NOW - 3 * 3_600_000, createdAt: NOW - DAY, kind: 'pulls', state: 'merged', draft: false, ...more })
 const pulse = (more = {}) => ({ weeks: 4, since: SINCE, previousSince: SINCE - 4 * WEEK,
   merged: { count: 12, previous: 8, items: [item(5), item(4, { title: '' })] }, opened: { count: 2, previous: 2, items: [item(6, { state: 'open', draft: true })] },
   closed: { count: 0, previous: 3, items: [] }, created: { count: 1, previous: 0, items: [item(3, { kind: 'issues', state: 'open', reason: null })] },
-  stats: stats(), pending: false, ...more })
+  stats: stats(), reading: null, pending: false, ...more })
 const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
 
 test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
   const read = pulse()
-  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, additions: 40, deletions: 8, authors: 2 })
+  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, additions: 40, deletions: 8, authors: 3 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')
   const large = pulseSummary({ ...read, stats: stats({ lines: false }) }, NOW)
   assert.deepEqual([large.additions, large.deletions], [null, null])
@@ -65,7 +66,8 @@ test('a period\'s figures: its commits, beside the same days of the week a perio
 
 test('the period\'s contributors, the most commits first, and a scale\'s round ticks', () => {
   assert.deepEqual(periodContributors(stats().contributors, SINCE), [
-    { login: 'ada', commits: 5, additions: 35, deletions: 5 }, { login: 'claude[bot]', commits: 5, additions: 2000, deletions: 10 }])
+    { login: 'ada', name: 'Ada', commits: 5, additions: 35, deletions: 5 }, { login: 'claude[bot]', name: null, commits: 5, additions: 2000, deletions: 10 },
+    { login: null, name: 'Alan Kay', commits: 1, additions: 3, deletions: 0 }])
   assert.deepEqual([niceScale(93), niceScale(7), niceScale(1), niceScale(0), niceScale(12_000)], [
     { top: 100, ticks: [0, 50, 100] }, { top: 10, ticks: [0, 5, 10] }, { top: 1, ticks: [0, 1] }, { top: 1, ticks: [0, 1] },
     { top: 15_000, ticks: [0, 5000, 10_000, 15_000] }])
@@ -83,7 +85,7 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   assert.match(text, /aria-pressed=true [^\n]*>Month</u)
   assert.match(text, /class="pulse-range">Sep 20 – Oct 15</u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ from 33 the month before</u)
-  assert.match(text, /Contributors<\/span>\s*<span class="pulse-tile-value">2</u)
+  assert.match(text, /Contributors<\/span>\s*<span class="pulse-tile-value">3</u)
   assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12<\/span>\s*<span class="pulse-tile-note">↑ from 8 the month before<\/span>\s*<span class="pulse-tile-note">2 opened/u)
   assert.match(text, /Issues closed<\/span>\s*<span class="pulse-tile-value">0<\/span>\s*<span class="pulse-tile-note">↓ from 3 the month before/u)
   assert.match(text, /<span>\+40<\/span> <span>−8<\/span>/u)
@@ -96,6 +98,7 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   assert.match(text, /class="pulse-months"[^]*<span>Nov<\/span>[^]*<span>2026<\/span>/u, 'months named where they start, January by its year')
   assert.match(text, /href=https:\/\/github\.com\/ada [^>]*>ada<\/a>[^]*--value: 1[^]*>5<\/span>[^]*\+35 −5/u)
   assert.match(text, /href=https:\/\/github\.com\/apps\/claude [^>]*>claude\[bot\]</u, 'an app by its page')
+  assert.match(text, /<span class="pulse-rank-name">Alan Kay<\/span>/u, 'one GitHub names no account for, by name, unlinked')
   assert.doesNotMatch(text, />grace</u, 'none of the period\'s')
   assert.match(text, /class=pulse-cell is-6 role="img" aria-label=Tuesdays, 14:00–15:00: 12 commits/u)
   assert.match(text, /class=pulse-cell is-1 role="img" aria-label=Mondays, 00:00–01:00: 1 commit /u)
@@ -133,31 +136,61 @@ test('another period is read for itself, the last one shown faded meanwhile; rea
   assert.equal(requests.length, 2, 'the month kept')
 })
 
-test('statistics GitHub is computing: the rest shown, asked for again a while apart, then left to the reader to ask for', async t => {
+test('a year not read whole yet: the rest shown, how many commits are read, asked again a second apart while each answer reads more', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  let read = 500
+  answer = () => Promise.resolve(pulse({ stats: null, reading: read }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /role="status">Reading this repository’s commits… 500 of the last year so far/u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Reading commits…/u)
+  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12</u, 'the period\'s pull requests and issues shown')
+  // Each answer reading more, as many times as it takes.
+  for (let more = 0; more < 8; more++) {
+    read += 500
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(requests.length, 9)
+  assert.match(templateText(view.render()), /4,500 of the last year so far/u)
+  // Then none more, five times, and it is left to the reader.
+  for (let stalled = 0; stalled < 6; stalled++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(requests.length, 14, 'five answers reading no more')
+  text = templateText(view.render())
+  assert.match(text, /4,500 of this repository’s commits of the last year read so far\. <button type="button" class="history-link" @click=\(\) => this\.askAgain\(\)>Read on</u)
+  answer = () => Promise.resolve(pulse())
+  view.askAgain()
+  t.mock.timers.tick(0)
+  await setImmediate()
+  assert.equal(requests.length, 15)
+  assert.match(templateText(view.render()), /class=pulse-column is-period/u)
+})
+
+test('a year GitHub\'s statistics count, while GitHub computes them, or its lines: asked again a while apart, a dozen times, then left to the reader', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
   answer = () => Promise.resolve(pulse({ stats: null, pending: true }))
   const view = shown()
   view.render()
   await setImmediate()
-  let text = templateText(view.render())
-  assert.match(text, /role="status">GitHub is still counting this repository’s commits…/u)
-  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Counting…/u)
-  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12</u, 'what GitHub had counted shown')
-  for (let tries = 0; tries < 6; tries++) {
+  assert.match(templateText(view.render()), /role="status">GitHub is still counting this repository’s commits…/u)
+  answer = () => Promise.resolve(pulse({ stats: stats({ lines: null, weeks: year().map(week => ({ ...week, additions: null, deletions: null })) }), pending: true }))
+  for (let tries = 0; tries < 12; tries++) {
     t.mock.timers.tick(5000)
     await setImmediate()
   }
-  assert.equal(requests.length, 7, 'asked six times again')
-  text = templateText(view.render())
-  assert.match(text, /GitHub hasn’t counted this repository’s commits yet\. <button type="button" class="history-link" @click=\(\) => this\.askAgain\(\)>Ask again</u)
+  assert.equal(requests.length, 13, 'asked a dozen times again')
   t.mock.timers.tick(60_000)
-  assert.equal(requests.length, 7, 'no more')
-  answer = () => Promise.resolve(pulse())
-  view.askAgain()
-  t.mock.timers.tick(0)
-  await setImmediate()
-  assert.equal(requests.length, 8)
-  assert.match(templateText(view.render()), /class=pulse-column is-period/u)
+  assert.equal(requests.length, 13, 'no more')
+  const text = templateText(view.render())
+  assert.match(text, /class=pulse-column is-period/u, 'the commits counted shown')
+  assert.match(text, /Lines<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Counting…/u)
+  assert.match(text, /GitHub hasn’t counted lines added and removed yet\. <button[^]*?>Ask again</u)
+  assert.doesNotMatch(text, /pulse-rank-lines/u, 'no contributor\'s lines')
 })
 
 test('the charts as tables: the year\'s weeks, the latest first, the period\'s marked; the period\'s contributors; commits by day and hour', async t => {

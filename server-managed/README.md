@@ -1598,6 +1598,8 @@ the page for the session five minutes, and on the server for every reader:
   `repository/history`, a month) by the commit it starts at, its top. A
   commit's history never changes, so a page kept is never read again, and a
   branch moving on doesn't miss: only the page from its new tip is read.
+  Read with a token, a page tells each commit's lines added and removed and
+  its author's own time too, which Pulse counts (and the tab is not sent).
 - Pages glue on: where a commit listed, or a parent of one not listed, is
   the top of a page kept, that page joins those listed, and so on, till two
   thousand commits are listed. The pages from where it starts are listed
@@ -1614,19 +1616,21 @@ the page for the session five minutes, and on the server for every reader:
 page of a revision's history, `{ commit, path, page, commits, more }`, each
 commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
 GitHub's list of commits gives them (`repository-history.ts`), with, on the
-first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
-GitHub's first page of each lists them. A whole repository's is the history
+first page, the `branches` and `tags` naming commits, `{ name, sha }` each:
+with a token, every branch All branches reads (below, kept for both) and the
+latest hundred tags; without, GitHub's first page of each, a hundred by
+name, to spare an unsigned reader's rate limit. A whole repository's is the history
 from its commit, glued on (above), `more` where a parent is not listed; a
 later page names the commits to read on from, `from=<sha>,<sha>…`, as All
 branches' do (a later page naming none reads GitHub's page of that
 number). A directory's is GitHub's page of that number. With `all=true`, at the root and first
 page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
 from GraphQL: the branches' tips with their commits' times, a hundred a page
-for up to ten pages (GitHub orders heads by name alone), then, in one query,
+for up to fifty pages (GitHub orders heads by name alone), then, in one query,
 the latest hundred commits of the default branch and the 24 others most
 recently committed to, each commit once; every branch naming a commit listed;
 the branches not read whose tips aren't listed, `{ name, sha, at }` each,
-newest first; `cut` where branches past the thousand listed are left out,
+newest first; `cut` where branches past the five thousand listed are left out,
 never to be read, the tab then saying so; and the latest hundred tags, an
 annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
 names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
@@ -1773,9 +1777,9 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues, the app agents (each its
-id, name and app, never how it is told), and the hundred newest of each
+id, name and app, never how it is told), and the five hundred newest of each
 agent's branches: GitHub lists branches by name alone, so every branch
-an agent's prefix names is read, as many as ten pages of a hundred of each,
+an agent's prefix names is read, as many as fifty pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
 their tips' times. Each pull request's body and head and merge commits'
 messages, each commit's message, and each branch's tip commit (never a
@@ -1802,7 +1806,7 @@ last of them. Its dates are named in the bar, beside **Charts** and
   issues are each set beside the same days of the week a period earlier
   ("↑ from 110 the month before"): this week's Sunday to Thursday beside
   last week's, not the days just before, whose days of the week differ. The
-  year's commits are set beside none, GitHub counting only the last year's.
+  year's commits are set beside none, only the last year's being counted.
 - **Commits**, a column a week over the last year, the period's in blue, the
   rest gray, over a scale of round counts; under them **Lines**, added above
   a line in blue and removed below it in red, one scale for both, the weeks
@@ -1810,47 +1814,65 @@ last of them. Its dates are named in the bar, beside **Charts** and
   January starts.
 - **Contributors**, those who made commits in the period, as many as eight,
   ranked by their commits in bars, each with the lines they added and
-  removed, and how many more there were; each name opens their GitHub page.
+  removed, and how many more there were; each name opens their GitHub page
+  (one whose commits name no GitHub account by the name they carry, unlinked).
 - **When commits are made**, a cell an hour of each day of the week, Monday
   first, the more commits the deeper its blue, as the scale under it shows;
-  in each commit's own time zone, and not only the period's, as GitHub
-  counts them.
+  in each author's own time zone, and not only the period's.
 - **Merged** and **opened pull requests**, **closed** and **opened issues**,
   the ten latest of each, with how many there were and, where there were
   more, a link to all of them on GitHub; each opens its popup as an Issues
   tile does.
 
 Each column, bar and cell names its figures on hover. A period read anew
-shows the last one read, faded, till it is. GitHub computes a repository's
-statistics when first asked, answering that it is till they are: the tab
-shows what else it read, says GitHub is still counting, and asks again five
-seconds apart, six times, then leaves **Ask again** to the reader. A
-repository of 10,000 commits or more has no lines counted, by GitHub, and
-shows none.
+shows the last one read, faded, till it is.
+
+The year is counted from the default branch's commits themselves, as the
+Commits tab reads and keeps them: each page of a hundred commits, kept by
+the commit it starts at, tells each commit's lines added and removed and
+when its author made it in their own time zone (GitHub's GraphQL API tells
+both). So a year whose commits are kept is counted from them at once, and
+once the branch moves, only the commits new since are read of GitHub. It is
+read on from as far as thirty days before the year, a commit's clock not
+always later than its parents'. A year not kept yet is read five queries an
+answer: the tab shows what else
+it read and how many of the year's commits are read so far, and asks again
+a second apart as long as each answer reads more (after five that read
+none, **Read on** is left to the reader). A year of more than 10,000
+commits is counted by GitHub's statistics instead (`stats/commit_activity`,
+`contributors`, `punch_card`, and `code_frequency` for lines), which GitHub
+computes when first asked, and again once the branch moves, answering `202`
+till they are: kept (commits and lines together, as one), they are
+answered through that; never computed yet,
+the tab says GitHub is still counting and asks again five seconds apart, a
+dozen times, then leaves **Ask again** to the reader. GitHub counts no lines
+of one of 10,000 commits or more there, and it shows none.
 
 `GET /api/admin/repositories/pulse?repoId=…&weeks=1|4|13|52` answers
 `{ weeks, since, previousSince, merged, opened, closed, created, stats,
-pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed` and
-`created` are each `{ count, previous, items }`: how many GitHub's search
-finds in the period (`since`, its first day, to today) and in the same days
-of the week a period earlier (`previousSince` on), and the ten latest, from
-one GraphQL query of eight searches, searched by the day. GitHub sorts no
-search by when a pull request was merged or an issue closed, so the fifty
-most recently updated are read and the ten latest merged or closed of them
-listed: all of them where the period holds fifty or fewer. `stats` is the default
-branch's statistics, from GitHub's `stats/commit_activity`,
-`code_frequency`, `contributors` and `punch_card`: `weeks`, a row a week of
-the last year, its commits each day and in all and its lines added and
-removed (null where GitHub counts none, `lines` false); `contributors`, as
-many as a hundred, the most commits that year first, each their weeks of it
-with any; and `punch`, commits by day of the week and hour. GitHub answering
-`202` while it computes them, each is asked again, a second and a half, then
-three, later; still computing, `stats` is null and `pending` true. The
-statistics are kept for every period, apart from the period's searches, each
-as Issues' pages are (two minutes, then answered while read again); those
-GitHub is still computing are not kept. They are read as Issues are: with
-the reader's own GitHub access, only where their grants reach the whole
-repository, a token needed, and access checked again before they are sent.
+reading, pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed`
+and `created` are each `{ count, previous, items }`: how many GitHub's
+search finds in the period (`since`, its first day, to today) and in the
+same days of the week a period earlier (`previousSince` on), and the ten
+latest, from one GraphQL query of eight searches, searched by the day.
+GitHub sorts no search by when a pull request was merged or an issue closed,
+so the fifty most recently updated are read and the ten latest merged or
+closed of them listed: all of them where the period holds fifty or fewer.
+`stats` is the year: `weeks`, a row a week, its commits each day (UTC) and
+in all and its lines added and removed; `contributors`, by login, else
+name, as many as a hundred, the most commits that year first, each their
+weeks of it with any; `punch`, commits by day of the week and hour; and
+`lines`, false where GitHub counts none.
+Merges are left out, as GitHub's statistics leave them. A year counted is
+kept by the head it was counted from (`repository/reads`, a day), the head
+as Issues' pages are (two minutes, then answered while read again); one not
+read whole yet is null, `reading` how many of its commits are read; one
+GitHub is still counting, null, `pending` true. A page of commits kept
+without lines (as GitHub's REST API lists them, for a reader without a
+token) is read again for the year, with them. They are read as Issues are:
+with the reader's own GitHub access, only where their grants reach the
+whole repository, a token needed, and access checked again before they are
+sent.
 
 # npm package viewer
 

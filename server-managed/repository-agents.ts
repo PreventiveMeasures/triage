@@ -4,7 +4,7 @@
 // and of its default branch's commits, the newest first, those no pull
 // request merged; on the first page, its latest issues and the newest of
 // its agents' branches (GitHub lists branches by name alone, so every one an
-// agent's prefix names is read, as many as ten pages of each, and the newest
+// agent's prefix names is read, as many as fifty pages of each, and the newest
 // kept). Each artifact's own texts (never comments: an agent links its
 // session in a pull request's body and its commits' messages) are read here
 // for the marks an agent leaves, and those alone are answered, never the
@@ -18,8 +18,8 @@ import { ISSUES_CURSOR } from './repository-issues.ts'
 export const AGENT_PULLS_PAGE = 50
 export const AGENT_COMMITS_PAGE = 100
 const AGENT_ISSUES = 100
-const AGENT_BRANCHES = 100
-const MAX_BRANCH_PAGES = 10
+const AGENT_BRANCHES = 500
+const MAX_BRANCH_PAGES = 50
 const CLOSES = 5
 const MAX_TITLE = 1000
 const MAX_NAME = 256

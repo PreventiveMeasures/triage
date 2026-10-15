@@ -222,7 +222,7 @@ test('every branch\'s older commits read on from where those listed stop and fro
   assert.deepEqual(requests.at(-1), [7, '', '', { page: 3, all: true, from: [x] }])
   assert.match(text, /5 commits on 2 branches</u)
   assert.doesNotMatch(text, /Older commits/u)
-  assert.doesNotMatch(text, /first 1,000 branches/u)
+  assert.doesNotMatch(text, /first 5,000 branches/u)
 })
 
 test('every branch\'s history, where branches past those GitHub listed are left out, says so, however far it reads', async () => {
@@ -233,7 +233,7 @@ test('every branch\'s history, where branches past those GitHub listed are left 
   await setImmediate()
   const text = templateText(view.render())
   assert.match(text, /2\+ commits on 1 branch</u, 'nothing left to read, but some never read')
-  assert.match(text, /Only the first 1,000 branches by name are read\./u)
+  assert.match(text, /Only the first 5,000 branches by name are read\./u)
   assert.doesNotMatch(text, /Older commits/u)
 })
 

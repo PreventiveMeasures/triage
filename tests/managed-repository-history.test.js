@@ -85,6 +85,20 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.deepEqual(asked.filter(entry => entry.path === '/repos/org/repo/commits').slice(-2).map(entry => entry.query.sha).toSorted(), [c, d])
 })
 
+test('with a token, a revision\'s commits are named by every branch All branches reads and the latest tags, not GitHub\'s first page of each by name', async t => {
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-02T10:00:00Z' } },
+      tags: { nodes: [{ name: 'v2', target: { __typename: 'Commit', oid: b } }] },
+      branches: { pageInfo: { hasNextPage: variables.after === null, endCursor: 'p1' },
+        nodes: variables.after === null ? [{ name: 'main', target: { oid: a, committedDate: null } }] : [{ name: 'zz-past-the-first-hundred', target: { oid: c, committedDate: null } }] } }
+    : { b0: { history: { nodes: [{ oid: a, messageHeadline: 'Work', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Ada', user: null }, parents: { nodes: [] } }] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual([body.branches, body.tags], [[{ name: 'main', sha: a }, { name: 'zz-past-the-first-hundred', sha: c }], [{ name: 'v2', sha: b }]])
+  assert.equal(asked.some(entry => entry.path === '/repos/org/repo/branches' || entry.path === '/repos/org/repo/tags'), false)
+})
+
 test('a full page offers the next, but for the deepest page read', async t => {
   const request = await fixture(t)
   github(t, { full: true })
@@ -184,7 +198,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   assert.equal((await request({ repoId: '1', all: 'true', page: '100', from: c })).body.more, false, 'page 101 is no page to read')
 })
 
-test('all branches says where branches past the ten pages it lists are left out', async t => {
+test('all branches says where branches past the fifty pages it lists are left out', async t => {
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
     ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-02T10:00:00Z' } }, tags: { nodes: [] },
       branches: { pageInfo: { hasNextPage: true, endCursor: `p${variables.after ?? 0}+` }, nodes: [{ name: `b-${variables.after}`, target: { oid: a, committedDate: null } }] } }
@@ -193,7 +207,7 @@ test('all branches says where branches past the ten pages it lists are left out'
   const asked = github(t, { graphql })
   const { body } = await request({ repoId: '1', all: 'true' })
   assert.equal(body.cut, true)
-  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('refs/heads/')).length, 10)
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('refs/heads/')).length, 50)
 })
 
 test('a history that names no page, all branches of a directory, or reads on from what is no commit, is a bad request', async t => {
