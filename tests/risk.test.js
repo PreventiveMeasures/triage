@@ -150,14 +150,14 @@ test('a path a script writes out whole read wherever it is: whatever takes it, i
     "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
     "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require.resolve('./resolved.txt')",
     "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
-    "require('./cased.txt')", "require('./caf\\u00e9.txt')",
+    "require(`./tmpl\\${x}.txt`)", "require('./cased.txt')", "require('./caf\\u00e9.txt')",
     "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
   ].join('\n')
   const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
-  const cased = ['Cased.TXT', 'cafe\u0301.txt']
+  const cased = ['tmpl${x}.txt', 'Cased.TXT', 'cafe\u0301.txt']
   const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
-    'as a filesystem telling neither case nor Unicode\'s normalization apart finds it too; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
+    'a template\'s escaped `\\${` its text; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
 })
 
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
@@ -173,6 +173,8 @@ test('a `main` read with `\\` a separator too, as on Windows; an `exports` patte
   assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'lib/a/a/.txt': 'x' }))].toSorted(), ['lib/a/a/.txt', 'lib/ab/ab.txt', 'lib/x/x.txt'],
     'not `lib/x/y.txt`, which no request reaches; `lib/a/a/.txt` by `pkg/a/`, the filesystem folding the slashes it puts beside the pattern\'s')
   assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ exports: { './*': './lib/*.txt' } }), 'lib/.txt': 'x' }))], ['lib/.txt'], 'by `pkg//`')
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ exports: { '.': './lib/*.txt' }, imports: { '#x': './lib/*.txt' } }), 'lib/*.txt': 'x', 'lib/evil.txt': 'x' }))], ['lib/*.txt'],
+    'a `*` a key that is no pattern names as its own')
 })
 
 test('a `main` read past `imports` nested deeper than a call stack goes, as JSON and node read it', () => {
