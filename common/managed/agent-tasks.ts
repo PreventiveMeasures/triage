@@ -155,7 +155,10 @@ function sessionOf({ agents, keys }: Group, { pulls, commits, issues, branches }
   const taskPulls = of('pull:').flatMap(number => pulls.get(Number(number)) ?? []).toSorted(byTime(pull => pull.createdAt))
   const taskCommits = of('commit:').flatMap(oid => commits.get(oid) ?? []).toSorted(byTime(commit => commit.at))
   const names = [...new Set([...of('branch:'), ...taskPulls.flatMap(pull => headName(pull) ?? [])])]
-  const issueNumbers = new Set([...of('issue:').map(Number), ...taskPulls.flatMap(pull => pull.closes), ...names.flatMap(name => agentBranch(name).issue ?? [])])
+  // The issues its branches are named for, by a pull request's own name for
+  // its branch, a fork's too.
+  const issueNumbers = new Set([...of('issue:').map(Number), ...taskPulls.flatMap(pull => pull.closes),
+    ...taskPulls.flatMap(pull => agentBranch(pull.head).issue ?? []), ...of('branch:').flatMap(name => agentBranch(name).issue ?? [])])
   const taskIssues = [...issueNumbers].flatMap(number => issues.get(number) ?? []).toSorted(byTime(issue => issue.createdAt))
   const taskBranches = names.flatMap(name => branches.get(name) ?? [])
   const items = [...taskPulls, ...taskCommits, ...taskIssues, ...taskBranches]

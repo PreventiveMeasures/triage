@@ -71,6 +71,9 @@ test('pull requests from forks, of one branch name, are a session each, apart fr
   assert.deepEqual(sessions.map(item => [item.pulls.map(linked => linked.number), item.branches]).toSorted(), [
     [[2], ['grace:codex/fix']], [[3], ['codex/fix']], [[4, 1], ['ada:codex/fix']],
   ])
+  // A fork's branch named for an issue is that issue's all the same.
+  const [named] = agentSessions({ pulls: [pull(5, 'claude/issue-12-fix', none, { fork: 'ada' })], issues: [issue(12)] })
+  assert.deepEqual([named.branches, named.issues.map(item => item.number)], [['ada:claude/issue-12-fix'], [12]])
 })
 
 test('a Claude session a Codex task pushed to is both agents\'', () => {
