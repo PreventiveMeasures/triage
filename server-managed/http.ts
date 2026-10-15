@@ -43,7 +43,8 @@
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week over the last
-//        year, its contributors and when in the week they commit (pending while GitHub computes them), and the pull requests
+//        year, its contributors and when in the week they commit, counted from its commits as Commits keeps them (how many are
+//        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
@@ -181,7 +182,8 @@ import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { APP_AGENTS, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { PULSE_WEEKS, StatsPending, repositoryActivity, repositoryStats } from './repository-pulse.ts'
+import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
+  yearCommits } from './repository-pulse.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -1602,7 +1604,11 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, body)
+    // Each commit as the tab draws it: what Pulse counts of it (its lines, its
+    // author's time) not sent.
+    const commits = (body as { commits: HistoryCommit[] }).commits.map(({ sha, parents, subject, authorName, authorLogin, committedAt }) =>
+      ({ sha, parents, subject, authorName, authorLogin, committedAt }))
+    sendJson(res, 200, { ...body, commits })
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1624,9 +1630,11 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // this: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
 // kept, answered at once and read again behind it for the next to ask, where
 // the instance outlives its answer (not serverless, where it is read again
-// before it is answered); `kept` where it was. One GitHub refuses to read
-// again is no longer kept: the next to ask is refused as GitHub refused it.
-async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>): Promise<{ value: T; kept: boolean }> {
+// before it is answered); `kept` where it was, or where reading it again
+// failed as `keepThrough` lets it. One GitHub refuses to read again is no
+// longer kept: the next to ask is refused as GitHub refused it.
+async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
+  keepThrough: (err: unknown) => boolean = () => false): Promise<{ value: T; kept: boolean }> {
   const store = repositoryReadStore(deps.db, deps.config.debug)
   // One kept longer than a day, not yet removed (pruneKept removes them as
   // others are written), is none.
@@ -1651,12 +1659,19 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
     }
     return { value: held.value as T, kept: true }
   }
-  return { value: await readKept(), kept: false }
+  try {
+    return { value: await readKept(), kept: false }
+  } catch (err) {
+    if (held && keepThrough(err)) return { value: held.value as T, kept: true }
+    throw err
+  }
 }
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
-// the commit it starts at (repository-history.ts historyFrom).
-function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
+// the commit it starts at (repository-history.ts historyFrom); with `lines`,
+// only those telling each commit's lines (read with GraphQL since it reads
+// them), the rest read again.
+function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${top}`
   return {
@@ -1664,7 +1679,7 @@ function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
       const kept = await store.readMany(tops.map(keyOf))
       return new Map(tops.flatMap(top => {
         const page = kept.get(keyOf(top))?.value
-        return Array.isArray(page) ? [[top, page] as const] : []
+        return Array.isArray(page) && (!lines || page.every(commit => commit.additions != null)) ? [[top, page] as const] : []
       }))
     },
     write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
@@ -1753,25 +1768,57 @@ async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, 
 }
 
 // GET /api/admin/repositories/pulse: what the code viewer's Pulse tab shows
-// (repository-pulse.ts): the default branch's statistics over the last year,
-// kept apart from the pull requests and issues of the last `weeks` weeks for
-// every period to share; `stats` null, `pending`, while GitHub is still
-// computing them, unkept, for the client to ask again. They are the whole
+// (repository-pulse.ts): the default branch's year, counted from its commits
+// (pulseCommits), and the pull requests and issues of the last `weeks`
+// weeks, each kept apart. A year not read whole yet answers how many of its
+// commits are (`reading`); one GitHub's statistics count, while it is still
+// computing them, `pending`, for the client to ask again. They are the whole
 // repository's (readWholeRepository).
 async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const weeks = Number(query.get('weeks') ?? '4')
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const [period, stats] = await Promise.all([
+    const [period, year] = await Promise.all([
       keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => repositoryActivity(fullName, token, weeks)),
-      keptAnswer(deps, `${repoId}\0pulse-stats`, () => repositoryStats(fullName, token)).catch((err: unknown) => {
-        if (err instanceof StatsPending) return null
-        throw err
-      }),
+      pulseCommits(deps, repoId, fullName, token),
     ])
-    return { value: { weeks, ...period.value, stats: stats?.value ?? null, pending: stats === null }, kept: period.kept && stats?.kept === true }
+    return { value: { weeks, ...period.value, stats: year.stats, reading: year.reading, pending: year.pending }, kept: period.kept && year.kept }
   })
+}
+
+// The default branch's year (repository-pulse.ts commitStats), counted from
+// its commits as the Commits tab keeps them, with their lines
+// (yearCommits): kept by the head it was read from (repositoryReadStore),
+// that head kept as an issue's page is. A year not read whole yet is how
+// many of its commits are (`reading`); one past YEAR_COMMITS is GitHub's
+// statistics' (repositoryStats, repositoryLines), each kept as an issue's
+// page is and through GitHub computing them again, `pending` while it first
+// computes them.
+async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
+  const first = pulseSince(52, Date.now())
+  const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+  if (!head.value.sha) return { stats: commitStats([], first), reading: null, pending: false, kept: head.kept }
+  const store = repositoryReadStore(deps.db, deps.config.debug)
+  const key = `${repoId}\0pulse-year\0${head.value.sha}\0${first}`
+  const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
+  if (held && !('tooMany' in held)) return { stats: held, reading: null, pending: false, kept: head.kept }
+  if (!held) {
+    const year = await yearCommits(fullName, token, head.value.sha, first, historyPages(deps, repoId, true))
+    if (year.complete) {
+      const stats = commitStats(year.commits, first)
+      await store.write(key, stats, Date.now())
+      return { stats, reading: null, pending: false, kept: false }
+    }
+    if (!year.tooMany) return { stats: null, reading: year.read, pending: false, kept: false }
+    await store.write(key, { tooMany: true }, Date.now())
+  }
+  const computing = (err: unknown) => err instanceof StatsPending
+  const [stats, lines] = await Promise.all([
+    keptAnswer(deps, `${repoId}\0pulse-stats`, () => repositoryStats(fullName, token), computing).catch((err: unknown) => { if (computing(err)) return null; throw err }),
+    keptAnswer(deps, `${repoId}\0pulse-lines`, () => repositoryLines(fullName, token, first), computing).catch((err: unknown) => { if (computing(err)) return null; throw err }),
+  ])
+  return { stats: stats && withLines(stats.value, lines?.value ?? null), reading: null, pending: !stats || !lines, kept: Boolean(stats?.kept && lines?.kept) }
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {

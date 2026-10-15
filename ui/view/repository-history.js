@@ -352,7 +352,7 @@ class RepositoryHistory extends LitElement {
     return html`<div class="history-bar">
         ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
-          : html`<div class="history-modes" role="group" aria-label="History">
+          : html`<div class="history-modes" role="group" aria-label="Branches">
             <button type="button" aria-pressed=${String(mode === 'revision')} @click=${() => this.pick('revision')}>This revision</button>
             <button type="button" aria-pressed=${String(mode === 'all')} ?disabled=${allRefused.has(this.repository.repoId)} @click=${() => this.pick('all')}>All branches</button>
           </div>

@@ -28,7 +28,11 @@ const MAX_NAME = 256
 const SHA = /^[a-f\d]{40}$/u
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 
-export interface HistoryCommit { sha: string; parents: string[]; subject: string; authorName: string | null; authorLogin: string | null; committedAt: number | null }
+// A commit, with the lines it adds and removes and when it was authored in its
+// author's own time zone (`authorZone`, minutes east of UTC), where GitHub's
+// GraphQL API tells them (null where its REST API lists it).
+export interface HistoryCommit { sha: string; parents: string[]; subject: string; authorName: string | null; authorLogin: string | null; committedAt: number | null
+  additions?: number | null; deletions?: number | null; authoredAt?: number | null; authorZone?: number | null }
 export interface HistoryRef { name: string; sha: string }
 
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
@@ -37,10 +41,21 @@ const timeOf = (value: unknown) => {
   return Number.isSafeInteger(at) ? at : null
 }
 
-// A commit as the History tab reads it, its subject the message's first line,
-// as `--oneline` shows; null for one GitHub names no commit id for.
-function historyCommit(sha: unknown, parents: unknown[], message: unknown, authorName: unknown, authorLogin: unknown, committedAt: unknown): HistoryCommit | null {
+const lineCount = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null
+// The minutes east of UTC an ISO 8601 time is given in: `Z` none.
+const zoneOf = (value: unknown) => {
+  const zone = typeof value === 'string' ? /(?:Z|([+-])(\d{2}):?(\d{2}))$/u.exec(value) : null
+  return zone ? zone[1] ? (zone[1] === '-' ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3])) : 0 : null
+}
+
+// A commit as the Commits tab reads it, its subject the message's first
+// line, as `--oneline` shows; null for one GitHub names no commit id for.
+// With `stats`, the GraphQL API's, its lines and its author's time.
+function historyCommit(sha: unknown, parents: unknown[], message: unknown, authorName: unknown, authorLogin: unknown, committedAt: unknown,
+  stats: { additions?: unknown; deletions?: unknown; authoredAt?: unknown } | null = null): HistoryCommit | null {
   if (typeof sha !== 'string' || !SHA.test(sha)) return null
+  const lines = stats ? { additions: lineCount(stats.additions), deletions: lineCount(stats.deletions), authoredAt: timeOf(stats.authoredAt),
+    authorZone: zoneOf(stats.authoredAt) } : { additions: null, deletions: null, authoredAt: null, authorZone: null }
   return {
     sha,
     parents: parents.filter((parent): parent is string => typeof parent === 'string' && SHA.test(parent)).slice(0, MAX_PARENTS),
@@ -48,6 +63,7 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
     authorName: textOf(authorName, MAX_NAME),
     authorLogin: typeof authorLogin === 'string' && LOGIN.test(authorLogin) ? authorLogin : null,
     committedAt: timeOf(committedAt),
+    ...lines,
   }
 }
 
@@ -138,9 +154,10 @@ const historiesQuery = (count: number) => `query($owner: String!, $name: String!
     ${Array.from({ length: count }, (_, at) => `b${at}: object(oid: $o${at}) { ... on Commit { history(first: ${ALL_DEPTH}) { pageInfo { hasNextPage } nodes { ...historyCommit } } } }`).join('\n    ')}
   }
 }
-fragment historyCommit on Commit { oid messageHeadline committedDate author { name user { login } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
+fragment historyCommit on Commit { oid messageHeadline committedDate additions deletions author { name date user { login } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
 
-type GraphCommit = { oid?: unknown; messageHeadline?: unknown; committedDate?: unknown; author?: { name?: unknown; user?: { login?: unknown } | null } | null
+type GraphCommit = { oid?: unknown; messageHeadline?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
+  author?: { name?: unknown; date?: unknown; user?: { login?: unknown } | null } | null
   parents?: { nodes?: { oid?: unknown }[] } }
 type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
 type GraphRef = { name?: unknown; target?: GraphTarget | null }
@@ -180,7 +197,8 @@ async function readPages(fullName: string, token: string | null, tops: string[],
   const [owner, name] = fullName.split('/') as [string, string]
   const data = await githubGraphql(historiesQuery(tops.length), { owner, name, ...Object.fromEntries(tops.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
   return new Map(tops.map((top, at) => [top, (data?.repository?.[`b${at}`]?.history?.nodes ?? []).flatMap(node => historyCommit(node?.oid,
-    (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name, node?.author?.user?.login, node?.committedDate) ?? [])]))
+    (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name, node?.author?.user?.login, node?.committedDate,
+    { additions: node?.additions, deletions: node?.deletions, authoredAt: node?.author?.date }) ?? [])]))
 }
 
 // The history from each of `starts`, a page of each, kept (`pages`), or read
@@ -190,7 +208,8 @@ async function readPages(fullName: string, token: string | null, tops: string[],
 // those that start where those go on, till HISTORY_GLUED are listed. The
 // pages from `starts` are listed whole, however many that is (all branches'
 // first, as many as ALL_BRANCHES of them): the cap is gluing's. Each commit
-// once, and whether any goes on past those listed (`more`).
+// once, whether any goes on past those listed (`more`), and how many pages
+// were read of GitHub (`read`).
 export async function historyFrom(fullName: string, token: string | null, starts: string[], pages: HistoryPages, fetchImpl: typeof fetch = globalThis.fetch) {
   const kept = await pages.read(starts)
   const unread = starts.filter(top => !kept.has(top))
@@ -213,7 +232,7 @@ export async function historyFrom(fullName: string, token: string | null, starts
     }
   }
   const commits = [...listed.values()]
-  return { commits, more: commits.some(commit => commit.parents.some(parent => !listed.has(parent))) }
+  return { commits, more: commits.some(commit => commit.parents.some(parent => !listed.has(parent))), read: unread.length }
 }
 
 export type AllHeads = { heads: (HistoryRef & { at: number | null })[]; defaultBranch: string | null; tags: HistoryRef[]; cut: boolean }

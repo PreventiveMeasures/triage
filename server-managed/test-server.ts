@@ -480,9 +480,9 @@ function itemFixture(url: URL, res: ServerResponse): void {
 // weekdays' working hours, and the pull requests and issues the Issues and
 // Pull requests tabs list, in the last `weeks` weeks and the same days a
 // period earlier.
-// Repository 102's statistics are pending the first two times they are
-// asked, as GitHub's are while it computes them.
-let pulsePending = 2
+// Repository 102's year is read over its first three answers, as one whose
+// commits are not kept yet is, a few pages of GitHub's an answer.
+let pulseReads = 0
 const WEEK_MS = 7 * 86_400_000
 
 function pulseFixture(url: URL, res: ServerResponse): void {
@@ -508,11 +508,11 @@ function pulseFixture(url: URL, res: ServerResponse): void {
   }
   const activity = { since, previousSince: since - back, merged: told('pulls', item => item.mergedAt), opened: told('pulls', item => item.createdAt),
     closed: told('issues', item => item.closedAt), created: told('issues', item => item.createdAt) }
-  if (url.searchParams.get('repoId') === '102' && pulsePending > 0) {
-    pulsePending--
-    sendJson(res, 200, { weeks, ...activity, stats: null, pending: true }); return
+  if (url.searchParams.get('repoId') === '102' && pulseReads < 2) {
+    pulseReads++
+    sendJson(res, 200, { weeks, ...activity, stats: null, reading: pulseReads * 500, pending: false }); return
   }
-  sendJson(res, 200, { weeks, ...activity, stats: pulseStats(now), pending: false })
+  sendJson(res, 200, { weeks, ...activity, stats: pulseStats(now), reading: null, pending: false })
 }
 
 // The default branch's statistics over the year to `now`, as
@@ -520,7 +520,7 @@ function pulseFixture(url: URL, res: ServerResponse): void {
 function pulseStats(now: number) {
   let seed = 7
   const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647
-  const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', 'alan-kay']
+  const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
   const theirs = new Map(people.map(login => [login, [] as [number, number, number, number][]]))
@@ -541,7 +541,9 @@ function pulseStats(now: number) {
     }
     return { week, days, commits: total, additions, deletions }
   })
-  const contributors = people.map(login => ({ login, weeks: theirs.get(login)! })).filter(person => person.weeks.length > 0)
+  // One whose commits name no GitHub account, by name.
+  const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, weeks: theirs.get(login)! }))
+    .filter(person => person.weeks.length > 0)
   const punch = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (__, hour) => {
     const weekday = day >= 1 && day <= 5
     const working = hour >= 9 && hour <= 18 ? (hour === 12 ? 0.6 : 1) : hour >= 19 && hour <= 23 ? 0.35 : hour <= 1 ? 0.15 : 0.02
