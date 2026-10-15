@@ -12,16 +12,27 @@ import { providerIcon } from './provider-icons.js'
 
 // By login, lowercased: a user (`id`, `login`, `name`) or an agent (`agent`).
 const known = new Map()
+// The account id answers name each login by, lowercased; those they name by
+// more than one, as what was kept of a repository's history may name a login
+// by an account GitHub named by it once, are no one's.
+const accounts = new Map()
+const ambiguous = new Set()
 
 // Keep what an answer says of each login it names, GitHub matching them
 // regardless of case: its user or agent (`users`, by login), or none, one
-// unlinked, whose user lost access or that another user claims since;
-// answered as it came.
+// unlinked, whose user lost access or that another user claims since, or one
+// this session's answers name by more than one account; answered as it came.
 export function knowGithubUsers(answer) {
   const { users: told, ...rest } = answer ?? {}
   const users = told ?? {}
-  for (const login of namedAccounts(rest).keys()) if (!Object.hasOwn(users, login)) known.delete(login.toLowerCase())
+  for (const [login, id] of namedAccounts(rest)) {
+    const key = login.toLowerCase()
+    if (id === 'ambiguous' || (id !== null && accounts.has(key) && accounts.get(key) !== id)) ambiguous.add(key)
+    else if (id !== null) accounts.set(key, id)
+    if (!Object.hasOwn(users, login) || ambiguous.has(key)) known.delete(key)
+  }
   for (const [login, user] of Object.entries(users)) {
+    if (ambiguous.has(login.toLowerCase())) continue
     if (typeof user?.agent === 'string' && Object.hasOwn(GITHUB_AGENTS, user.agent)) known.set(login.toLowerCase(), { agent: user.agent })
     else if (typeof user?.id === 'string' && typeof user.login === 'string') {
       known.set(login.toLowerCase(), { id: user.id, login: user.login, name: typeof user.name === 'string' && user.name.trim() ? user.name.trim() : null })
@@ -34,6 +45,8 @@ export function knowGithubUsers(answer) {
 let generation = 0
 export function forgetGithubUsers() {
   known.clear()
+  accounts.clear()
+  ambiguous.clear()
   generation++
 }
 

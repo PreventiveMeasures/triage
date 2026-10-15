@@ -72,6 +72,25 @@ test('Copilot and Dependabot show by their avatars, as Agents draws them: by the
   forgetGithubUsers()
 })
 
+test('a login this session\'s answers name by more than one account, one GitHub named by it once and one it names by it now, is no one\'s till another session', () => {
+  forgetGithubUsers()
+  // History kept from before the login was renamed and taken by another account.
+  knowGithubUsers({ commits: [{ authorLogin: 'octo', authorId: 2 }], users: { octo: { id: 'octo-id', login: 'octo', name: 'Octo' } } })
+  assert.equal(appUser('octo')?.id, 'octo-id')
+  knowGithubUsers({ items: [{ author: 'Octo', authorId: 9 }], users: { Octo: { id: 'cat-id', login: 'cat', name: 'Cat' } } })
+  assert.equal(appUser('octo'), null, 'neither account\'s')
+  assert.equal(githubUser('octo'), 'octo', 'the login itself')
+  knowGithubUsers({ commits: [{ authorLogin: 'octo', authorId: 2 }, { authorLogin: 'dependabot', authorId: 1 }, { authorLogin: 'dependabot', authorId: 49699333 }],
+    users: { octo: { id: 'octo-id', login: 'octo', name: 'Octo' }, dependabot: { agent: 'dependabot' } } })
+  assert.deepEqual([appUser('octo'), commitAgent('dependabot')], [null, null], 'nor once an answer names one of them again; nor one an answer names by two')
+  knowGithubUsers({ commits: [{ authorLogin: 'ada', authorId: 7 }, { authorLogin: 'ada', authorId: null }], users: { ada: { id: 'ada-id', login: 'ada', name: null } } })
+  assert.equal(appUser('ada')?.id, 'ada-id', 'one named once with its id and once without is that account')
+  forgetGithubUsers()
+  knowGithubUsers({ items: [{ author: 'Octo', authorId: 9 }], users: { Octo: { id: 'cat-id', login: 'cat', name: 'Cat' } } })
+  assert.equal(appUser('octo')?.id, 'cat-id', 'another session\'s answers say anew')
+  forgetGithubUsers()
+})
+
 test('an answer naming a login the server resolves to no one forgets what was kept of it; another session forgets them all', () => {
   forgetGithubUsers()
   knowGithubUsers({ commits: [{ authorLogin: 'alice-work' }, { authorLogin: 'bob' }], users: {
