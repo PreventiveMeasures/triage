@@ -15,6 +15,8 @@ import { templates } from './_lit.js'
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
+// Compare's own bundle is loaded in the browser; render its tabs' elements here.
+mock.module('../ui/view/compare-load.js', { exports: { withCompare: template => template() } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
 // Dialogs have separate rendering tests; capture why requests without browser-only dependencies.

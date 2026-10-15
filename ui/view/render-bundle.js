@@ -52,6 +52,7 @@ import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
+import { withCompare } from './compare-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFileHash(hash)
@@ -2180,10 +2181,10 @@ function renderBundleSlide(entry) {
           ['history', () => repositoryFilelessTab(entry.repository, 'history')],
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
-          ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
-            .source=${npmComparisonSource(entry)}></npm-review>`],
-          ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
+          ['review', () => withCompare(() => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+            .source=${npmComparisonSource(entry)}></npm-review>`)],
+          ['compare', () => withCompare(() => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`)],
           ['issues', () => repository ? repositoryFilelessTab(entry.repository, 'issues') : renderBundleIssuesList(details)],
           ['advisories', () => renderBundleAdvisoriesTab(details, render,
             canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

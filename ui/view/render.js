@@ -59,6 +59,7 @@ import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
+import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
 // Bring the report pane up over the landing page.
@@ -1882,7 +1883,7 @@ function renderImpl() {
   }
   if (state.currentView === 'reviews') {
     const slot = ensureReportSlot('dependency-reviews-slot')
-    if (slot) litRender(html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`, slot)
+    if (slot) litRender(withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), slot)
     showReport()
     document.title = 'DeepView — my reviews'
     return
