@@ -610,7 +610,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
       ${this._scopeBar()}
-      <div class="risk-progress" role="status">${this._progress()}</div>
+      ${this._progress()}
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size === 0 ? nothing : html`<div class="manage-list">${this._lockfiles()}
         ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}</div>`}
@@ -680,17 +680,19 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     ]
   }
 
-  // The scan's state, and its metrics (_metrics), each read with a bar.
+  // The scan's state, and its metrics (_metrics), each read with a bar; where
+  // any has a detail, room beneath each for it (risk-details).
   _progress() {
-    if (this._state === 'idle') return html`<p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p>`
+    if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
     const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    return html`<span class="risk-state" data-state=${this._state}>${state}</span>
-      ${this._metrics().map(({ label, value, of, detail, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
+    const metrics = this._metrics()
+    return html`<div class=${metrics.some(({ detail }) => detail) ? 'risk-progress risk-details' : 'risk-progress'} role="status"><span class="risk-state" data-state=${this._state}>${state}</span>
+      ${metrics.map(({ label, value, of, detail, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
         <span class="risk-metric-label">${label}</span>
         <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}</span>
         ${of === undefined ? nothing : html`<span class="risk-bar" aria-hidden="true"><span style=${styleMap({ width: `${of === 0 ? 0 : Math.round(value / of * 100)}%` })}></span></span>`}
         ${detail ? html`<span class="risk-metric-detail">${detail}</span>` : nothing}
-      </span>`)}`
+      </span>`)}</div>`
   }
 
   _pending(running, otherwise) {
