@@ -87,10 +87,10 @@ async function githubGraphql(query: string, variables: Record<string, unknown>, 
   return body?.data
 }
 
-// A tag's target, an annotated tag's own target in turn, as deep as
-// MAX_TAG_DEPTH tags go, each object's type naming what it is.
+// A tag's target, an annotated tag's own target in turn, through as many as
+// MAX_TAG_DEPTH annotated tags, each object's type naming what it is.
 const MAX_TAG_DEPTH = 4
-const tagTarget = (depth: number): string => `target { __typename oid${depth > 1 ? ` ... on Tag { ${tagTarget(depth - 1)} }` : ''} }`
+const tagTarget = (tags: number): string => `target { __typename oid${tags > 0 ? ` ... on Tag { ${tagTarget(tags - 1)} }` : ''} }`
 
 // The branches' tips, a page at a time, each with its commit's date (GitHub
 // orders heads by name alone), and, on the first page, the default branch's

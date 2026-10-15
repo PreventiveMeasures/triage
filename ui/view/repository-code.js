@@ -157,7 +157,7 @@ function showOpening(opening) {
 // since has left both.
 export function repositoryCodePending(entry) {
   const pending = state.repositoryCodePending
-  return pending?.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
+  return pending && pending.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
 }
 
 // Failures a directory's own entries get past: one too large to read whole,
@@ -203,6 +203,15 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   const failed = state.currentView === 'repository-code' ? state.repositoryCodeOpening : null
   if (!entry && commit && failed?.code === 'directory-too-large' && sameDirectory(failed, { repoId, commit, path })) {
     showOpening({ ...failed, tab })
+    return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+  }
+  // History reads none of its files: a directory at a commit shows it alone,
+  // its other tabs opening them.
+  if (!entry && commit && tab === 'history') {
+    const revision = route.revision === undefined ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.revision
+    const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
+    showOpening({ repoId, commit, ref: null, path, tab, repo: route.repo ?? known ?? null, revision, error: null, historyOnly: true })
+    renderSidebar()
     return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
   }
   if (!entry) {

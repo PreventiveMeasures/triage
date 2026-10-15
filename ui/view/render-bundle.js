@@ -1993,20 +1993,21 @@ export function renderNpmOpening({ name, spec, tab }) {
 // A repository's directory opening (repository-code.js
 // openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
 // body what opens, or why it didn't, with the directories it lists to open
-// instead where it has any. One too large to open, once its commit is known,
-// shows its History all the same, its tabs opening each.
+// instead where it has any. Its History, which reads none of its files,
+// shows at its commit alone (`historyOnly`), or where its files failed to
+// open, its tabs then opening each.
 export function renderRepositoryCodeOpening(opening) {
-  const { repoId, commit, path, tab, repo, revision, error, code } = opening
+  const { repoId, commit, path, tab, repo, revision, error, historyOnly = false } = opening
   const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
   const repository = { repoId, repo, commit, path, revision }
-  const historyOnly = Boolean(error && commit && code === 'directory-too-large')
-  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), historyOnly && tab === 'history'
+  const tabsOpen = Boolean(commit && (historyOnly || error))
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && tab === 'history'
     ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repoId)}></repository-history>`
     : error
       ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
       : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
-  { opening: true, onTab: historyOnly ? key => openRepositoryCodeTab(opening, key) : null })
+  { opening: !historyOnly, onTab: tabsOpen ? key => openRepositoryCodeTab(opening, key) : null })
 }
 
 // Top-level bundle view. The header carries the bundle's filename

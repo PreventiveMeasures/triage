@@ -23,7 +23,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryRefs: () => Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { openRepositoryCodeRoute, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
+const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 
 const commit = 'c'.repeat(40)
@@ -208,6 +208,21 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.notEqual(state.currentView, 'bundles')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app' }, () => true, () => {}), false)
+})
+
+test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async () => {
+  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' })
+  assert.deepEqual(requests, [], 'no files read')
+  assert.equal(state.currentView, 'repository-code')
+  assert.equal(state.repositoryCodeOpening.historyOnly, true)
+  assert.equal(state.repositoryCodeOpening.commit, commit)
+  openRepositoryCodeTab(state.repositoryCodeOpening, 'code')
+  assert.deepEqual(navigations, [{ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code' }])
+  // Code, at its route, reads them.
+  await openRepositoryCodeRoute(navigations[0], () => true, () => {})
+  assert.deepEqual(requests, [[7, commit, 'packages/app']])
+  assert.equal(state.currentView, 'bundles')
 })
 
 test('the header opens another repository at its default branch, another revision of the directory on the same tab, and a typed one on Enter alone', () => {

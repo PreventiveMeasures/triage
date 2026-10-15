@@ -142,6 +142,8 @@ test('all branches reads the 25 most recently committed to, the default branch f
     { owner: 'org', name: 'repo', o0: a, o1: c, o2: d },
   ])
   assert.match(queries[2].body.query, /b2: object\(oid: \$o2\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
+  // A tag's target, and those of as many as four annotated tags after it.
+  assert.equal(queries[0].body.query.match(/target \{ __typename oid/gu).length, 5)
 
   const anonymous = await fixture(t)
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })
