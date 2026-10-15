@@ -24,6 +24,8 @@ export interface KeptStore<T> {
   // Those of `keys` kept, by key, in one read of the database.
   readMany(keys: string[]): Promise<Map<string, { at: number; value: T }>>
   write(key: string, value: T, at: number): Promise<void>
+  // Removes what is kept by `key`.
+  remove(key: string): Promise<void>
 }
 
 // When each database last had the rows under each prefix removed.
@@ -64,6 +66,9 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
     async write(key, value, at) {
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }
       await prune(at)
+    },
+    async remove(key) {
+      try { await db.deleteUpstreamCacheEntries(keyOf(key), Number.MAX_SAFE_INTEGER) } catch (error) { warn('remove', error) }
     },
   }
 }

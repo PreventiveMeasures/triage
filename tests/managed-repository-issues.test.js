@@ -201,3 +201,23 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   assert.deepEqual(await item('9'), { status: 404, body: { error: 'github-not-found' } })
   for (const number of ['0', '-1', '1.5', 'x', '', '2147483648']) assert.equal((await item(number)).status, 400, number)
 })
+
+test('a kept page GitHub refuses to read again is no longer kept: the next to ask is refused as GitHub refused it', async t => {
+  let refused = false
+  const asked = github(t, () => refused ? { data: null, errors: [{ type: 'FORBIDDEN', path: ['repository', 'page'], message: 'Resource not accessible by integration' }] }
+    : page([{ number: 2, title: 'Kept', state: 'OPEN', stateReason: null, createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 }, labels: labels() }]))
+  const tracked = []
+  const request = await fixture(t, { tracked })
+  assert.equal((await request({ repoId: '1', kind: 'issues' })).status, 200)
+  // The App's Issues permission withdrawn: kept, it is answered once more as it is read again, refused.
+  refused = true
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3 * 60_000 })
+  assert.equal((await request({ repoId: '1', kind: 'issues' })).body.items[0].title, 'Kept')
+  await Promise.allSettled(tracked)
+  assert.equal(asked.length, 2)
+  assert.deepEqual(await request({ repoId: '1', kind: 'issues' }), { status: 502, body: { error: 'github-status-403' } })
+  // Read again once GitHub allows it, it is kept again.
+  refused = false
+  t.mock.timers.setTime(Date.now() + 60_000)
+  assert.equal((await request({ repoId: '1', kind: 'issues' })).status, 200)
+})

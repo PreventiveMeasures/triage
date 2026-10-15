@@ -1577,6 +1577,11 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
 const REPOSITORY_READ_FRESH_MS = 2 * 60_000
 // The repositories' reads being read again behind a kept answer, by key.
 const repositoryRereads = new Set<string>()
+// A read GitHub refused, not failed: its credential or the GitHub App's
+// permission for it withdrawn (Issues, Pull requests, Checks), the
+// repository or what was asked of it gone. What was kept of it goes too.
+const refusedRead = (err: unknown) => err instanceof GithubApiError
+  && (err.status === 401 || err.status === 403 || err.status === 404 || err.message === 'github-status-403')
 
 // What the whole of repository `repoId` gives in GraphQL (`read`, with its
 // name and a token), read as browsing is, with the reader's own GitHub
@@ -1586,7 +1591,8 @@ const repositoryRereads = new Set<string>()
 // they ask: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
 // kept, answered at once and read again behind it for the next to ask, where
 // the instance outlives its answer (not serverless, where it is read again
-// before it is answered).
+// before it is answered). One GitHub refuses to read again is no longer
+// kept: the next to ask is refused as GitHub refused it.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   read: (fullName: string, token: string) => Promise<object>, key: string | null = null): Promise<void> {
   const authorize = async () => {
@@ -1606,9 +1612,14 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
     const stored = kept ? await kept.store.read(kept.key) : null
     const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
     const readKept = async () => {
-      const body = await read(access.repo.fullName, token)
-      if (kept) await kept.store.write(kept.key, body, Date.now())
-      return body
+      try {
+        const body = await read(access.repo.fullName, token)
+        if (kept) await kept.store.write(kept.key, body, Date.now())
+        return body
+      } catch (err) {
+        if (kept && refusedRead(err)) await kept.store.remove(kept.key)
+        throw err
+      }
     }
     const age = held ? Date.now() - held.at : Infinity
     if (held && kept && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {

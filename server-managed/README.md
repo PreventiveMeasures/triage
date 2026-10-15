@@ -1663,7 +1663,10 @@ under `repository/reads`, a day), for every reader, their access checked as
 each asks: for two minutes it is answered as kept, unread again; then, while
 kept, it is answered at once and read again behind the answer for the next
 to ask, once at a time. Serverless, where nothing outlives an answer, a
-read older than two minutes is read again before it is answered. The
+read older than two minutes is read again before it is answered. One GitHub
+refuses to read again (the GitHub App's permission for it withdrawn, the
+repository or item gone) is no longer kept, the next to ask refused as
+GitHub refused it. The
 Agents tab's pages are kept so too.
 
 
