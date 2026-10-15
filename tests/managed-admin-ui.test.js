@@ -943,3 +943,21 @@ test('upload and location refusals name team access only when the server reports
     for (const call of calls) await assert.rejects(call(), { message })
   }
 })
+
+test('an admin opens the repositories\' risk page from its button beside Aliases', t => {
+  const page = createPage(Repositories)
+  page.session = adminSession
+  page._data = { repositories: [], connectedCount: 0 }
+  // The page's events go to the document, as the sidebar listens for them there.
+  const events = []
+  const document = new EventTarget()
+  document.addEventListener('managed-admin-navigate', event => { events.push(event.detail) })
+  globalThis.document = document
+  t.after(() => { delete globalThis.document })
+  const pages = templates(page.render()).find(template => template.strings.join('').includes('class="repository-pages"'))
+  assert.match(pages.strings.join(''), />Aliases<\/button>[^]*>Risk<\/button>/u, 'Risk beside Aliases')
+  pages.values[1]()
+  assert.deepEqual(events, [{ view: 'manage-repo-risk' }])
+  page.session = { ...adminSession, role: 'manage' }
+  assert.equal(templates(page.render()).some(template => template.strings.join('').includes('class="repository-pages"')), false, 'an admin\'s alone')
+})

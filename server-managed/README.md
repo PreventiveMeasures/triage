@@ -1067,8 +1067,8 @@ version since, as it removes malware, risk finds it missing from the package's
 whole document and the scan tells it as one npm removed. Rows kept longer
 than they count are removed as new ones are written, at most once an hour. What risk keeps of each package
 (`npm-risk.ts`) is beneath that. Closing the response, or leaving it idle for
-five minutes, stops the scan. The page is `/manage/repositories/risk`, not yet
-linked from the Manage navigation.
+five minutes, stops the scan. The page is `/manage/repositories/risk`, opened
+from the Repositories page's Risk button, beside Aliases.
 
 # Bundle commits and tags
 
