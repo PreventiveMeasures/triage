@@ -36,7 +36,8 @@ function npmWokenFiles(base, other, files) {
 // one of the hosts' tags new to a file it adds or changes (hosts.js
 // npmExfiltration), a finding a tag a level higher than its own
 // (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
-// code file of 256 KiB or more it adds (npmLargeCode, `large-code`); a file
+// code file of 256 KiB or more it adds, one node runs as a script whatever
+// its name too (npmLargeCode, `large-code`); a file
 // it changes that had no line over 200 characters and now has one over 2,000
 // (npmBecameUnreadable, `now-unreadable`); a file it adds or changes with
 // an obfuscator's fingerprint where the one compared with had none
@@ -56,7 +57,8 @@ function npmFileFindings(base, other, files, major) {
   const after = row => npmVersionFileRisk(other, row.path)
   const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.renamedFrom ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
-  const touched = [...files.onlyOther, ...changed, ...npmWokenFiles(base, other, files)]
+  const woken = npmWokenFiles(base, other, files)
+  const touched = [...files.onlyOther, ...changed, ...woken]
   const sizes = bundleFileSizes(other)
   // The files that hold what they didn't before, each with that.
   const gained = key => touched.map(row => ({ path: row.path, added: npmFoundAdded(after(row)[key], before(row)?.[key] ?? null) })).filter(row => row.added)
@@ -72,7 +74,8 @@ function npmFileFindings(base, other, files, major) {
       const rows = exfiltration.map(row => ({ path: row.path, added: npmHostsTagged(row.added, tag) })).filter(row => row.added)
       return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
     }),
-    { id: 'large-code', severity: 'critical', files: files.onlyOther.filter(row => npmLargeCode(row.path, sizes.get(row.path))).map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
+    { id: 'large-code', severity: 'critical', files: [...files.onlyOther, ...woken].filter(row => npmLargeCode(row.path, sizes.get(row.path), npmLoadedScripts(other).has(row.path)))
+      .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
     { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability, npmLoadedScripts(other).has(row.path)))
       .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest,
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
@@ -191,7 +194,7 @@ export function npmBaseFilesTell(other, manifest) {
   const sizes = bundleFileSizes(other)
   return [...bundleFilesAsMap(other).keys()].some(path => {
     const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
-    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability, npmLoadedScripts(other).has(path)) || npmLargeCode(path, sizes.get(path))
+    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability, npmLoadedScripts(other).has(path)) || npmLargeCode(path, sizes.get(path), npmLoadedScripts(other).has(path))
       || npmBinaryCode(path, readability, npmLoadedScripts(other).has(path))
       || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
   })

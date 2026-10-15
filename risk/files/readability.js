@@ -45,11 +45,12 @@ export function npmObfuscation(text) {
 
 // A code file this large is mostly a bundle, worth a look where a version
 // adds it: JavaScript or TypeScript, not a declaration file, which holds no
-// code that runs.
+// code that runs, or any file node runs as a script (`script`, npm/files.js
+// npmLoadedScripts).
 export const NPM_LARGE_CODE = 256 * 1024
 const CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/iu
 const DECLARATION = /\.d\.[cm]?ts$/iu
-export const npmLargeCode = (path, bytes) => typeof bytes === 'number' && bytes >= NPM_LARGE_CODE && CODE.test(path) && !DECLARATION.test(path)
+export const npmLargeCode = (path, bytes, script = false) => typeof bytes === 'number' && bytes >= NPM_LARGE_CODE && (script || (CODE.test(path) && !DECLARATION.test(path)))
 
 // A code file that isn't text (npmFileReadability's `binary`: not UTF-8, or
 // holding a NUL), by its path and how it reads, a declaration file too, or

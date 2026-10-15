@@ -223,6 +223,17 @@ test('a file a version held alike that its code now loads, told as new: what nod
   assert.deepEqual(findings.find(({ id }) => id === 'new-hosts')?.hosts.map(({ host, path }) => [host, path]), [['collector.attacker.dev', 'data.txt']], 'and a host it names new')
 })
 
+test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const large = 'x = 1\n'.repeat(48 * 1024)
+  const before = version('heavy', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('heavy', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'payload.txt': large, 'notes.txt': large }, meta, ago(40))
+  npm(t, [{ name: 'heavy', versions: [before, after] }])
+  const assessment = await assessNpm('heavy', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(assessment.findings.find(({ id }) => id === 'large-code'), { id: 'large-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: large.length }] }, 'not a file nothing loads')
+  assert.deepEqual([assessment.files['payload.txt'].stamps, assessment.files['notes.txt'].stamps], [[{ name: 'Large', severity: 'notice' }], []])
+})
+
 test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const before = version('auth', '1.0.0', { 'package.json': '{}', 'lib/run.js': "require('child_process').exec(cmd)\n", 'lib/rc.js': "readFileSync(join(homedir(), '.npmrc'))\n" }, meta, ago(60))

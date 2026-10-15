@@ -22,12 +22,12 @@ const severityOf = mark => mark === 'warn' ? 'high' : 'notice'
 // obfuscator's fingerprint, a warning's; and its control characters, long
 // lines and category, by their marks, but for what reads as most files do
 // (UTF-8, ASCII) and a source map.
-function npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) {
+function npmStampsOf({ path, bytes, readability, runsCode, exfiltration, script }) {
   const category = npmTaggedCategory(readability)
   const listed = category !== 'ascii' && category !== 'map' && READABILITY.get(category).mark
   return [...npmRunsCodeFlags(runsCode),
     ...npmHostTags(exfiltration).map(([tag, services]) => ({ name: tag, severity: npmHostSeverity(tag, services) })),
-    ...npmLargeCode(path, bytes) ? [{ name: 'Large', severity: 'notice' }] : [],
+    ...npmLargeCode(path, bytes, script) ? [{ name: 'Large', severity: 'notice' }] : [],
     ...readability.obfuscation ? [{ name: 'Obfuscated', severity: 'high' }] : [],
     ...npmReadabilityLabels(readability).filter(label => label === 'controls' || label === 'long')
       .map(label => ({ name: READABILITY.get(label).tag, severity: severityOf(npmLabelMark(readability, label)) })),
@@ -43,5 +43,5 @@ function npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) {
 export function npmFileRisk(path, text, bytes, script = false) {
   const readability = npmFileReadability(path, text, script)
   const exfiltration = npmExfiltration(path, text, script), runsCode = npmRunsCode(path, text, script)
-  return { readability, runsCode, exfiltration, hosts: npmHosts(path, text, script), stamps: npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) }
+  return { readability, runsCode, exfiltration, hosts: npmHosts(path, text, script), stamps: npmStampsOf({ path, bytes, readability, runsCode, exfiltration, script }) }
 }
