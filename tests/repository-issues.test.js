@@ -45,8 +45,8 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, 'issues', { state: 'open', after: null }]])
-  assert.match(text, /aria-pressed=true [^\n]*>Open <span class="issues-count">1,234<\/span>/u)
-  assert.match(text, /Closed <span class="issues-count">40<\/span>/u)
+  assert.match(text, /aria-pressed=true [^\n]*>Open<span class="n">1,234<\/span>/u)
+  assert.match(text, /Closed<span class="n">40<\/span>/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/12 target="_blank" rel="noopener noreferrer"/u)
   assert.match(text, /aria-label=Open[^]*Issue 12[^]*#12[^]*octo[^]*3h<\/time>/u)
   assert.match(text, /data-tooltip=bug>bug<\/span><span class="issue-labels-rest" style=[^>]*>[^]*>ui<[^]*>docs<[^]*>perf<\/span>(?:<\/span>){3}<span class="issue-label is-more">\+2</u,
@@ -62,7 +62,7 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   const reading = templateText(view.render())
   assert.deepEqual(requests.at(-1), [7, 'issues', { state: 'closed', after: null }])
   assert.match(reading, /Reading the issues…/u)
-  assert.match(reading, /Open <span class="issues-count">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed <span class="issues-count">40<\/span>/u)
+  assert.match(reading, /Open<span class="n">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed<span class="n">40<\/span>/u)
   view.pick('open')
 })
 

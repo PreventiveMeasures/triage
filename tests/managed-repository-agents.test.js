@@ -71,7 +71,8 @@ const firstPage = () => ({ data: { repository: {
     pullNode(921, { headRefName: 'claude/apps', body: `Apps.\n\n- Its fingerprint, \`🤖 Generated with [Neo](\`.\n\n${session}` }),
     null, { number: 'x' },
   ] },
-  defaultBranchRef: { target: { history: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+  // GitHub's cursor of a commit's history, `<oid> <offset>`.
+  defaultBranchRef: { target: { history: { pageInfo: { hasNextPage: true, endCursor: `${'c'.repeat(40)} 99` }, nodes: [
     commitNode(a, `Fix it\n\nClaude-Session: ${session}`),
     // A commit Claude authored, naming no session; one a pull request merged; one by hand.
     commitNode(b, 'Fix a flaky test', { author: { email: 'noreply@anthropic.com', user: null } }),
@@ -103,9 +104,16 @@ const refPages = {
   'refs/heads/dependabot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ prefix: 'refs/heads/dependabot/', name: 'npm_and_yarn/ws-8.21.0',
     target: { committedDate: '2026-10-15T06:00:00Z', message: 'Bump ws', author: { email: '49699333+dependabot[bot]@users.noreply.github.com', user: null } } }] } },
 }
+// The commits the app agents' accounts authored, however far back: one
+// deeper than the first page, and one it holds too.
+const authoredPage = () => ({ data: { repository: { defaultBranchRef: { target: { history: { nodes: [
+  commitNode('f'.repeat(40), 'Move the database (#50)', { author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
+  commitNode('9'.repeat(40), 'Fix the build (#7)', { committedDate: '2026-05-14T00:00:00Z',
+    author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
+] } } } } } })
 const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
-  : firstPage()
+  : query.includes('author: { emails: $emails }') ? authoredPage() : firstPage()
 
 test('the first page reads pull requests, the default branch\'s commits no pull request merged, issues and agents\' branches, and answers their agents\' marks, never their texts', async t => {
   const request = await fixture(t)
@@ -127,8 +135,11 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     createdAt: Date.parse('2026-10-14T00:00:00Z'), updatedAt: Date.parse('2026-10-15T00:00:00Z') })
   assert.deepEqual(body.commits.map(commit => [commit.oid, commit.title, commit.signals]), [[a, 'Fix it', sessionSignals],
     [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, agents: [] }], ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, agents: ['neo'] }],
-    ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }]],
-  'those no agent marked, or a pull request merged, are not')
+    ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }],
+    ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }]],
+  'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
+  assert.deepEqual(asked.find(query => query.query.includes('author: { emails: $emails }')).variables.emails, ['198982749+Copilot@users.noreply.github.com',
+    '198982749+copilot-swe-agent@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', createdAt: null, updatedAt: null },
     { number: 13, title: 'History', state: 'closed', author: null, createdAt: null, updatedAt: null }])
   // Every page of each agent's branches read, the newest first, named in full.
@@ -140,7 +151,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
   assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' },
     { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])
-  assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: null }])
+  assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: `${'c'.repeat(40)} 99` }], 'read on from GitHub\'s cursors, a commit\'s with its space')
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')
   const page = asked.find(query => query.query.includes('pullRequests('))
   // An agent links its session in its own texts: no comment is read, nor an issue's body.
@@ -162,6 +173,9 @@ test('a later page reads on from the cursors it names alone, without issues and 
   assert.equal(asked.length, 1, 'no branches read again')
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', pulls: cursor, commits: null, first: false, readPulls: true, readCommits: false })
   assert.deepEqual([body.pulls.map(pull => pull.number), body.commits, body.issues, body.branches, body.more], [[800], [], undefined, undefined, false])
+  // The default branch's commits read on from GitHub's cursor, its space and all.
+  assert.equal((await request({ repoId: '1', commits: `${'c'.repeat(40)} 99` })).status, 200)
+  assert.deepEqual(asked.at(-1).variables, { owner: 'org', name: 'repo', pulls: null, commits: `${'c'.repeat(40)} 99`, first: false, readPulls: false, readCommits: true })
 })
 
 test('agents\' work is read only with a token by a reader whose grants reach the whole repository; a cursor that isn\'t one is a bad request', async t => {
@@ -169,6 +183,7 @@ test('agents\' work is read only with a token by a reader whose grants reach the
   assert.deepEqual(await (await fixture(t, { tokens: null }))({ repoId: '1' }), { status: 403, body: { error: 'github-token-required' } })
   assert.deepEqual(await (await fixture(t, { role: 'manage' }))({ repoId: '1' }), { status: 404, body: { error: 'no-directory' } })
   const request = await fixture(t)
-  for (const query of [{ repoId: '0' }, { repoId: '1', pulls: 'a b' }, { repoId: '1', commits: '' }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
+  for (const query of [{ repoId: '0' }, { repoId: '1', pulls: 'a b' }, { repoId: '1', commits: '' }, { repoId: '1', commits: 'a b' },
+    { repoId: '1', pulls: `${'c'.repeat(40)} 99` }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)
 })

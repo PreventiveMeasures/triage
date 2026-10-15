@@ -46,6 +46,8 @@ export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
   { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' },
 ]
+// The app agents' accounts' no-reply addresses, by each login of theirs.
+const AGENT_EMAILS = APP_AGENTS.flatMap(({ account }) => account?.logins.map(login => `${account.id}+${login}@users.noreply.github.com`) ?? [])
 // Whose branches are read, by their prefixes.
 const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
 
@@ -57,6 +59,17 @@ const BRANCHES_QUERY = `query($owner: String!, $name: String!, $prefix: String!,
       pageInfo { hasNextPage endCursor }
       nodes { prefix name target { ... on Commit { committedDate message author { email user { login databaseId } } } } }
     }
+  }
+}`
+// What a commit of the default branch is read by.
+const COMMIT_FIELDS = 'oid messageHeadline message committedDate additions deletions author { email user { login databaseId } } associatedPullRequests(first: 1) { totalCount }'
+// The newest of the default branch's commits the app agents' accounts
+// authored, by their GitHub no-reply addresses, however far back: a bot's
+// commits pushed with no pull request here (as before a repository moved)
+// may lie deeper than pages are read on to.
+const AUTHORED_QUERY = `query($owner: String!, $name: String!, $emails: [String!]!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { target { ... on Commit { history(first: ${AGENT_COMMITS_PAGE}, author: { emails: $emails }) { nodes { ${COMMIT_FIELDS} } } } } }
   }
 }`
 const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $commits: String, $first: Boolean!, $readPulls: Boolean!, $readCommits: Boolean!) {
@@ -71,7 +84,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
     defaultBranchRef { target { ... on Commit {
       history(first: ${AGENT_COMMITS_PAGE}, after: $commits) @include(if: $readCommits) {
         pageInfo { hasNextPage endCursor }
-        nodes { oid messageHeadline message committedDate additions deletions author { email user { login databaseId } } associatedPullRequests(first: 1) { totalCount } }
+        nodes { ${COMMIT_FIELDS} }
       }
     } } }
     issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
@@ -179,32 +192,39 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
   return found.toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES)
 }
 
-const nextCursor = (connection: Connection<unknown> | undefined) => {
+// A cursor of the default branch's commits: GitHub names one by a commit
+// and how many on from it, `<oid> <offset>`, a space between.
+export const COMMITS_CURSOR = /^(?:[!-~]{1,256}|[\da-f]{40} \d{1,9})$/u
+
+const nextCursor = (connection: Connection<unknown> | undefined, cursor = ISSUES_CURSOR) => {
   const info = connection?.pageInfo
-  return info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
+  return info?.hasNextPage === true && typeof info.endCursor === 'string' && cursor.test(info.endCursor) ? info.endCursor : null
 }
 
 // A page of what the repository's agents left: its pull requests on from
 // the cursor `pulls` ends at, its default branch's commits on from
-// `commits` (the first page where neither is named, with its issues and its
-// agents' branches, and the app agents it may name), and the cursors reading
-// on from each, null where either is read whole.
+// `commits` (the first page where neither is named, with its issues, its
+// agents' branches and the commits the app agents' accounts authored, and
+// the app agents it may name), and the cursors reading on from each, null
+// where either is read whole.
 export async function repositoryAgents(fullName: string, token: string, cursors: { pulls: string | null; commits: string | null },
   fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const first = cursors.pulls === null && cursors.commits === null
-  const [data, branches] = await Promise.all([
+  const [data, branches, authored] = await Promise.all([
     githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
       readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Promise<Page>,
     first ? Promise.all(BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
+    first ? githubGraphql(AUTHORED_QUERY, { owner, name, emails: AGENT_EMAILS }, token, fetchImpl) as Promise<Page> : null,
   ])
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const history = repository.defaultBranchRef?.target?.history
-  const after = { pulls: nextCursor(repository.pullRequests), commits: nextCursor(history) }
+  const after = { pulls: nextCursor(repository.pullRequests), commits: nextCursor(history, COMMITS_CURSOR) }
+  const commits = [...history?.nodes ?? [], ...authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []].flatMap(node => directCommit(node) ?? [])
   return {
     pulls: (repository.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),
-    commits: (history?.nodes ?? []).flatMap(node => directCommit(node) ?? []),
+    commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
     ...first ? {
       issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
       branches: branches.flat(),

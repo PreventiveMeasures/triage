@@ -53,9 +53,9 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, {}]])
-  assert.match(text, /aria-pressed=true [^\n]*>All <span class="issues-count">3\+<\/span>/u)
-  assert.match(text, />Claude <span class="issues-count">1\+</u)
-  assert.match(text, />Codex <span class="issues-count">2\+</u)
+  assert.match(text, /aria-pressed=true [^\n]*>All<span class="n">3\+<\/span>/u)
+  assert.match(text, />Claude<span class="n">1\+</u)
+  assert.match(text, />Codex<span class="n">2\+</u)
   assert.match(text, /4 pull requests read/u)
   // Each agent's pull requests, branches and commits to main without one, by icon, more to come
   // where its pages are left: pull requests', and the branches waiting on them, not commits'.
@@ -207,7 +207,7 @@ test('an agent the server knows by its app: picked after Claude and Codex, count
   assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }],
     'only well formed, never Claude or Codex')
   const text = templateText(view.render())
-  assert.match(text, />Claude <span class="issues-count">2<[^]*>Codex <span class="issues-count">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo <span class="issues-count">2</u)
+  assert.match(text, />Claude<span class="n">2<[^]*>Codex<span class="n">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo<span class="n">2</u)
   assert.doesNotMatch(text, /agent-pick is-copilot/u, 'an agent the server knows with no session read is not picked among')
   assert.match(text, /class="agent-totals"><span class="agent-stats" role="group" aria-label=Neo>[^]*aria-label=Claude>/u)
   assert.doesNotMatch(text, /role="group" aria-label=Codex>/u, 'an agent with no session read is not counted')
