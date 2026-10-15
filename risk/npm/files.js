@@ -77,8 +77,10 @@ function resolved(parts, spec) {
   return all
 }
 // Those parts as a path in the package where it is installed (`root`, its
-// directory's parts, `node_modules/<name>`): null for one outside it.
-const within = (root, parts) => parts !== null && root.every((part, index) => parts[index] === part) ? parts.slice(root.length).join('/') : null
+// directory's parts, `node_modules/<name>`), told as a filesystem telling
+// neither case nor Unicode's normalization apart tells them (folded,
+// `../LOADS/x` for `loads`): null for one outside it.
+const within = (root, parts) => parts !== null && root.every((part, index) => index < parts.length && (parts[index] === part || folded(parts[index]) === part)) ? parts.slice(root.length).join('/') : null
 // `spec` from the directory `dir` ('' for the package's top) as a path in the
 // package, one leading out of it and back in by its name too
 // (`../<name>/x`); null for one leading elsewhere.
@@ -109,10 +111,10 @@ function urlJoined(root, dir, spec) {
   }
 }
 
-// Where a package is installed (`node_modules/<name>`), as parts; none for
-// one with no name, or one no directory could be.
+// Where a package is installed (`node_modules/<name>`), as parts, folded
+// (within); none for one with no name, or one no directory could be.
 const NAME = /^(?:@[^/]+\/)?[^/@.][^/]*$/u
-const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split('/').every(part => part !== '.' && part !== '..') ? ['node_modules', ...name.split('/')] : []
+const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split('/').every(part => part !== '.' && part !== '..') ? ['node_modules', ...name.split('/')].map(folded) : []
 
 // A path as a filesystem telling neither case nor Unicode's normalization
 // apart takes it, as Windows' and macOS's do by default: `Payload.txt` for
