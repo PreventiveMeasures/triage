@@ -1595,8 +1595,13 @@ pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
 `deletions`, `head` and `base`, its `state` `merged` where it was. They are
 the whole repository's, so they are read only where the reader's grants
 reach all of it (`404 no-directory` otherwise), with the reader's own GitHub
-access; GraphQL needs a token (`403 github-token-required` without one).
-Access is checked again before they are sent.
+access; GraphQL needs a token (`403 github-token-required` without one). A
+nonpublic repository's are read with its GitHub App's installation, which
+lists pull requests only with **Pull requests: read** (`502
+github-status-403`, the tab saying so, where GitHub refuses them) and reads a
+pull request's checks only with **Checks: read** and **Commit statuses:
+read**, its tiles showing none where GitHub refuses those alone (see GitHub
+App setup). Access is checked again before they are sent.
 
 
 # npm package viewer
@@ -2292,10 +2297,12 @@ Use one GitHub App for sign-in and repository access: `GITHUB_CLIENT_ID` and
 `GITHUB_CLIENT_SECRET` are its user-authorization credentials; `GITHUB_APP_ID`,
 `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are its installation credentials.
 Keep **Account permissions** unset/minimal so login requests no elevated account
-access. Repository **Contents: read** and **Issues: read and write** are approved
-when connecting repositories, not added as login OAuth scopes. Existing
-installations must have their owner approve the Issues permission update; the
-issue dialog offers the installation flow when approval is missing. GitHub App
+access. Repository **Contents: read**, **Issues: read and write** and **Pull
+requests: read** are approved when connecting repositories, not added as login
+OAuth scopes; **Checks: read** and **Commit statuses: read** let the Pull
+requests tab show a pull request's checks. Existing installations must have
+their owner approve each permission update; the issue dialog offers the
+installation flow when approval is missing. GitHub App
 permissions are configured on the app, rather than requested as incremental
 OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 

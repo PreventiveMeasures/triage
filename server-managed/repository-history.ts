@@ -75,13 +75,20 @@ export async function repositoryRefTips(fullName: string, token: string | null, 
   return { branches: tips(branches), tags: tips(tags) }
 }
 
+export type GraphqlError = { type?: unknown; path?: unknown }
+
 // One GraphQL query with `token`, answered with its `data`: one GitHub answers
-// with errors is rate limited, names what isn't there, or else is malformed.
-export async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch) {
-  const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }) as { data?: unknown; errors?: { type?: unknown }[] } | null
-  if (Array.isArray(body?.errors) && body.errors.length > 0) {
-    if (body.errors.some(error => error?.type === 'RATE_LIMITED')) throw new GithubApiError(429, 'github-rate-limited', 60)
-    if (body.errors.some(error => error?.type === 'NOT_FOUND')) throw new GithubApiError(404, 'github-not-found')
+// with errors, but for those the caller reads past (`tolerated`, the fields
+// they name then null), is rate limited, names what isn't there, is refused,
+// as one a GitHub App lacks the permission for is, or else is malformed.
+export async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch,
+  tolerated: (error: GraphqlError) => boolean = () => false) {
+  const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }) as { data?: unknown; errors?: GraphqlError[] } | null
+  const errors = Array.isArray(body?.errors) ? body.errors.filter(error => !tolerated(error)) : []
+  if (errors.length > 0) {
+    if (errors.some(error => error?.type === 'RATE_LIMITED')) throw new GithubApiError(429, 'github-rate-limited', 60)
+    if (errors.some(error => error?.type === 'NOT_FOUND')) throw new GithubApiError(404, 'github-not-found')
+    if (errors.some(error => error?.type === 'FORBIDDEN')) throw new GithubApiError(502, 'github-status-403')
     throw new GithubApiError(502, 'github-malformed')
   }
   return body?.data

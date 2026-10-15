@@ -3,9 +3,11 @@
 // closed (a pull request's merged among them), the most recently updated
 // first, a page at a time, each as one tile has room for, with how many are
 // open and closed. A pull request's tile names its branches, its size, its
-// review and its checks, which GraphQL alone gives, so it needs a token.
+// review and its checks, which GraphQL alone gives, so it needs a token. A
+// nonpublic repository's are read with its GitHub App's installation, which
+// reads pull requests only with their own permission (README).
 import { GithubApiError } from './github-app.ts'
-import { githubGraphql } from './repository-history.ts'
+import { type GraphqlError, githubGraphql } from './repository-history.ts'
 
 export const ISSUES_PAGE = 50
 const MAX_LABELS = 6
@@ -78,12 +80,17 @@ function item(kind: IssuesKind, node: Node | null) {
     head: nameOf(node.headRefName), base: nameOf(node.baseRefName) }
 }
 
+// A pull request's checks, which a GitHub App reads only with the Checks and
+// Commit statuses permissions, refused: its tile then shows none. Any other
+// field refused, the list is, as one without Pull requests: read is.
+const checksRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path) && error.path.includes('statusCheckRollup')
+
 // A page of the repository's issues or pull requests in `state`, after the
 // page `after` ended (null for the first): its `items`, how many are open and
 // closed (`counts`), and, where more follow, the cursor reading them (`after`).
 export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl) as Page
+  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, checksRefused) as Page
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const info = repository.page?.pageInfo

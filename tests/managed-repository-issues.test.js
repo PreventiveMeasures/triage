@@ -106,6 +106,18 @@ test('issues are read only with a token, by a reader whose grants reach the whol
   assert.deepEqual(await (await fixture(t))({ repoId: '1', kind: 'pulls' }), { status: 404, body: { error: 'github-not-found' } })
 })
 
+test('a GitHub App refused a pull request\'s checks lists it without them; refused the list, it says so', async t => {
+  const refused = path => ({ type: 'FORBIDDEN', path, message: 'Resource not accessible by integration' })
+  let errors = [refused(['repository', 'page', 'nodes', 0, 'commits', 'nodes', 0, 'commit', 'statusCheckRollup'])]
+  github(t, () => ({ ...page([{ number: 2, title: 'Pull', state: 'OPEN', isDraft: false, labels: labels(), commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }]), errors }))
+  const request = await fixture(t)
+  const listed = await request({ repoId: '1', kind: 'pulls' })
+  assert.equal(listed.status, 200)
+  assert.deepEqual(listed.body.items.map(item => [item.number, item.checks]), [[2, null]])
+  errors = [refused(['repository', 'page'])]
+  assert.deepEqual(await request({ repoId: '1', kind: 'pulls' }), { status: 502, body: { error: 'github-status-403' } })
+})
+
 test('a list that names no kind or state, or a cursor that isn\'t one, is a bad request', async t => {
   const request = await fixture(t)
   github(t, () => page([]))
