@@ -142,17 +142,24 @@ const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split
 const folded = path => path.toWellFormed().normalize('NFC').toUpperCase().toLowerCase()
 // The files a path names once installed, as a filesystem tells them
 // (folded): its own, and for a .npmignore, a .gitignore npm installs as that;
-// and those a path folded already names (`keyed`), with what follows it in
-// ASCII (`.json`, `/index`), which folds as it is.
+// and the filesystems node may find them on, each telling the files a path
+// names (`named`) by the path as it takes it (`fold`): one telling case
+// apart (`cased`), as Linux's does, and one telling neither case nor
+// Unicode's normalization apart (`folding`, folded), a path folded naming
+// those with what follows it in ASCII (`.json`, `/index`), which folds as
+// it is, every file the other names among them.
 function installedOf(files) {
-  const index = new Map()
-  const put = (key, path) => index.has(key) ? index.get(key).push(path) : index.set(key, [path])
+  const exact = new Map(), index = new Map()
+  const put = (map, key, path) => map.has(key) ? map.get(key).push(path) : map.set(key, [path])
   for (const path of files.keys()) {
-    put(folded(path), path)
-    if (/(?:^|\/)\.gitignore$/u.test(path)) put(folded(path.replace(/\.gitignore$/u, '.npmignore')), path)
+    const aliases = /(?:^|\/)\.gitignore$/u.test(path) ? [path, path.replace(/\.gitignore$/u, '.npmignore')] : [path]
+    for (const alias of aliases) {
+      put(index, folded(alias), path)
+      put(exact, alias, path)
+    }
   }
   const keyed = key => index.get(key) ?? []
-  return { installed: path => path === null ? [] : keyed(folded(path)), keyed }
+  return { installed: path => path === null ? [] : keyed(folded(path)), cased: { named: key => exact.get(key) ?? [], fold: path => path }, folding: { named: keyed, fold: folded } }
 }
 
 // Every string a JSON value holds, however deep it nests them, read
@@ -257,30 +264,31 @@ const selfResolved = (root, { exports, hasExports }, spec) => hasExports
   ? mappedTo(exports.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => target === EVERY ? EVERY : urlJoined(root, '', target))
   : [urlJoined(root, '', spec)]
 
-// The path of the first of `extensions` a path (and `key`, it folded) takes
-// that names a file of a version's (`keyed`, installedOf), each a filesystem
-// tells for it its own: none at the package's top, which is no file.
-function firstNamed(keyed, path, key, extensions) {
-  const extension = path === '' ? undefined : extensions.find(each => keyed(`${key}${each}`).length > 0)
+// The path of the first of `extensions` a path takes that names a file of a
+// version's on a filesystem (`system`, installedOf's), each it tells for it
+// its own: none at the package's top, which is no file.
+function firstNamed({ named, fold }, path, extensions) {
+  const key = path === '' ? null : fold(path)
+  const extension = key === null ? undefined : extensions.find(each => named(`${key}${each}`).length > 0)
   return extension === undefined ? null : `${path}${extension}`
 }
-const indexFile = (keyed, path, key) => firstNamed(keyed, path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)
+const indexFile = (system, path) => firstNamed(system, path === '' ? 'index' : `${path}/index`, TRIED)
 
 // The files a path `require` takes finds, the first it tries that names a
 // file: its own, one by its name and an extension (`.js`, `.json`, `.node`,
 // `payload.JSON` as a filesystem folding case finds it), but where it takes
 // it as a directory's (`directory`, DIRECTORY); else a directory's
 // package.json `main`, found so or by its `index` and an extension; else the
-// directory's `index` so, as node falls back to it.
-function requiredFiles(files, keyed, root, path, directory) {
+// directory's `index` so, as node falls back to it; on a filesystem
+// (`system`, installedOf's), as each finds its own first.
+function requiredFiles(files, system, root, path, directory) {
   if (path === null) return []
-  const key = folded(path)
-  const file = directory ? null : firstNamed(keyed, path, key, ['', ...TRIED])
+  const file = directory ? null : firstNamed(system, path, ['', ...TRIED])
   if (file !== null) return [file]
-  const mains = keyed(path === '' ? 'package.json' : `${key}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
+  const mains = system.named(path === '' ? 'package.json' : `${system.fold(path)}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
     .flatMap(main => [...separated(main)].map(spec => joined(root, path, spec))).filter(at => at !== null)
-    .map(at => firstNamed(keyed, at, folded(at), ['', ...TRIED]) ?? indexFile(keyed, at, folded(at))).filter(found => found !== null)
-  return mains.length > 0 ? mains : [indexFile(keyed, path, key)].filter(found => found !== null)
+    .map(at => firstNamed(system, at, ['', ...TRIED]) ?? indexFile(system, at)).filter(found => found !== null)
+  return mains.length > 0 ? mains : [indexFile(system, path)].filter(found => found !== null)
 }
 
 // The `#` specifiers each package.json of a version's files maps
@@ -320,7 +328,7 @@ export function npmLoadedScripts(version) {
   let loaded = loadedByVersion.get(keyOf(version))
   if (loaded) return loaded
   loaded = new Set()
-  const files = bundleFilesAsMap(version), { installed, keyed } = installedOf(files), queue = []
+  const files = bundleFilesAsMap(version), { installed, cased, folding } = installedOf(files), queue = []
   const top = entriesOf(files.get(files.has('package.json') ? 'package.json' : installed('package.json')[0]))
   const root = rootOf(top.name)
   // What a loader takes (`by`) runs, as the name it is asked by tells, or
@@ -340,7 +348,12 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  const requires = (path, directory) => { for (const file of requiredFiles(files, keyed, root, path, directory)) add(file, 'require') }
+  // On either filesystem: where one folding case finds none, neither does
+  // one telling case apart, which finds fewer.
+  const requires = (path, directory) => {
+    const found = requiredFiles(files, folding, root, path, directory)
+    if (found.length > 0) for (const file of [...found, ...requiredFiles(files, cased, root, path, directory)]) add(file, 'require')
+  }
   requires('', true)
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
     .flatMap(([path, text]) => entriesOf(text).targets.map(({ pattern, target }) => [path.slice(0, -'package.json'.length - 1), target, pattern && target.includes('*')]))

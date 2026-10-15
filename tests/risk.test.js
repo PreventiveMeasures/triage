@@ -166,6 +166,11 @@ test('a path `require` takes as a directory\'s alone, ending in `/` or in a `.` 
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['conf/run.txt', 'payload/evil.txt', 'up/go.txt'])
 })
 
+test('a path `require` takes found as each filesystem finds it first: one telling case apart reaching a directory past a file only one folding case takes for it', () => {
+  const files = { 'index.js': "require('./dir')\n", 'DIR': 'x', 'dir/package.json': '{"main":"payload.txt"}', 'dir/payload.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['DIR', 'dir/payload.txt'])
+})
+
 test('a `#` specifier a script names, as the package\'s `imports` map it, a pattern\'s naming nothing past its `*` too', () => {
   const files = { 'package.json': JSON.stringify({ imports: { '#*': './*', '#fixed': './fixed.txt' } }), 'index.js': "require('#lib/payload.txt')\nimport('#lib/data.txt')\n",
     'lib/payload.txt': 'x', 'lib/data.txt': 'x', 'lib/unnamed.txt': 'x', 'fixed.txt': 'x' }
