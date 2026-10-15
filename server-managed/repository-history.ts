@@ -4,8 +4,8 @@
 // the branches and tags pointing at commits. From a revision, a page at a
 // time, of the whole repository or of the commits touching a directory, as
 // GitHub's REST API lists them, for any reader; or, as `--all`, across the
-// repository's most recently committed to branches at once, in GraphQL
-// queries, which need a token.
+// repository's most recently committed to branches at once, then on from where
+// those stop, in GraphQL queries, which need a token.
 import { GithubApiError, githubJson } from './github-app.ts'
 
 export const HISTORY_PAGE = 100
@@ -147,9 +147,30 @@ async function repositoryHeads(owner: string, name: string, token: string, fetch
   return { heads, repository: first, cut: true }
 }
 
+// The latest commits of each of `tips`, each commit once, and whether any of
+// their histories goes on past those.
+async function tipHistories(owner: string, name: string, tips: string[], token: string, fetchImpl: typeof fetch) {
+  const commits = new Map<string, HistoryCommit>()
+  let more = false
+  if (tips.length === 0) return { commits, more }
+  const data = await githubGraphql(historiesQuery(tips.length), { owner, name, ...Object.fromEntries(tips.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
+  for (const at of tips.keys()) {
+    const history = data?.repository?.[`b${at}`]?.history
+    if (history?.pageInfo?.hasNextPage === true) more = true
+    for (const node of history?.nodes ?? []) {
+      const commit = historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name,
+        node?.author?.user?.login, node?.committedDate)
+      if (commit && !commits.has(commit.sha)) commits.set(commit.sha, commit)
+    }
+  }
+  return { commits, more }
+}
+
 // `--all`: the latest commits of the repository's most recently committed to
 // branches, its default branch's among them, each commit once; the branches
-// naming them and the latest tags; and whether any is left out (`more`).
+// naming them and the latest tags; the branches not read, newest first, whose
+// tips none of those is (`unread`), where reading on goes; and whether any is
+// left out (`more`).
 export async function repositoryAllHistory(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const { heads, repository, cut } = await repositoryHeads(owner, name, token, fetchImpl)
@@ -159,23 +180,11 @@ export async function repositoryAllHistory(fullName: string, token: string, fetc
   if (defaultBranch && typeof defaultTip === 'string' && SHA.test(defaultTip) && !heads.some(head => head.name === defaultBranch)) {
     heads.push({ name: defaultBranch, sha: defaultTip, at: timeOf(repository?.defaultBranchRef?.target?.committedDate) })
   }
-  const shown = heads.toSorted((a, b) => Number(b.name === defaultBranch) - Number(a.name === defaultBranch) || (b.at ?? 0) - (a.at ?? 0))
-    .slice(0, ALL_BRANCHES)
-  const tips = [...new Set(shown.map(head => head.sha))]
-  const commits = new Map<string, HistoryCommit>()
-  let more = cut || heads.length > shown.length
-  if (tips.length > 0) {
-    const data = await githubGraphql(historiesQuery(tips.length), { owner, name, ...Object.fromEntries(tips.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
-    for (const at of tips.keys()) {
-      const history = data?.repository?.[`b${at}`]?.history
-      if (history?.pageInfo?.hasNextPage === true) more = true
-      for (const node of history?.nodes ?? []) {
-        const commit = historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name,
-          node?.author?.user?.login, node?.committedDate)
-        if (commit && !commits.has(commit.sha)) commits.set(commit.sha, commit)
-      }
-    }
-  }
+  const newest = heads.toSorted((a, b) => Number(b.name === defaultBranch) - Number(a.name === defaultBranch) || (b.at ?? 0) - (a.at ?? 0))
+  const shown = newest.slice(0, ALL_BRANCHES)
+  const read = await tipHistories(owner, name, [...new Set(shown.map(head => head.sha))], token, fetchImpl)
+  const { commits } = read
+  const more = cut || heads.length > shown.length || read.more
   // A tag by the commit it tags, through the annotated tags between; one
   // ending at no commit names none.
   const tags = (repository?.tags?.nodes ?? []).flatMap(ref => {
@@ -186,5 +195,22 @@ export async function repositoryAllHistory(fullName: string, token: string, fetc
   })
   // Every branch naming a commit listed, those not read among them.
   const branches = heads.flatMap(({ name: branch, sha }) => commits.has(sha) ? [{ name: branch, sha }] : [])
-  return { commits: [...commits.values()], branches, tags, defaultBranch, more }
+  const unread = newest.slice(ALL_BRANCHES).filter(head => !commits.has(head.sha))
+  return { commits: [...commits.values()], branches, tags, defaultBranch, unread, more }
+}
+
+// `--all` read on, its Older commits: the latest commits of each of
+// `starts`, the commits where those read stop and branches not yet read,
+// each commit once.
+export async function repositoryAllHistoryFrom(fullName: string, token: string, starts: string[], fetchImpl: typeof fetch = globalThis.fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  return { commits: [...(await tipHistories(owner, name, starts, token, fetchImpl)).commits.values()] }
+}
+
+// Where `--all` reads on from, as a request names them (`from`): as many
+// commit ids, each once, as branches are read at first; null for none, or
+// for one that isn't a commit id.
+export function historyStarts(from: string): string[] | null {
+  const starts = [...new Set(from.split(','))]
+  return starts.length <= ALL_BRANCHES && starts.every(sha => SHA.test(sha)) ? starts : null
 }

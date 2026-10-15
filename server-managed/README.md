@@ -1524,9 +1524,13 @@ on one parent join where it comes; each line keeps a color of its own, unlike
 its neighbors' where it can, the default branch's first lane and color its
 own; a parent not listed is a short dotted line on. At the repository's root
 it reads **All branches**, as `--all` adds them, else **This revision**'s, the
-commit shown first, a hundred at a time, **Older commits** reading the next; the
-commit shown is marked, and, where every branch's latest commits don't reach it,
-a link shows its own history. A directory lists the commits touching it, in a
+commit shown first, a hundred at a time, **Older commits** reading the next.
+All branches' **Older commits** reads on from where those listed stop, their
+parents not listed and the branches not read yet, the newest 25 first (a
+parent by its child's time), a hundred commits from each, each commit once; a
+branch not read joins those named once a commit listed is its tip. The
+commit shown is marked, and, where every branch's latest commits don't reach
+it, a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
 commit's code, named by the branch, else the tag, naming it. History reads
 none of the directory's files: its route at a commit opens it alone, its other
@@ -1540,13 +1544,17 @@ commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
 GitHub's list of commits gives them (`repository-history.ts`), with, on the
 first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
 GitHub's first page of each lists them. With `all=true`, at the root and first
-page alone, it answers `{ all, commits, branches, tags, defaultBranch, more }`
+page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
 from GraphQL: the branches' tips with their commits' times, a hundred a page
 for up to ten pages (GitHub orders heads by name alone), then, in one query,
 the latest hundred commits of the default branch and the 24 others most
 recently committed to, each commit once; every branch naming a commit listed;
-and the latest hundred tags, an annotated one by the commit it tags. `more`
-where a branch or a branch's commits are left out. GraphQL needs a token: a public repository read without one is `403
+the branches not read whose tips aren't listed, `{ name, sha, at }` each,
+newest first; and the latest hundred tags, an annotated one by the commit it
+tags. `more` where a branch or a branch's commits are left out. A later page
+names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
+`{ all, page, commits, more }`, the latest hundred commits of each, each
+once, `more` but for the deepest page. GraphQL needs a token: a public repository read without one is `403
 github-token-required`, and the tab then shows the revision's history. It is
 read as the code is, with the reader's own GitHub access, only where the
 reader's grants reach the whole directory, and access is checked again before
