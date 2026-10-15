@@ -1587,8 +1587,10 @@ the page for the session five minutes, and on the server for every reader:
   commit's history never changes, so a page kept is never read again, and a
   branch moving on doesn't miss: only the page from its new tip is read.
 - Pages glue on: where a commit listed, or a parent of one not listed, is
-  the top of a page kept, that page joins those listed, and so on, up to two
-  thousand commits. A branch that moved on a few commits reads one page and
+  the top of a page kept, that page joins those listed, and so on, till two
+  thousand commits are listed. The pages from where it starts are listed
+  whole all the same, All branches' 25 tips' as before, two thousand five
+  hundred commits at most. A branch that moved on a few commits reads one page and
   shows all the history read of it before, the pages Older commits read
   among it.
 - The branches and tags naming commits, which move, are kept as Issues'

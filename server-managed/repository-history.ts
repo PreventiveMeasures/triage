@@ -187,8 +187,10 @@ async function readPages(fullName: string, token: string | null, tops: string[],
 // and then kept by its top; glued on to it, the pages kept that start at a
 // parent of a commit listed not listed, or at a commit listed, the oldest
 // first (where each goes on furthest), GLUE_LOOKUP looked up at a time, and
-// those that start where those go on, till HISTORY_GLUED are listed. Each
-// commit once, and whether any goes on past those listed (`more`).
+// those that start where those go on, till HISTORY_GLUED are listed. The
+// pages from `starts` are listed whole, however many that is (all branches'
+// first, as many as ALL_BRANCHES of them): the cap is gluing's. Each commit
+// once, and whether any goes on past those listed (`more`).
 export async function historyFrom(fullName: string, token: string | null, starts: string[], pages: HistoryPages, fetchImpl: typeof fetch = globalThis.fetch) {
   const kept = await pages.read(starts)
   const unread = starts.filter(top => !kept.has(top))
