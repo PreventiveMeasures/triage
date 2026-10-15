@@ -20,7 +20,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
-const { agentStats, filterSessions, sessionLink } = await import('../ui/view/repository-agents.js')
+const { agentStats, filterSessions, pullsReadShare, sessionLink } = await import('../ui/view/repository-agents.js')
 const { agentIcon } = await import('../ui/view/repository-tiles.js')
 const Agents = customElements.get('repository-agents')
 
@@ -57,7 +57,8 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /aria-pressed=true [^\n]*>All<span class="n">3\+<\/span>/u)
   assert.match(text, />Claude<span class="n">1\+</u)
   assert.match(text, />Codex<span class="n">2\+</u)
-  assert.match(text, /4 pull requests read/u)
+  // How much of the pull requests were read, by the highest number read, an issue's among them: 4 of 9.
+  assert.match(text, /role="progressbar" aria-valuemin="0" aria-valuemax="100"\s*aria-valuenow=44 aria-label=4 pull requests read data-tooltip=4 pull requests read>[^]*>44%<\/span>/u)
   // Each agent's pull requests, branches and commits to main without one, by icon, more to come
   // where its pages are left: pull requests', and the branches waiting on them, not commits'.
   assert.match(text, /role="group" aria-label=Claude>[^]*aria-label=2\+ pull requests[^]*aria-label=1\+ branches[^]*aria-label=1 commit to the default branch without a pull request/u)
@@ -108,7 +109,8 @@ test('more read on from the cursors a page ended at, each pull request and commi
   await setImmediate()
   assert.deepEqual(requests.at(-1), [7, { pulls: 'p_1', commits: null }])
   const text = templateText(view.render())
-  assert.match(text, /5 pull requests read/u)
+  assert.match(text, /aria-valuenow=100 aria-label=5 pull requests read[^]*class="read-gauge-check"/u, 'all read, a check')
+  assert.doesNotMatch(text, />100<\/span>/u)
   assert.match(text, />Pull 2<[^]*4 tasks/u, 'an older one on its branch, its first task now')
   assert.match(text, /codex\/old[^]*no pull request/u, 'all read, a branch without one shows')
   assert.doesNotMatch(text, />More</u)
@@ -236,4 +238,13 @@ test('an agent the server knows by its app: picked after Claude and Codex, count
   assert.doesNotMatch(text, /role="group" aria-label=Codex>/u, 'an agent with no session read is not counted')
   assert.match(text, /class="issue-rail"><span class=agent-mark is-neo role="img" aria-label=Neo><img class="agent-avatar" src=\/api\/avatar\/app-3115942 [^]*<span class=agent-mark is-claude role="img" aria-label=Claude>[^]*>Pull 12</u)
   assert.equal(view.list().entry.sessions.filter(item => item.agents[0] === 'neo').length, 2, 'a pull request a session')
+})
+
+test('how much of the pull requests were read: all once none are left, else of the numbers up to the highest read, each taken for one, short of all', () => {
+  const entry = (numbers, issues = [], left = 'p_1') => ({ pulls: numbers.map(number => ({ number })), issues: issues.map(number => ({ number })), after: left ? { pulls: left } : null })
+  assert.equal(pullsReadShare(entry([9, 8, 5, 4], [3])), 44)
+  assert.equal(pullsReadShare(entry([5], [20])), 5, 'an issue\'s number among them')
+  assert.equal(pullsReadShare(entry(Array.from({ length: 100 }, (_, index) => index + 1))), 99, 'more left, short of all')
+  assert.equal(pullsReadShare(entry([])), 0)
+  assert.equal(pullsReadShare(entry([2], [], null)), 100)
 })
