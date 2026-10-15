@@ -395,7 +395,7 @@ class RepositoryHistory extends LitElement {
           </li>`
         })}</ol>
       </div>
-      ${entry.cut ? html`<p class="history-note">Only the first 1,000 branches by name are read.</p>` : nothing}
+      ${entry.cut ? html`<p class="history-note">Only the first 5,000 branches by name are read.</p>` : nothing}
       ${entry.more || entry.moreError ? html`<div class="history-more">
         ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
         <button type="button" ?disabled=${entry.loadingMore} @click=${more}>${entry.loadingMore ? 'Reading…' : 'Older commits'}</button>

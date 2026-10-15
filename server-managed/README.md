@@ -1616,19 +1616,21 @@ the page for the session five minutes, and on the server for every reader:
 page of a revision's history, `{ commit, path, page, commits, more }`, each
 commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
 GitHub's list of commits gives them (`repository-history.ts`), with, on the
-first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
-GitHub's first page of each lists them. A whole repository's is the history
+first page, the `branches` and `tags` naming commits, `{ name, sha }` each:
+with a token, every branch All branches reads (below, kept for both) and the
+latest hundred tags; without, GitHub's first page of each, a hundred by
+name, to spare an unsigned reader's rate limit. A whole repository's is the history
 from its commit, glued on (above), `more` where a parent is not listed; a
 later page names the commits to read on from, `from=<sha>,<sha>…`, as All
 branches' do (a later page naming none reads GitHub's page of that
 number). A directory's is GitHub's page of that number. With `all=true`, at the root and first
 page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
 from GraphQL: the branches' tips with their commits' times, a hundred a page
-for up to ten pages (GitHub orders heads by name alone), then, in one query,
+for up to fifty pages (GitHub orders heads by name alone), then, in one query,
 the latest hundred commits of the default branch and the 24 others most
 recently committed to, each commit once; every branch naming a commit listed;
 the branches not read whose tips aren't listed, `{ name, sha, at }` each,
-newest first; `cut` where branches past the thousand listed are left out,
+newest first; `cut` where branches past the five thousand listed are left out,
 never to be read, the tab then saying so; and the latest hundred tags, an
 annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
 names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
@@ -1775,9 +1777,9 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues, the app agents (each its
-id, name and app, never how it is told), and the hundred newest of each
+id, name and app, never how it is told), and the five hundred newest of each
 agent's branches: GitHub lists branches by name alone, so every branch
-an agent's prefix names is read, as many as ten pages of a hundred of each,
+an agent's prefix names is read, as many as fifty pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
 their tips' times. Each pull request's body and head and merge commits'
 messages, each commit's message, and each branch's tip commit (never a

@@ -1591,7 +1591,14 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
         : { all: true, ...await repositoryAllHistory(repo, token, (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token))).value, pages) }
     } else {
       const commit = await reader.commit(ref)
-      const tips = page === 1 ? keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value) : null
+      // The branches and tags naming commits: with a token, every branch All
+      // branches reads and the latest tags, kept for both; without, GitHub's
+      // first page of each.
+      const naming = () => token
+        ? keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token)).then(({ value }) => ({
+          branches: value.heads.map(({ name, sha }) => ({ name, sha })), tags: value.tags }))
+        : keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value)
+      const tips = page === 1 ? naming() : null
       // A whole repository's from its commit, or on from those `from` names
       // (a page by its number where none are, as GitHub lists them); a
       // directory's by its number.

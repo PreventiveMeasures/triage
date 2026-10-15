@@ -14,11 +14,11 @@ import { GithubApiError, githubJson } from './github-app.ts'
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
 export const MAX_HISTORY_PAGE = 100
-// `--all`: the branches most recently committed to, of as many as ten pages
-// of them list, the latest commits of each (as many as a GraphQL connection
+// `--all`: the branches most recently committed to, of as many as fifty
+// pages of them list, the latest commits of each (as many as a GraphQL connection
 // gives), and the latest tags.
 export const ALL_BRANCHES = 25
-const MAX_HEAD_PAGES = 10
+const MAX_HEAD_PAGES = 50
 const ALL_DEPTH = 100
 const ALL_TAGS = 100
 const REF_TIPS = 100
