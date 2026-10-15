@@ -130,8 +130,8 @@ const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split
 
 // A path as a filesystem telling neither case nor Unicode's normalization
 // apart takes it, as Windows' and macOS's do by default: `Payload.txt` for
-// `payload.txt`.
-const folded = path => path.normalize('NFC').toUpperCase().toLowerCase()
+// `payload.txt`; a lone surrogate the U+FFFD node writes a name with for it.
+const folded = path => path.toWellFormed().normalize('NFC').toUpperCase().toLowerCase()
 // The files a path names once installed, as a filesystem tells them
 // (folded): its own, and for a .npmignore, a .gitignore npm installs as that.
 function installedOf(files) {
