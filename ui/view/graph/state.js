@@ -31,6 +31,10 @@ export const graph2 = {
   // the code, and issue markers, counts and filters appear when on.
   bundleIssues: false,
   bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies' | 'flow'; bundle-only
+  // The layout lockfiles open on (lockfile-graph.js), apart from the bundle
+  // graph's: Dependencies, then the last one picked. The lockfile viewer
+  // draws by bundleLayout while it is on the page, and gives it back after.
+  lockfileLayout: 'dependencies',
   bundleReason: null, // null = all reasons; shared by graph and layers
   bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
   selected: null,        // file path or null

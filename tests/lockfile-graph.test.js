@@ -198,7 +198,7 @@ describe('<lockfile-graph>', () => {
   }
 
   it('switches between the layouts it offers, and keeps its graph\'s clicks from the page', t => {
-    keep(t, 'bundleLayout', 'solo', 'selected', 'graphState')
+    keep(t, 'bundleLayout', 'lockfileLayout', 'solo', 'selected', 'graphState')
     const el = new (customElements.get('lockfile-graph'))()
     let attached = 0
     el._attach = () => { attached++ }
@@ -206,6 +206,7 @@ describe('<lockfile-graph>', () => {
     graph2.solo = 'react'
     assert.equal(click(el, '[data-g2-layout]', { g2Layout: 'matrix' }), true)
     assert.equal(graph2.bundleLayout, 'matrix')
+    assert.equal(graph2.lockfileLayout, 'matrix', 'the next lockfile opens on it')
     assert.equal(graph2.solo, null)
     assert.equal(attached, 1)
     assert.equal(click(el, '[data-g2-layout]', { g2Layout: 'flow' }), true, 'a layout it does not offer is still not the page\'s')
@@ -218,23 +219,36 @@ describe('<lockfile-graph>', () => {
     assert.equal(click(el, '.somewhere-else'), false)
   })
 
-  it('takes over a graph left at a layout a lockfile has no bytes for, and what was picked in it', async t => {
-    keep(t, 'bundleLayout', 'solo', 'selected', 'focusedPkg')
-    const el = new (customElements.get('lockfile-graph'))()
+  it('opens on Dependencies, or the layout picked last, gives the bundle graph its own back, and drops what was picked in another', async t => {
+    keep(t, 'bundleLayout', 'lockfileLayout', 'solo', 'selected', 'focusedPkg')
+    const opened = () => {
+      const el = new (customElements.get('lockfile-graph'))()
+      el.lockfile = pnpm
+      el.willUpdate(new Map([['lockfile', undefined]]))
+      // No graph module to load here: the slot says so, as on a failed load.
+      const slot = {}
+      el.renderRoot = { querySelector: selector => selector === '.slot' ? slot : null }
+      Object.defineProperty(el, 'isConnected', { value: true })
+      return { el, slot }
+    }
     graph2.bundleLayout = 'flow'
     graph2.solo = 'react'
     graph2.selected = 'src/index.js'
     graph2.focusedPkg = 'react'
-    el.lockfile = pnpm
-    el.willUpdate(new Map([['lockfile', undefined]]))
+    const { el, slot } = opened()
     assert.deepEqual([graph2.solo, graph2.selected, graph2.focusedPkg], [null, null, null])
-    // No graph module to load here: the slot says so, as on a failed load.
-    const slot = {}
-    el.renderRoot = { querySelector: selector => selector === '.slot' ? slot : null }
-    Object.defineProperty(el, 'isConnected', { value: true })
     await el._attach()
-    assert.equal(graph2.bundleLayout, 'graph')
     assert.match(slot.textContent, /^Graph failed to load/u)
+    assert.equal(graph2.bundleLayout, 'dependencies', 'Dependencies first, the third of its layouts')
+    await el._attach()
+    el._detach()
+    assert.equal(graph2.bundleLayout, 'flow', 'the bundle graph\'s own, however often it mounted')
+    graph2.lockfileLayout = 'matrix'
+    const { el: next } = opened()
+    await next._attach()
+    assert.equal(graph2.bundleLayout, 'matrix')
+    next._detach()
+    assert.equal(graph2.bundleLayout, 'flow')
   })
 
   it('mounts only its latest attachment, and none once off the page, so a late one leaves the graph on screen alone', async t => {
