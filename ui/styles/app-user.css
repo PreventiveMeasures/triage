@@ -17,7 +17,7 @@
    Dependabot's avatar with its avatars' corners. */
 .app-user-mark {
   display: inline-flex; flex: none; width: 1.15em; height: 1.15em;
-  & svg { width: 100%; height: 100%; fill: currentcolor; stroke: none; }
+  & svg { flex: none; width: 100%; height: 100%; fill: currentcolor; stroke: none; }
   & img { width: 100%; height: 100%; border-radius: 3px; object-fit: cover; }
   &.is-claude { color: var(--claude, #d97757); }
   &:is(.is-codex, .is-copilot) { color: var(--text); }

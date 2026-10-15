@@ -8,7 +8,7 @@
 // returning; each, and a commit or branch, is a link to GitHub, and a session
 // to where it ran.
 import { html, nothing, unsafeCSS } from 'lit'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from '../style-map.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchRepositoryItem } from '../client-managed.js'
 import { flowText } from '../format.js'

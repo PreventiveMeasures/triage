@@ -182,7 +182,7 @@ function entryVisible(entry, blocks) {
 function renderBlock(block) {
   if (block.kind === 'text') return html`<div class="text-block">${block.text}</div>`
   if (block.kind === 'summary') return html`<div class="text-block summary-text">${block.text}</div>`
-  if (block.kind === 'system') return html`<div class="text-block" style="color:var(--muted); font-size:.825rem;">${block.text}</div>`
+  if (block.kind === 'system') return html`<div class="text-block quiet system-text">${block.text}</div>`
   if (block.kind === 'thinking') {
     if (!showThinking) return nothing
     return html`<div class="thinking-block">${block.text}</div>`
@@ -199,7 +199,7 @@ function renderBlock(block) {
     const label = block.isError ? '✗ error' : '✓ result'
     return html`<details class=${cls}><summary><span class="tool-name">${label}</span><span class="tool-preview">${preview}</span></summary><pre>${toolResultText(block.content)}</pre></details>`
   }
-  return html`<div class="text-block" style="color:var(--muted);">${block.text || ''}</div>`
+  return html`<div class="text-block quiet">${block.text || ''}</div>`
 }
 
 function entryTemplate(entry, blocks) {
@@ -208,11 +208,11 @@ function entryTemplate(entry, blocks) {
   return html`<div class=${`entry type-${badge}`}>
     <div class="entry-meta">
       <span class=${`badge ${badge}`}>${badge}</span>
-      ${entry.uuid ? html`<span class="mono" style="font-size:.7rem;">#${String(entry.uuid).slice(0, 8)}</span>` : nothing}
+      ${entry.uuid ? html`<span class="mono uuid">#${String(entry.uuid).slice(0, 8)}</span>` : nothing}
       ${time ? html`<span class="time">${time}</span>` : nothing}
     </div>
     <div class="entry-body">${blocks.length === 0
-      ? html`<div class="text-block" style="color:var(--muted);">(no content)</div>`
+      ? html`<div class="text-block quiet">(no content)</div>`
       : blocks.map(renderBlock)}</div>
   </div>`
 }

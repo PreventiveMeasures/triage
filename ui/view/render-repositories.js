@@ -25,7 +25,7 @@ import { sharedFindingTriage } from '../../client/ignored-triage.js'
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { ensureBundleFindingsIndexed, getRepositoriesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
@@ -88,13 +88,13 @@ export function renderRepositoriesView() {
       ${repositoriesToolbarTemplate(triageCounts)}
     </header>
     ${filtered.length === 0
-      ? html`<p style="color:var(--muted)">${buckets.size === 0
+      ? html`<p style=${styleMap({ color: 'var(--muted)' })}>${buckets.size === 0
           ? 'Indexing reports… this view populates as the OPFS scan finishes.'
           : state.shownTriage
             ? `No ${state.shownTriage} findings in any repository.`
             : 'No untriaged findings in any repository.'}</p>`
       : visible.length === 0
-        ? html`<p style="color:var(--muted)">No repositories match "${state.repositoriesSearchQuery}".</p>`
+        ? html`<p style=${styleMap({ color: 'var(--muted)' })}>No repositories match "${state.repositoriesSearchQuery}".</p>`
         : html`<div class=${layoutClass}>
           <ul class="packages-list">
             ${repeat(visible, ([repo]) => repo, ([repo, bucket]) => renderRepositoryRow(repo, bucket, repo === selected))}

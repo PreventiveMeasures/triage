@@ -13,12 +13,12 @@ import zai from '../provider-icons/zai.svg'
 
 // Claude's and OpenAI's marks, as the report stickers draw them (icons.js),
 // cropped to the mark, as large as the text, as the other providers' are.
-const mark = path => html`<svg width="1em" height="1em" fill="currentColor" style="flex:none;line-height:1" viewBox="4 5 8 8" aria-hidden="true"><path d=${path}></path></svg>`
+const mark = path => html`<svg width="1em" height="1em" fill="currentColor" viewBox="4 5 8 8" aria-hidden="true"><path d=${path}></path></svg>`
 const anthropic = mark(CLAUDE_MARK_PATH)
 const openai = mark(OPENAI_MARK_PATH)
 // GitHub Copilot's, Copilot's agent mark, drawn here rather than its
 // account's avatar fetched.
-const githubCopilot = html`<svg width="1em" height="1em" fill="currentColor" style="flex:none;line-height:1" viewBox="0 0 24 24" aria-hidden="true"><path d=${COPILOT_MARK_PATH}></path></svg>`
+const githubCopilot = html`<svg width="1em" height="1em" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d=${COPILOT_MARK_PATH}></path></svg>`
 
 // SVG imports are compiled into Lit html templates by the bundler.
 const icons = { anthropic, deepseek, 'github-copilot': githubCopilot, google, mistralai: mistral, moonshot, moonshotai: moonshot, nvidia, openai, openrouter, qwen, xiaomi, 'x-ai': grok, 'z-ai': zai }

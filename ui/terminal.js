@@ -11,6 +11,7 @@
 
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from './view/style-map.js'
 import { createTerminal } from '@preventive/terminal'
 import { classifyDiff } from './view/diff-color.js'
 import { silencedGaps } from './view/silenced-gaps.js'
@@ -540,7 +541,7 @@ class BundleTerminal extends LitElement {
            role's implicit value, since an implicit value is exactly
            what made the stack re-announce itself. -->
       <div class="notes" role="log" aria-atomic="false">
-        ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note ${n.kind === 'gap' ? 'note-gap' : ''}" style="--dwell-out: ${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms">${n.text}</div>`)}
+        ${repeat(this._notes, (n) => n.id, (n) => html`<div class="note ${n.kind === 'gap' ? 'note-gap' : ''}" style=${styleMap({ '--dwell-out': `${n.dwell - BundleTerminal.#NOTE_FADE_MS}ms` })}>${n.text}</div>`)}
       </div>
       <div class="output" @click=${this.#onClickOutput}>
         ${this._lines.map((l) => this.#renderLine(l))}

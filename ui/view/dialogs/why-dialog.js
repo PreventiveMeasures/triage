@@ -1,5 +1,5 @@
 import { html, nothing, svg, unsafeCSS } from 'lit'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from '../style-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { autorun } from '@rray/frontend/state-management'
 import { AppDialog, openAppDialog } from './app-dialog.js'

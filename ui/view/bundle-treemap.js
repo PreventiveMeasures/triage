@@ -55,7 +55,7 @@
 // so the viz stays mouse-driven (keyboard users get the Files / Code
 // tabs); only the few header breadcrumbs remain buttons.
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
 import { bundleGraphReasons } from './bundle-graph-inputs.js'
@@ -386,7 +386,7 @@ class BundleTreemap extends LitElement {
       litRender(html`
         <div class="bundle-treemap-tt-path">${d.ttPath}</div>
         ${d.ttPkg ? html`<div class="bundle-treemap-tt-head">
-          <span class="bundle-treemap-tt-dot" style=${`background:${d.ttColor}`}></span>
+          <span class="bundle-treemap-tt-dot" style=${styleMap({ background: d.ttColor })}></span>
           <span class="bundle-treemap-tt-pkg">${d.ttPkg}</span>
         </div>` : ''}
         <div class="bundle-treemap-tt-meta">${d.ttMeta}</div>

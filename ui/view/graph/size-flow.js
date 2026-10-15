@@ -1,5 +1,6 @@
 import { keyed } from 'lit/directives/keyed.js'
 import { LitElement, html, unsafeCSS } from 'lit'
+import { styleMap } from '../style-map.js'
 import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
@@ -17,7 +18,7 @@ const availableWidth = width => Math.max(1, width - 2 * sidePadding)
 
 function flowRow(node, size, onClick) {
   return html`<button class="g2-dist-item flow-link" data-tooltip=${node.label} @click=${onClick}>
-    <span class="g2-dist-dot" style=${`background:${pkgColor(node.pkg)}`}></span>
+    <span class="g2-dist-dot" style=${styleMap({ background: pkgColor(node.pkg) })}></span>
     <span class="g2-dist-name">${node.label}</span><span class="g2-dist-count">${shortSize(size)}</span>
   </button>`
 }
@@ -320,7 +321,7 @@ class SizeFlow extends LitElement {
   render() {
     if (!this.layout) return null
     const { nodes } = this.layout
-    return html`<section class="flow-stage" aria-label="Dependency size flow" style=${`--flow-background:${graphBackground()}`}>
+    return html`<section class="flow-stage" aria-label="Dependency size flow" style=${styleMap({ '--flow-background': graphBackground() })}>
       <div class="flow-viewport">${this.chart.render()}${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">

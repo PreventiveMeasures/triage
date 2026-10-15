@@ -1,4 +1,5 @@
 import { html, render } from 'lit'
+import { styleMap } from '../style-map.js'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
@@ -1400,7 +1401,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     render(html`
       <div class="g2-tt-path">${relPath}</div>
       <div class="g2-tt-head">
-        <span class="g2-tt-dot" style=${`background:${col}`}></span>
+        <span class="g2-tt-dot" style=${styleMap({ background: col })}></span>
         <span class="g2-tt-pkg">${pkgLabel}</span>
       </div>
       ${n.totalIssues > 0 ? renderSevChips(n.own) : null}
@@ -1427,7 +1428,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ? `Level ${layers.depth.get(p.pkg)} · shortest import distance from App`
         : 'No known import path from App'}</div>` : null}
       <div class="g2-tt-head">
-        <span class="g2-tt-dot" style=${`background:${col}`}></span>
+        <span class="g2-tt-dot" style=${styleMap({ background: col })}></span>
         <span class="g2-tt-pkg">${members}</span>
       </div>
       ${p.totalIssues > 0 ? renderSevChips(p.own) : null}

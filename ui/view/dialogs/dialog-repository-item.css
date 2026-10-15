@@ -74,6 +74,7 @@ svg .dotted { stroke-dasharray: 1 2.2; }
 .agent-mark:is(.is-claude, .is-codex, .is-copilot) svg { fill: currentcolor; stroke: none; }
 .agent-mark.is-claude svg { color: var(--claude); }
 .agent-logo { display: inline-flex; }
+.agent-logo svg { flex: none; }
 .agent-avatar { border-radius: 3px; }
 .repo-item-section {
   & h4 { margin: 0 0 .3rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }

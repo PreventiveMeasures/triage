@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
@@ -1201,7 +1201,7 @@ function confTemplate(f) {
     return html`<div class=${`conf-ring ${displayedSeverity(f, state.severityMode)}`}>
       <svg viewBox="0 0 36 36" aria-hidden="true">
         <circle class="conf-ring-track" cx="18" cy="18" r="15.9155"/>
-        <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style="stroke-dasharray: ${arc} 100"/>
+        <circle class="conf-ring-arc" cx="18" cy="18" r="15.9155" style=${styleMap({ 'stroke-dasharray': `${arc} 100` })} />
       </svg>
       <span>${f.confidence}<small>/10</small></span>
     </div>

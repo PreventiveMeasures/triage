@@ -3721,6 +3721,7 @@ repository-agents { --claude: #d97757; }
   & :is(svg, img) { width: 12px; height: 12px; }
 }
 .agent-mark, .agent-logo { display: inline-flex; }
+.agent-logo svg { flex: none; }
 .agent-mark :is(svg, img) { width: 14px; height: 14px; }
 .agent-avatar { border-radius: 3px; }
 /* Claude's mark filled in its orange, Codex's OpenAI mark and Copilot's in
