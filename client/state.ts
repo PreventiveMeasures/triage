@@ -114,8 +114,6 @@ export interface State {
   selectedBundleWorkspace: string | null
   scanSelection: { bundleId: string, repoId?: string | number } | { mode: 'report', reportMode: 'link' } | null
   bundleCreationRepoId: number | null
-  // The repository the code page picks, as its link names it.
-  codeRepoId: number | null
   bundleDetails: unknown
   bundleDetailsTab: string
   selectedPackage: string | null
@@ -571,7 +569,6 @@ export const state: State = store<State>({
   selectedBundleWorkspace: null,
   scanSelection: null,
   bundleCreationRepoId: null,
-  codeRepoId: null,
   bundleDetails: null,
   // Active tab in the bundle view's tab strip: 'overview' (the
   // metadata + Packages / Files / Reports nested view), 'terminal',

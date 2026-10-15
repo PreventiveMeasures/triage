@@ -1287,11 +1287,9 @@ async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo:
   return { ...refs.value, defaultContents: contents.value }
 }
 
-// A directory the reader's grants reach only part of lists those parts alone,
-// `scoped`: the code viewer reads none of it (handleRepositoryCode).
 function scopeRepositoryContents(contents: RepositoryContents | null, virtualEntries: RepositoryEntry[] | null) {
   return contents && { ...contents, ...(virtualEntries ? {
-    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false, scoped: true,
+    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false,
   } : {}) }
 }
 

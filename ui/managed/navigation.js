@@ -5,7 +5,6 @@ import { BUNDLE_ICON_SVG, CODE_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG } from '
 const PAGES = [
   ['manage', 'Overview'],
   ['manage-bundles', 'Bundles'],
-  ['manage-code', 'Code'],
   ['manage-scans', 'Scans'],
   ['manage-reports', 'Reports'],
   ['manage-deduplication', 'Deduplication', 'admin'],

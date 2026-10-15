@@ -336,7 +336,7 @@ test('combined refs honors virtual root scopes and rechecks managed and GitHub a
   const result = await request(query, { route: 'refs' })
   assert.equal(result.status, 200)
   assert.deepEqual(result.body.defaultContents, { entries: [{ name: 'src', path: 'src', type: 'dir' }], limited: false,
-    path: '', commit, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false, scoped: true })
+    path: '', commit, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false })
   duringRead = () => db.removeTeamMember('team', userId)
   assert.equal((await request(query, { route: 'refs' })).status, 404)
   await db.setTeamMember('team', userId, { dependencies: true, security: true })

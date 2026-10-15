@@ -41,7 +41,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
-import { repositoryCodeName, repositoryCodeRoute } from './repository-code.js'
+import { browsableRepositories, repositoryCodeListing, repositoryCodeName, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -1936,16 +1936,6 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
 // The tabs a repository's directory shows (repository-code.js).
 const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search']]
 
-// A repository directory's header: the repository and the directory in it,
-// and the commit shown, linking its tree on GitHub there.
-function repositoryCodeTitle({ repo, commit, path }) {
-  const tree = repo ? `https://github.com/${[...repo.split('/'), 'tree', commit, ...path ? path.split('/') : []].map(encodeURIComponent).join('/')}` : null
-  return html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${repo ? repositoryCodeName({ repo, path }) : 'Repository'}>${repo ? repositoryCodeName({ repo, path }) : 'Repository'}</div>
-    ${tree ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
-      aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>`
-      : html`<span class="bundles-slide-commit">${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></span>`}`
-}
-
 // The bundle slide: its header, with the bundle's name, or an npm version's
 // with the package's versions to switch to, and its `tabs`, `tab` the one
 // open; that tab's `body` under it. An npm version opening (`opening`)
@@ -1963,15 +1953,15 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
         <button type="button" @click=${() => navigateToNpm()}>npm</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      ${repository ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-code', codeRepoId: repository.repoId }, bubbles: true, composed: true }))}>Code</button>
+      ${repository && state.managedSession?.role === 'admin' ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repos' }, bubbles: true, composed: true }))}>Repositories</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
           <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
-          : repository ? repositoryCodeTitle(repository)
+          : repository ? html`<repository-code-source .repository=${repository} .tab=${tab} .repos=${browsableRepositories()} .refs=${repositoryRefs(repository.repoId)}></repository-code-source>`
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
@@ -1991,13 +1981,15 @@ export function renderNpmOpening({ name, spec, tab }) {
 
 // A repository's directory opening (repository-code.js
 // openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
-// body what opens, or why it didn't. Its repository's name shows where it
-// was picked from, which knows it.
-export function renderRepositoryCodeOpening({ repoId, commit, path, tab, repo, error }) {
+// body what opens, or why it didn't, with the directories it lists to open
+// instead where it has any.
+export function renderRepositoryCodeOpening(opening) {
+  const { repoId, commit, path, tab, repo, revision, error } = opening
   const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
-  return bundleSlideView({ repository: { repoId, repo, commit, path } }, tab, repositoryCodeTabs(), error
-    ? html`<div class="bundles-slide-placeholder is-error" role="alert">Couldn't open ${what} at ${commit.slice(0, 7)}: ${error}</div>`
-    : html`<div class="bundles-slide-placeholder" role="status">Opening ${what} at ${commit.slice(0, 7)}…</div>`, { opening: true })
+  const at = commit ? ` at ${commit.slice(0, 7)}` : ''
+  return bundleSlideView({ repository: { repoId, repo, commit, path, revision } }, tab, repositoryCodeTabs(), error
+    ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
+    : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`, { opening: true })
 }
 
 // Top-level bundle view. The header carries the bundle's filename

@@ -1666,7 +1666,6 @@ const ADMIN_VIEWS = {
   'manage-repo-risk': { slot: 'manage-repo-risk-slot', tag: 'managed-admin-repo-risk', title: 'DeepView — repository risk' },
   'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
-  'manage-code':    { slot: 'manage-code-slot',    tag: 'managed-admin-code',    title: 'DeepView — code' },
   'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
   'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
   'manage-import':  { slot: 'manage-import-slot',  tag: 'managed-admin-import',  title: 'DeepView — import' },
@@ -2004,10 +2003,6 @@ function renderImpl() {
         el.createRepoId = state.bundleCreationRepoId
         el.installTooltips = installTooltips
       }
-      if (state.currentView === 'manage-code') {
-        el.repoId = state.codeRepoId
-        el.installTooltips = installTooltips
-      }
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -2030,7 +2025,6 @@ function renderImpl() {
     }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
     if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
-    if (state.currentView === 'manage-code' && slot?.firstElementChild) slot.firstElementChild.repoId = state.codeRepoId
     showReport()
     document.title = adminView.title
     return

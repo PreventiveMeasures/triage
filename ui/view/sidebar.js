@@ -2313,7 +2313,7 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
   // The code viewer reads repositories as Create a bundle browses them.
-  if (route.view === 'repository-code') return canAccessManagedPage('manage-code') && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
+  if (route.view === 'repository-code') return ['admin', 'manage'].includes(state.managedSession.role) && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
   if (route.view === 'reviews') {
     if (state.managedSession.publicShare) return false
     cleanupGraph2()
@@ -2372,7 +2372,7 @@ document.addEventListener('managed-feed-closed', () => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}), ...(options.codeRepoId ? { codeRepoId: options.codeRepoId } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
   }
   if (!Object.hasOwn(MANAGED_PAGES, view) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -2387,7 +2387,6 @@ export async function navigateToAdminPage(view, options = {}) {
   state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' }
     : options.bundleId ? { bundleId: options.bundleId, ...(options.scanMode === 'dependencies' ? { mode: 'dependencies' } : {}) } : null : null
   state.bundleCreationRepoId = view === 'manage-bundles' ? options.createRepoId ?? null : null
-  state.codeRepoId = view === 'manage-code' ? options.codeRepoId ?? null : null
   render({ animate: false })
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
@@ -2412,14 +2411,14 @@ document.addEventListener('managed-notice', event => showToast(event.detail.mess
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor
-  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId, codeRepoId: event.detail?.codeRepoId })
+  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId })
 })
 
-// The code page's pick: a directory of a repository at a commit, and a file
-// in it for Code to open on.
+// A repository's code, from its row on the Repositories page: at its default
+// branch's head.
 document.addEventListener('managed-repository-code-open', event => {
-  const { repoId, commit, path, repo, file } = event.detail ?? {}
-  if (isManagedUiMode() && Number.isSafeInteger(repoId) && typeof commit === 'string') navigateToRepositoryCode({ repoId, commit, path, repo, file })
+  const repoId = event.detail?.repoId
+  if (isManagedUiMode() && Number.isSafeInteger(repoId) && repoId > 0) navigateToRepositoryCode({ repoId })
 })
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's

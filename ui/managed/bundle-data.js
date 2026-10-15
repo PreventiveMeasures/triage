@@ -117,10 +117,29 @@ const REPOSITORY_CODE_ERRORS = {
   502: 'GitHub couldn’t be reached.',
 }
 
-// A repository's directory at a commit, for the code viewer: never kept, as
-// the server checks access, against GitHub, on every read.
-export function fetchRepositoryCode(repoId, commit, path, { signal } = {}) {
-  return request(`/api/admin/repositories/code?${new URLSearchParams({ repoId, ref: commit, path })}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+const requestRepository = (part, params, signal) =>
+  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+
+// A repository's directory at a revision (`ref`: a commit, `heads/<branch>`,
+// `tags/<tag>`, or '' for the default branch's head), for the code viewer:
+// never kept, as the server checks access, against GitHub, on every read.
+export function fetchRepositoryCode(repoId, ref, path, { signal } = {}) {
+  return requestRepository('code', { repoId, ref, path }, signal)
+}
+
+// What the code viewer's header offers: the repositories its reader may
+// browse, a repository's branches and tags, and a directory's entries, to
+// open one of them where the directory itself can't be.
+export async function fetchBrowsableRepositories({ signal } = {}) {
+  return (await requestRepository('browsable', {}, signal)).repos ?? []
+}
+
+export function fetchRepositoryRefs(repoId, { signal } = {}) {
+  return requestRepository('refs', { repoId }, signal)
+}
+
+export function fetchRepositoryContents(repoId, ref, path, { signal } = {}) {
+  return requestRepository('contents', { repoId, ref, path }, signal)
 }
 
 export function fetchNpmPackage(name, version, { signal } = {}) {
