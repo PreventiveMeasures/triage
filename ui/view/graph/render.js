@@ -7,7 +7,7 @@ import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { pkgLabelOf, pkgRelative } from './data.js'
+import { graphTerms, packageVersions, pkgLabelOf, pkgRelative } from './data.js'
 import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-network.js'
 // `<graph-layout>` is defined in `./graph-layout.js`, behind the
 // lazy entry `ui/graph.js` (loaded by `view/graph-attach.js` on
@@ -15,6 +15,15 @@ import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-
 // below are called by the host's `render()` after the lazy module
 // has defined the element, so the import direction is one-way
 // (graph-layout → render.js).
+
+// The bundle layouts, in their selector's order: id, label, icon.
+const BUNDLE_LAYOUTS = [
+  ['graph', 'Graph', unsafeHTML(GRAPH_ICON_SVG)],
+  ['layers', 'Layers', unsafeHTML(LAYERS_ICON_SVG)],
+  ['matrix', 'Matrix', unsafeHTML(MATRIX_ICON_SVG)],
+  ['dependencies', 'Dependencies', unsafeHTML(DEPENDENCIES_ICON_SVG)],
+  ['flow', 'Size flow', html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg>`],
+]
 
 // Per-section Lit templates for the v2 layout (left panel, stage,
 // right panel), composed by the `<graph-layout>` shadow-DOM host in
@@ -37,17 +46,17 @@ import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-
 // `placement.issuesWrapped` (bundle graphs, measured by `<graph-layout>`)
 // moves the Issues switch from the end of the first row to the start of
 // the issue row when it would otherwise wrap onto a line of its own.
+// `options.layouts` narrows the bundle layouts offered (all by default): a
+// lockfile's graph has no bytes for Layers and Size flow.
 export function renderTopBar(graph, options, extraControls = null, placement = {}) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
   const flow = options.showBundleLayouts && graph2.bundleLayout === 'flow'
+  const layout = layers ? 'layers' : matrix ? 'matrix' : dependencies ? 'dependencies' : flow ? 'flow' : 'graph'
   const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
-    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix && !dependencies && !flow)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
-    <button type="button" data-g2-layout="layers" aria-label="Layers" aria-pressed=${String(!!layers)}>${unsafeHTML(LAYERS_ICON_SVG)}</button>
-    <button type="button" data-g2-layout="matrix" aria-label="Matrix" aria-pressed=${String(!!matrix)}>${unsafeHTML(MATRIX_ICON_SVG)}</button>
-    <button type="button" data-g2-layout="dependencies" aria-label="Dependencies" aria-pressed=${String(!!dependencies)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>
-    <button type="button" data-g2-layout="flow" aria-label="Size flow" aria-pressed=${String(!!flow)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg></button>
+    ${BUNDLE_LAYOUTS.filter(([id]) => options.layouts?.includes(id) ?? true).map(([id, label, icon]) =>
+      html`<button type="button" data-g2-layout=${id} aria-label=${label} aria-pressed=${String(id === layout)}>${icon}</button>`)}
   </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
@@ -105,8 +114,10 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
   // `showPackagesView`, which requires 3+ packages under the current
   // grouping). On: the canvas collapses to one node per package
   // with aggregated import edges. Same rebuild-on-flip contract as above —
-  // the layout and hit-testing operate on a different node set.
-  const showPackagesView = flow || (dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false))
+  // the layout and hit-testing operate on a different node set. A graph
+  // of packages alone has nothing to flip to.
+  const showPackagesView = !graph.packagesOnly
+    && (flow || (dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false)))
   const packagesViewBtn = showPackagesView ? html`<mode-switch
     label="Packages" .checked=${flow ? graph2.flowPackagesView : dependencies ? graph2.dependencyPackagesView : graph2.packagesView}
     data-g2-packages-view
@@ -315,7 +326,9 @@ export function renderStage(graph) {
   let cross = 0; for (const e of graph.edges) if (e.cross) cross++
   const intra = graph.edges.length - cross
   let issues = 0; for (const n of graph.nodes) issues += n.totalIssues
-  const network = graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg ? dependencyNetwork(graph, graph2.dependencyPackagesView) : null
+  // A graph of packages alone counts its package dependencies in every layout.
+  const network = graph.supportsLayers && (graph.packagesOnly || graph2.bundleLayout === 'dependencies') && !graph2.focusedPkg
+    ? dependencyNetwork(graph, graph2.dependencyPackagesView) : null
   const nodeCount = network?.nodes.length ?? graph.nodes.length
   const edgeCount = network?.directedEdges.length ?? graph.edges.length
   const avgDeg = nodeCount === 0 ? '0.0' : (edgeCount * 2 / nodeCount).toFixed(1)
@@ -359,11 +372,12 @@ export function renderStage(graph) {
 //   - a file is selected → use that file's package, OR
 //   - a package is solo'd → use that package.
 // Hidden when there's only one file in the package (nothing to
-// visualize) or when already focused on it. Returns the button
+// visualize) or when already focused on it, and on a graph of packages
+// alone, whose members are no files to draw. Returns the button
 // template, or null/`''` to leave the slot empty. Exported so the
 // refresh helper in render.js can swap it on selection change.
 export function renderFocusOverlay(graph) {
-  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies') return null
+  if (graph.packagesOnly || graph.supportsLayers && graph2.bundleLayout === 'dependencies') return null
   let pkg = null
   if (graph2.selected) {
     const sel = graph.nodeByFile.get(graph2.selected)
@@ -417,10 +431,10 @@ export function renderRightPanel() {
 // no node has findings (clean bundle/report — nothing to rank). If
 // the active tab is gated off, falls back to Files.
 export function renderTopPkgsBlock(graph) {
-  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg && !dependencyFilesOn(graph, graph2.dependencyPackagesView)) {
+  if (packageDependencyPanel(graph)) {
     const pg = packageNetwork(graph)
     const ids = pg.nodes.toSorted((a, b) => pg.importedBy.get(b.pkg).length - pg.importedBy.get(a.pkg).length || a.pkg.localeCompare(b.pkg)).map((n) => n.pkg)
-    return html`<div class="g2-panel-title">Packages · importers</div>${renderDependencyList(pg, ids, true)}`
+    return html`<div class="g2-panel-title">Packages · ${graphTerms(graph).importers}</div>${renderDependencyList(pg, ids, true)}`
   }
   const showSize = graph2.showAll && graph.nodes.length > 0
     && graph.nodes.every((n) => typeof n.size === 'number')
@@ -448,8 +462,8 @@ export function renderTopPkgsBlock(graph) {
 //   2. A package is solo'd (palette swatch or top-pkgs click) → pkg card
 //   3. Neither → empty placeholder
 export function renderSelectionCard(graph, ctx = {}) {
-  if (graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg && !dependencyFilesOn(graph, graph2.dependencyPackagesView)) {
-    return renderDependencyCard(packageNetwork(graph), graph2.solo)
+  if (packageDependencyPanel(graph)) {
+    return renderDependencyCard(graph, packageNetwork(graph), graph2.solo)
   }
   const file = graph2.selected
   if (file) {
@@ -721,6 +735,14 @@ function renderDistribution(graph, activeTab) {
   </div>`
 }
 
+// The right panel inspects packages by what they depend on, at the same
+// altitude as the canvas: in Dependencies at package altitude, and in every
+// layout of a graph of packages alone.
+function packageDependencyPanel(graph) {
+  return (graph.packagesOnly || graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg)
+    && !dependencyFilesOn(graph, graph2.dependencyPackagesView)
+}
+
 // Package-level inspection stays at the same altitude as the new canvas.
 function renderDependencyList(pg, ids, counts = false) {
   return html`<div class="g2-dist-list">
@@ -732,18 +754,25 @@ function renderDependencyList(pg, ids, counts = false) {
   </div>`
 }
 
-function renderDependencyCard(pg, id) {
+// A graph of packages alone also lists the versions installed.
+function renderDependencyCard(graph, pg, id) {
   const n = pg.byPkg.get(id)
-  if (!n) return html`<div class="g2-empty-state">Select a package to trace its imports.</div>`
+  const terms = graphTerms(graph)
+  if (!n) return html`<div class="g2-empty-state">Select a package to trace its ${terms.links}.</div>`
   const importers = pg.importedBy.get(id) ?? [], imports = pg.importsOf.get(id) ?? []
+  const versions = graph.packagesOnly ? packageVersions(graph, id) : []
   return html`<div class="g2-selection-card">
     <div class="g2-sel-head">
       <span class="g2-sel-dot" style=${styleMap({ background: pkgColor(id) })}></span>
       <span class="g2-sel-id">${n.label}</span>
     </div>
     ${n.totalIssues ? html`<div class="g2-sel-section">${renderSevChips(n.own)}</div>` : null}
+    ${versions.length > 0 ? html`<div class="g2-sel-section">
+      <div class="g2-sel-section-label">${versions.length === 1 ? 'Version' : `Versions (${versions.length})`}</div>
+      <div class="g2-sel-versions">${versions.join(', ')}</div>
+    </div>` : null}
     <div class="g2-sel-section">
-      <div class="g2-sel-section-label">Imported by (${importers.length})</div>
+      <div class="g2-sel-section-label">${terms.incoming} (${importers.length})</div>
       ${renderDependencyList(pg, importers.toSorted())}
     </div>
     <div class="g2-sel-section">

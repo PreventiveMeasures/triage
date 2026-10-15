@@ -17,7 +17,7 @@ import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parse
 import { acceptsReportMetadata } from './report-response.ts'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
@@ -319,6 +319,97 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
   return false
 }
 
+// A repository's history for the History tab: main merging a feature and a
+// fix, develop merging main back, a branch still open, tags on main, and a
+// long line of older commits under them. main's head is the code fixture's
+// `a…`, develop's its `b…`.
+const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
+  ['main', 'Merge pull request #42 from org/feature/code-viewer', ['m9', 'cv3'], 2, 'Ada Lovelace'],
+  ['cv3', 'Code viewer: a History tab with the graph of branches', ['cv2'], 3, 'Grace Hopper'],
+  ['bp2', 'Bundle picker: remember the last repository picked', ['bp1'], 5, 'Linus Torvalds'],
+  ['develop', 'Experimental: read trees lazily', ['d2'], 9, 'Margaret Hamilton'],
+  ['m9', 'Fix a flaky upload test', ['m8'], 20, 'Ada Lovelace'],
+  ['cv2', 'Code viewer: the repository as a dropdown', ['cv1'], 26, 'Grace Hopper'],
+  ['bp1', 'Bundle picker: list the repositories connected', ['m8'], 30, 'Linus Torvalds'],
+  ['d2', 'Merge branch main into develop', ['d1', 'm8'], 34, 'Margaret Hamilton'],
+  ['cv1', 'Code viewer: open a directory at a revision', ['m7'], 50, 'Grace Hopper'],
+  ['m8', 'Merge pull request #41 from org/fix/ci-cache', ['m7', 'f1'], 70, 'Ada Lovelace'],
+  ['f1', 'CI: cache node_modules between runs', ['m6'], 80, 'Ken Thompson'],
+  ['m7', 'Release 1.0.0', ['m6'], 100, 'Ada Lovelace'],
+  ['d1', 'Experimental: a worker pool for scans', ['m5'], 130, 'Margaret Hamilton'],
+  ['m6', 'Bump dependencies', ['m5'], 160, 'Dependabot'],
+  ['m5', 'Merge pull request #40 from org/feature/treemap', ['m4', 't2'], 200, 'Ada Lovelace'],
+  ['t2', 'Treemap: label the largest files', ['t1'], 230, 'Barbara Liskov'],
+  ['m4', 'Docs: the managed mode', ['m3'], 260, 'Ada Lovelace'],
+  ['t1', 'Treemap: size files by their bytes', ['m3'], 300, 'Barbara Liskov'],
+  ['m3', 'Search: match case and whole words', ['m2'], 400, 'Edsger Dijkstra'],
+  ['m2', 'Release 0.19.0', ['m1'], 600, 'Ada Lovelace'],
+  ['m1', 'Code: open files by their number', ['o1'], 900, 'Edsger Dijkstra'],
+  ...Array.from({ length: 140 }, (_, index): [string, string, string[], number, string] =>
+    [`o${index + 1}`, `Older work, part ${140 - index}`, index === 139 ? [] : [`o${index + 2}`], 1000 + index * 40, index % 3 === 0 ? 'Ada Lovelace' : 'Alan Turing']),
+]
+const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
+const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3']]
+// Read on from, by All branches' Older commits: as if past the most recently
+// committed to.
+const HISTORY_STALE_BRANCHES = [['release/0.x', 'o90']]
+const HISTORY_TAGS = [['v1.0.0', 'm7'], ['v0.19.0', 'm2']]
+// All branches' commits from each tip, fewer than GitHub's, so that it reads
+// on.
+const HISTORY_ALL_DEPTH = 40
+
+function historyFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const commits = HISTORY_FIXTURE.map(([label, subject, parents, hours, author]) => ({
+    sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
+  }))
+  const branches = HISTORY_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!) }))
+  const tags = HISTORY_TAGS.map(([name, label]) => ({ name, sha: historySha(label!) }))
+  const bySha = new Map(commits.map(item => [item.sha, item]))
+  // The commits `commit` reaches, newest first.
+  const reaching = (commit: string) => {
+    const reached = new Set<string>()
+    for (const queue = [commit]; queue.length > 0;) {
+      const sha = queue.pop()!
+      if (reached.has(sha) || !bySha.has(sha)) continue
+      reached.add(sha)
+      queue.push(...bySha.get(sha)!.parents)
+    }
+    return commits.filter(item => reached.has(item.sha))
+  }
+  const page = Number(url.searchParams.get('page') ?? '1')
+  if (url.searchParams.get('all') === 'true') {
+    const from = url.searchParams.get('from')?.split(',') ?? null
+    const read = new Map((from ?? branches.map(branch => branch.sha)).flatMap(sha => reaching(sha).slice(0, HISTORY_ALL_DEPTH)).map(item => [item.sha, item]))
+    if (from) { sendJson(res, 200, { all: true, page, commits: [...read.values()], more: page < 100 }); return }
+    const stale = HISTORY_STALE_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!), at: bySha.get(historySha(label!))!.committedAt }))
+    sendJson(res, 200, { all: true, commits: [...read.values()], branches: [...branches, ...stale.filter(head => read.has(head.sha)).map(({ name, sha }) => ({ name, sha }))],
+      tags, defaultBranch: 'main', unread: stale.filter(head => !read.has(head.sha)), more: true })
+    return
+  }
+  const ref = url.searchParams.get('ref') ?? ''
+  const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
+  const path = url.searchParams.get('path') ?? ''
+  const listed = reaching(commit).filter(item => !path || commits.indexOf(item) % 3 === 0)
+  sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
+}
+
+// The fixture repository's package-lock.json, as npm 11 writes one, for the
+// code viewer's View lockfile: debug's own ms a second copy of ms.
+const fixtureLockfile = `${JSON.stringify({
+  name: 'managed-fixtures', version: '1.0.0', lockfileVersion: 3, requires: true,
+  packages: {
+    '': { name: 'managed-fixtures', version: '1.0.0', dependencies: { debug: '4.3.4' }, devDependencies: { ms: '2.0.0' } },
+    'node_modules/debug': { version: '4.3.4', resolved: 'https://registry.npmjs.org/debug/-/debug-4.3.4.tgz',
+      integrity: 'sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==', license: 'MIT',
+      dependencies: { ms: '2.1.2' }, engines: { node: '>=6.0' }, peerDependenciesMeta: { 'supports-color': { optional: true } } },
+    'node_modules/debug/node_modules/ms': { version: '2.1.2', resolved: 'https://registry.npmjs.org/ms/-/ms-2.1.2.tgz',
+      integrity: 'sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==', license: 'MIT' },
+    'node_modules/ms': { version: '2.0.0', resolved: 'https://registry.npmjs.org/ms/-/ms-2.0.0.tgz',
+      integrity: 'sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==', dev: true, license: 'MIT' },
+  },
+}, null, 2)}\n`
+
 function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
   if (url.pathname.endsWith('/browsable')) {
@@ -326,21 +417,37 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   }
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
+  if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
   const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'
   const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
-    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
+    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
+  const commit = /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40)
+  // The code viewer's read of a directory: its files as `GET
+  // /api/npm/package` answers a version's, a line of text each.
+  if (url.pathname.endsWith('/code')) {
+    // `vendor` stands for a directory too large to open.
+    if (path === 'vendor') { sendJson(res, 413, { error: 'directory-too-large', commit }); return }
+    const inside = files.filter(file => file.startsWith(prefix)).toSorted()
+    if (inside.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return }
+    const rows = inside.map(file => {
+      const text = file === 'README.md' ? `# ${repo.fullName}\n\nFixture repository for the managed code viewer.\n`
+        : file === 'package-lock.json' ? fixtureLockfile : `// ${file} at ${commit.slice(0, 7)}\n`
+      return [file.slice(prefix.length), Buffer.byteLength(text), text]
+    })
+    sendJson(res, 200, { repoId: repo.id, repo: repo.fullName, commit, path, tree: 'f'.repeat(40), files: rows }); return
+  }
   const entries = new Map()
   for (const file of files.filter(candidate => candidate.startsWith(prefix))) {
     const rest = file.slice(prefix.length)
     const name = rest.split('/')[0]!
     entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
   }
-  const contents = { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
+  const contents = { path, commit, entries: [...entries.values()], limited: false,
     ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
     ...(repo.id !== 102 && (path === '' || path === 'contracts') ? { solidityEntryPoints: ['contracts/Token.sol', ...(path === '' ? ['contracts/vault/Vault.sol'] : [])], soliditySuggestionsLimited: false } : {}),
   }
@@ -527,7 +634,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

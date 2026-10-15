@@ -1,15 +1,42 @@
-// Shared across Code-view mounts, but deliberately reset on page reload.
-const DEFAULT_WIDTH = 320
-let preferredWidth = DEFAULT_WIDTH
+// Drag-to-resize handles of the Code view: <bundle-code-splitter> between
+// the file tree and the code, by the tree's width, and <bundle-code-terminal-
+// splitter> between the code and the terminal pane under it, by the pane's
+// height. Each size is shared across Code-view mounts, but deliberately reset
+// on page reload.
+
+// What a handle resizes: the pane, the container it is measured in, the
+// custom property its size reaches the layout through, and the axis it moves
+// along — `grow` saying which way along it the pane gets bigger. `initial` is
+// the size before any is chosen, from the container's; `preferred` the one
+// chosen since.
+const RAIL = {
+  view: '.bundle-code-view', pane: '.bundle-code-rail', property: '--bundle-code-rail-width',
+  // The pane before the handle: dragging right widens it.
+  axis: 'x', grow: 1, keys: { ArrowLeft: -16, ArrowRight: 16 },
+  initial: () => 320,
+  bounds: size => ({ min: Math.min(180, size * .4), max: size * .6 }),
+  preferred: null,
+}
+const TERMINAL = {
+  view: '.bundle-code-main', pane: '.bundle-code-terminal', property: '--bundle-code-terminal-height',
+  // The pane after the handle: dragging up heightens it.
+  axis: 'y', grow: -1, keys: { ArrowUp: 16, ArrowDown: -16 },
+  initial: size => size * .4,
+  bounds: size => ({ min: Math.min(96, size * .4), max: size * .85 }),
+  preferred: null,
+}
 
 class BundleCodeSplitter extends HTMLElement {
+  static split = RAIL
+
   constructor() {
     super()
+    this._split = this.constructor.split
     this._drag = null
     this.addEventListener('pointerdown', e => this._startDrag(e))
     this.addEventListener('pointermove', e => {
       if (this._drag?.id !== e.pointerId) return
-      preferredWidth = this._apply(this._drag.width + e.clientX - this._drag.x)
+      this._split.preferred = this._apply(this._drag.size + this._split.grow * (this._client(e) - this._drag.at))
     })
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
       this.addEventListener(type, e => {
@@ -18,17 +45,17 @@ class BundleCodeSplitter extends HTMLElement {
     }
     this.addEventListener('keydown', e => this._onKeyDown(e))
     this.addEventListener('dblclick', () => {
-      preferredWidth = DEFAULT_WIDTH
-      this._apply(preferredWidth)
+      this._split.preferred = null
+      this._apply(this._preferred())
     })
   }
 
   connectedCallback() {
-    this._view = this.closest('.bundle-code-view')
+    this._view = this.closest(this._split.view)
     if (!this._view) return
-    this._observer = new ResizeObserver(() => this._apply(preferredWidth))
+    this._observer = new ResizeObserver(() => this._apply(this._preferred()))
     this._observer.observe(this._view)
-    this._apply(preferredWidth)
+    this._apply(this._preferred())
   }
 
   disconnectedCallback() {
@@ -37,19 +64,29 @@ class BundleCodeSplitter extends HTMLElement {
     this._view = null
   }
 
-  _bounds() {
-    const width = this._view.getBoundingClientRect().width
-    return { min: Math.min(180, width * .4), max: width * .6 }
+  _client(e) { return this._split.axis === 'x' ? e.clientX : e.clientY }
+
+  _measure(el) {
+    const rect = el.getBoundingClientRect()
+    return this._split.axis === 'x' ? rect.width : rect.height
   }
 
-  _apply(width) {
-    if (!this._view) return width
+  _preferred() {
+    return this._split.preferred ?? this._split.initial(this._view ? this._measure(this._view) : 0)
+  }
+
+  _bounds() {
+    return this._split.bounds(this._measure(this._view))
+  }
+
+  _apply(size) {
+    if (!this._view) return size
     const { min, max } = this._bounds()
-    if (max === 0) return width
-    const clamped = Math.max(min, Math.min(max, width))
+    if (max === 0) return size
+    const clamped = Math.max(min, Math.min(max, size))
     // Resize only the layout; rebuilding the source viewer on every move
     // would interrupt selections and needlessly re-render highlighted code.
-    this._view.style.setProperty('--bundle-code-rail-width', `${clamped}px`)
+    this._view.style.setProperty(this._split.property, `${clamped}px`)
     this.setAttribute('aria-valuemin', String(Math.round(min)))
     this.setAttribute('aria-valuemax', String(Math.round(max)))
     this.setAttribute('aria-valuenow', String(Math.round(clamped)))
@@ -57,11 +94,14 @@ class BundleCodeSplitter extends HTMLElement {
     return clamped
   }
 
+  _paneSize() {
+    return this._measure(this._view.querySelector(this._split.pane))
+  }
+
   _startDrag(e) {
     if (e.button !== 0 || !e.isPrimary || this._drag || !this._view) return
     e.preventDefault()
-    const width = this._view.querySelector('.bundle-code-rail').getBoundingClientRect().width
-    this._drag = { id: e.pointerId, x: e.clientX, width }
+    this._drag = { id: e.pointerId, at: this._client(e), size: this._paneSize() }
     this.setPointerCapture(e.pointerId)
     this.classList.add('dragging')
   }
@@ -76,14 +116,17 @@ class BundleCodeSplitter extends HTMLElement {
 
   _onKeyDown(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !this._view) return
-    const width = this._view.querySelector('.bundle-code-rail').getBoundingClientRect().width
     const { min, max } = this._bounds()
-    const next = { ArrowLeft: width - 16, ArrowRight: width + 16, Home: min, End: max }[e.key]
+    const step = this._split.keys[e.key]
+    const next = step === undefined ? { Home: min, End: max }[e.key] : this._paneSize() + step
     if (next === undefined) return
     e.preventDefault()
     e.stopPropagation()
-    preferredWidth = this._apply(next)
+    this._split.preferred = this._apply(next)
   }
 }
 
 customElements.define('bundle-code-splitter', BundleCodeSplitter)
+customElements.define('bundle-code-terminal-splitter', class extends BundleCodeSplitter {
+  static split = TERMINAL
+})

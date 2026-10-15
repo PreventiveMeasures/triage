@@ -12,8 +12,8 @@
 // host with an integrity, such as a company's mirror of npm's, as npm's
 // package of its name and version where npm's integrity is among it; one
 // from elsewhere (git, a tarball with no integrity, a file) is listed, not
-// assessed. Repositories are read one at a time, as GitHub's limits are the
-// caller's; packages are assessed meanwhile, as many at a time as npm-risk.ts
+// assessed. Repositories are read a few at a time (READ_AHEAD), each told in
+// turn, as GitHub's limits are the caller's; packages are assessed meanwhile, as many at a time as npm-risk.ts
 // makes spare assessments, those only devDependencies need in every lockfile
 // that locks them (LockedPackage `dev`) once all the rest are, as an install
 // of no devDependencies leaves them out. A lockfile's packages of npm's
@@ -21,48 +21,28 @@
 // audit` asks, each advisory told with whether it is of malware (risk's
 // npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
 // vulnerabilities, told beside.
-import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
+import type { LockfileFormat } from '@preventive/upstream/github.js'
 import type { Severity } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import type { NpmVersionDocument } from './npm-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
-import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
+import type { LockedPackage } from './locked-packages.ts'
 import { type Queue, queue } from './queue.ts'
 import { type DownloadsSource, readyingDownloads } from './scan-downloads.ts'
 import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
 import { type AdvisoryRow, type Audit, type AuditSource, auditLockfile } from './repository-risk-audit.ts'
+import { type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
+  readRepository } from './repository-risk-read.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
-
-// The formats of npm's ecosystem, as findRepoLockfiles names them, and those
-// of them read here.
-const NPM_LOCKFILE_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm', 'yarn', 'bun', 'deno'])
-const READ_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm', 'yarn'])
+export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
 
 // A repository to read: where `paths` are given, a team's directories in it,
 // only the lockfiles in them or above them, as a workspace's root lockfile
 // locks them too.
 export interface RepositoryRiskRepo { repoId: number; fullName: string; paths?: readonly string[] }
-
-// Whether a lockfile at `path` is of `paths` (RepositoryRiskRepo).
-function lockfileOf(path: string, paths: readonly string[] | undefined) {
-  const dir = path.slice(0, Math.max(path.lastIndexOf('/'), 0))
-  return !paths || paths.some(scope => dir === '' || dir === scope || dir.startsWith(`${scope}/`) || scope.startsWith(`${dir}/`))
-}
-
-type ListedLockfile = Pick<RepoLockfile, 'path' | 'format' | 'sha'>
-
-// A repository opened at its default branch's head (`commit`): its lockfiles,
-// as findRepoLockfiles lists them, each with its blob's id, and a file's
-// text; `recheck` checks access to it again, throwing where it is gone.
-export interface OpenedRepository {
-  commit: string
-  lockfiles(): Promise<ListedLockfile[]>
-  file(path: string): Promise<string>
-  recheck(): Promise<void>
-}
 
 export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends AuditSource {
   repos(): Promise<R[]>
@@ -120,7 +100,6 @@ export interface ScanProgress { repos: ToldRepository[] }
 interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[] }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
-type LockfileRead = { packages: LockedPackage[] } | RiskFailure
 
 // What scans keep between them, in this instance's memory: a repository's
 // lockfiles as listed at a commit, and a lockfile's packages by its blob,
@@ -143,9 +122,10 @@ export const riskCaches = (): RiskCaches => ({
   risks: lru(50_000),
   advisories: lru(50_000, kept => Array.isArray(kept.audit) ? kept.audit.length + 1 : 1),
 })
-// How long the source's `listings` and `lockfiles` are read for: what
-// GitHub has at a commit or a blob doesn't change, how it is read here may.
-export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
+// How many repositories are read at once (repository-risk-read.ts), ahead of
+// the one told: each asks GitHub one thing after another (opening it, and
+// its head) even where all else is kept.
+const READ_AHEAD = 6
 // How long a part's progress, written as it ends (`progress`), is waited on.
 const PROGRESS_WRITE_MS = 5000
 // How many kept risk lines are read of the source's `risks` at once.
@@ -255,36 +235,6 @@ async function assessing(scan: Scan, feed: (assess: (packages: AssessedPackage[]
   await Promise.all(assessors)
 }
 
-type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
-
-// What is kept by `key`: in this instance's memory, else in `store` within
-// SCAN_READ_KEPT_MS, else `read` and kept in both.
-async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>) {
-  const known = memory.get(key)
-  if (known !== undefined) return known
-  const kept = await store?.read(key)
-  if (kept && Date.now() - kept.at < SCAN_READ_KEPT_MS) { memory.set(key, kept.value); return kept.value }
-  const value = await read()
-  memory.set(key, value)
-  await store?.write(key, value, Date.now())
-  return value
-}
-
-// A lockfile's line, its packages or why they couldn't be had: as kept by its
-// blob, else read from GitHub and kept.
-async function readLockfile({ source, caches }: Scan, repo: number, opened: OpenedRepository, { path, format, sha }: ListedLockfile): Promise<LockfileLine> {
-  const at = { type: 'lockfile', repo, path, format } as const
-  if (!READ_FORMATS.has(format)) return { ...at, error: 'unsupported-format' }
-  try {
-    return { ...at, ...await keptRead(caches.lockfiles, source.lockfiles, `${format}\0${sha}`, async (): Promise<LockfileRead> => {
-      const text = await opened.file(path)
-      try { return { packages: lockedPackages(format, text) } } catch (error) {
-        return { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
-      }
-    }) }
-  } catch (error) { return { ...at, ...failureOf(error) } }
-}
-
 // A lockfile's packages of npm's registry or a mirror not yet seen this scan,
 // to look up as kept (lookUp), and assess where none is; and one seen as only
 // devDependencies need it, and put off, that this lockfile needs otherwise,
@@ -303,25 +253,8 @@ function assessLater(scan: Scan, packages: LockedPackage[]) {
   if (fresh.length > 0) scan.lookups.add(fresh)
 }
 
-// A repository opened and its lockfiles of npm's ecosystem listed, as kept
-// for its commit or else from GitHub, those of its `paths` alone; null, with
-// its line telling why, where either failed, or where the scan stopped.
-async function listLockfiles(scan: Scan, repo: RepositoryRiskRepo) {
-  let doing = 'opening it'
-  try {
-    const opened = await scan.source.open(repo)
-    if (scan.signal.aborted) return null
-    doing = 'listing its lockfiles'
-    const listed = await keptRead(scan.caches.listings, scan.source.listings, `${repo.repoId}@${opened.commit}`, () => opened.lockfiles())
-    const lockfiles = listed.filter(({ path, format }) => NPM_LOCKFILE_FORMATS.has(format) && lockfileOf(path, repo.paths))
-    return { opened, lockfiles }
-  } catch (error) {
-    if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, doing) })
-    return null
-  }
-}
-
 type AdvisoriesLine = Extract<RepositoryRiskLine, { type: 'advisories' }>
+type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 
 // A lockfile's advisories line (repository-risk-audit.ts auditLockfile);
 // null where it locks none, or once the scan stops.
@@ -331,26 +264,20 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
   return audit === null ? null : Array.isArray(audit) ? { ...at, advisories: audit } : { ...at, ...audit }
 }
 
-// A repository's line, its lockfiles or why they couldn't be listed, and
-// then its lockfiles', and their advisories: told once they are all read
-// and access to the repository is checked again, as GitHub may have
-// withdrawn it meanwhile. A test's fixture or example its reader refuses
-// (isTestFixture) isn't told at all, as a test may keep one so on purpose.
-async function readRepository(scan: Scan, repo: RepositoryRiskRepo) {
-  const listed = await listLockfiles(scan, repo)
-  if (!listed) return
-  const lockfiles: { sha: string; line: LockfileLine }[] = []
-  for (const lockfile of listed.lockfiles) {
-    if (scan.signal.aborted) return
-    const line = await readLockfile(scan, repo.repoId, listed.opened, lockfile)
-    if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: lockfile.sha, line })
-  }
-  try { await listed.opened.recheck() } catch (error) {
+// A repository read (repository-risk-read.ts readRepository) told: its
+// line, or why it couldn't be read, then its lockfiles', and their
+// advisories, its packages assessed meanwhile. Access to it is checked again
+// just before, however long ago it was read, as GitHub may have withdrawn it.
+async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: RepositoryRead | RepositoryFailure | null) {
+  if (!read || scan.signal.aborted) return
+  if ('type' in read) { scan.lines.add(read); return }
+  try { await read.recheck() } catch (error) {
     if (!scan.signal.aborted) scan.lines.add({ type: 'repo', id: repo.repoId, ...failureOf(error, 'checking access to it again') })
     return
   }
   if (scan.signal.aborted) return
-  scan.lines.add({ type: 'repo', id: repo.repoId, commit: listed.opened.commit, lockfiles: lockfiles.map(({ line: { path, format } }) => ({ path, format })) })
+  const { commit, lockfiles } = read
+  scan.lines.add({ type: 'repo', id: repo.repoId, commit, lockfiles: lockfiles.map(({ line: { path, format } }) => ({ path, format })) })
   for (const { line } of lockfiles) {
     scan.lines.add(line)
     if ('packages' in line) assessLater(scan, line.packages)
@@ -382,8 +309,8 @@ async function toldBefore(scan: Scan, repo: RepositoryRiskRepo) {
   return true
 }
 
-// Each repository, a repository at a time, but those an earlier part told
-// whole (ScanProgress).
+// Each repository, READ_AHEAD read at a time, each told in turn, but those an
+// earlier part told whole (ScanProgress), read of none.
 async function readRepositories(scan: Scan) {
   const repos = await scan.source.repos()
   scan.lines.add({ type: 'repos', repos: repos.map(repo => ({ id: repo.repoId, fullName: repo.fullName })) })
@@ -393,9 +320,19 @@ async function readRepositories(scan: Scan) {
   const kept = await scan.source.progress?.read()
   const progress = kept && Date.now() - kept.at < SCAN_READ_KEPT_MS ? kept.value.repos : []
   for (const told of progress) if (listed.has(told.id)) scan.told.set(told.id, told)
-  for (const repo of repos) {
+  const reads: Promise<RepositoryRead | RepositoryFailure | null>[] = []
+  const read = (at: number) => {
+    if (reads[at]) return reads[at]
+    const repo = repos[at]!
+    const started = reads[at] = toldBefore(scan, repo).then(told => told ? null : readRepository(scan, repo))
+    // One read ahead and no longer waited on, as the scan stopped, fails alone.
+    started.catch(() => {})
+    return started
+  }
+  for (const [at, repo] of repos.entries()) {
     if (scan.signal.aborted) return
-    if (!await toldBefore(scan, repo)) await readRepository(scan, repo)
+    for (let ahead = at; ahead < Math.min(at + READ_AHEAD, repos.length); ahead++) void read(ahead)
+    await tellRepository(scan, repo, await read(at))
   }
 }
 

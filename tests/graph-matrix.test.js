@@ -344,6 +344,26 @@ it('labels a vendored package by name, but keeps it apart from an npm package of
   assert.equal(byPkg.get('log').size, 1)
 })
 
+// The topbar controls a matrix hands its graph (`matrix-controls-change`).
+function matrixControls(graph, set = {}) {
+  const matrix = new (customElements.get('dependency-matrix'))()
+  Object.assign(matrix, { graph }, set)
+  matrix.willUpdate(new Map([['graph', undefined]]))
+  const text = (value) => Array.isArray(value) ? value.map(text).join('')
+    : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('') : ['string', 'number'].includes(typeof value) ? String(value) : ''
+  return text(matrix.renderControls())
+}
+
+it('offers the Cycles switch only where there are cycles, or while it is on', () => {
+  const acyclic = cycleFixture([['app', 'dep'], ['dep', 'leaf']])
+  assert.equal(matrixControls(acyclic), '', 'no cycles, the switch off: no controls')
+  assert.match(matrixControls(acyclic, { cyclesOnly: true }), /<mode-switch label=0 cycles/u, 'left on by another scope, to be turned off')
+  assert.match(matrixControls(cycleFixture([['app', 'dep'], ['dep', 'app']])), /<mode-switch label=1 cycle /u)
+  const expanded = matrixControls(acyclic, { expanded: new Set(['app']) })
+  assert.match(expanded, /Collapse all/u)
+  assert.doesNotMatch(expanded, /<mode-switch/u, 'the other controls without it')
+})
+
 describe('matrix Cycles filter', () => {
   const executor = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
   const manifest = 'node_modules/react-native-shimmer/package.json'

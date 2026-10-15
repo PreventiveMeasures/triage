@@ -11,6 +11,7 @@ import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-pac
 import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
+import { fileRowDetails } from './bundle-sources.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
@@ -50,6 +51,9 @@ export function parseNpmPackageInput(text) {
   return { name, spec }
 }
 
+// A package as typed, `spec` its version or dist-tag where it names one.
+export const npmPackageInput = (name, spec = null) => spec == null ? name : `${name}@${spec}`
+
 // The file a package's Code tab opens on: what `main` names, resolved as
 // require would for the usual spellings, else `module`, else `index.js`.
 export function npmPackageEntries(manifest, paths) {
@@ -75,20 +79,13 @@ export function npmPackageEntry(data) {
   }
 }
 
-// Its parsed details, in the shape of a sourcemap carrying its sources: one
-// source per file, text inline, and every file's size from its bytes, so a
-// file that is not text still lists with its size. Those carry a digest of
-// their bytes instead (`npmBinaries`), which Compare compares them by.
+// Its parsed details (bundle-sources.js fileRowDetails), Code opening on
+// what `main` names.
 export function npmPackageDetails(entry, data) {
-  const files = Array.isArray(data.files) ? data.files : []
-  const sources = files.map(([path]) => path)
+  const details = fileRowDetails(entry, data.files)
   return {
-    integrity: entry.integrity, kind: 'sourcemap', size: entry.size, npm: entry.npm,
-    json: { version: 3, sources, sourcesContent: files.map(([, , text]) => typeof text === 'string' ? text : null) },
-    fileSizes: new Map(files.map(([path, size]) => [path, size])),
-    npmBinaries: new Map(files.filter(([, , text, digest]) => typeof text !== 'string' && typeof digest === 'string')
-      .map(([path, size, , digest]) => [path, { size, digest }])),
-    npmEntries: npmPackageEntries(entry.npm.manifest, sources),
+    ...details, npm: entry.npm,
+    npmEntries: npmPackageEntries(entry.npm.manifest, details.json.sources),
     // What the server's risk tells of it, once it arrives (file-risk.js).
     risk: () => npmRisk(entry.npm),
   }
@@ -166,7 +163,8 @@ function keepKnown({ name, version, known }) {
 // Something read about a package for this session, as `ask` answers and
 // `shape` keeps it: `{ status }` while the server is asked ('loading', then
 // 'ready' with what `shape` gives, or 'error' until a retry), each a new
-// object, so the view repaints when it arrives. What came with a version
+// object, so the view repaints when it arrives; one given up (aborted) is
+// not kept, and asked for again when next wanted. What came with a version
 // (keepKnown) is ready without asking.
 export function npmPackageData(kind, name, ask, shape) {
   sessionKept()
@@ -182,13 +180,18 @@ export function npmPackageData(kind, name, ask, shape) {
   packageData.set(key, loading)
   ask().then(
     data => ({ status: 'ready', ...shape(data) }),
-    () => {
+    err => {
+      if (err?.name === 'AbortError') return null
       const failures = loading.failures + 1
       const wait = Math.min(DATA_RETRY_MS * 2 ** (failures - 1), DATA_RETRY_MAX_MS)
       return { status: 'error', failures, wait, retryAt: Date.now() + wait }
     },
   ).then(answer => {
     if (packageData.get(key) !== loading) return null
+    if (answer === null) {
+      packageData.delete(key)
+      return null
+    }
     packageData.set(key, answer)
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
@@ -211,9 +214,10 @@ function repaint() {
 // A package's versions, newest first, and dist-tags, when each was
 // published (`times`) and its first was (`created`, null where the server
 // didn't say), whether the registry has it only for the server's token
-// (`private`), and whether a team lists its scope (`teamScoped`).
-export function npmVersionList(name) {
-  return npmPackageData('versions', name, () => fetchNpmVersions(name),
+// (`private`), and whether a team lists its scope (`teamScoped`). `signal`
+// gives up the request where this is the first to ask for it.
+export function npmVersionList(name, signal = undefined) {
+  return npmPackageData('versions', name, () => fetchNpmVersions(name, { signal }),
     data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {}, created: typeof data.created === 'string' ? data.created : null,
       private: data.private === true, teamScoped: data.teamScoped === true }))
 }
@@ -301,27 +305,39 @@ export function navigateToNpm(packageName = null, packageSpec = null, bundleTab 
     : { view: 'npm', packageName, packageSpec, bundleTab, ...fields })
 }
 
-function showLookup(lookup) {
+// The lookup page, or a version opening (`opening`, render-bundle.js
+// renderNpmOpening).
+function showNpmPage(lookup, opening = null) {
   state.currentView = 'npm'
   state.npmLookup = lookup
+  state.npmOpening = opening
   state.currentManagedTeam = null
   state.currentManagedReport = null
   document.body.classList.remove('report-fullscreen')
   render({ animate: false })
 }
 
+// A version as npm's registry names it (`4.18.1`, `1.0.0-rc.1`), which the
+// server answers as asked, not a dist-tag it resolves. No published version
+// has build metadata (`+build.4`): npm's publish strips it (semver.clean),
+// and the registry has none of a spec that holds it.
+const EXACT_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[\dA-Za-z-]+(?:\.[\dA-Za-z-]+)*)?$/u
+// The tabs whose first render reads the version's own risk: the Overview's
+// chips, and Compare's tags on its files.
+const RISK_TABS = new Set(['overview', 'compare'])
+
 // Open a `/npm` route: the lookup page, or a package version, which replaces
-// whatever bundle was shown. Answers the route the page ends on, the version
-// exact, or false. A version that fails to open leaves the lookup page saying
-// why, at `/npm`.
+// whatever bundle was shown, its header showing while it opens. Answers the
+// route the page ends on, the version exact, or false. A version that fails
+// to open leaves the lookup page saying why, at `/npm`.
 export async function openNpmRoute(route, isCurrent, renderSidebar) {
   const { packageName: name, packageSpec: spec = null, bundleTab: tab = 'overview' } = route
   if (name == null) {
-    showLookup({ input: state.npmLookup?.input ?? '', pending: false, error: null })
+    showNpmPage({ input: state.npmLookup?.input ?? '', error: null })
     renderSidebar()
     return { view: 'npm' }
   }
-  const input = `${name}${spec == null ? '' : `@${spec}`}`
+  const input = npmPackageInput(name, spec)
   const shown = state.currentView === 'bundles' && state.bundleDetails?.npm
   // Another tab of the version shown, as Back gives, keeps it.
   let entry = shown && state.bundles?.[0]?.npm?.name === name && state.bundles[0].npm.version === spec ? state.bundles[0] : null
@@ -330,17 +346,33 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     // Another version keeps the one shown until it opens.
     const kept = spec != null && sessionKept().has(`${name}@${spec}`)
     if (!shown && !kept) {
-      showLookup({ input, pending: true, error: null })
+      showNpmPage({ input, error: null }, { name, spec, tab })
       renderSidebar()
     }
+    // What its first render asks for that the route names enough of, asked
+    // beside the version rather than once it has come: its package's
+    // versions, for the header's picker, and where the route names it
+    // exactly, its risk, on a tab that reads it. Each is kept as it is asked
+    // (npmPackageData), for that render to take up. Both are given up where
+    // the route is left before the version opens, as the server reads only a
+    // few package documents and makes only a few assessments at once; apart
+    // from the view's own signal, which opening the version renews
+    // (selectBundle).
+    const early = new AbortController()
+    npmVersionList(name, early.signal)
+    if (spec != null && EXACT_VERSION.test(spec) && RISK_TABS.has(tab)) npmRisk({ name, version: spec }, null, early.signal)
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
+      early.abort()
       if (err?.name === 'AbortError' || !isCurrent()) return false
       searching = null
-      showLookup({ input, pending: false, error: err.message })
+      showNpmPage({ input, error: err.message })
       return { view: 'npm' }
     }
-    if (!isCurrent() || !isManagedUiMode()) return false
+    if (!isCurrent() || !isManagedUiMode()) {
+      early.abort()
+      return false
+    }
   }
   if (searching?.name === name && searching.spec === spec) {
     saveRecentSearches([input, ...npmRecentSearches().filter(other => other !== input)])
@@ -364,7 +396,8 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: compareModeOf(route.compareMode) }
   } else if (compared) state.bundleCompare = compared
   state.bundleDetails = details
-  state.npmLookup = { input: entry.name, pending: false, error: null }
+  state.npmLookup = { input: entry.name, error: null }
+  state.npmOpening = null
   state.currentManagedTeam = null
   state.currentManagedReport = null
   state.reports = []
@@ -402,7 +435,7 @@ export function forgetNpmSearch(search) {
 export function searchNpm(text) {
   const parsed = parseNpmPackageInput(text)
   if (!parsed) {
-    state.npmLookup = { input: text ?? '', pending: false, error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
+    state.npmLookup = { input: text ?? '', error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
     render()
     return
   }
@@ -418,7 +451,7 @@ function submitLookup(event) {
 // The lookup page: a package to open, why the last one did not, and the
 // recent searches to open again or remove.
 export function renderNpmLookup() {
-  const lookup = state.npmLookup ?? { input: '', pending: false, error: null }
+  const lookup = state.npmLookup ?? { input: '', error: null }
   const privileged = ['admin', 'manage'].includes(state.managedSession?.role)
   const recent = npmRecentSearches()
   return html`<section class="npm-lookup" aria-labelledby="npm-lookup-title">
@@ -430,17 +463,16 @@ export function renderNpmLookup() {
       ${privileged ? nothing : 'You can open public packages, and private ones in npm scopes your teams list.'}</p>
     <form class="npm-lookup-form" @submit=${submitLookup}>
       <input name="package" type="text" aria-label="Package" autocomplete="off" spellcheck="false" maxlength="500"
-        placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''} ?disabled=${lookup.pending}>
-      <button type="submit" ?disabled=${lookup.pending}>Open</button>
+        placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''}>
+      <button type="submit">Open</button>
     </form>
     <div class="npm-lookup-message">
-      <p class="npm-lookup-status" role="status">${lookup.pending ? `Opening ${lookup.input}…` : nothing}</p>
       ${lookup.error ? html`<p class="npm-lookup-error" role="alert">${lookup.error}</p>` : nothing}
     </div>
     ${recent.length > 0 ? html`<section class="npm-lookup-recent" aria-labelledby="npm-lookup-recent-title">
       <h2 id="npm-lookup-recent-title">Recent searches</h2>
       <ul>${recent.map(search => html`<li>
-        <button type="button" class="npm-lookup-recent-open" ?disabled=${lookup.pending} @click=${() => searchNpm(search)}>${search}</button>
+        <button type="button" class="npm-lookup-recent-open" @click=${() => searchNpm(search)}>${search}</button>
         <button type="button" class="npm-lookup-recent-remove" aria-label=${`Remove ${search} from recent searches`}
           @click=${() => forgetNpmSearch(search)}>×</button>
       </li>`)}</ul>

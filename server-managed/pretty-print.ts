@@ -250,18 +250,21 @@ export function stalePrettyRemover(npm: CacheStorage): (signal?: AbortSignal) =>
   }
 }
 
+// A bundle's details, from its bytes in `store`: bundles are read one at a
+// time, as reading one decodes all of it.
+function detailsReader(store: BundleStore) {
+  const enqueue = serial()
+  return (record: ManagedBundle) => enqueue(async () => {
+    const details = await readBundleDetails(record, store)
+    if (!details) throw new PrettyError(422, 'bundle-unavailable')
+    return details
+  })
+}
+
 export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage, db: Pick<ManagedDb, 'getBundle'>, store: BundleStore) {
   // Copies being made; readers asking for one meanwhile share it.
   const shared = sharing<Buffer>()
-  // Bundles are read one at a time: reading one decodes all of it.
-  const enqueue = serial()
-  function bundleDetails(record: ManagedBundle) {
-    return enqueue(async () => {
-      const details = await readBundleDetails(record, store)
-      if (!details) throw new PrettyError(422, 'bundle-unavailable')
-      return details
-    })
-  }
+  const bundleDetails = detailsReader(store)
   // A bundle's file pretty-printed from the text `read` reads, and kept in
   // its cache.
   function bundleCopy(record: ManagedBundle, request: PrettyRequest, read: () => Promise<string>): Promise<Buffer> {
@@ -341,6 +344,8 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
         made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
       return [await sideOf(base, 'base'), await sideOf(other, 'other')]
     },
+    // A bundle's details, read in its turn, as Compare pairs them (comparison.ts).
+    bundleDetails,
     async npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc)), packageDirs: null,
         kept: request => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request)))),

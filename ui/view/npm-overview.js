@@ -7,7 +7,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { bundleFileSizes } from '../../common/bundle-sources.js'
 import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
-import { compareSemver } from './bundle-compare-diff.js'
+import { compareSemver } from '../../common/bundle-compare-versions.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
 import { factFile, npmAge, npmDeprecation, npmPackageData, npmPublishedDay, npmPublishedOn } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
@@ -847,8 +847,11 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
 // by downloads, or none npm has for anyone; and the version its spec installs where that has install
 // scripts, its package's latest where it isn't that, published since too
 // where it was; its spec before where that version named it by another;
-// null where it tells none, as of one kept from that version.
-const unusedSaid = (sides, { created, gap, level, tier, installs, missing, was }) => [
+// that risk doesn't count it, a notice (risk/npm/dependencies.js
+// npmUnusedDependencyCounted); null where it tells none, as of one kept from
+// that version.
+const unusedSaid = (sides, { created, gap, level, tier, installs, missing, was, severity }) => [
+  severity === 'notice' ? 'no risk counted' : null,
   was === undefined ? null : `was ${was}`,
   created ? `new package, ${gap >= 0 ? `${npmSpan(gap)} old` : 'published later'}` : missing ? 'no package npm has' : level ? `npm's ${npmTierName(tier ?? Infinity)}` : null,
   installs?.scripts ? `installs ${installs.version}${installs.latest && installs.latest !== installs.version ? ` (its latest ${installs.latest})` : ''}`
@@ -879,7 +882,7 @@ function dependencyBadges(sides, found) {
   if (unimported.length > 0) {
     const [it, its] = unimported.length === 1 ? ['it', 'its'] : ['them', 'their']
     const named = row => row.kind ? `${row.name} (${row.kind})` : row.name
-    chips.push(html`<li><span class=${`npm-extension ${SEVERITY_CHIPS[unused.severity] ?? 'is-warn'} npm-compare-unimported`}
+    chips.push(html`<li><span class=${`npm-extension ${unused.severity === 'notice' ? 'is-notice' : SEVERITY_CHIPS[unused.severity] ?? 'is-warn'} npm-compare-unimported`}
       data-tooltip=${`Imported by nothing of ${version}: ${unimported.map(row => `${row.name} ${row.range}${unusedSaid(sides, row) ? ` (${unusedSaid(sides, row)})` : ''}`).join(', ')}${anew(unimported)}`}
       .tooltipContent=${compareTip(`Nothing imports ${it}`, [sides.at(-1)], [tipLines(unimported.map(row => [[named(row), unusedSaid(sides, row)].filter(Boolean).join(', '), row.range, row.added]))],
         `No code file of ${version} names ${it} as an import would, nor does an install script; npm installs ${it} all the same, running ${its} install scripts`)}>

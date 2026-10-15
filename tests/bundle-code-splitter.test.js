@@ -19,8 +19,11 @@ globalThis.ResizeObserver = class {
   observe(view) { view.observer = this }
   disconnect() { this.disconnected = true }
 }
-let Splitter
-globalThis.customElements = { define(_name, element) { Splitter = element } }
+let Splitter, TerminalSplitter
+globalThis.customElements = { define(name, element) {
+  if (name === 'bundle-code-splitter') Splitter = element
+  if (name === 'bundle-code-terminal-splitter') TerminalSplitter = element
+} }
 // Any storage access is a failure: the width must live only in memory.
 globalThis.localStorage = globalThis.sessionStorage = {
   getItem() { assert.fail('must not read storage') },
@@ -42,6 +45,21 @@ function mount(width = 1000) {
     style: { setProperty(_name, value) { view.railWidth = parseFloat(value) } },
   }
   const handle = new Splitter()
+  handle.view = view
+  handle.connectedCallback()
+  return { handle, view }
+}
+
+// The terminal pane's handle, in a Code column `height` tall.
+function mountTerminal(height = 800) {
+  const view = {
+    height,
+    paneHeight: null,
+    getBoundingClientRect() { return { height: this.height } },
+    querySelector() { return { getBoundingClientRect: () => ({ height: this.paneHeight }) } },
+    style: { setProperty(name, value) { assert.equal(name, '--bundle-code-terminal-height'); view.paneHeight = parseFloat(value) } },
+  }
+  const handle = new TerminalSplitter()
   handle.view = view
   handle.connectedCallback()
   return { handle, view }
@@ -151,4 +169,58 @@ test('a fresh page starts at 320px even after a previous instance was resized', 
   assert.equal(mount().view.railWidth, 600)
   await reload()
   assert.equal(mount().view.railWidth, 320)
+})
+
+test('the terminal pane starts at 40% of the column, dragged up to grow and down to shrink, within bounds', async () => {
+  await reload()
+  const { handle, view } = mountTerminal()
+  assert.equal(view.paneHeight, 320)
+  fire(handle, 'pointerdown', { clientY: 480 })
+  fire(handle, 'pointermove', { clientY: 380 })
+  assert.equal(view.paneHeight, 420)
+  fire(handle, 'pointermove', { clientY: 530 })
+  assert.equal(view.paneHeight, 270)
+  fire(handle, 'pointermove', { clientY: -1000 })
+  assert.equal(view.paneHeight, 680, 'the code keeps 15% of the column')
+  fire(handle, 'pointermove', { clientY: 2000 })
+  assert.equal(view.paneHeight, 96)
+  fire(handle, 'pointerup')
+  assert.equal(handle.capture, null)
+})
+
+test('the terminal pane resizes by keyboard, keeps its height across mounts apart from the rail\'s width, and resets to 40%', async () => {
+  await reload()
+  const { handle, view } = mountTerminal()
+  assert.equal(fire(handle, 'keydown', { key: 'ArrowUp' }).defaultPrevented, true)
+  assert.equal(view.paneHeight, 336)
+  fire(handle, 'keydown', { key: 'ArrowDown' })
+  fire(handle, 'keydown', { key: 'ArrowDown' })
+  assert.equal(view.paneHeight, 304)
+  assert.equal(fire(handle, 'keydown', { key: 'ArrowLeft' }).defaultPrevented, false)
+  fire(handle, 'keydown', { key: 'Home' })
+  assert.equal(view.paneHeight, 96)
+  fire(handle, 'keydown', { key: 'End' })
+  assert.equal(view.paneHeight, 680)
+  handle.disconnectedCallback()
+  assert.equal(mount().view.railWidth, 320)
+  const next = mountTerminal()
+  assert.equal(next.view.paneHeight, 680)
+  fire(next.handle, 'dblclick')
+  assert.equal(next.view.paneHeight, 320)
+})
+
+test('until one is chosen, the terminal pane follows the column at 40%; once chosen, it is clamped to it', async () => {
+  await reload()
+  const { handle, view } = mountTerminal()
+  view.height = 500
+  view.observer.callback()
+  assert.equal(view.paneHeight, 200)
+  fire(handle, 'keydown', { key: 'End' })
+  assert.equal(view.paneHeight, 425)
+  view.height = 300
+  view.observer.callback()
+  assert.equal(view.paneHeight, 255)
+  view.height = 1000
+  view.observer.callback()
+  assert.equal(view.paneHeight, 425)
 })

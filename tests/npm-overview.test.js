@@ -678,7 +678,8 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
   // Unused deps tinted as risk grades them by their packages: red for one
   // first published since the version compared with, its age said; yellow
   // for one among npm's top 20,000, as a peer's or a tool's is, its tier said,
-  // or for those all kept from the version compared with.
+  // or for those all kept from the version compared with; a notice's for
+  // those risk counts none of.
   const unusedChip = shown => /<li><span class=npm-extension (is-\w+) npm-compare-unimported\s+data-tooltip=([^\n]*)[^]*?<\/li>/u.exec(shown)?.slice(1).join(' | ')
   answers.told['told@1.14.1'] = { 'plain-crypto-js': { tier: null, level: 'is-unpopular', created: '2026-03-30T05:57:32.867Z', gap: 66_265_133 }, react: { tier: 200, level: 'is-solid' } }
   assert.equal(unusedChip(await badges(depending('told', '1.14.0', {}), depending('told', '1.14.1', { 'plain-crypto-js': '^4.2.1', react: '^19.0.0' }))),
@@ -692,6 +693,9 @@ test('Compare\'s badges flag the advisories affecting either version, Socket\'s 
     'is-moderate | Imported by nothing of 1.1.0: react ^19.0.0 (npm\'s top 200); new since 1.0.0: react')
   assert.equal(unusedChip(await badges(depending('debug-kept', '1.0.0', { debug: '^4.0.0' }), depending('debug-kept', '1.1.0', { debug: '^4.0.0' }))),
     'is-moderate | Imported by nothing of 1.1.0: debug ^4.0.0', 'kept from 1.0.0')
+  assert.equal(unusedChip(await badges(depending('leftover', '1.0.0', { lodash: '^4.17.21' }), depending('leftover', '1.1.0', { lodash: '^4.17.21', '@babel/preset-react': '^7.0.0' }))),
+    'is-notice | Imported by nothing of 1.1.0: @babel/preset-react ^7.0.0 (no risk counted), lodash ^4.17.21 (no risk counted); new since 1.0.0: @babel/preset-react',
+    'lodash and Babel\'s presets told all the same, as a notice')
 
   // An open version under two weeks old: how long ago, the day in its
   // tooltip; not one of a scope a team lists.

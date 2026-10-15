@@ -16,7 +16,7 @@ mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
-mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
+mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
 // Dialogs have separate rendering tests; capture why requests without browser-only dependencies.
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
 mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })
@@ -33,7 +33,7 @@ const { graph2 } = await import('../ui/view/graph/state.js')
 const npmPackage = await import('../ui/view/npm-package.js')
 mock.module('../ui/view/npm-package.js', { namedExports: { ...npmPackage, npmVersionList: () => ({ status: 'ready', versions: [] }),
   npmCompareSource: () => ({ choices: [], options: [] }) } })
-const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
+const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile, renderNpmOpening } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -85,6 +85,61 @@ test('npm Review tab requires membership in a team with dependency review enable
     Object.assign(state, { managedSession: session, managedTeams: teams })
     assert.equal(/data-bundle-tab="review"/u.test(renderText(renderBundlesList([entry]))), shown)
   }
+})
+
+test('an npm version has a Search tab, searching its text files as a bundle\'s Search does', t => {
+  const previous = { currentView: state.currentView, selectedBundle: state.selectedBundle, bundles: state.bundles, bundleDetails: state.bundleDetails,
+    bundleDetailsTab: state.bundleDetailsTab, bundleSourceFile: state.bundleSourceFile, bundleSearchQuery: state.bundleSearchQuery,
+    bundleSearchRegex: state.bundleSearchRegex, bundleSearchCase: state.bundleSearchCase }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'lib@1.0.0', integrity: 'npm-search-tab', npm: { name: 'lib', version: '1.0.0' } }
+  const details = { ...entry, kind: 'sourcemap', json: { version: 3, sources: ['index.js', 'lib/util.js', 'logo.png'], sourcesContent: ['const needle = 1\n', 'needle()\n', null] },
+    npmBinaries: new Map([['logo.png', { size: 3, digest: 'sha256-logo' }]]) }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: details, bundleDetailsTab: 'search',
+    bundleSourceFile: null, bundleSearchQuery: '', bundleSearchRegex: false, bundleSearchCase: false })
+  const hint = renderText(renderBundlesList([entry]))
+  assert.match(hint, /data-bundle-tab="search" aria-selected=true/u, 'in its tab strip, kept open')
+  assert.match(hint, /Search across every file of this version\./u)
+  state.bundleSearchQuery = 'needle'
+  const found = renderText(renderBundlesList([entry]))
+  assert.deepEqual([...found.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), ['index.js', 'lib/util.js'],
+    'its text files, one that isn\'t aside')
+  state.bundleDetails = { ...details, json: { version: 3, sources: ['logo.png'], sourcesContent: [null] } }
+  assert.match(renderText(renderBundlesList([entry])), /This version has no text files to search\./u, 'one whose files are all binary has files, none of them text')
+})
+
+test('an npm version opening shows its header at once, its version and tabs waiting for it, and its body says what opens', t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams, currentView: state.currentView, selectedBundle: state.selectedBundle,
+    bundles: state.bundles, bundleDetails: state.bundleDetails, bundleDetailsTab: state.bundleDetailsTab }
+  t.after(() => Object.assign(state, previous))
+  Object.assign(state, { managedSession: { role: 'view' }, managedTeams: [{ dependencyReview: true }] })
+  const at = (template, binding) => template.values[template.strings.findIndex(part => part.endsWith(binding))]
+  const tabsOf = view => templates(view).filter(template => template.strings.some(part => part.includes('role="tab"')))
+  const selectOf = view => templates(view).find(template => template.strings.some(part => part.includes('<npm-version-select')))
+
+  const opening = renderNpmOpening({ name: 'lodash', spec: '4.18.1', tab: 'code' })
+  const text = renderText(opening)
+  assert.match(text, /<span class="bundles-slide-breadcrumb">\s*<button type="button" @click=>npm<\/button>/u, 'the way back to the lookup page works meanwhile')
+  assert.match(text, /<div class="bundles-slide-name"[^>]*>lodash<\/div>/u)
+  assert.equal(at(selectOf(opening), '.version='), '4.18.1')
+  assert.equal(at(selectOf(opening), '.list='), null, 'no versions to switch to until it opens')
+  assert.deepEqual(tabsOf(opening).map(tab => [at(tab, 'data-bundle-tab="'), at(tab, 'aria-selected='), at(tab, '?disabled=')]),
+    [['treemap', 'false', true], ['code', 'true', true], ['search', 'false', true], ['compare', 'false', true], ['review', 'false', true], ['overview', 'false', true]],
+    'the tabs it will have, the one its route names open')
+  assert.match(text, /<div class=\s*\?inert= aria-busy=><div class="bundles-slide-placeholder" role="status">Opening lodash@4\.18\.1…<\/div><\/div>\s*<\/div>$/u)
+  const latest = renderNpmOpening({ name: 'lodash', spec: null, tab: 'overview' })
+  assert.equal(at(selectOf(latest), '.version='), 'latest')
+  assert.match(renderText(latest), /Opening lodash…/u)
+
+  // Opened, it renders through the same templates, so its header stays put.
+  const entry = { name: 'lodash@4.18.1', integrity: 'npm-opening', npm: { name: 'lodash', version: '4.18.1' } }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: null, bundleDetailsTab: 'code' })
+  const opened = renderBundlesList([entry])
+  assert.equal(templates(opened)[0].strings, templates(opening)[0].strings)
+  assert.equal(selectOf(opened).strings, selectOf(opening).strings)
+  assert.ok(at(selectOf(opened), '.list='), 'its versions to switch to')
+  assert.deepEqual(tabsOf(opened).map(tab => [at(tab, 'data-bundle-tab="'), at(tab, '?disabled=')]),
+    [['treemap', false], ['code', false], ['search', false], ['compare', false], ['review', false], ['overview', false]])
 })
 
 test('Compare and Review receive the same header chip renderer and file metadata source', t => {
@@ -540,6 +595,45 @@ test('Code offers a managed bundle\'s minified code pretty-printed, after the wr
   const readable = header(managed, 'src/index.js')
   assert.ok(!readable.includes('data-bundle-source-pretty'), 'readable code is not offered it')
   assert.match(readable, /<span class="bundle-code-main-stats"><span>2 lines · 19 B<\/span><\/span>/u, 'nor room kept')
+})
+
+test('Code offers a lockfile in the lockfile viewer, last before the stats, which show its packages in place of its text once read', async t => {
+  t.after(() => { state.bundleSourceLockfile = false })
+  const integrity = 'sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A=='
+  const lockfile = `${JSON.stringify({ name: 'app', version: '1.0.0', lockfileVersion: 3, requires: true, packages: {
+    '': { name: 'app', version: '1.0.0', dependencies: { ms: '2.0.0' } },
+    'node_modules/ms': { version: '2.0.0', resolved: 'https://registry.npmjs.org/ms/-/ms-2.0.0.tgz', integrity },
+  } }, null, 2)}\n`
+  const sources = { 'package-lock.json': lockfile, 'broken/package-lock.json': '{\n', 'src/index.js': 'export const a = 1\n' }
+  const entry = { name: 'app.map', integrity: 'sha512-lockfile-view' }
+  const code = (file, on) => {
+    Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: file,
+      bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleSourceLockfile: on,
+      bundleDetails: { kind: 'sourcemap', integrity: entry.integrity, size: 123, json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources) } } })
+    const text = renderText(renderBundlesList([entry]))
+    return { header: text.match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1], body: text.match(/<div class="bundle-code-main-body">(.*)/su)[1] }
+  }
+  const offered = code('package-lock.json', false)
+  assert.match(offered.header, /data-bundle-source-wrap.*data-bundle-source-lockfile aria-pressed=false aria-busy=\s+aria-label="View lockfile" data-tooltip=View lockfile>.*bundle-code-main-stats/su,
+    'wrap, View lockfile, then the lines and size')
+  assert.doesNotMatch(offered.body, /<lockfile-graph/u)
+  assert.ok(!code('src/index.js', true).header.includes('data-bundle-source-lockfile'), 'other files are not offered it')
+
+  const reading = code('package-lock.json', true)
+  assert.match(reading.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=true\s+aria-label="View lockfile" data-tooltip=Reading the lockfile…>/u)
+  assert.doesNotMatch(reading.body, /<lockfile-graph/u, 'its text while it is read')
+  await import('../ui/view/lockfile-read.js')
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  const read = code('package-lock.json', true)
+  assert.match(read.body, /^\s*<lockfile-graph/u, 'its packages once read')
+  assert.doesNotMatch(read.header, /data-bundle-source-wrap|bundle-code-issue-step/u, 'nothing of the text but its stats')
+  assert.match(read.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=\s.*<span class="bundle-code-main-stats"><span>21 lines · /su)
+
+  code('broken/package-lock.json', true)
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  const broken = code('broken/package-lock.json', true)
+  assert.match(broken.header, /data-bundle-source-lockfile aria-pressed=true aria-busy=\s+aria-label="View lockfile" data-tooltip=Couldn't read the lockfile: \S/u)
+  assert.doesNotMatch(broken.body, /<lockfile-graph/u, 'its text where it can\'t be read')
 })
 
 test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, after the wrap toggle', () => {

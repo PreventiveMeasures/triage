@@ -794,6 +794,7 @@
 }
 .bundle-code-rail-action:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
 .bundle-code-rail-action:disabled { opacity: .35; }
+.bundle-code-rail-action[aria-pressed=true] { color: var(--accent); }
 .bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
@@ -814,24 +815,34 @@
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* A one-pixel divider with a wider grab area over the pane edges. */
-bundle-code-splitter {
+/* A one-pixel divider with a wider grab area over the pane edges:
+   between the file tree and the code, and between the code and the
+   terminal pane under it. */
+bundle-code-splitter,
+bundle-code-terminal-splitter {
   flex: none;
   position: relative; z-index: 1;
-  width: 7px; margin-inline: -3px;
   cursor: default;
   touch-action: none;
   user-select: none;
 
   &::before {
     content: '';
-    position: absolute; inset: 0 3px;
+    position: absolute;
     background: var(--border);
   }
   &:hover::before, &:focus-visible::before, &.dragging::before { background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 }
-.bundle-code-view:has(> bundle-code-splitter.dragging) {
+bundle-code-splitter {
+  width: 7px; margin-inline: -3px;
+  &::before { inset: 0 3px; }
+}
+bundle-code-terminal-splitter {
+  height: 7px; margin-block: -3px;
+  &::before { inset: 3px 0; }
+}
+.bundle-code-view:has(> bundle-code-splitter.dragging, bundle-code-terminal-splitter.dragging) {
   &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
@@ -1207,6 +1218,7 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path,
 .bundle-code-github-link,
 .bundle-source-pretty-toggle,
+.bundle-source-lockfile-toggle,
 .bundle-source-wrap-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1220,13 +1232,19 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path:hover,
 .bundle-code-github-link:hover,
 .bundle-source-pretty-toggle:hover,
+.bundle-source-lockfile-toggle:hover,
 .bundle-source-wrap-toggle:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
 .bundle-source-pretty-toggle[aria-pressed=true],
+.bundle-source-lockfile-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
-/* Busy while its copy is asked for; red where that failed. */
-.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: default; }
-.bundle-source-pretty-toggle.is-error { color: var(--critical); }
+/* Busy while its copy is asked for, or its lockfile read; red where that
+   failed. */
+.bundle-source-pretty-toggle.is-loading,
+.bundle-source-lockfile-toggle.is-loading { opacity: .55; cursor: default; }
+.bundle-source-pretty-toggle.is-error,
+.bundle-source-lockfile-toggle.is-error { color: var(--critical); }
+.bundle-source-lockfile-toggle svg { width: 13px; height: 13px; }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
 /* A grid of one cell, the stats over the room kept for them where the file
@@ -1273,6 +1291,34 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-main-body > .bundle-source-code-wrap {
   flex: 1; min-width: 0;
   overflow: auto;
+  -webkit-app-region: no-drag; app-region: no-drag;
+}
+/* Terminal pane — under the code panel, across the right column: a
+   bar naming it, with its close, over the Terminal tab's terminal
+   (render-bundle.js renderBundleCodeTerminal). The code panel above
+   gives up the height, which the handle between them sets (bundle-
+   code-splitter.js), 40% of the column until it does. */
+.bundle-code-terminal {
+  flex: 0 0 var(--bundle-code-terminal-height, 40%);
+  min-height: 0;
+  display: flex; flex-direction: column;
+}
+.bundle-code-terminal-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .2rem .5rem .2rem .75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+
+  & > .bundle-code-rail-action { font-size: 1rem; line-height: 1; }
+}
+.bundle-code-terminal-slot {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* A lockfile's packages, in place of its text (renderBundleCodeMain). */
+.bundle-code-main-body > lockfile-graph {
+  flex: 1; min-width: 0;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
 .bundle-code-placeholder,
@@ -2244,6 +2290,19 @@ body.report-fullscreen {
   & #report header.page-head { display: none; }
   & .bundles-slide-bar { display: none; }
   & #report { max-width: none; padding: .5rem; }
+
+  /* The Code tab's, from the lockfile viewer's button: the file's panel
+     alone, without the file tree, the terminal pane (kept running) or the
+     header's back and forward, until fullscreen is left. The file's header,
+     now the top row, keeps clear of the corner's floating controls. */
+  & .bundle-code-view {
+    & > .bundle-code-rail,
+    & > bundle-code-splitter,
+    & bundle-code-terminal-splitter,
+    & .bundle-code-terminal,
+    & .bundle-code-main-bar > .bundle-code-file-nav { display: none; }
+    & .bundle-code-main-bar { padding-right: var(--graph-fullscreen-inset); }
+  }
 }
 
 /* Bundle source viewer — modal overlay shown on top of the
@@ -2576,11 +2635,15 @@ body.report-fullscreen {
   background: transparent;
   & code { font: inherit; background: transparent; padding: 0; }
 }
+/* The underline paints in the button's own colour, so that is the code's
+   text colour wherever the button sits: a C `#include` string is nested in
+   the macro's token, whose red it would otherwise inherit. The linked text
+   keeps its token colour. */
 .bundle-source-link {
   display: inline;
   padding: 0; border: 0; border-radius: var(--ui-radius, 2px);
   background: transparent;
-  color: inherit;
+  color: var(--text);
   font: inherit;
   line-height: inherit;
   white-space: inherit;
@@ -2646,6 +2709,8 @@ body.report-fullscreen {
 
   &:hover { color: var(--text); }
   &.active { color: var(--accent); border-bottom-color: var(--accent); }
+  /* An npm version's, while it opens. */
+  &:disabled:not(.active) { color: var(--muted); }
   &.bundles-tab-action {
     color: var(--accent);
     &:hover { color: var(--text); }
@@ -3292,6 +3357,177 @@ body.report-fullscreen {
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
 /* As wide as the version it shows, with its tags. */
 npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16rem; }
+/* A repository directory's header (repository-code.js RepositoryCodeSource):
+   the repository and revision pickers, the directory's path between them and
+   the commit after, as wide as the bar leaves beside its tabs. */
+.bundles-slide-header .bundles-slide-title.bundles-slide-repository,
+.bundles-slide-header:not(.boxed) .bundles-slide-title.bundles-slide-repository {
+  width: auto; max-width: none; flex: 1 1 24rem; min-width: min(100%, 24rem);
+}
+/* Where the pickers and the tabs don't fit side by side, the tabs wrap
+   under them, at the right. */
+.bundles-slide-bar:has(> .bundles-slide-repository) {
+  flex-wrap: wrap; row-gap: .4rem;
+  & > .bundles-slide-tabs { margin-left: auto; }
+}
+repository-code-source {
+  display: flex; align-items: center; gap: .55rem; min-width: 0;
+  & > .repository-code-repo { flex: 0 1 17rem; min-width: 8rem; max-width: max-content; }
+  /* The revision grows into room left, as wide as a full one it names. */
+  & > .repository-code-revision { flex: 1 1 16rem; min-width: 10rem; max-width: max-content; }
+}
+.repository-code-path {
+  display: inline-flex; align-items: center; gap: .3rem; min-width: 0; flex: none; max-width: 18rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; color: var(--muted);
+  white-space: nowrap; overflow: hidden;
+  & > button {
+    border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: default;
+    &:hover { color: var(--accent); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 4px); }
+  }
+  & > [aria-current] { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+}
+/* A repository's directory opening (repository-code.js): a bar runs along
+   the header's foot, and a directory shown in its place dims, after a moment,
+   so a quick switch doesn't flicker. */
+.bundles-slide-bar:has(> .bundles-slide-progress) { position: relative; }
+.bundles-slide-progress {
+  position: absolute; inset: auto .5rem -1px; height: 2px; overflow: hidden; pointer-events: none;
+  &::before {
+    content: ''; position: absolute; inset: 0 auto 0 -30%; width: 30%;
+    background: var(--accent); animation: bundles-slide-progress 1.2s ease-in-out infinite;
+  }
+}
+@keyframes bundles-slide-progress { 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .bundles-slide-progress::before { left: 0; width: 100%; opacity: .5; animation: none; }
+}
+.bundles-slide-body.is-pending { opacity: .45; transition: opacity .2s .2s; }
+
+/* What a directory that failed to open lists to open instead. */
+.bundles-slide-placeholder.repository-code-failed {
+  flex-direction: column;
+  & > p { margin: 0; }
+}
+.repository-code-listing {
+  width: min(100%, 48rem); margin-top: 1rem; color: var(--muted); text-align: left;
+  & p { margin: 0 0 .5rem; }
+  & ul {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: .4rem;
+    margin: 0; padding: 0; list-style: none;
+  }
+}
+.repository-code-directory {
+  display: flex; align-items: center; gap: .5rem; width: 100%; min-width: 0; padding: .4rem .6rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--text);
+  font: inherit; font-size: .78rem; text-align: left; cursor: default;
+  & > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  &:hover { border-color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+.bundles-slide-commit {
+  display: inline-flex; flex: none; align-items: center; gap: .3rem;
+  color: var(--muted); text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem;
+  & > svg { flex: none; }
+  &:is(a):hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 4px); }
+}
+
+/* A repository's history (repository-history.js): one compact line a commit
+   beside the graph its lanes draw, each lane in its color, in order, as the
+   data-viz reference palette steps them for a dark surface, and, below, for
+   a light one. A commit's own line names it, so no lane needs its color to. */
+repository-history {
+  --lane-0: #3987e5; --lane-1: #d95926; --lane-2: #199e70; --lane-3: #c98500;
+  --lane-4: #d55181; --lane-5: #008300; --lane-6: #9085e9; --lane-7: #e66767;
+  container: history / inline-size;
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+  background: var(--bg); border-radius: inherit; font-size: .8rem;
+}
+body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
+  --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
+  --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
+}
+.history-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding: .45rem .75rem;
+  border-bottom: 1px solid var(--border); color: var(--muted);
+  & code { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+.history-modes {
+  display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
+  & > button {
+    padding: .2rem .65rem; border: 0; background: none; color: var(--muted); font: inherit; cursor: default;
+    &:hover:not(:disabled) { color: var(--text); }
+    &[aria-pressed=true] { background: var(--surface-active); color: var(--text); }
+    &:disabled { opacity: .5; }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  }
+  & > button + button { border-left: 1px solid var(--border); }
+}
+.history-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
+.history-scroll { flex: 1; min-height: 0; overflow: auto; padding: .3rem 0 .5rem; }
+.history-lines { position: relative; min-width: calc(var(--history-graph) + 24rem); }
+.history-graph {
+  position: absolute; top: 0; left: 0; z-index: 1; overflow: visible; pointer-events: none;
+  & path { fill: none; stroke: currentcolor; stroke-width: 2; stroke-linecap: round; }
+  & .history-stub { stroke-dasharray: 0 4; opacity: .8; }
+  & circle { fill: currentcolor; stroke: var(--bg); stroke-width: 1.5; }
+  & circle.is-shown { fill: var(--bg); stroke: currentcolor; stroke-width: 2.5; }
+  & .lane-0 { color: var(--lane-0); }
+  & .lane-1 { color: var(--lane-1); }
+  & .lane-2 { color: var(--lane-2); }
+  & .lane-3 { color: var(--lane-3); }
+  & .lane-4 { color: var(--lane-4); }
+  & .lane-5 { color: var(--lane-5); }
+  & .lane-6 { color: var(--lane-6); }
+  & .lane-7 { color: var(--lane-7); }
+}
+.history-list { margin: 0; padding: 0; list-style: none; }
+.history-commit {
+  display: flex; align-items: center; gap: .55rem; width: 100%; height: 24px;
+  padding: 0 .75rem 0 calc(var(--history-graph) + .35rem);
+  border: 0; background: none; color: var(--text); font: inherit; text-align: left; white-space: nowrap; cursor: default;
+  &:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .is-shown > & { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+}
+.history-sha { flex: none; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
+.is-shown .history-sha { color: var(--accent); }
+.history-refs { display: inline-flex; flex: 0 1 auto; gap: .25rem; min-width: 0; max-width: 45%; overflow: hidden; }
+.history-ref {
+  display: inline-flex; flex: none; align-items: center; gap: .3rem; max-width: 12rem; height: 1.15rem; padding: 0 .45rem;
+  border: 1px solid var(--border); border-radius: 999px; font-size: .72rem; line-height: 1;
+  & > span { overflow: hidden; text-overflow: ellipsis; }
+  & > svg { flex: none; width: .7rem; height: .7rem; color: var(--muted); }
+  &.is-branch::before { content: ''; flex: none; width: .45rem; height: .45rem; border-radius: 50%; background: var(--ref); }
+  &.is-default { font-weight: 600; }
+  &.is-shown { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  &.is-more { color: var(--muted); }
+}
+.history-subject { flex: 1 1 0; min-width: 4rem; overflow: hidden; text-overflow: ellipsis; }
+.history-author { flex: none; width: 9rem; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+/* As wide as the widest time, a day of another year ("Nov 23, 2025"), so
+   every line's author and time line up whatever its own. */
+.history-time { flex: none; width: 5.75rem; overflow: hidden; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+@container history (width < 40rem) {
+  .history-author { display: none; }
+}
+.history-note { margin: .35rem .75rem; color: var(--muted); }
+.history-link {
+  border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: default;
+  &:hover { text-decoration: underline; }
+}
+.history-more {
+  display: flex; align-items: center; justify-content: center; gap: .75rem; padding: .5rem;
+  & > [role=alert] { color: var(--critical); }
+  & > button {
+    padding: .25rem .8rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+    background: var(--surface); color: var(--text); font: inherit; cursor: default;
+    &:hover:not(:disabled) { border-color: var(--accent); }
+    &:disabled { color: var(--muted); }
+  }
+}
 
 /* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
    laid out by the Overview's own width: the package's facts, its build's
@@ -3794,6 +4030,9 @@ a.npm-compare-publisher {
 
   & .npm-extension-count { color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 }
+/* Unused deps risk counts none of (npm-overview.js dependencyBadges): a
+   notice, in the text's own color. */
+.npm-extension.npm-compare-unimported.is-notice { color: var(--text); }
 /* The advisories' chip is a button, listing them in a dialog. */
 .npm-extension.npm-compare-advisories {
   --sev: var(--muted);
@@ -3966,17 +4205,15 @@ a.npm-compare-publisher {
     border: 0; border-radius: var(--ui-radius, 6px);
     font: inherit; font-size: .85rem; font-weight: 600; cursor: default;
   }
-  & :disabled { opacity: .6; }
 }
-/* Where the search says it's opening a package, or why it didn't: a line
-   kept for it, so the recent searches under it stay put. */
+/* Why the last package didn't open: a line kept for it, so the recent
+   searches under it stay put. */
 .npm-lookup-message {
   min-height: 1.5em; margin-top: .75rem;
   font-size: .85rem; line-height: 1.5;
 
   & p { margin: 0; }
 }
-.npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
 /* Recent searches, under the search: each opens again, or is removed. */
 .npm-lookup-recent {
@@ -3991,7 +4228,7 @@ a.npm-compare-publisher {
   }
   & button { padding: .25rem .5rem; color: var(--text); background: none; border: 0; font: inherit; font-size: .8rem; }
   & .npm-lookup-recent-open { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  & .npm-lookup-recent-open:hover:not(:disabled) { color: var(--accent); }
+  & .npm-lookup-recent-open:hover { color: var(--accent); }
   & .npm-lookup-recent-remove { padding-left: .1rem; color: var(--muted); line-height: 1; }
   & .npm-lookup-recent-remove:hover { color: var(--critical); }
   & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--ui-radius, 6px); }

@@ -70,6 +70,9 @@ export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = 
 }
 
 const NPM_ERRORS = {
+  'bad-tarball': "This package's tarball couldn't be read.",
+  'upstream-invalid': "The npm registry's answer for this package couldn't be read.",
+  'upstream-too-large': "The npm registry's answer for this package is too large to read here.",
   400: 'Not an npm package name and version.',
   404: 'No such package version, or it is not available to you.',
   413: 'This package is too large to open here.',
@@ -85,8 +88,11 @@ export async function request(url, errors, read, signal) {
   const response = await managedFetch(url, { credentials: 'same-origin', signal })
   signal.throwIfAborted()
   if (!response.ok) {
-    const code = (await response.json().catch(() => null))?.error ?? null
-    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code })
+    const body = await response.json().catch(() => null)
+    const code = body?.error ?? null
+    // A failure naming the commit it was read at (a directory too large) keeps it.
+    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code,
+      ...typeof body?.commit === 'string' ? { commit: body.commit } : {} })
   }
   const data = await read(response)
   signal.throwIfAborted()
@@ -97,6 +103,66 @@ export async function request(url, errors, read, signal) {
 // npm package reads are never kept: the server checks access, against the
 // registry, on every one.
 const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, response => response.json(), signal)
+
+const REPOSITORY_CODE_ERRORS = {
+  'no-repository': 'This repository is not available to you.',
+  'no-directory': 'This directory is not at that commit, or not available to you.',
+  'directory-too-large': 'This directory is too large to open here. Open one of its directories instead.',
+  'repository-busy': 'Too many directories and packages are loading. Try again shortly.',
+  'repository-changed': 'The repository changed while it was read. Try again.',
+  'github-rate-limited': 'GitHub’s API rate limit has been reached. Try again later.',
+  'github-unauthorized': 'GitHub authentication has expired or was revoked. Sign in again.',
+  'github-status-403': 'GitHub denied this request. Check repository access and the GitHub App’s read permissions.',
+  'github-malformed': 'GitHub’s archive of this directory could not be verified against its commit.',
+  'github-unreachable': 'Could not connect to GitHub. Try again shortly.',
+  400: 'Not a repository directory and commit.',
+  403: 'Repository access is required to read its files.',
+  404: 'This repository, commit or directory is unavailable.',
+  413: 'This directory is too large to open here.',
+  429: 'Too many directories and packages are loading. Try again shortly.',
+  502: 'GitHub couldn’t be reached.',
+}
+
+const requestRepository = (part, params, signal) =>
+  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+
+// A repository's directory at a revision (`ref`: a commit, `heads/<branch>`,
+// `tags/<tag>`, or '' for the default branch's head), for the code viewer:
+// never kept, as the server checks access, against GitHub, on every read.
+export function fetchRepositoryCode(repoId, ref, path, { signal } = {}) {
+  return requestRepository('code', { repoId, ref, path }, signal)
+}
+
+// What the code viewer's header offers: the repositories its reader may
+// browse, a repository's branches and tags, and a directory's entries, to
+// open one of them where the directory itself can't be.
+export async function fetchBrowsableRepositories({ signal } = {}) {
+  return (await requestRepository('browsable', {}, signal)).repos ?? []
+}
+
+export function fetchRepositoryRefs(repoId, { signal } = {}) {
+  return requestRepository('refs', { repoId }, signal)
+}
+
+export function fetchRepositoryContents(repoId, ref, path, { signal } = {}) {
+  return requestRepository('contents', { repoId, ref, path }, signal)
+}
+
+const REPOSITORY_HISTORY_ERRORS = {
+  ...REPOSITORY_CODE_ERRORS,
+  'no-directory': 'This directory’s history is not available to you.',
+  'github-malformed': 'GitHub answered with a history that couldn’t be read.',
+  'github-token-required': 'Reading every branch needs your GitHub sign-in.',
+  400: 'Not a repository’s history.',
+}
+
+// The History tab's commits: from a revision, a page at a time (`page`), or
+// across the repository's most recently updated branches (`all`), a later
+// page on from the commits `from` names.
+export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, from = null, signal } = {}) {
+  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...from ? { from: from.join(',') } : {} })}`,
+    REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
+}
 
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
@@ -260,4 +326,31 @@ export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = 
 
 export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal } = {}) {
   return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
+}
+
+const COMPARISON_ERRORS = {
+  404: 'This bundle is no longer available.',
+  422: "This bundle couldn't be read.",
+  429: 'Too many bundles are being compared. Try again shortly.',
+}
+
+// A comparison as the server works it out (server-managed/comparison.ts), its
+// files paired as Compare and Review read them: the viewer pairs none of a
+// managed bundle's or a package's itself. Its `files.basePaths` a Map again.
+const readComparison = async response => {
+  const comparison = await response.json()
+  comparison.files.basePaths = new Map(comparison.files.basePaths)
+  return comparison
+}
+
+// Two bundles', the one `id` names the base, within a reason `scope` where given.
+export function fetchBundleComparison(id, other, { signal, scope = '' } = {}) {
+  return request(`/api/bundles/${encodeURIComponent(id)}/comparison?${scoped(other, scope)}`, COMPARISON_ERRORS, readComparison, signal)
+}
+
+// Two versions' of a package: `version` the one shown, compared with
+// `otherVersion`, of `otherName` where another package's, or with none as `(empty)`.
+export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name } = {}) {
+  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName } })
+  return request(`/api/npm/comparison?${params}`, NPM_ERRORS, readComparison, signal)
 }

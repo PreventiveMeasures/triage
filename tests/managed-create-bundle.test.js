@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
 import './_polyfills.js'
 import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
+import { RevisionSelect } from '../ui/view/revision-select.js'
 import { templates } from './_lit.js'
 
 const commit = 'a'.repeat(40)
@@ -217,45 +218,84 @@ test('the commit link opens the current directory at the pinned commit on GitHub
   assert.equal(link(), undefined, 'do not retain a link to the previous commit while loading a revision')
 })
 
+test('the revision field rings where the keyboard moved focus into it, as the repository picker does, not where a pointer did', () => {
+  const select = new RevisionSelect()
+  const form = () => select.render()
+  const [, pointerDown, focusIn, focusOut] = form().values
+  pointerDown()
+  focusIn()
+  assert.equal(form().values[0], 'revision', 'a click focuses it ringless, as the name it then focuses')
+  select._onKey()
+  focusIn()
+  assert.equal(form().values[0], 'revision keyboard', 'Tab into it rings')
+  pointerDown()
+  assert.equal(form().values[0], 'revision', 'a click in it, focused already, clears the ring')
+  select._onKey()
+  focusIn()
+  focusOut({ currentTarget: { contains: () => false }, relatedTarget: null })
+  assert.equal(form().values[0], 'revision', 'leaving it clears the ring')
+})
+
 test('branch suggestions put the default first, retain filtering, and leave tag order unchanged', () => {
-  const page = new ManagedCreateBundle()
-  page._refs = { defaultBranch: 'main', branches: ['develop', 'main', 'release'], tags: ['v1', 'v2'] }
-  assert.deepEqual(page.revisionSuggestions(), ['main', 'develop', 'release'])
-  page._revisionQuery = 're'
-  assert.deepEqual(page.revisionSuggestions(), ['release'])
-  page._revisionQuery = ''
-  page._refs.branches = ['develop']
-  assert.deepEqual(page.revisionSuggestions(), ['main', 'develop'], 'default remains available when outside the first page of branch suggestions')
-  page._refKind = 'tag'
-  assert.deepEqual(page.revisionSuggestions(), ['v1', 'v2'])
+  const select = new RevisionSelect()
+  select.refs = { defaultBranch: 'main', branches: ['develop', 'main', 'release'], tags: ['v1', 'v2'] }
+  assert.deepEqual(select.suggestions(), ['main', 'develop', 'release'])
+  select._query = 're'
+  assert.deepEqual(select.suggestions(), ['release'])
+  select._query = ''
+  select.refs.branches = ['develop']
+  assert.deepEqual(select.suggestions(), ['main', 'develop'], 'default remains available when outside the first page of branch suggestions')
+  select.kind = 'tag'
+  assert.deepEqual(select.suggestions(), ['v1', 'v2'])
 })
 
 test('branch suggestions collapse prefixes with more than two branches until a query filters them', () => {
-  const page = new ManagedCreateBundle()
-  page._refs = { defaultBranch: 'claude/main', branches: ['claude/a', 'dev', 'claude/b', 'fix/x', 'claude/c', 'fix/y', 'claude/main'], tags: [] }
-  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/main' }, { name: 'dev' }, { name: 'fix/x' }, { name: 'fix/y' },
+  const select = new RevisionSelect()
+  select.refs = { defaultBranch: 'claude/main', branches: ['claude/a', 'dev', 'claude/b', 'fix/x', 'claude/c', 'fix/y', 'claude/main'], tags: [] }
+  assert.deepEqual(select.entries(), [{ name: 'claude/main' }, { name: 'dev' }, { name: 'fix/x' }, { name: 'fix/y' },
     { prefix: 'claude', count: 3, expanded: false }], 'the default branch stays first and outside its prefix')
-  page.toggleRevisionGroup('claude')
-  assert.deepEqual(page.revisionEntries().slice(4), [{ prefix: 'claude', count: 3, expanded: true },
+  select.toggleGroup('claude')
+  assert.deepEqual(select.entries().slice(4), [{ prefix: 'claude', count: 3, expanded: true },
     { name: 'claude/a', label: 'a', group: 'claude' }, { name: 'claude/b', label: 'b', group: 'claude' }, { name: 'claude/c', label: 'c', group: 'claude' }])
-  page.toggleRevisionGroup('claude')
-  assert.equal(page.revisionEntries().length, 5)
-  page._revisionQuery = 'b'
-  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/b' }], 'a query lists matching branches in full')
-  page._revisionQuery = ''
-  page._refKind = 'tag'
-  page._refs.tags = ['a/1', 'a/2', 'a/3']
-  assert.deepEqual(page.revisionEntries(), [{ name: 'a/1' }, { name: 'a/2' }, { name: 'a/3' }], 'tags never group')
+  select.toggleGroup('claude')
+  assert.equal(select.entries().length, 5)
+  select._query = 'b'
+  assert.deepEqual(select.entries(), [{ name: 'claude/b' }], 'a query lists matching branches in full')
+  select._query = ''
+  select.kind = 'tag'
+  select.refs.tags = ['a/1', 'a/2', 'a/3']
+  assert.deepEqual(select.entries(), [{ name: 'a/1' }, { name: 'a/2' }, { name: 'a/3' }], 'tags never group')
 })
 
 test('version branches lead newest first, plain lines before suffixed ones, in groups too', () => {
-  const page = new ManagedCreateBundle()
-  page._refs = { defaultBranch: 'main', tags: [], branches: ['canary-base', 'main', 'v0.10', 'v0.12', 'v0.7.4-release', 'v1.x', 'v10.x',
+  const select = new RevisionSelect()
+  select.refs = { defaultBranch: 'main', tags: [], branches: ['canary-base', 'main', 'v0.10', 'v0.12', 'v0.7.4-release', 'v1.x', 'v10.x',
     'v18.x-staging', 'v20.x', 'v20.x-staging', 'v22.23.2-proposal', 'v22.x', 'v22.x-staging', 'v9.x', 'release/1.2', 'release/1.10', 'release/next'] }
-  assert.deepEqual(page.revisionSuggestions(), ['main', 'v22.x', 'v20.x', 'v10.x', 'v9.x', 'v1.x', 'v0.12', 'v0.10',
+  assert.deepEqual(select.suggestions(), ['main', 'v22.x', 'v20.x', 'v10.x', 'v9.x', 'v1.x', 'v0.12', 'v0.10',
     'v22.x-staging', 'v22.23.2-proposal', 'v20.x-staging', 'v18.x-staging', 'v0.7.4-release', 'canary-base', 'release/1.2', 'release/1.10', 'release/next'])
-  page.toggleRevisionGroup('release')
-  assert.deepEqual(page.revisionEntries().slice(-3).map(entry => entry.name), ['release/1.10', 'release/1.2', 'release/next'])
+  select.toggleGroup('release')
+  assert.deepEqual(select.entries().slice(-3).map(entry => entry.name), ['release/1.10', 'release/1.2', 'release/next'])
+})
+
+test('a revision picked, typed, switched or submitted reaches the picker as what made it', () => {
+  const page = new ManagedCreateBundle()
+  const browsed = []
+  page.loadDirectory = (path, fresh) => { browsed.push([path, fresh ?? false, page._refKind, page._refName]); return Promise.resolve() }
+  page._repoId = 1
+  page._refs = { defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }
+  page.revisionChanged({ detail: { how: 'pick', kind: 'branch', name: 'develop' } })
+  page.revisionChanged({ detail: { how: 'kind', kind: 'tag', name: '' } })
+  page.revisionChanged({ detail: { how: 'input', kind: 'tag', name: 'v1' } })
+  page.revisionChanged({ detail: { how: 'submit', kind: 'tag', name: 'v1' } })
+  assert.deepEqual(browsed, [['', false, 'branch', 'develop'], ['', false, 'tag', 'v1'], ['', true, 'tag', 'v1']])
+  const select = new RevisionSelect()
+  const events = []
+  select.dispatchEvent = event => { events.push(event.detail); return true }
+  select.refs = page._refs
+  select.pick('develop')
+  select.pickKind('branch')
+  select.pickKind('commit')
+  assert.deepEqual(events, [{ how: 'pick', kind: 'branch', name: 'develop' }, { how: 'kind', kind: 'commit', name: '' }], 'the kind shown is no change')
 })
 
 test('the creation picker loads managed repositories and never selects a filtered-out initial repository', async t => {

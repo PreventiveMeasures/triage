@@ -345,6 +345,23 @@ export function pkgLabelOf(pkg) {
   return pkgLabel(pkg)
 }
 
+// What links a graph's nodes: a bundle's files import each other; a
+// lockfile's packages depend on each other through their installed copies,
+// which have no source to open or size to sum (`packagesOnly`).
+const FILE_TERMS = { links: 'imports', cellLinks: 'file imports', link: 'Import', linked: 'imports', members: 'files',
+  mostImported: 'Most imported', outgoing: 'Imports', incoming: 'Imported by', importers: 'importers', cellHeading: 'File imports' }
+const PACKAGE_TERMS = { links: 'dependencies', cellLinks: 'dependencies', link: 'Dependency', linked: 'depends on', members: 'versions',
+  mostImported: 'Most depended on', outgoing: 'Dependencies', incoming: 'Dependents', importers: 'dependents', cellHeading: 'Copies' }
+export const graphTerms = graph => graph.packagesOnly ? PACKAGE_TERMS : FILE_TERMS
+
+// The versions a package's members record (`packageInfo`), each once, in
+// version order: a lockfile's copies of one package (lockfile-graph-inputs.js).
+export function packageVersions(graph, pkg) {
+  const versions = new Set()
+  for (const n of graph.byPkg.get(pkg) ?? []) if (n.packageInfo?.version !== undefined) versions.add(n.packageInfo.version)
+  return [...versions].toSorted((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+}
+
 // Strip a file path's package anchor so callers can show
 // "index.js" instead of "node_modules/foo/index.js" (npm) or
 // "foo/bar.js" instead of "packages/app/foo/bar.js" (workspace package).

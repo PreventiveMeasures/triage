@@ -36,11 +36,15 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { lockfileFormat, lockfileTooltip, viewedLockfile } from './lockfile-view.js'
+import './lockfile-graph.js'
 import { overviewColumn } from './bundle-overview-column.js'
-import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
-import { NPM_TABS } from '../../common/managed/routes.js'
+import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
+import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
+import './repository-history.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -85,7 +89,8 @@ import { renderHighlighted } from './render-finding.js'
 // for hoisted function declarations, and the call sites are async
 // (always after init).
 import { render } from './render.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
+import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
+import { focusTerminal } from './terminal-attach.js'
 
 // Bundles graph — like the findings-tab graph but sourced from a
 // parsed bundle (sourcemap / stasis). The refresh helpers below
@@ -667,6 +672,15 @@ function viewedSource(details, entry, path, content, fileFindings, lineFindings)
     fileFindings: pretty ? [] : fileFindings, lineFindings: pretty ? new Map() : lineFindings }
 }
 
+// The Code tab's View lockfile toggle, on a lockfile the lockfile viewer
+// reads, busy while its read runs and red where that failed (lockfile-view.js).
+function renderLockfileToggle(read) {
+  const status = read?.status
+  return html`<button type="button" class=${classMap({ 'bundle-source-lockfile-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
+    data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
+    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>`
+}
+
 // Auto-pick bookkeeping for the Code slide. When the pick ran
 // before any findings were indexed (page refresh straight into the
 // Code tab: the hash pass and the OPFS finding index both land
@@ -991,6 +1005,33 @@ function collapseBundleTree(tree) {
   }
   walk(tree)
   render()
+}
+
+// The rail's terminal toggle, and the pane's close. Opening puts the caret
+// on the terminal's command line; closing hands focus back to the toggle,
+// as the close button that had it goes with the pane.
+function showBundleCodeTerminal(open) {
+  state.bundleCodeTerminal = open
+  render()
+  if (open) void focusTerminal()
+  else document.querySelector('[data-bundle-code-terminal-toggle]')?.focus()
+}
+
+// The Code tab's terminal pane, under the code panel and a handle resizing
+// it: the Terminal tab's own terminal, attached into the slot by render.js,
+// so one session carries between the two.
+function renderBundleCodeTerminal() {
+  return html`<bundle-code-terminal-splitter role="separator" tabindex="0" aria-orientation="horizontal"
+      aria-label="Resize terminal" data-tooltip="Drag to resize · double-click to reset"
+    ></bundle-code-terminal-splitter>
+    <section class="bundle-code-terminal" aria-label="Terminal">
+    <header class="bundle-code-terminal-bar">
+      <span class="bundle-code-rail-label">Terminal</span>
+      <button type="button" class="bundle-code-rail-action" aria-label="Close terminal"
+        @click=${() => showBundleCodeTerminal(false)}>×</button>
+    </header>
+    <div id="bundle-terminal-slot" class="bundle-code-terminal-slot"></div>
+  </section>`
 }
 
 // Aggregate issue count + worst severity across every file under a
@@ -1503,6 +1544,8 @@ function renderBundleCodeView(details, entry = null) {
     managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', managedCodeLocation(state)))
   } else if (path && entry?.npm && isManagedUiMode()) {
     managedHistory?.replaceCodeRoute(npmPackageRoute(entry, 'code', managedCodeLocation(state)))
+  } else if (path && entry?.repository && isManagedUiMode()) {
+    managedHistory?.replaceCodeRoute(repositoryCodeRoute(entry, 'code', managedCodeLocation(state)))
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -1527,6 +1570,10 @@ function renderBundleCodeView(details, entry = null) {
         <span class="bundle-code-rail-label">Files</span>
         <span class="bundle-code-rail-count">${allPaths.length}</span>
         <span class="bundle-code-rail-actions">
+          <button type="button" class="bundle-code-rail-action" aria-label="Terminal" data-tooltip="Terminal" data-bundle-code-terminal-toggle
+            aria-pressed=${state.bundleCodeTerminal ? 'true' : 'false'} @click=${() => showBundleCodeTerminal(!state.bundleCodeTerminal)}>
+            ${TERMINAL_ICON}
+          </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Reveal current file" data-tooltip="Reveal current file"
             ?disabled=${!path} @click=${() => revealBundleTreeFile(path, prefix)}>
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
@@ -1555,6 +1602,7 @@ function renderBundleCodeView(details, entry = null) {
       ${path
         ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
+      ${state.bundleCodeTerminal ? renderBundleCodeTerminal() : nothing}
     </div>
   </div>`
 }
@@ -1589,9 +1637,17 @@ function textStats(text) {
 // own and three characters more (`.bundle-code-main-stats-room`), right-
 // aligned, so pressing the toggle, whose copy has more lines and bytes,
 // moves neither toggle. The stepper comes first, as a copy has no findings.
+// A lockfile has a View lockfile toggle last: once read, its packages show in
+// the lockfile viewer in place of its text, with the file's own stats and
+// none of the toggles and stepper that are of the text.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
-  const { pretty, toggle, content, fileFindings, lineFindings } = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const { pretty, toggle, fileFindings, lineFindings } = viewed
+  const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
+  const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (state.bundleSourceFile === path) render() }) : null
+  const graphed = read?.status === 'ready'
+  const content = graphed ? sourceContent : viewed.content
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1609,7 +1665,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${fileFindings.length > 0 ? html`<span
+      ${fileFindings.length > 0 && !graphed ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
       >
@@ -1630,14 +1686,16 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}
-      ${renderSourceWrapToggle()}
-      ${toggle}
+      ${graphed ? nothing : renderSourceWrapToggle()}
+      ${graphed ? nothing : toggle}
+      ${lockfile ? renderLockfileToggle(read) : nothing}
       ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-        !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
+      ${graphed ? html`<lockfile-graph .lockfile=${read.lockfile}></lockfile-graph>`
+        : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
+          !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
     </div>`
 }
 
@@ -1778,7 +1836,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
   if (!query) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-hint">
-        Search across every source in this bundle. Each match shows the surrounding
+        Search across every ${details.npm ? 'file of this version' : details.repository ? 'file of this directory' : 'source in this bundle'}. Each match shows the surrounding
         lines for context — fewer matches get more context. Toggle
         <span class="bundle-search-hint-kbd">Aa</span> for case-sensitive and
         <span class="bundle-search-hint-kbd">.*</span> for regular-expression matching.
@@ -1873,7 +1931,7 @@ function renderBundleSearchView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
-      <div class="bundle-code-empty">This bundle doesn't carry any source content.</div>
+      <div class="bundle-code-empty">${details.npm ? 'This version has no text files to search.' : details.repository ? 'This directory has no text files to search.' : 'This bundle doesn\'t carry any source content.'}</div>
     </div>`
   }
   const query = state.bundleSearchQuery
@@ -1919,9 +1977,92 @@ function renderBundleSearchView(details, entry = null) {
   </div>`
 }
 
-// One button of the bundle slide's tab strip.
-const bundleTab = (key, label, tab) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
-  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab">${label}</button>`
+// One button of the bundle slide's tab strip, inert while an npm version
+// opens; `onTab` opening its tab where no bundle is shown to switch.
+const bundleTab = (key, label, tab, opening = false, onTab = null) => onTab
+  ? html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })} aria-selected=${String(tab === key)} role="tab"
+    @click=${() => { if (key !== tab) onTab(key) }}>${label}</button>`
+  : html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
+
+// The tabs an npm version shows, each `[key, label]`: Review where a team
+// the reader is in reviews dependencies.
+const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'],
+  ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
+  ['overview', 'Overview']]
+
+// The tabs a repository's directory shows (repository-code.js).
+const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History']]
+
+// The bundle slide: its header, with the bundle's name, or an npm version's
+// with the package's versions to switch to, and its `tabs`, `tab` the one
+// open; that tab's `body` under it. An npm version opening (`opening`)
+// shows the header it will have, its versions and tabs waiting for it.
+// Both render through here, so the header stays put as the version opens.
+function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false, onTab = null } = {}) {
+  const { npm } = entry
+  // A repository's directory opening in place of the one shown names it in the
+  // header, its bar running, the one shown dimmed under it until it opens.
+  const pending = entry.repository && !opening ? repositoryCodePending(entry) : null
+  const repository = pending ?? entry.repository
+  const loading = Boolean(pending) || (opening && Boolean(repository) && !state.repositoryCodeOpening?.error)
+  return html`<div class="bundles-view bundles-slide-view">
+    <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
+      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      ${npm ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => navigateToNpm()}>npm</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      ${repository && state.managedSession?.role === 'admin' ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repos' }, bubbles: true, composed: true }))}>Repositories</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
+        ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
+          <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
+          : repository ? html`<repository-code-source .repository=${repository} .tab=${tab} .repos=${browsableRepositories()} .refs=${repositoryRefs(repository.repoId)}></repository-code-source>`
+          : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
+      </div>
+      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
+      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending), onTab))}</div>
+      ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
+    </header></bundle-slide-header>
+    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview, 'is-pending': Boolean(pending) })}
+      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing}>${body}</div>
+  </div>`
+}
+
+// An npm version opening (npm-package.js openNpmRoute), `spec` its version
+// or dist-tag as its route names it, `tab` the tab it opens on: its header,
+// and in its body what opens.
+export function renderNpmOpening({ name, spec, tab }) {
+  return bundleSlideView({ npm: { name, version: spec ?? 'latest' } }, tab, npmTabs(),
+    html`<div class="bundles-slide-placeholder" role="status">Opening ${npmPackageInput(name, spec)}…</div>`, { opening: true })
+}
+
+// A repository's directory opening (repository-code.js
+// openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
+// body what opens, or why it didn't, with the directories it lists to open
+// instead where it has any. Its History, which reads none of its files,
+// shows at its commit alone (`historyOnly`), or where its files failed to
+// open, its tabs then opening each.
+export function renderRepositoryCodeOpening(opening) {
+  const { repoId, commit, path, tab, repo, revision, error, historyOnly = false } = opening
+  const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
+  const at = commit ? ` at ${commit.slice(0, 7)}` : ''
+  const repository = { repoId, repo, commit, path, revision }
+  const tabsOpen = Boolean(commit && (historyOnly || error))
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && tab === 'history'
+    ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repoId)}></repository-history>`
+    : error
+      ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
+      : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
+  { opening: !historyOnly, onTab: tabsOpen ? key => openRepositoryCodeTab(opening, key) : null })
+}
 
 // Top-level bundle view. The header carries the bundle's filename
 // (the canonical user-facing label; integrity lives in the Overview
@@ -1936,10 +2077,13 @@ const bundleTab = (key, label, tab) => html`<button type="button" class=${classM
 // and fall back to 'overview' there — no migration needed.
 
 function renderBundleSlide(entry) {
-  // An npm package version shows its Overview, Code, Treemap and Compare,
-  // which compares it with the package's other versions.
+  // An npm package version shows its Overview, Code, Search, Treemap and
+  // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
+  // A repository's directory shows its Code, Search, Treemap and History alone.
+  const repository = Boolean(entry.repository)
+  if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch
@@ -1951,7 +2095,7 @@ function renderBundleSlide(entry) {
   // the LEFTMOST entry on purpose, so the post-parse stamp-in for
   // a fresh stasis bundle pushes the other tabs right rather than
   // landing in their middle — no in-flight click theft.
-  const showAdvisories = !npm && showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
+  const showAdvisories = !npm && !repository && showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
   // 'overview' only without security access, or for a bundle known to have
   // no package versions (see `showAdvisoriesTab`). A sourcemap, or a bundle
@@ -2004,64 +2148,39 @@ function renderBundleSlide(entry) {
   // (2) an orphan tab state where a persisted `b:<integrity> issues`
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
-  return html`<div class="bundles-view bundles-slide-view">
-    <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
-      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      ${npm ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => navigateToNpm()}>npm</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
-      <div class="bundles-slide-title">
-        ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.npm.name}>${entry.npm.name}</div>
-          <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>`
-          : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
-      </div>
-      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
-      <div class="bundles-slide-tabs" role="tablist">
-        ${showAdvisories ? bundleTab('advisories', 'Advisories', tab) : nothing}
-        ${showIssues ? bundleTab('issues', 'Issues', tab) : nothing}
-        ${npm ? nothing : bundleTab('terminal', 'Terminal', tab)}
-        ${bundleTab('treemap', 'Treemap', tab)}
-        ${npm ? nothing : bundleTab('graph', 'Graph', tab)}
-        ${bundleTab('code', 'Code', tab)}
-        ${npm ? nothing : bundleTab('search', 'Search', tab)}
-        ${canCompare ? bundleTab('compare', 'Compare', tab) : nothing}
-        ${npm && state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true)
-          ? bundleTab('review', 'Review', tab) : nothing}
-        ${bundleTab('overview', 'Overview', tab)}
-      </div>
-    </header></bundle-slide-header>
-    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>
-      ${overviewActive
-        ? renderBundleDetails(entry, details)
-        : detailsParsed
-          ? choose(tab, [
-              ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
-              ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
-              ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
-              ['code', () => renderBundleCodeView(details, entry)],
-              ['search', () => renderBundleSearchView(details, entry)],
-              ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
-                .source=${npmComparisonSource(entry)}></npm-review>`],
-              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-                .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
-              ['issues', () => renderBundleIssuesList(details)],
-              ['advisories', () => renderBundleAdvisoriesTab(details, render,
-                canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
-            ])
-          : detailsReady && details.sourceError
-            ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`
-          : detailsReady && !details.metadataOnly
-            ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
-                ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
-              </div>`
-            : html`<div class="bundles-slide-placeholder">Loading bundle…</div>`}
-    </div>
-  </div>`
+  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs() : [
+    ...showAdvisories ? [['advisories', 'Advisories']] : [],
+    ...showIssues ? [['issues', 'Issues']] : [],
+    ['terminal', 'Terminal'], ['treemap', 'Treemap'], ['graph', 'Graph'], ['code', 'Code'], ['search', 'Search'],
+    ...canCompare ? [['compare', 'Compare']] : [],
+    ['overview', 'Overview'],
+  ]
+  const body = overviewActive
+    ? renderBundleDetails(entry, details)
+    : detailsParsed
+      ? choose(tab, [
+          ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
+          ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
+          ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
+          ['code', () => renderBundleCodeView(details, entry)],
+          ['search', () => renderBundleSearchView(details, entry)],
+          ['history', () => html`<repository-history .repository=${entry.repository} .refs=${repositoryRefs(entry.repository.repoId)}></repository-history>`],
+          ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+            .source=${npmComparisonSource(entry)}></npm-review>`],
+          ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
+          ['issues', () => renderBundleIssuesList(details)],
+          ['advisories', () => renderBundleAdvisoriesTab(details, render,
+            canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
+        ])
+      : detailsReady && details.sourceError
+        ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`
+      : detailsReady && !details.metadataOnly
+        ? html`<div class=${classMap({ 'bundles-slide-placeholder': true, 'is-error': Boolean(details.error) })}>
+            ${details.error ? `Failed to parse: ${details.error}` : 'Bundle contents not parsed.'}
+          </div>`
+        : html`<div class="bundles-slide-placeholder">Loading bundle…</div>`
+  return bundleSlideView(entry, tab, tabs, body, { overview: overviewActive })
 }
 
 // Per-issue list of OPFS reports the finding showed up in. Up to

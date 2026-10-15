@@ -25,7 +25,8 @@ function shortLabel(row) {
   return row.file.includes(prefix) ? row.file.slice(row.file.indexOf(prefix) + prefix.length) : row.file
 }
 
-export function paintMatrix(ctx, model, view, { width, height, theme, colorOf, hover, selected, dimmed }) {
+// `rows` names what the rows are: a bundle's importers, a lockfile's dependents.
+export function paintMatrix(ctx, model, view, { width, height, theme, colorOf, hover, selected, dimmed, rows: rowsLabel = 'importers' }) {
   const { cell, x: ox, y: oy } = view, { rows } = model
   const x = (i) => MATRIX_LEFT + i * cell - ox
   const y = (i) => MATRIX_TOP + i * cell - oy
@@ -109,7 +110,7 @@ export function paintMatrix(ctx, model, view, { width, height, theme, colorOf, h
     ctx.fillStyle = colorOf(rows[i].pkg); ctx.fillRect(x(i) + 1, MATRIX_TOP - 4, Math.max(1, cell - 2), 3)
   }
   ctx.fillStyle = theme.muted; ctx.font = '10px ui-monospace, monospace'
-  ctx.fillText('IMPORTERS ↓', 14, MATRIX_TOP - 14)
+  ctx.fillText(`${rowsLabel.toUpperCase()} ↓`, 14, MATRIX_TOP - 14)
   ctx.fillText('DEPENDENCIES →', MATRIX_LEFT + 8, 12)
   ctx.strokeStyle = theme.border; ctx.beginPath(); ctx.moveTo(MATRIX_LEFT - .5, MATRIX_TOP); ctx.lineTo(MATRIX_LEFT - .5, height)
   ctx.moveTo(MATRIX_LEFT, MATRIX_TOP - .5); ctx.lineTo(width, MATRIX_TOP - .5); ctx.stroke()

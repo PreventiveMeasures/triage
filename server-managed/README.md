@@ -170,6 +170,9 @@ window also navigate to their managed page URL.
 | `…/bundle/:bundleSlug/compare[/:otherSlug[/code\|/diff]]` | Its Compare tab, with another bundle, in its Code or Diff mode |
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
+| `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or History tab |
+| `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
@@ -949,10 +952,13 @@ at most): it tells none of them again, nor asks GitHub of them, as the page
 has them already, but looks up their packages' risks as their lockfiles are
 kept, so a scan of more repositories than a part reaches goes on past them.
 One renamed since, or whose team's directories changed, is read again; one
-whose default branch moved on is told as the scan read it. Repositories are read one
-at a time with the admin's own GitHub access, through the same gate as browsing
-them, which is checked again once a repository's lockfiles are read and before
-any of them is told. A repository GitHub isn't reached for (`github-unreachable`)
+whose default branch moved on is told as the scan read it. Repositories are read six
+at a time (`repository-risk-read.ts`), each told in turn, as each asks GitHub
+one thing after another (opening it and its default branch's head) even where
+its listing and lockfiles are kept, with the admin's own GitHub access,
+through the same gate as browsing them, which is checked again as a
+repository's turn to be told comes, however long ago it was read, and before
+any of it is told. A repository GitHub isn't reached for (`github-unreachable`)
 tells, as its line's `detail` and its row's tooltip, while doing what (opening
 it, listing its lockfiles or checking access to it again) and what failed, as
 the error and its causes tell it (a timeout, a connection closed, an answer too
@@ -965,13 +971,31 @@ and pnpm's lockfiles say (`@preventive/lockfile`'s `dev`; Yarn 1's say nothing
 of it, which only the package.json files do), is `dev: true` in its
 lockfile's line; one every lockfile of the scan locks so is assessed only once
 all the rest are, the stale ones among them, as an install of no
-devDependencies leaves it out, and the page tags it `dev` and lists it after
-the rest, but for malware, which runs wherever it is installed, CI and a
-developer's machine among them; and an advisory of versions only
-devDependencies need after those of the rest, malware's first all the same.
-The page's progress line counts packages assessed, flagged and stale of
-devDependencies alone apart from the rest, as each lockfile tells it so far:
-a later lockfile that needs one otherwise moves it among the rest.
+devDependencies leaves it out, and the page tags it `dev`, listing packages
+by their risk alone, whatever needs them, so that a riskier one only
+devDependencies need is above a less risky one production takes; toggled
+beside the filter, it shows all packages, or those an install for
+production takes, or those only devDependencies need, malware either way,
+as it runs wherever it is installed, CI and a developer's machine among
+them. A mirror's copy that risk finds
+differs from npm's (`integrity-mismatch`) is flagged critical and listed
+first but for malware, not among those that couldn't be assessed, and, as
+malware, shown and listed so whatever needs it. Each
+lockfile a package or an advisory is used in links to it on GitHub, at the
+commit read. Its Advisories tab shows those of the
+versions an install for production takes (some lockfile needs them as more
+than devDependencies do, or doesn't say, as Yarn 1's doesn't), or, toggled
+beside the search, those of the versions only devDependencies need, each
+with the versions of its kind, tagged `dev` in the latter, and each toggle
+saying how many; an advisory of malware is shown either way, first, with
+all its versions, as is the package it names among the riskiest.
+The page's progress shows the scan's state (scanning, and which part, done
+or stopped), then a metric each: repositories and lockfiles read and
+packages assessed, each of how many with a bar, and packages flagged, stale
+and advisories, those of malware said apart. Packages' metrics say those an
+install for production takes and those only devDependencies need apart
+(`prod` and `dev`), as each lockfile tells it so far: a later lockfile that
+needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour, in the instance's memory and the
@@ -1043,8 +1067,8 @@ version since, as it removes malware, risk finds it missing from the package's
 whole document and the scan tells it as one npm removed. Rows kept longer
 than they count are removed as new ones are written, at most once an hour. What risk keeps of each package
 (`npm-risk.ts`) is beneath that. Closing the response, or leaving it idle for
-five minutes, stops the scan. The page is `/manage/repositories/risk`, not yet
-linked from the Manage navigation.
+five minutes, stops the scan. The page is `/manage/repositories/risk`, opened
+from the Repositories page's Risk button, beside Aliases.
 
 # Bundle commits and tags
 
@@ -1239,6 +1263,21 @@ narrowed to a tree of Stasis bundles asks, each side's files are those of the
 tree alone (`bundleCompareFiles`), paired as that Compare pairs them. Access is
 checked as for `pretty?other=`, again before each line; a pair the viewer pairs
 otherwise, or one the server was too busy for, it asks for alone.
+
+`GET /api/bundles/:id/comparison?other=` compares the bundle with the `other`
+one for Compare's Overview and Code: the files each side has alone, and those
+that changed, at one path or renamed, paired as `compareTrees` pairs them
+within a package (`common/bundle-comparison.js prepareComparison`), with
+their sizes, lines and recorded changes, the packages, dependency versions and
+import resolutions that differ, and the totals (`comparison.ts`). The viewer of
+a managed bundle pairs nothing itself: only bundles it opened from disk, which
+no server holds, it pairs, in a chunk loaded for those alone. With `&scope=reason:<tree>`, each side's files are those of the tree
+alone. Answered as Brotli-encoded JSON once worked out, the bundles read one at
+a time as the pretty-printed copies read them; `files.root` is the directory
+one side's files sit under in the other's, where they differ, and
+`files.basePaths` then each base file's path as the other lays it out, as
+`[path, laid out]` pairs, else none. Access is checked as for `pretty?other=`,
+and again before it is sent; a public link answers for two of its own bundles.
 
 `GET /api/bundles/:id/type-only?other=` tells which TypeScript files that
 changed between the two bundles changed in types alone, for Compare's **Hide
@@ -1437,6 +1476,94 @@ the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
 
 
+# Repository code viewer
+
+Admins and managers read a connected repository's files in the bundle view,
+as an npm version shows, with the Code, Search, Treemap and History tabs: from the
+`</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
+opens its default branch's head, its route then naming the commit it opened
+(see Page routes), so a link or a reload opens the same files, whatever the
+branch has moved to since. Its header picks the repository, among those the
+reader may browse, and the revision, a branch, a tag or a commit, as Create a
+bundle picks one (`ui/view/revision-select.js`, shared by both): another
+repository opens at its default branch, another revision opens the same
+directory there, on the same tab, a typed one on Enter, and Back names a
+revision as it was opened, else by its commit. Between them, a directory's
+path in the repository, each part opening its own directory, and after them
+the commit, linking its tree on GitHub; each file's head links it on GitHub at
+the commit, and admins have a breadcrumb back to the Repositories page. A
+directory too large to read whole, or one the reader's grants reach only part
+of, says so, and lists its directories to open instead (as browsing lists
+them, `GET /api/admin/repositories/contents`).
+
+`GET /api/admin/repositories/code?repoId=…&ref=…&path=…` answers the
+directory's files, Brotli-encoded, as `{ repoId, repo, commit, path, tree,
+files }`, the files as `GET /api/npm/package` answers a version's (by their
+paths in the directory, text inline, a digest for those not UTF-8), for the
+viewer to hold in memory only while it shows them. It is read as browsing is,
+with the same two gates and the reader's own GitHub access, and only where
+the reader's grants reach the whole directory: an ancestor of a manager's
+grants is `no-directory`, as is a directory the commit has none at. GitHub's listing of the directory's tree, every tree
+under it with it, says first whether it holds at most 20,000 files and
+64 MiB, as a package may (`repository-code.ts`), else `413
+directory-too-large`, before its tarball is asked for: the tree's, verified
+against the tree's id as bundle builds verify theirs, and kept in upstream's
+disk cache with them. Readers asking for the same directory meanwhile share
+one load, among the npm viewer's (`429 repository-busy` past them), and access
+is checked again once it is read, before any of it is sent.
+
+## History
+
+The History tab lists commits as `git log --oneline --decorate --graph` does,
+one compact line each: its short id, the branches and tags naming it (the
+default branch's first, the revision shown marked), its subject, author and
+time, beside the graph of the lines its parents make
+(`ui/view/history-graph.js`). Commits list newest first, never a parent before
+a child of it; a merge's other parent takes a lane of its own, and lanes waiting
+on one parent join where it comes; each line keeps a color of its own, unlike
+its neighbors' where it can, the default branch's first lane and color its
+own; a parent not listed is a short dotted line on. At the repository's root
+it reads **All branches**, as `--all` adds them, else **This revision**'s, the
+commit shown first, a hundred at a time, **Older commits** reading the next.
+All branches' **Older commits** reads on from where those listed stop, their
+parents not listed and the branches not read yet, the newest 25 first (a
+parent by its child's time), a hundred commits from each, each commit once; a
+branch not read joins those named once a commit listed is its tip. Older
+commits read as their button nears the end of the scroll, a screen before it
+shows, as though clicked, and again while it stays near; after a page that
+failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
+it, a link shows its own history. A directory lists the commits touching it, in a
+line, as GitHub doesn't rewrite their parents to those listed. A line opens its
+commit's code, named by the branch, else the tag, naming it. History reads
+none of the directory's files: its route at a commit opens it alone, its other
+tabs then reading them. A directory whose files fail to open shows its History
+all the same, where its commit is known (a `413 directory-too-large` names the
+commit it was read at, its route then naming it). What it read is kept for the session five minutes.
+
+`GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
+page of a revision's history, `{ commit, path, page, commits, more }`, each
+commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
+GitHub's list of commits gives them (`repository-history.ts`), with, on the
+first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
+GitHub's first page of each lists them. With `all=true`, at the root and first
+page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
+from GraphQL: the branches' tips with their commits' times, a hundred a page
+for up to ten pages (GitHub orders heads by name alone), then, in one query,
+the latest hundred commits of the default branch and the 24 others most
+recently committed to, each commit once; every branch naming a commit listed;
+the branches not read whose tips aren't listed, `{ name, sha, at }` each,
+newest first; `cut` where branches past the thousand listed are left out,
+never to be read, the tab then saying so; and the latest hundred tags, an
+annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
+names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
+`{ all, page, commits, more }`, the latest hundred commits of each, each
+once, `more` but for the deepest page. GraphQL needs a token: a public repository read without one is `403
+github-token-required`, and the tab then shows the revision's history. It is
+read as the code is, with the reader's own GitHub access, only where the
+reader's grants reach the whole directory, and access is checked again before
+it is sent.
+
+
 # npm package viewer
 
 Every role but `none` can open a published npm package version from the
@@ -1444,7 +1571,9 @@ landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. The
 `/npm` page lists the reader's last ten searches that opened, newest first,
 under its search, each to open again or remove; they are kept in the
 browser's `localStorage` per signed-in user, a convenience, not access
-control. A version shows in the bundle view with four tabs:
+control. While a version opens, its header shows at once, on the tab its
+link names, its version picker and tabs waiting for it, and its body says
+what opens. A version shows in the bundle view with these tabs:
 
 - **Overview**: its header names the package beside a picker of its
   versions, as wide as the version shown, listing them as Compare's pickers
@@ -1660,6 +1789,11 @@ control. A version shows in the bundle view with four tabs:
   files are asked for all at once, in one request, the first time one is
   wanted (see `GET /api/npm/pretty` below). The formatted copy has lines of
   its own, so line links and marks stay on the file as published.
+- **Search**: the bundle Search across the version's text files (a file that
+  isn't text has none to match), each match with the lines around it, case
+  and regular expressions as toggles, a result opening its file beside the
+  results, its pretty-print toggle there as in Code;
+  `/npm/<name>@<version>/search`.
 - **Treemap**: the files by size, as for bundles, colored by the top-most
   directories that tell them apart, as package colors can't tell one
   package's files apart: below the directories every file shares, each
@@ -1739,7 +1873,9 @@ control. A version shows in the bundle view with four tabs:
   scripts, not its package's latest (`installs 3.0.1 (its latest 4.0.0),
   published since 1.0.0, running its install scripts`), orange where that version has install scripts, yellow for one
   among npm's top 20,000 (`npm's top 200`), as a dependency named for
-  another's peer is, or for those all kept, else orange; an open version under two weeks old, as on
+  another's peer is, or for those all kept, else orange, and a notice's
+  for lodash and Babel's presets alone (`no risk counted`); an open version
+  under two weeks old, as on
   the Overview, how long ago (`3 days ago`), the day in its tooltip; the
   advisories affecting either version, counted from
   the one compared with to the open one (`2 → 1`, one number where they
@@ -2019,7 +2155,12 @@ bundle's are (`GET /api/bundles/:id/rename-diff`), and without a file every
 pair of them, a line each, as a bundle's; `GET
 /api/npm/type-only?name=&version=&otherVersion=` tells which of their
 TypeScript files changed in types alone, as a bundle's (`GET
-/api/bundles/:id/type-only`), nothing of it kept; a diff of two public
+/api/bundles/:id/type-only`), nothing of it kept; `GET
+/api/npm/comparison?name=&version=&otherVersion=&otherName=` compares the
+version shown with `otherVersion`, of `otherName` where Review compares a
+dependency replaced by another package, or with none as `(empty)`, as a
+bundle's is (`GET /api/bundles/:id/comparison`), each package's private access
+checked before and again once it is worked out; a diff of two public
 versions' files is kept in memory among the last few dozen, a private one's never,
 its sides, formatted again for it, read in its turn among the diffs waiting.
 Responses are `private, no-store`. Nothing else derived from a package's

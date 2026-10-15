@@ -19,6 +19,8 @@ import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import { changeBlocks } from '../common/line-diff.js'
+import { parseBundleContents } from '../common/bundle-metadata.js'
+import { prepareComparison } from '../common/bundle-comparison.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -733,4 +735,88 @@ test('a scoped comparison\'s pairs and type-only files are of the files it compa
   const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
   const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
   assert.deepEqual(linesOf(await h.send(scoped(bundleTypeOnly(base, other)), null, { headers })).map(({ otherPath }) => otherPath), ['types/w.d.ts'], 'a public link\'s alike')
+})
+
+const bundleComparison = (id, other, scope = '') => `/api/bundles/${id}/comparison?${new URLSearchParams({ other, ...scope ? { scope } : {} })}`
+const npmComparison = params => `/api/npm/comparison?${new URLSearchParams(params)}`
+// A comparison as the server sends it: its `files.basePaths` as pairs where
+// the two sides' roots differ, none else, and nothing JSON can't carry.
+const sent = comparison => JSON.parse(JSON.stringify({ ...comparison, files: { ...comparison.files, basePaths: comparison.files.root ? [...comparison.files.basePaths] : [] } }))
+// A managed bundle's details as its viewer reads them, from its contents.
+async function viewed(h, id, kind = 'sourcemap') {
+  const res = await h.send(`/api/bundles/${id}/contents`)
+  assert.equal(res.status, 200)
+  return parseBundleContents(res.text(), { integrity: id, kind, size: 0 })
+}
+// An npm version's details as its viewer reads them (ui/view/npm-package.js
+// npmPackageDetails), from the files the server sends with it.
+async function viewedNpm(h, name, version) {
+  const { files: rows } = (await h.send(`/api/npm/package?${new URLSearchParams({ name, version })}`)).json()
+  return { integrity: `${name}@${version}`, kind: 'sourcemap', size: 0,
+    json: { version: 3, sources: rows.map(([path]) => path), sourcesContent: rows.map(([, , text]) => (typeof text === 'string' ? text : null)) },
+    npmBinaries: new Map(rows.filter(([, , text]) => typeof text !== 'string').map(([path, size, , digest]) => [path, { size, digest }])) }
+}
+
+test('two bundles\' files are paired by the server, as the viewer paired them, for a reader of both', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(typedBuilds[0]), await h.seed(typedBuilds[1])]
+  const res = await h.send(bundleComparison(base, other))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/json')
+  assert.equal(res.headers['content-encoding'], 'br')
+  assert.equal(res.headers['cache-control'], 'private, no-store')
+  const comparison = res.json()
+  assert.deepEqual(comparison, sent(prepareComparison(await viewed(h, base), await viewed(h, other))))
+  assert.deepEqual(comparison.files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path]), [['types/old-name.d.ts', 'types/new-name.d.ts']], 'renamed, as paired')
+  assert.equal((await h.send(bundleComparison(base, other), 'outsider')).status, 404)
+  assert.equal((await h.send(bundleComparison(base, other), null)).status, 401)
+  assert.equal((await h.send(bundleComparison(base, 'nope'))).status, 400)
+  assert.equal((await h.send(bundleComparison(base, randomUUID()))).status, 404)
+  assert.equal((await h.send(`/api/bundles/${base}/comparison?other=${other}`, 'viewer', { method: 'POST' })).status, 405)
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  assert.deepEqual((await h.send(bundleComparison(base, other), null, { headers })).json(), comparison, 'a public link\'s own bundles')
+  assert.equal((await h.send(bundleComparison(base, randomUUID()), null, { headers })).status, 404)
+})
+
+test('a comparison sends where the two sides\' roots differ how each base file reads, and is of the files within its scope', async t => {
+  const h = await setup(t)
+  // The other build's files under `src/`: the base's read there.
+  const [base, other] = [await h.seed({ 'a.js': 'a\n', 'b.js': 'b\n' }), await h.seed({ 'src/a.js': 'a\n', 'src/b.js': 'b2\n' })]
+  const moved = (await h.send(bundleComparison(base, other))).json()
+  assert.deepEqual(moved.files.root, { base: '', other: 'src/' })
+  assert.deepEqual(moved.files.basePaths, [['a.js', 'src/a.js'], ['b.js', 'src/b.js']])
+  assert.deepEqual(moved, sent(prepareComparison(await viewed(h, base), await viewed(h, other))))
+  const tree = { 'dist/a.js': 'a\n', 'types/w.d.ts': 'export type W = string;\n' }
+  const [web, wider] = [await h.seedStasis(tree, { web: ['dist/a.js'] }), await h.seedStasis(tree, { web: ['dist/a.js', 'types/w.d.ts'] })]
+  const scoped = (await h.send(bundleComparison(web, wider, 'reason:web'))).json()
+  assert.deepEqual(scoped.files.onlyOther.map(row => row.path), ['types/w.d.ts'], 'within the web tree, a file come')
+  assert.equal(scoped.scope, 'reason:web')
+  assert.deepEqual(scoped, sent(prepareComparison(await viewed(h, web, 'stasis'), await viewed(h, wider, 'stasis'), 'reason:web')))
+  assert.equal((await h.send(bundleComparison(web, wider))).json().totals.identical, true, 'the whole bundles the same')
+})
+
+test('two npm versions\' files are paired by the server, against another package\'s or none, a private one\'s for its readers alone', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', typedBuilds[0]), packageOf('lib', '1.1.0', typedBuilds[1]), packageOf('fork', '2.0.0', typedBuilds[0]),
+    { ...packageOf('@corp/lib', '1.0.0', typedBuilds[0]), private: true }, { ...packageOf('@corp/lib', '1.1.0', typedBuilds[1]), private: true }])
+  const [old, now] = [await viewedNpm(h, 'lib', '1.0.0'), await viewedNpm(h, 'lib', '1.1.0')]
+  const res = await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '1.0.0' }))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-encoding'], 'br')
+  assert.deepEqual(res.json(), sent(prepareComparison(old, now)), 'the version shown against the one compared with')
+  const empty = { integrity: '(empty)', kind: 'sourcemap', size: 0, json: { version: 3, sources: [], sourcesContent: [] } }
+  const first = (await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '(empty)' }))).json()
+  assert.deepEqual(first, sent(prepareComparison(empty, now)), 'against none, as Review reads a first version')
+  assert.equal(first.files.onlyOther.length, Object.keys(typedBuilds[1]).length)
+  const fork = (await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '2.0.0', otherName: 'fork' }))).json()
+  assert.deepEqual(fork, sent(prepareComparison(await viewedNpm(h, 'fork', '2.0.0'), now)), 'against another package\'s version')
+  const corp = npmComparison({ name: '@corp/lib', version: '1.1.0', otherVersion: '1.0.0' })
+  assert.equal((await h.send(corp)).status, 404, 'a reader without private access gets nothing')
+  assert.equal((await h.send(corp, 'admin')).status, 200)
+  assert.equal((await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '1.0.0', otherName: '@corp/lib' }))).status, 404, 'nor where the other side is private')
+  assert.equal((await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '' }))).status, 400)
+  assert.equal((await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '1.0.0', otherName: 'Not a name' }))).status, 400)
+  assert.equal((await h.send(npmComparison({ name: 'lib', version: '1.1.0', otherVersion: '1.0.0' }), null)).status, 401)
 })

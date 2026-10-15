@@ -42,6 +42,8 @@ import {
   refreshBundleGraphTopPkgs,
   renderBundleSourceModal,
   renderBundlesList,
+  renderNpmOpening,
+  renderRepositoryCodeOpening,
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
@@ -52,7 +54,8 @@ import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
-import { renderNpmLookup } from './npm-package.js'
+import { npmPackageInput, renderNpmLookup } from './npm-package.js'
+import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
@@ -1862,17 +1865,18 @@ function renderImpl() {
           }
         }
       }
-      // Terminal tab — lazy-load `ui/terminal.js` into the slot.
-      // The attach helper is idempotent for the same bundle
-      // (matched by `integrity`), so flipping tabs in and out
-      // preserves the running shell session.
-      if (bundleOpen && !details.metadataOnly && state.bundleDetailsTab === 'terminal') {
+      // Terminal tab — lazy-load `ui/terminal.js` into the slot, which
+      // the Code tab's terminal pane renders too. The attach helper is
+      // idempotent for the same bundle (matched by `integrity`), so
+      // flipping tabs in and out preserves the running shell session.
+      if (bundleOpen && !details.metadataOnly
+          && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'code' && state.bundleCodeTerminal)) {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
       showReport()
-      const npm = state.bundles.find(entry => entry.integrity === state.selectedBundle)?.npm
-      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : 'DeepView — bundles'
+      const { npm, repository } = state.bundles.find(entry => entry.integrity === state.selectedBundle) ?? {}
+      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : repository ? `DeepView — ${repositoryCodeName(repository)}` : 'DeepView — bundles'
       return
     }
   }
@@ -1883,12 +1887,24 @@ function renderImpl() {
     document.title = 'DeepView — my reviews'
     return
   }
-  // The npm viewer's lookup page; a package it opens shows as a bundle.
+  // The npm viewer's lookup page; a package it opens shows as a bundle, its
+  // header already while it opens, in the slot it then shows in.
   if (state.currentView === 'npm') {
-    const slot = ensureReportSlot('npm-slot')
-    if (slot) litRender(renderNpmLookup(), slot)
+    const opening = state.npmOpening
+    const slot = ensureReportSlot(opening ? 'bundles-slot' : 'npm-slot')
+    if (slot) litRender(opening ? renderNpmOpening(opening) : renderNpmLookup(), slot)
     showReport()
-    document.title = 'DeepView — npm packages'
+    document.title = opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages'
+    return
+  }
+  // A repository's directory opening, or why it didn't; once it opens it
+  // shows as a bundle, its header the same, in the same slot.
+  if (state.currentView === 'repository-code') {
+    const opening = state.repositoryCodeOpening
+    const slot = ensureReportSlot('bundles-slot')
+    if (slot && opening) litRender(renderRepositoryCodeOpening(opening), slot)
+    showReport()
+    document.title = `DeepView — ${opening?.repo ?? 'code'}`
     return
   }
   // Packages view — cross-report aggregation by package, fed by

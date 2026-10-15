@@ -37,6 +37,9 @@ export function bundleFileGithub(details, path, assigned = null) {
     const commit = bundleCommitHash(npm.gitHead)
     return npm.github?.github && commit ? fileLink(npm.github.github, repoDirectory({ directory: npm.github.directory ?? '' }), path, commit, null) : null
   }
+  // A repository directory's file, at the commit it was read at.
+  const repository = details?.repository
+  if (repository) return fileLink(repository.repo, repository.path, path, repository.commit, null)
   if (details?.kind !== 'stasis') return null
   const bundle = details.bundle
   let owner = null

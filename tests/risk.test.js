@@ -19,6 +19,7 @@ import { npmCombinedFindings } from '../risk/npm/combined.js'
 import { npmAssessmentOf } from '../risk/npm/assess.js'
 import { npmPublicFacts } from '../risk/npm/registry.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
+import { npmRiskScore } from '../risk/npm/score.js'
 import { REGISTRY, packageOf } from './_managed-npm.js'
 
 const DAY = 24 * 60 * 60_000
@@ -197,6 +198,27 @@ test('a dependency nothing imports graded by its package: one kept yellow, a new
   assert.deepEqual(severities([row('react'), row('tiny')], [{ ...row('react'), tier: 5, level: 'is-solid' }, { ...row('tiny'), tier: null, level: 'is-unpopular' }], false),
     ['react moderate', 'tiny high'], 'a version alone, none kept: each by its package')
   assert.deepEqual(severities([row('react')], [], false), ['react high'], 'nor its package told: orange, as before')
+})
+
+test('a dependency nothing imports that risk doesn\'t count, lodash or one of Babel\'s presets: told all the same as a notice, its package not looked up for it', async t => {
+  const row = (name, extra = {}) => ({ name, kind: null, range: '^1.0.0', ...extra })
+  const graded = rows => npmAssessmentOf({ findings: [{ id: 'held-unused-deps', severity: 'high', dependencies: rows }], files: {},
+    dependencies: { added: [], changed: [], held: [] } }, []).findings[0]
+  const uncounted = graded([row('lodash', { added: true }), row('@babel/preset-react'), row('@babel/preset-env', { range: 'npm:@babel/preset-env@^7.0.0', added: true })])
+  assert.deepEqual([uncounted.severity, uncounted.dependencies.map(({ severity }) => severity)], ['notice', ['notice', 'notice', 'notice']], 'each told, as a notice, new or kept')
+  assert.deepEqual(npmRiskScore([uncounted]).raised, [], 'raising no score')
+  assert.equal(graded([row('lodash'), row('debug')]).severity, 'moderate', 'beside one counted, the finding as that one')
+  assert.deepEqual([row('lodash', { range: 'npm:attacker@1.0.0', added: true }), row('@babel/preset-env', { range: 'github:attacker/preset', added: true }),
+    row('babel-preset-env', { added: true }), row('@babel/core', { added: true }), row('lodash.merge', { added: true })].map(dependency => graded([dependency]).severity),
+  ['high', 'high', 'high', 'high', 'high'], 'another package under either name, a preset outside Babel\'s scope, and Babel\'s other packages counted')
+  const meta = dependencies => ({ dependencies, scripts: {} })
+  const before = version('leftover', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({}), ago(30))
+  const after = version('leftover', '1.1.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta({ lodash: '^4.17.21' }), ago(20))
+  const days = Array.from({ length: 72 }, (_, at) => ({ day: new Date(Date.parse('2026-08-01') + at * DAY).toISOString().slice(0, 10), downloads: 4e6 }))
+  npm(t, [{ name: 'leftover', versions: [before, after] }], { lodash: { start: '2026-08-01', end: '2026-10-11', downloads: days } })
+  const unused = (await assessNpm('leftover', '1.1.0', { oldVersion: '1.0.0', now: NOW, advisories: false })).findings.find(({ id }) => id === 'held-unused-deps')
+  assert.deepEqual([unused.severity, unused.dependencies[0].missing, unused.dependencies[0].installs], ['notice', undefined, undefined],
+    'a new one among the top 20,000 not looked up as an unused one would be: npm having no document of it here told nothing')
 })
 
 test('against the version before: what it adds and changes, its publisher and provenance, and a new dependency\'s package', async t => {

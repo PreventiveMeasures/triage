@@ -1,8 +1,64 @@
+/* The scan's progress: a metric each, its label and count on a line, its bar
+   beneath, then its state at the line's end, all centered on a line,
+   wrapping where they don't fit. */
 .risk-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem 1.5rem;
   margin: 0 0 1rem;
   color: var(--muted);
   font-size: .8rem;
 }
+.risk-progress-idle { margin: 0; }
+.risk-state {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin-left: auto;
+  padding: .15rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.risk-state::before {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--muted);
+  content: '';
+}
+.risk-state[data-state=running]::before { background: var(--accent); animation: risk-pulse 1.4s ease-in-out infinite; }
+.risk-state[data-state=done]::before { background: var(--green); }
+@keyframes risk-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .risk-state[data-state=running]::before { animation: none; } }
+/* A metric's label and count on one line, its bar beneath, set solid so its
+   box is what shows of it, as the state is centered on it. */
+.risk-metric {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: baseline;
+  gap: .35rem .45rem;
+  min-width: 6rem;
+  line-height: 1;
+}
+.risk-metric-label { font-size: .7rem; letter-spacing: .02em; text-transform: uppercase; }
+.risk-metric-value { color: var(--text); font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.risk-metric-of { color: var(--muted); font-weight: 400; }
+.risk-metric-slash { margin: 0 .1em; }
+.risk-metric.risk-high .risk-metric-value { color: var(--high); }
+/* A metric's bar, unfilled the border's grey, filled a segment each: what
+   is read the accent, what an install for production takes a brighter shade
+   of it and what only devDependencies need a darker one, malware red. */
+.risk-bar { display: flex; grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: var(--border); }
+.risk-bar > span { height: 100%; transition: width .25s; }
+.risk-bar-read { background: var(--accent); }
+.risk-bar-prod { background: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+.risk-bar-dev { background: color-mix(in srgb, var(--accent) 50%, var(--bg)); }
+.risk-bar-malware { background: var(--critical); }
 .risk-section { margin-top: 1rem; }
 .risk-section:first-child { margin-top: 0; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
@@ -23,6 +79,31 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .risk-name, .risk-name:visited { color: var(--text); }
 .risk-name:hover { color: var(--accent); text-decoration: none; }
+/* An icon before a cell's text: npm's mark, a package's, or GitHub's, muted
+   as the tags beside it are. */
+.risk-icon { display: inline-flex; flex: none; color: var(--muted); }
+.risk-icon svg { display: block; width: 14px; height: 14px; }
+/* A package: its icon, its name, and its version, muted, on one line, the dev
+   tag after them; and a lockfile it is used in, a link to it on GitHub cut
+   short after GitHub's mark, of the link's color on hover. */
+.risk-package, .risk-used { display: inline-flex; align-items: center; gap: .4rem; max-width: 100%; }
+.risk-version { color: var(--muted); font-variant-numeric: tabular-nums; }
+.risk-package .risk-dev { margin-left: 0; }
+.risk-used .risk-clip { min-width: 0; }
+.risk-name:hover .risk-icon { color: inherit; }
+/* Several lockfiles: how many, opening into a link to each, a line each.
+   Rows are drawn by their package, so one opened stays with it as a scan
+   sorts them. */
+.risk-used-all summary { list-style: none; }
+.risk-used-all summary::-webkit-details-marker { display: none; }
+.risk-used-all summary:hover, .risk-used-all[open] summary { color: var(--accent); }
+.risk-used-all ul {
+  display: grid;
+  gap: .15rem;
+  margin: .25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
 /* Lockfiles, a line a repository: its name, then its lockfiles, wrapping. */
 .risk-repos { margin: 0; padding: 0; list-style: none; font-size: .8rem; }
 .risk-repos > li {
@@ -47,12 +128,13 @@ a:hover { text-decoration: underline; }
 @container (max-width: 40rem) {
   .risk-repos > li { grid-template-columns: 1fr; gap: 0; }
 }
-/* The tables are links.css's, each cell on one line: findings wrap where the
-   row doesn't fit, taking what width the other columns leave, and where a
-   package is used is cut short, its tooltip telling it whole. */
+/* The tables are links.css's, each cell on one line: a package's findings as
+   wide as they are, to a width past which they wrap, where it is used taking
+   what width the other columns leave and cut short, its tooltip telling it
+   whole. */
 th:last-child, td:last-child { text-align: left; }
-td { vertical-align: top; }
-.risk-findings-column { width: 100%; }
+td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
+.risk-used-column { width: 100%; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-used-in { max-width: 14rem; }
 .risk-pending, .risk-none { color: var(--muted); }
@@ -94,6 +176,8 @@ td { vertical-align: top; }
 .risk-findings {
   display: flex;
   flex-wrap: wrap;
+  width: max-content;
+  max-width: 24rem;
   gap: .25rem .75rem;
   margin: 0;
   padding: 0;
@@ -120,6 +204,9 @@ td { vertical-align: top; }
   background: var(--bg);
 }
 .risk-scope button, .risk-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
   padding: .3rem .65rem;
   border: 0;
   border-radius: var(--ui-radius, 3px);
@@ -131,6 +218,27 @@ td { vertical-align: top; }
 .risk-scope button[aria-pressed=true],
 .risk-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
 .risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
+/* A toggle's or a tab's count: the bubble the severity and triage filters
+   count their chips in (toolbar.css .sev-chip .n), in flow, lifted to the
+   button's top edge and pulled tight to its label, of the button's color
+   where pressed. */
+.risk-scope .n, .risk-tabs .n {
+  align-self: flex-start;
+  margin: -1px -5px 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 8.5px;
+  font-weight: 600;
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 0 3px;
+  min-width: 11px;
+  text-align: center;
+  line-height: 11px;
+}
+.risk-scope button[aria-pressed=true] .n, .risk-tabs button[aria-selected=true] .n { color: inherit; }
+/* A few teams, chosen as the scope is: wrapping where they don't fit. */
+.risk-scope { flex-wrap: wrap; max-width: 100%; box-sizing: border-box; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
 .risk-tabs { width: fit-content; margin-bottom: .5rem; }

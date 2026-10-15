@@ -57,6 +57,26 @@ export async function fetchNpmPackage(name, version, options) {
   return (await loadManagedBundle()).fetchNpmPackage(name, version, options)
 }
 
+export async function fetchRepositoryCode(repoId, ref, path, options) {
+  return (await loadManagedBundle()).fetchRepositoryCode(repoId, ref, path, options)
+}
+
+export async function fetchBrowsableRepositories(options) {
+  return (await loadManagedBundle()).fetchBrowsableRepositories(options)
+}
+
+export async function fetchRepositoryRefs(repoId, options) {
+  return (await loadManagedBundle()).fetchRepositoryRefs(repoId, options)
+}
+
+export async function fetchRepositoryContents(repoId, ref, path, options) {
+  return (await loadManagedBundle()).fetchRepositoryContents(repoId, ref, path, options)
+}
+
+export async function fetchRepositoryHistory(repoId, ref, path, options) {
+  return (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options)
+}
+
 export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }
@@ -127,6 +147,14 @@ export async function fetchBundleTypeOnly(id, other, onLine, options) {
 
 export async function fetchNpmTypeOnly(name, version, otherVersion, onLine, options) {
   return (await loadManagedBundle()).fetchNpmTypeOnly(name, version, otherVersion, onLine, options)
+}
+
+export async function fetchBundleComparison(id, other, options) {
+  return (await loadManagedBundle()).fetchBundleComparison(id, other, options)
+}
+
+export async function fetchNpmComparison(name, version, otherVersion, options) {
+  return (await loadManagedBundle()).fetchNpmComparison(name, version, otherVersion, options)
 }
 
 export async function openManagedShareDialog(team) {

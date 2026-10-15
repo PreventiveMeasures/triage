@@ -3,7 +3,8 @@
 // server doesn't speak the e2e sync protocol yet). Every handler is async; the
 // boot's `track()` keeps in-flight requests drainable on shutdown.
 //
-//   GET  /api/config             → { mode:'managed', managed:{ loginPath, cookieName } }  (public)
+//   GET  /api/config             → { mode:'managed', managed:{ loginPath, cookieName }, session }  (public;
+//        `session` is /api/auth/session's answer, null signed out, absent when it could not be read)
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
@@ -24,6 +25,11 @@
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
 //   GET /api/admin/repositories/impact → admin attached data summary
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
+//   GET /api/admin/repositories/code?repoId=&ref=&path= → the files of a directory at a revision, within the reader's grants,
+//        Brotli-encoded | 400/401/403/404/409/413/429/502
+//   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true[&from=]] → the commits a revision reaches, a page at a time,
+//        or across the most recently updated branches, with the branches and tags naming them, then on from the commits `from`
+//        names | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -120,7 +126,7 @@ import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedR
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
-import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
+import { CONFIG_PATH, type ManagedSessionInfo, type ServerInfo } from '../common/server-info.ts'
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import { upstreamGithub } from './github-errors.ts'
@@ -129,7 +135,7 @@ import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
 import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
-import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
+import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
@@ -153,6 +159,8 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
+import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -163,6 +171,7 @@ import { NpmRiskError } from '../risk/index.js'
 import { type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
 import { typeOnlyFiles } from './type-only.ts'
+import { comparisonBody, emptySide, npmComparedSide } from './comparison.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -176,6 +185,8 @@ const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const BROWSABLE_REPOS_PATH = '/api/admin/repositories/browsable'
 const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
+const REPO_CODE_PATH = '/api/admin/repositories/code'
+const REPO_HISTORY_PATH = '/api/admin/repositories/history'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -216,6 +227,7 @@ const NPM_PROVENANCE_PATH = '/api/npm/provenance'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
 const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
 const NPM_TYPE_ONLY_PATH = '/api/npm/type-only'
+const NPM_COMPARISON_PATH = '/api/npm/comparison'
 const NPM_RISK_PATH = '/api/npm/risk'
 // What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
 // having no such package or version, or a tarball unpacking past risk's
@@ -229,7 +241,7 @@ function sendRiskError(res: ServerResponse, err: NpmRiskError) {
   sendJson(res, status, { error: err.code })
 }
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
-  NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH])
+  NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH, NPM_COMPARISON_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -579,6 +591,24 @@ async function readWorkspaceSession(res: ServerResponse, deps: ManagedHttpDeps, 
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
   if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return null }
   return s
+}
+
+// Who am I? While an admin views as another user, that user, plus the admin
+// as `viewer`. A view that has ended (with the admin's session or role, or the
+// viewed account) is cleared, returning to the own session. Null signed out.
+async function currentSession(config: ManagedConfig, db: ManagedDb, cookie: string | undefined): Promise<{ body: ManagedSessionInfo | null; headers: Record<string, string> }> {
+  const now = Date.now()
+  let s = await readSession(config, db, cookie, now)
+  const ended = s == null && viewToken(config, cookie) != null
+  if (ended) s = await readSession(config, db, cookie, now, { own: true })
+  return {
+    body: s && {
+      user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
+      csrfToken: s.session.csrfToken,
+      ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
+    },
+    headers: ended ? { 'set-cookie': clearViewCookie(config) } : {},
+  }
 }
 
 // GET /api/admin/scan/models — the server's canonical scan model ids and effort
@@ -1268,25 +1298,52 @@ function scopeRepositoryContents(contents: RepositoryContents | null, virtualEnt
   } : {}) }
 }
 
-// Recheck repository/path grants after upstream reads, before returning names.
-async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
+// A browse's repository, revision and directory, as its query names them;
+// null, answered, where it names none.
+function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
   const repoId = Number(query.get('repoId'))
   const normalized = normalizeTeamPath(query.get('path') ?? '')
   const ref = query.get('ref') ?? ''
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
-    sendJson(res, 400, { error: 'bad-request' }); return
+    sendJson(res, 400, { error: 'bad-request' }); return null
   }
+  return { repoId, ref, path: normalized.path ?? '' }
+}
+
+// The repository `repoId` as the reader may browse it at `path`: one of their
+// bundle repositories, and what their grants show of that directory
+// (`virtualEntries`, null where they reach all of it: scopedDirectory). Null,
+// answered, where it is none of theirs.
+async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return null
+  const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
+  if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
+  const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
+  return { repo, virtualEntries: scopedDirectory(path, scopes), user: s.user }
+}
+
+// The repository as it was authorized, but for the shared default branch hint,
+// which a read may refresh meanwhile: that changes none of its identity,
+// credentials or managed grants.
+const sameRepository = (current: SelectedRepo, authorized: SelectedRepo) =>
+  JSON.stringify({ ...current, cachedDefaultBranch: authorized.cachedDefaultBranch }) === JSON.stringify(authorized)
+
+function sendGithubError(res: ServerResponse, err: GithubApiError) {
+  sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+}
+
+// Recheck repository/path grants after upstream reads, before returning names.
+async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref } = asked
   const withDefault = refs && query.get('withDefault') === 'true'
-  const path = refs ? '' : normalized.path ?? ''
+  const path = refs ? '' : asked.path
   const authorize = async () => {
-    const s = await readManageSession(res, deps, cookie)
-    if (!s) return null
-    const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
-    if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
-    const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
-    const virtualEntries = scopedDirectory(path, scopes)
-    if ((!refs || withDefault) && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return { repo, virtualEntries, user: s.user }
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && (!refs || withDefault) && access.virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
   }
   const access = await authorize()
   if (!access) return
@@ -1308,19 +1365,128 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
-    // This request (or another reader) may have refreshed the shared hint. It
-    // does not change repository identity, credentials, or managed grants.
-    if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
-      sendJson(res, 409, { error: 'repository-changed' }); return
-    }
+    // This request (or another reader) may have refreshed the shared hint.
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     sendJson(res, 200, refs ? { ...listed, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
     } : {}) } : scopeRepositoryContents(contents, current.virtualEntries))
   } catch (err) {
-    if (err instanceof GithubApiError) {
-      sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    throw err
+  }
+}
+
+// GET /api/admin/repositories/code: the files of a directory of a repository
+// at a revision, for the code viewer (repository-code.ts), read as browsing
+// it is, with the reader's own GitHub access, and only where their grants
+// reach the whole directory: one they reach only the ancestor of is none to
+// read. Its tree's listing says first whether its files fit, before its
+// tarball is asked for; the reader's access is checked again once it is
+// read, before any of it is sent. The load stays held until this response is
+// written or abandoned, and a reader who stops reading it gives it up after
+// a while.
+async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref, path } = asked
+  const authorize = async () => {
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const commit = await reader.commit(ref)
+    const repo = access.repo.fullName
+    const client = createClient({ token: reader.readToken() })
+    // A directory the commit has none at is none to read, as browsing it says.
+    const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
+      throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
+    }))
+    // Access still held, and the same repository, before anything read is sent.
+    const fenced = async () => {
+      await reader.recheckAccess()
+      const current = await authorize()
+      if (!current) return false
+      if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return false }
+      return true
+    }
+    // Too large names the commit it was read at, for History to read.
+    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) {
+      if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
       return
     }
+    if (res.destroyed) return
+    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
+    res.once('close', load.release)
+    const bytes = await load.result
+    if (!(await fenced()) || res.destroyed) return
+    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+    res.writeHead(200, {
+      'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
+      'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
+    })
+    writeResponse(res, bytes)
+  } catch (err) {
+    if (res.headersSent || res.destroyed) return
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
+    throw err
+  }
+}
+
+// GET /api/admin/repositories/history: what the code viewer's History tab
+// draws (repository-history.ts), read as browsing is, with the reader's own
+// GitHub access, within their grants as the code is. From a revision (`ref`),
+// a page at a time (`page`), the commits touching `path` where it names a
+// directory, with the branches and tags naming commits on the first page; or,
+// with `all`, across the repository's most recently updated branches, then,
+// a later page, on from the commits `from` names, which needs the whole
+// repository and a GitHub token. Access is checked again once it is read,
+// before any of it is sent.
+async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref, path } = asked
+  const page = Number(query.get('page') ?? '1')
+  const all = query.get('all') === 'true'
+  // Every branch's later pages read on from where those before stop.
+  const from = query.get('from')
+  const starts = from === null ? null : historyStarts(from)
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || (page > 1) !== (starts !== null)))
+    || (from !== null && (!all || starts === null))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const authorize = async () => {
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const repo = access.repo.fullName
+    const token = reader.readToken()
+    let body: object
+    if (all) {
+      if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
+      // What a later page reads on from, the client knows; whether one may
+      // follow, the deepest page says.
+      body = starts ? { all: true, page, ...await repositoryAllHistoryFrom(repo, token, starts), more: page < MAX_HISTORY_PAGE }
+        : { all: true, ...await repositoryAllHistory(repo, token) }
+    } else {
+      const commit = await reader.commit(ref)
+      const [history, tips] = await Promise.all([repositoryHistory(repo, token, commit, path, page), page === 1 ? repositoryRefTips(repo, token) : null])
+      body = { commit, path, page, ...history, ...tips }
+    }
+    await reader.recheckAccess()
+    const current = await authorize()
+    if (!current) return
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    sendJson(res, 200, body)
+  } catch (err) {
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
   }
 }
@@ -1515,18 +1681,25 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   await sendEncoded(req, res, cached, contentType, headers)
 }
 
+// Two bundles a reader asks about together, where they may read both, else
+// null, told as 401 or 404: asked before what is worked out of them and
+// again before it is sent.
+function bothBundles(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string) {
+  return async () => {
+    const [base, other] = await Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
+    if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+    return [base.bundle, other.bundle] as const
+  }
+}
+
 // GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
 // one of the `other` bundle's, both pretty-printed, renamed names hidden
 // (rename-diff.ts), for a reader of both, checked again once it is worked out.
 async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? '', request = renameDiffRequest(params)
   if (!request || !/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const readable = async () => {
-    const [base, other] = await Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
-    if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
-    if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
-    return [base.bundle, other.bundle] as const
-  }
+  const readable = bothBundles(res, deps, session, id, otherId)
   const records = await readable()
   if (!records) return
   const { prettyCache } = deps
@@ -1540,6 +1713,25 @@ async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse,
   }
   if (await readable()) await sendEncoded(req, res, diff, 'application/json')
   else diff.stream.destroy()
+}
+
+// GET /api/bundles/:id/comparison?other=: its files paired with the `other`
+// bundle's as Compare pairs them, with what its Overview reads beside them
+// (comparison.ts), within a reason `scope` where given; for a reader of
+// both, checked again once it is worked out.
+async function handleBundleComparison(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
+  const otherId = params.get('other') ?? ''
+  if (!/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-bundle' }); return }
+  const readable = bothBundles(res, deps, session, id, otherId)
+  const records = await readable()
+  if (!records) return
+  const { prettyCache } = deps
+  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let body
+  try { body = await comparisonBody(await prettyCache.bundleDetails(records[0]), await prettyCache.bundleDetails(records[1]), params.get('scope') ?? '') }
+  catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
+  if (await readable()) await sendEncoded(req, res, body, 'application/json')
+  else body.stream.destroy()
 }
 
 // GET /api/bundles/:id/pretty?other=: the files that changed between it and
@@ -2854,7 +3046,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff,type-only}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff,type-only,risk,comparison}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
@@ -2864,14 +3056,17 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   // All but the package's own (its versions, figures and advisories) are a version's.
   const versioned = path !== NPM_VERSIONS_PATH && path !== NPM_STATS_PATH && path !== NPM_ADVISORIES_PATH
   const otherSpec = params.get('otherVersion') ?? ''
-  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || ((path === NPM_RENAME_DIFF_PATH || path === NPM_TYPE_ONLY_PATH) && !isNpmPackageSpec(otherSpec))
+  // The package a comparison's other side is a version of, another where Review compares a dependency replaced.
+  const otherName = path === NPM_COMPARISON_PATH ? params.get('otherName') ?? name : name
+  if (!isNpmPackageName(name) || !isNpmPackageName(otherName) || (versioned && !isNpmPackageSpec(spec)) || ((path === NPM_RENAME_DIFF_PATH || path === NPM_TYPE_ONLY_PATH) && !isNpmPackageSpec(otherSpec))
     || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
-    || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
+    || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))
+    || (path === NPM_COMPARISON_PATH && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
   if (path === NPM_RENAME_DIFF_PATH && params.has('path') && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const reader = await npmReader(deps, cookie, [name])
+  const reader = await npmReader(deps, cookie, otherName === name ? [name] : [name, otherName])
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -2970,6 +3165,28 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       return
     }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
+    // Its files paired with those of `otherVersion` (of `otherName`, else the
+    // same package), as Compare and Review pair them, with what their
+    // Overview reads beside them (comparison.ts): the version shown against
+    // the one compared with, or `(empty)`, none, as Review reads a first
+    // version. Read of both, each package's access checked again once worked out.
+    if (path === NPM_COMPARISON_PATH) {
+      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(otherName, otherSpec, canReadPrivateNpm(reader, otherName), controller.signal, keptVersions))
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
+      let body
+      try {
+        const [files, oldFiles] = await Promise.all(loads.map(load => load.result))
+        body = await comparisonBody(old ? npmComparedSide(old.dist.integrity, oldFiles!) : emptySide(), npmComparedSide(doc.dist.integrity, files!))
+      } finally { for (const load of loads) load.release() }
+      const current = await npmReader(deps, cookie, otherName === name ? [name] : [name, otherName])
+      if (current == null) { body.stream.destroy(); sendJson(res, 401, { error: 'unauthenticated' }); return }
+      if ((doc.private && !canReadPrivateNpm(current, name)) || (old?.private && !canReadPrivateNpm(current, otherName))) {
+        body.stream.destroy(); sendJson(res, 404, { error: 'package-not-found' }); return
+      }
+      if (!res.destroyed) await sendEncoded(req, res, body, 'application/json')
+      return
+    }
     // Every one of its files that needs it pretty-printed (pretty-print.ts
     // npmAll), or, against another version, the files that changed between
     // them, both sides' (compared), a line each as it is formatted, or found
@@ -3110,13 +3327,16 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
 
     // Public mode probe — lets a client detect the managed protocol up front.
+    // It also sends the session, sparing the client's GET /api/auth/session;
+    // a failed read leaves that request to the client, never failing the probe.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
+      const current = await currentSession(config, db, cookie).catch((err) => { console.warn('managed: config session read failed:', err); return null })
       sendJson(res, 200, { ...info, ...(config.githubNewIssueLabels ? { githubNewIssueLabels: config.githubNewIssueLabels } : {}),
         managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? {
           uploadChunkBytes: UPLOAD_CHUNK_BYTES, uploadMaxBytes: { reports: config.maxReportBytes, bundles: config.maxBundleBytes },
-        } : {}) } })
+        } : {}) }, ...(current ? { session: current.body } : {}) }, current?.headers)
       return
     }
     if (viewing && underPrefix(path, VIEW_PREFIXES) && !viewAllows(method, path)) { sendViewOnly(res); return }
@@ -3159,22 +3379,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
       res.end(); return
     }
-    // Who am I? While an admin views as another user, that user, plus the
-    // admin as `viewer`. A view that has ended (with the admin's session or
-    // role, or the viewed account) is cleared, returning to the own session.
     if (path === SESSION_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      const now = Date.now()
-      let s = await readSession(config, db, cookie, now)
-      const ended = s == null && viewing
-      if (ended) s = await readSession(config, db, cookie, now, { own: true })
-      const headers: Record<string, string> = ended ? { 'set-cookie': clearViewCookie(config) } : {}
-      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }, headers); return }
-      sendJson(res, 200, {
-        user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
-        csrfToken: s.session.csrfToken,
-        ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
-      }, headers)
+      const { body, headers } = await currentSession(config, db, cookie)
+      if (body == null) { sendJson(res, 401, { error: 'unauthenticated' }, headers); return }
+      sendJson(res, 200, body, headers)
       return
     }
     if (path === VIEW_AS_PATH) { await handleViewAs(req, res, deps, cookie); return }
@@ -3256,6 +3465,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryBrowser(res, deps, cookie, url.searchParams, path === REPO_REFS_PATH); return
     }
+    if (path === REPO_CODE_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryCode(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_HISTORY_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryHistory(res, deps, cookie, url.searchParams); return
+    }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     if (path === ADD_PUBLIC_REPO_PATH) { await handleAddPublicRepository(req, res, deps, cookie); return }
@@ -3302,9 +3519,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
-    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff|type-only)$/iu.exec(path)
+    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff|type-only|comparison)$/iu.exec(path)
     if (bundleRead) {
       const id = bundleRead[1]!, part = bundleRead[2]!, { session } = workspaceSession!, { bundleCache, prettyCache } = deps
+      if (part === 'comparison') {
+        if (method !== 'GET') { send405(res, 'GET'); return }
+        await handleBundleComparison(req, res, deps, session, id, url.searchParams); return
+      }
       if (part === 'rename-diff' || part === 'type-only' || (part === 'pretty' && url.searchParams.has('other'))) {
         if (method !== 'GET') { send405(res, 'GET'); return }
         if (part === 'rename-diff' && url.searchParams.has('path')) { await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return }

@@ -125,6 +125,17 @@ export function npmDependencyUnimported(details, { name, kind, range, to }) {
     && !commands.some(command => commandNames(command, name))
 }
 
+// Whether a dependency nothing of a version imports (`{ name, range }`,
+// npmDependencyUnimported) counts toward its risk (assess.js): not lodash,
+// which packages keep naming long after their code stopped importing it, nor
+// Babel's own presets (`@babel/preset-*`), which a config names by a string
+// (an ESLint config's parser options); each where npm installs that package
+// from its registry (installsAs), not another under its name.
+export function npmUnusedDependencyCounted({ name, range }) {
+  const installs = installsAs(name, range)
+  return !(name === 'lodash' && installs === 'lodash') && !(name.startsWith('@babel/preset-') && installs?.startsWith('@babel/preset-'))
+}
+
 // Where a source takes a dependency from, in a sentence.
 const SOURCE_NAMES = new Map([['URL', 'a URL'], ['git', 'a git repository']])
 

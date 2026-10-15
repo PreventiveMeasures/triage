@@ -15,7 +15,7 @@ mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/dom.js', { exports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { exports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { exports: { bundleKind: () => null } })
-mock.module('../ui/view/tooltip.js', { exports: { hideTooltip() {}, showTooltip() {} } })
+mock.module('../ui/view/tooltip.js', { exports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
 // Dialogs have separate tests; keep their browser-only dependencies out of source selection.
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
 mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })

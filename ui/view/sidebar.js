@@ -14,6 +14,7 @@ import { managedReportViewChanged } from './managed-report-catalog.js'
 import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { openManagedBundle } from './managed-bundle-open.js'
 import { openNpmRoute } from './npm-package.js'
+import { navigateToRepositoryCode, openRepositoryCodeRoute } from './repository-code.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
 import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
@@ -559,7 +560,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   if (isManagedUiMode()) {
     teamSections.sync(state, revealSelection)
     if (!managedSessionPending && !managedTeamsPending && !managedSessionRefresh && !managedNavigationPending) startManagedTeamFeed({ catalogOnly: true })
-    state.bundles = (state.bundles ?? []).filter(entry => entry.managedId || entry.npm)
+    state.bundles = (state.bundles ?? []).filter(entry => entry.managedId || entry.npm || entry.repository)
     state.storedFiles = []
     renderLandingWorkspaces([])
     if (!root) return
@@ -1911,6 +1912,18 @@ let managedSessionPending = true
 let managedTeamsPending = true
 let managedNavigationPending = false
 let managedBase = null
+// The session's catalog read while it is in flight (revalidateManagedSession).
+let managedSessionTeams = null
+// The session the startup mode probe sent, for the first managed session probe
+// in place of GET /api/auth/session. Dropped once taken, or when startup opens
+// another protocol, so no later probe takes it stale.
+let startupSession
+
+function takeStartupSession() {
+  const sent = startupSession
+  startupSession = undefined
+  return sent
+}
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
   managedHistory.reset({ force: resetNavigation })
@@ -2010,6 +2023,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (getPublicShare() && info.managed) state.serverModeSelection = 'managed'
   configureClientMode(info.mode)
   if (getPublicShare() && info.managed) setLocalMode(false)
+  if (!isManagedUiMode()) startupSession = undefined
   const changed = previousMode !== state.serverMode
   state.managed = info.managed
   // Cached mode hints omit runtime values; only a live response replaces them.
@@ -2064,7 +2078,7 @@ async function revalidateManagedSession() {
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
     const previous = state.managedSession
-    const session = await managedProbeSession({ fallback: previous })
+    const session = await managedProbeSession({ fallback: previous, sent: takeStartupSession() })
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
@@ -2085,17 +2099,24 @@ async function revalidateManagedSession() {
     // Claim the triage change-notifier for the server push — a no-op unless
     // the session's role can write triage (reads still hydrate without it).
     initManagedTriagePush()
-    // The user's teams (sidebar Teams section). probeTeams never throws; empty
-    // when logged out. Repaint the sidebar so the section reflects the result.
-    if (!(await refreshManagedTeams(isCurrent))) return
     if (!document.querySelector('base')) {
       managedBase = document.createElement('base')
       managedBase.href = '/'
       document.head.prepend(managedBase)
     }
-    if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
-      await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
-    } else if (session) await managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration })
+    // The user's teams (sidebar Teams section). probeTeams never throws; empty
+    // when logged out. Repaint the sidebar so the section reflects the result.
+    // The page opens alongside this read, not after it: Manage, npm and the
+    // other pages need only the session, and the routes resolved through a
+    // team wait for this read (viewManagedTeams). The read is the session's,
+    // not a view's: neither the navigation that opens the page nor leaving
+    // that page before the read answers cancels it.
+    const teams = managedSessionTeams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
+      .finally(() => { if (managedSessionTeams === teams) managedSessionTeams = null })
+    const page = managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)
+      ? managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
+      : session ? managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration }) : null
+    await Promise.all([teams, page])
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   } finally {
@@ -2110,6 +2131,13 @@ async function revalidateManagedSession() {
 setManagedTeamFeedRefresh((isCurrent, signal, revision) => refreshManagedTeams(isCurrent, { strict: true, signal, revision }))
 
 const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
+
+// A view's catalog: the session's read while it is in flight, waited for
+// rather than joined, since a joined read is cancelled with its view
+// (createManagedTeamsProbe); otherwise the shared catalog, read if expired.
+function viewManagedTeams(isCurrent) {
+  return managedSessionTeams ?? refreshManagedTeams(isCurrent, { reuse: true })
+}
 let managedTeamsUpdate = 0
 async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal(), reuse = false, revision = null } = {}) {
   const generation = clientModeGeneration
@@ -2223,7 +2251,7 @@ function cancelManagedRestoration() {
   managedNavigationPending = false
   beginViewNavigation()
   const generation = clientModeGeneration
-  void refreshManagedTeams(() => generation === clientModeGeneration && isManagedUiMode(), { reuse: true })
+  void viewManagedTeams(() => generation === clientModeGeneration && isManagedUiMode())
 }
 
 // Navigate to one of the admin / manage pages: load the admin bundle
@@ -2247,7 +2275,8 @@ async function restoreManagedPageContent(route, isCurrent) {
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
-  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent, { reuse: true }))) return false
+  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding)
+    && (!(await viewManagedTeams(isCurrent)) || !isCurrent())) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
     if (!canAccessManagedPage('manage-bundles')) return false
@@ -2283,6 +2312,8 @@ async function restoreManagedPageContent(route, isCurrent) {
   }
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
+  // The code viewer reads repositories as Create a bundle browses them.
+  if (route.view === 'repository-code') return ['admin', 'manage'].includes(state.managedSession.role) && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
   if (route.view === 'reviews') {
     if (state.managedSession.publicShare) return false
     cleanupGraph2()
@@ -2383,6 +2414,13 @@ document.addEventListener('managed-admin-navigate', (event) => {
   if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId })
 })
 
+// A repository's code, from its row on the Repositories page: at its default
+// branch's head.
+document.addEventListener('managed-repository-code-open', event => {
+  const repoId = event.detail?.repoId
+  if (isManagedUiMode() && Number.isSafeInteger(repoId) && repoId > 0) navigateToRepositoryCode({ repoId })
+})
+
 // Cold-start mode detection. With nothing cached we don't yet know the server's
 // protocol — and a managed server has no WS plane whose connect frame would
 // tell us — so GET /api/config to learn it up front and feed the same
@@ -2395,6 +2433,13 @@ export function ensureClientMode() {
   return clientModeReady ??= detectServerModeIfUnknown().then(() => document.querySelector('app-sidebar')?.removeAttribute('inert'))
 }
 
+function probeStartupServerInfo() {
+  const probe = probeServerInfo()
+  // A probe slower than startup's wait never holds the session: it is asked for.
+  startupSession = waitForServerInfo(probe).then(info => info?.session)
+  return probe
+}
+
 async function detectServerModeIfUnknown() {
   const cached = readCachedServerInfo()
   if (cached) {
@@ -2403,14 +2448,14 @@ async function detectServerModeIfUnknown() {
     state.managed = cached.managed
     // The cache is a startup hint, not a permanent protocol binding. Today's
     // advertisement replaces it; a failed probe still permits local access.
-    void probeServerInfo().then((info) => {
+    void probeStartupServerInfo().then((info) => {
       if (info && info !== 'standalone') return applyServerInfo(info)
       return undefined
     }).catch((err) => console.warn('server mode revalidation:', err))
     return
   }
   setLandingModePending(!hasStandaloneProbeHint())
-  const probe = probeServerInfo()
+  const probe = probeStartupServerInfo()
   const info = await waitForServerInfo(probe, hasStandaloneProbeHint() ? 0 : 3000)
   // A sync frame or another tab may have confirmed the mode while pending.
   // Adopt it into state as well: the initial e2e default is not confirmation.

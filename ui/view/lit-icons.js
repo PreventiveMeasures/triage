@@ -22,6 +22,9 @@ export const WRAP_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fi
 // "Collapse directories" in a file tree rail.
 export const COLLAPSE_DIRS_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M5 2h8a1 1 0 0 1 1 1v8M3 5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM4.5 9.5h4"/></svg>`
 
+// A prompt in a window: the Code tab's rail opens its terminal pane.
+export const TERMINAL_ICON = html`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="m4.5 6 2 2-2 2M8.5 10h3"/></svg>`
+
 // The Code tab's rail search modes (bundle-code-search.js), as Compare's Code
 // rail offers them too: filter files (a folder, as the sidebar's packages
 // button draws one), and search code.

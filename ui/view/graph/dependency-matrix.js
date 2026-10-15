@@ -3,7 +3,8 @@ import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { buildDependencyMatrix } from './matrix-model.js'
 import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell, paintMatrix } from './matrix-paint.js'
-import { renderMatrixPanel } from './matrix-panel.js'
+import { matrixMembers, renderMatrixPanel } from './matrix-panel.js'
+import { graphTerms } from './data.js'
 import css from './dependency-matrix.css'
 import sidebarListCSS from './sidebar-list.css'
 import zoomControlsCSS from './zoom-controls.css'
@@ -128,7 +129,9 @@ class DependencyMatrix extends LitElement {
     this.requestUpdate()
   }
 
+  // A lockfile's copies of a package have no rows of their own to expand into.
   expand(pkg) {
+    if (this.graph.packagesOnly) return
     if (this.expanded.has(pkg)) this.expanded.delete(pkg)
     else this.expanded.add(pkg)
     this.revealPkg = pkg
@@ -186,7 +189,7 @@ class DependencyMatrix extends LitElement {
       border: value('--border'), grid: light ? '#0000000b' : '#ffffff0b', highlight: paper ? '#fff' : light ? '#0969da18' : '#ffffff12', cycle: paper ? '#000' : light ? '#a21caf' : '#e879c7' }
     this.style.setProperty('--matrix-cycle', theme.cycle)
     const c = this.model.index.get(this.selection?.to), r = this.model.index.get(this.selection?.from)
-    paintMatrix(ctx, this.model, this.view, { width: this.width, height: this.height, theme, colorOf: pkgColor,
+    paintMatrix(ctx, this.model, this.view, { width: this.width, height: this.height, theme, colorOf: pkgColor, rows: graphTerms(this.graph).importers,
       hover: this.hover, selected: r === undefined ? null : { row: r, col: c ?? null },
       dimmed: (row) => !this.graph.issuesHidden && !row.files.some((file) => {
         const n = this.graph.nodeByFile.get(file)
@@ -196,9 +199,13 @@ class DependencyMatrix extends LitElement {
     })
   }
 
+  // The cycles switch where there are cycles, or while it is on: another
+  // scope can leave it on over a graph with none, for it to be turned off.
   renderControls() {
+    const cycles = this.model.cycleCount > 0 || this.cyclesOnly
+    if (!cycles && this.expanded.size === 0 && !this.neighborhood) return null
     return html`<div class="g2-matrix-controls">
-        <mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>
+        ${cycles ? html`<mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>` : null}
         ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.dirty = true; this.requestUpdate() }}>Collapse all</button>` : null}
         ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.dirty = true; this.requestUpdate() }}>All dependencies</button>` : null}
       </div>`
@@ -208,18 +215,19 @@ class DependencyMatrix extends LitElement {
     if (!this.model) return null
     const hoverCol = this.model.rows[this.hover?.col], hoverRow = this.model.rows[this.hover?.row]
     const hoverImports = hoverCol && hoverRow ? this.model.cells.get(hoverRow.id)?.get(hoverCol.id)?.count ?? 0 : 0
+    const packagesOnly = this.graph.packagesOnly, terms = graphTerms(this.graph)
     return html`<div class="matrix-layout">
       <div class="matrix-stage" style=${`--matrix-label-width: ${MATRIX_LEFT}px`}>
         <select class="matrix-order" aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.dirty = true; this.requestUpdate() }}>
-          <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>Most imported ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most imports ↓</option>
+          <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>${terms.mostImported} ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most ${terms.links} ↓</option>
         </select>
-        <canvas tabindex="0" role="img" aria-label="Dependency matrix. Rows import columns. Arrow keys select cells; Enter expands a package."
+        <canvas tabindex="0" role="img" aria-label=${packagesOnly ? 'Dependency matrix. Rows depend on columns. Arrow keys select cells.' : 'Dependency matrix. Rows import columns. Arrow keys select cells; Enter expands a package.'}
           @keydown=${(e) => this.key(e)} @pointermove=${(e) => this.move(e)} @pointerleave=${() => { if (!this.drag) { this.hover = null; this.requestUpdate() } }}
           @pointerdown=${(e) => { if (e.button !== 0) return; this.canvas.setPointerCapture(e.pointerId); this.drag = { x: e.clientX, y: e.clientY, ox: this.view.x, oy: this.view.y, moved: false } }}
           @pointercancel=${() => { this.drag = null }}
           @pointerup=${(e) => { if (!this.drag) return; if (!this.drag.moved) { const hit = this.pointer(e); if (hit) this.select(this.model.rows[hit.row].id, hit.col === null ? null : this.model.rows[hit.col].id, false) } this.drag = null }}
           @dblclick=${(e) => { const hit = this.pointer(e); if (hit) this.expand(this.model.rows[hit.row].pkg) }}></canvas>
-        ${hoverRow && (!hoverCol || hoverImports > 0) ? html`<div class="matrix-hover">${hoverRow.label}${hoverCol ? ` → ${hoverCol.label} · ${hoverImports} imports` : ` · ${hoverRow.files.length} files`}</div>` : null}
+        ${hoverRow && (!hoverCol || hoverImports > 0) ? html`<div class="matrix-hover">${hoverRow.label}${hoverCol ? ` → ${hoverCol.label} · ${hoverImports} ${terms.links}` : ` · ${matrixMembers(this.graph, hoverRow)} ${terms.members}`}</div>` : null}
         <div class="g2-zoom-ctrl" role="group" aria-label="Matrix zoom">
           <button aria-label="Zoom in" @click=${() => this.zoom(1.5)}>+</button>
           <div class="g2-zoom-pct">${Math.round(this.view.cell / 18 * 100)}%</div>

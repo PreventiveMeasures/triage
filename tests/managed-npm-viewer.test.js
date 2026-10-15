@@ -10,8 +10,9 @@ import { templateText as text } from './_lit.js'
 import { holdVersion, riskAnswer } from './_npm-risk.js'
 
 const state = {}
-const renders = [], requests = [], versionRequests = []
-let answer = null, versionsAnswer = () => Promise.resolve({ versions: [] })
+const renders = [], requests = [], riskRequests = [], versionRequests = []
+let answer = null, riskHeld = false, versionsAnswer = () => Promise.resolve({ versions: [] })
+const riskSignals = [], versionSignals = []
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -20,9 +21,14 @@ mock.module('../ui/view/render.js', { exports: { render() { renders.push(Date.no
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
-  fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
+  fetchNpmVersions(name, { signal } = {}) { versionRequests.push(name); versionSignals.push(signal); return versionsAnswer(name, signal) },
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
-  fetchNpmRisk: (name, version, otherVersion) => Promise.resolve(riskAnswer(name, version, otherVersion)),
+  fetchNpmRisk(name, version, otherVersion, { signal } = {}) {
+    riskRequests.push([name, version, otherVersion])
+    riskSignals.push(signal)
+    // Held, where a test asks, till its signal gives it up.
+    return riskHeld ? new Promise((resolve, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)) }) : Promise.resolve(riskAnswer(name, version, otherVersion))
+  },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependenciesColumn, npmDeprecation, npmOverviewExtras, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmOverviewMeta, npmAge, npmPackageRoute, npmPublished, npmPublishedOn, npmRangeVersion, npmRecentRelease, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
@@ -42,12 +48,16 @@ beforeEach(() => {
   beginViewNavigation()
   requests.length = 0
   versionRequests.length = 0
+  riskRequests.length = 0
+  riskSignals.length = 0
+  versionSignals.length = 0
+  riskHeld = false
   answer = () => Promise.resolve(data)
   versionsAnswer = () => Promise.resolve({ versions: [] })
   // A session of its own each, so nothing kept from another test answers.
   state.managedSession = { id: `session-${++session}`, role: 'view' }
   Object.assign(state, { currentView: 'findings', bundles: [], bundleDetails: null, selectedBundle: null, bundleDetailsTab: 'overview',
-    bundleSourceFile: null, bundleCodeFileRequest: null, npmLookup: { input: '', pending: false, error: null }, reports: [], currentManagedTeam: 'team' })
+    bundleSourceFile: null, bundleCodeFileRequest: null, npmLookup: { input: '', error: null }, npmOpening: null, reports: [], currentManagedTeam: 'team' })
   globalThis.document = { body: { classList: { remove() {} } }, querySelector: () => null }
 })
 
@@ -184,6 +194,49 @@ test('a version that fails to list says so, without a picker of nothing, and is 
   assert.equal(versionRequests.length, 3)
 })
 
+test('a version\'s versions, and its risk where the route names it exactly, are asked beside it, not once it has come', async () => {
+  let release = null
+  answer = () => new Promise(resolve => { release = () => resolve(data) })
+  const opening = openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'overview' }, () => true, () => {})
+  await setImmediate()
+  assert.deepEqual(requests, [['@scope/pkg', '1.2.3']])
+  assert.deepEqual(versionRequests, ['@scope/pkg'], 'its versions asked while it loads')
+  assert.deepEqual(riskRequests, [['@scope/pkg', '1.2.3', null]], 'and its risk')
+  release()
+  await opening
+  npmVersionList('@scope/pkg')
+  npmRisk({ name: '@scope/pkg', version: '1.2.3' })
+  assert.deepEqual([versionRequests.length, riskRequests.length], [1, 1], 'its render taking them up, not asking again')
+  assert.deepEqual([versionSignals[0].aborted, riskSignals[0].aborted], [false, false], 'nor giving them up once the version opened')
+  for (const [packageName, packageSpec, bundleTab] of [['tagged', 'next', 'overview'], ['latest', null, 'overview'], ['treemapped', '1.0.0', 'treemap']]) {
+    answer = () => Promise.resolve({ ...data, name: packageName, integrity: `sha512-${packageName}` })
+    await openNpmRoute({ view: 'npm', packageName, packageSpec, bundleTab }, () => true, () => {})
+    assert.equal(versionRequests.at(-1), packageName, `${packageName}: its versions`)
+  }
+  assert.equal(riskRequests.length, 1, 'not the risk of a version a dist-tag or none names, which only the server resolves, nor on a tab that reads none')
+  // A route left before its version opens gives its versions and risk up,
+  // the server reading and making only a few at once, and keeps no failure
+  // of them.
+  riskHeld = true
+  versionsAnswer = (name, signal) => new Promise((resolve, reject) => { signal?.addEventListener('abort', () => reject(signal.reason)) })
+  let current = true
+  answer = () => new Promise(resolve => { release = () => resolve({ ...data, name: 'left', integrity: 'sha512-left' }) })
+  const leaving = openNpmRoute({ view: 'npm', packageName: 'left', packageSpec: '2.0.0', bundleTab: 'overview' }, () => current, () => {})
+  await setImmediate()
+  assert.deepEqual([riskRequests.at(-1), riskSignals.at(-1).aborted, versionRequests.at(-1), versionSignals.at(-1).aborted], [['left', '2.0.0', null], false, 'left', false])
+  current = false
+  release()
+  assert.equal(await leaving, false)
+  assert.deepEqual([riskSignals.at(-1).aborted, versionSignals.at(-1).aborted], [true, true])
+  await setImmediate()
+  riskHeld = false
+  versionsAnswer = () => Promise.resolve({ versions: [] })
+  const asked = [riskRequests.length, versionRequests.length]
+  npmRisk({ name: 'left', version: '2.0.0' })
+  npmVersionList('left')
+  assert.deepEqual([riskRequests.length, versionRequests.length], [asked[0] + 1, asked[1] + 1], 'asked again when next wanted')
+})
+
 test('a Compare link opens the version with the one it compares with', async () => {
   const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'compare', compareSpec: '1.0.0', compareMode: 'code' }, () => true, () => {})
   assert.deepEqual(state.bundleCompare, { bundle: 'sha512-pkg', target: '1.0.0', mode: 'code' })
@@ -230,7 +283,8 @@ test('a version shows as a bundle of its files, sized by their bytes, text alone
 
 test('opening a version shows it in the bundle view, and its route names the exact version', async () => {
   const rendered = []
-  const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: null, bundleTab: 'code', file: 2, line: 4 }, () => true, () => rendered.push(state.currentView))
+  const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: null, bundleTab: 'code', file: 2, line: 4 }, () => true,
+    () => rendered.push([state.currentView, state.npmOpening]))
   assert.deepEqual(requests, [['@scope/pkg', 'latest']])
   assert.equal(state.currentView, 'bundles')
   assert.equal(state.selectedBundle, 'sha512-pkg')
@@ -239,13 +293,18 @@ test('opening a version shows it in the bundle view, and its route names the exa
   assert.equal(state.currentManagedTeam, null)
   assert.equal(state.bundles[0].npm.version, '1.2.3')
   assert.equal(managedRoutePath(route), '/npm/@scope/pkg@1.2.3/code/2#L4')
-  assert.deepEqual(rendered, ['npm', 'bundles'], 'the lookup page says what opens meanwhile')
+  assert.deepEqual(rendered, [['npm', { name: '@scope/pkg', spec: null, tab: 'code' }], ['bundles', null]],
+    'its header shows meanwhile, on the tab its route names')
   // Another tab of the version shown keeps it, without asking again.
   const details = state.bundleDetails
   const overview = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'overview' }, () => true, () => {})
   assert.equal(requests.length, 1)
   assert.equal(state.bundleDetails, details)
   assert.equal(managedRoutePath(overview), '/npm/@scope/pkg@1.2.3')
+  answer = () => Promise.resolve({ ...data, version: '2.0.0', integrity: 'sha512-other' })
+  rendered.length = 0
+  await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '2.0.0' }, () => true, () => rendered.push([state.currentView, state.npmOpening]))
+  assert.deepEqual(rendered, [['bundles', null]], 'another version keeps the one shown until it opens')
 })
 
 test('a version that fails to open leaves the lookup page saying why', async () => {
@@ -253,20 +312,22 @@ test('a version that fails to open leaves the lookup page saying why', async () 
   const route = await openNpmRoute({ view: 'npm', packageName: 'missing', packageSpec: '1.0.0', bundleTab: 'overview' }, () => true, () => {})
   assert.deepEqual(route, { view: 'npm' })
   assert.equal(state.currentView, 'npm')
-  assert.deepEqual(state.npmLookup, { input: 'missing@1.0.0', pending: false, error: 'No such package version, or it is not available to you.' })
+  assert.deepEqual(state.npmLookup, { input: 'missing@1.0.0', error: 'No such package version, or it is not available to you.' })
+  assert.equal(state.npmOpening, null)
   // A navigation that moved on meanwhile takes nothing over.
   state.currentView = 'findings'
   assert.equal(await openNpmRoute({ view: 'npm', packageName: 'missing', bundleTab: 'overview' }, () => false, () => {}), false)
-  assert.equal(state.currentView, 'npm', 'only the lookup page it showed while loading')
+  assert.equal(state.currentView, 'npm')
+  assert.deepEqual(state.npmOpening, { name: 'missing', spec: null, tab: 'overview' }, 'only the page it showed while opening')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openNpmRoute({ view: 'npm', packageName: 'missing', bundleTab: 'overview' }, () => true, () => {}), false)
 })
 
 test('the lookup page keeps what it was last asked for', async () => {
-  state.npmLookup = { input: 'lodash', pending: false, error: 'old' }
+  state.npmLookup = { input: 'lodash', error: 'old' }
   assert.deepEqual(await openNpmRoute({ view: 'npm' }, () => true, () => {}), { view: 'npm' })
   assert.equal(state.currentView, 'npm')
-  assert.deepEqual(state.npmLookup, { input: 'lodash', pending: false, error: null })
+  assert.deepEqual(state.npmLookup, { input: 'lodash', error: null })
 })
 
 test('history commits a dist-tag link at the version it opened', async () => {

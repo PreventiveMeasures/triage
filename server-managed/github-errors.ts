@@ -50,6 +50,8 @@ export async function throwGithubResponseError(res: Response): Promise<never> {
 export async function upstreamGithub<T>(request: () => Promise<T>): Promise<T> {
   const started = Date.now()
   try { return await request() } catch (error) {
+    // Already told as the router surfaces it.
+    if (error instanceof GithubApiError) throw error
     if (error instanceof HttpError) {
       // The upstream error includes GitHub's response text. Retain managed
       // status handling, including rate limits, without exposing that text.

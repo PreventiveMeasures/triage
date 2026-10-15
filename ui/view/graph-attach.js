@@ -19,7 +19,7 @@ let loaded = null
 
 export function loadedGraphMod() { return loaded }
 
-function loadGraph() {
+export function loadGraph() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     // Path held in a variable so esbuild can't statically resolve

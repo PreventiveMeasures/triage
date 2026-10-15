@@ -570,7 +570,10 @@ class ManagedAdminRepos extends ManagedPage {
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
       <div class="manage-list"><div aria-busy=${this._loading}>${this._body(choices)}</div>
-        ${connected && this._role === 'admin' ? html`<div class="aliases-link"><button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button></div>` : nothing}
+        ${connected && this._role === 'admin' ? html`<div class="repository-pages">
+          <button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button>
+          <button type="button" class="btn" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repo-risk' }, bubbles: true, composed: true }))}>Risk</button>
+        </div>` : nothing}
       </div>
     </div>`
   }
@@ -642,9 +645,12 @@ class ManagedAdminRepos extends ManagedPage {
     const access = `${this._accessLabel(repo)}${this._scope === 'connected' && repo.active === false ? ' · Deactivated' : ''}`
     const copy = html`${REPO_ICON}<span class="repo-copy"><span class="repo-name">${label}</span><span class="repo-meta">${access}</span></span>`
     if (this._scope === 'connected') {
-      return html`<li><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
-        ${copy}<svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
-      </button></li>`
+      // Its code opens from beside the row's arrow, in the same place on every
+      // row, but a deactivated one's, which no one reads.
+      return html`<li class="repo-item"><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
+        ${copy}<span class="repo-code-slot" aria-hidden="true"></span><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
+      </button>${repo.active === false ? nothing : html`<a class="repo-code" href=${managedRoutePath({ view: 'repository-code', repoId: repo.id })}
+        aria-label=${`Open ${repo.fullName}'s code`} @click=${event => this._openCode(event, repo)}>${adminIcon('code')}</a>`}</li>`
     }
     return html`<li class="repo-row">${copy}
       ${repo.selected ? html`<span class="connected"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>Connected</span>`
@@ -652,6 +658,14 @@ class ManagedAdminRepos extends ManagedPage {
           ? html`<span class="repo-meta">Needs App access</span>`
           : html`<button type="button" class="btn" aria-label=${`Add ${repo.fullName}`} ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, true) }}>${this._busy === repo.id ? 'Adding…' : 'Add'}</button>`}
     </li>`
+  }
+
+  // In the code viewer, at its default branch; a new tab's or window's opens
+  // there from its link.
+  _openCode(event, repo) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    this.dispatchEvent(new CustomEvent('managed-repository-code-open', { detail: { repoId: repo.id }, bubbles: true, composed: true }))
   }
 
   _accessLabel(repo) {

@@ -2,7 +2,7 @@
 // `src/{a.js → a.ts}`, what changed colored — the old part red, the new
 // green (see renameParts).
 import { html } from 'lit'
-import { renameParts } from '@preventive/compare'
+import { renameParts } from '@preventive/compare/view.js'
 
 export function renameTemplate(from, to) {
   const { head, from: before, to: after, tail } = renameParts(from, to)

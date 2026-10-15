@@ -10,10 +10,12 @@ function sameFindingsPage(a, b) {
     && a.teamSlug === b.teamSlug && (a.reportSlug ?? null) === (b.reportSlug ?? null)
 }
 
-// The Code tab of one bundle, or of one npm package version.
+// The Code tab of one bundle, of one npm package version, or of one
+// repository directory at a commit.
 function sameBundleCode(a, b) {
   if (a?.bundleTab !== 'code' || b?.bundleTab !== 'code' || a.view !== b.view) return false
   if (a.view === 'npm') return a.packageName === b.packageName && (a.packageSpec ?? null) === (b.packageSpec ?? null)
+  if (a.view === 'repository-code') return a.repoId === b.repoId && a.commit === b.commit && (a.path ?? '') === (b.path ?? '')
   return a.view === 'bundles' && (a.teamSlug ?? null) === (b.teamSlug ?? null) && a.bundleSlug === b.bundleSlug
 }
 
@@ -197,7 +199,7 @@ export function createManagedHistory(browser) {
     // tab's own history does; held for the end of a navigation that opens
     // the tab, like replaceFindingRoute's.
     replaceCodeRoute(route) {
-      if (!active || shareChanged() || !['bundles', 'npm'].includes(route?.view) || route.bundleTab !== 'code') return
+      if (!active || shareChanged() || !['bundles', 'npm', 'repository-code'].includes(route?.view) || route.bundleTab !== 'code') return
       const path = managedRoutePath(route)
       if (path == null) return
       if (restoring) {

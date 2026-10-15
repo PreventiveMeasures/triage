@@ -39,6 +39,7 @@ export function managedRoutePath(route) {
   if (route.view === 'home') return '/'
   if (route.view === 'reviews') return '/my/reviews'
   if (route.view === 'npm') return npmPackagePath(route)
+  if (route.view === 'repository-code') return repositoryCodePath(route)
   if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
     return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
   }
@@ -82,11 +83,11 @@ export function managedRoutePath(route) {
 }
 
 // The npm viewer: its lookup page, or a package version's Overview, Code,
-// Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
+// Search, Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
 // its file by number and its lines in the fragment, as a bundle's Code
 // does: `/code/<file>#L4`. Compare names the version compared with, then
 // its mode past the Overview: `/compare/<version>/code` or `/diff`.
-export const NPM_TABS = new Set(['overview', 'code', 'compare', 'review', 'treemap'])
+export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
@@ -114,7 +115,7 @@ function parseNpmRoute(path, hash) {
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
       ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}) }
   }
-  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
+  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|search|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
   if (match[1] == null) return { view: 'npm' }
   if (!isNpmPackageName(match[1]) || (match[2] != null && !isNpmPackageSpec(match[2]))) return null
@@ -126,6 +127,51 @@ function parseNpmRoute(path, hash) {
   if (route.bundleTab !== 'code') return null
   const file = Number(match[4])
   return !match[5] && /^[1-9]\d*$/u.test(match[4]) && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(hash) } : null
+}
+
+// The code viewer: a directory of a repository at a commit, on its Code,
+// Search, Treemap or History tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
+// the repository's root where it names no directory. Code, the tab a bare
+// link opens, names its file by number and its lines in the fragment, as a
+// bundle's Code does: `/code/<file>#L4`. Without a commit,
+// `/manage/code/<repo id>[?path=<directory>]`, it opens on the default
+// branch's head, or on the revision a route held in memory names (`ref`),
+// and its route then names the commit it opened.
+export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'history'])
+const COMMIT = /^[a-f\d]{40}$/u
+const MAX_DIRECTORY = 500
+const isRepoId = value => Number.isSafeInteger(value) && value > 0
+
+// A directory as the server takes one (server-managed/repo-path.ts), in its
+// canonical form: `''` the root, else names with no empty, `.` or `..` one
+// among them, nor control characters, backslashes or spaces around one.
+export function isRepositoryDirectory(path) {
+  return typeof path === 'string' && (path === '' || path.length <= MAX_DIRECTORY && !/[\p{Cc}\\]/u.test(path)
+    && path.split('/').every(part => part !== '' && part !== '.' && part !== '..' && part === part.trim()))
+}
+
+function repositoryCodePath(route) {
+  const tab = route.bundleTab ?? 'code'
+  const path = route.path ?? ''
+  if (!isRepoId(route.repoId) || (route.commit != null && !COMMIT.test(route.commit)) || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)) return null
+  const directory = path ? `?path=${path.split('/').map(encodeURIComponent).join('/')}` : ''
+  if (route.commit == null) return `/manage/code/${route.repoId}${directory}`
+  const file = tab === 'code' && isLineNumber(route.file) ? `/code/${route.file}` : tab === 'code' ? '' : `/${tab}`
+  const lines = tab === 'code' && isLineNumber(route.file) && isLineNumber(route.line)
+    ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
+  return `/manage/code/${route.repoId}/${route.commit}${file}${directory}${lines}`
+}
+
+function parseRepositoryCodeRoute(url) {
+  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|history)(?:\/([1-9]\d*))?)?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
+  if (!match) return undefined
+  const repoId = Number(match[1])
+  const path = url.searchParams.get('path') ?? ''
+  const tab = match[3] ?? 'code'
+  if (!isRepoId(repoId) || !isRepositoryDirectory(path) || (match[4] != null && tab !== 'code')) return null
+  const route = { view: 'repository-code', repoId, commit: match[2] ?? null, path, bundleTab: tab }
+  const file = Number(match[4])
+  return match[4] != null && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(url.hash) } : route
 }
 
 function isLineNumber(value) {
@@ -169,6 +215,8 @@ export function parseManagedRoute(url) {
   }
   const npm = parseNpmRoute(path, url.hash)
   if (npm !== undefined) return npm
+  const code = parseRepositoryCodeRoute(url)
+  if (code !== undefined) return code
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)

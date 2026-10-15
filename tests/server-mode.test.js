@@ -143,6 +143,12 @@ test('scan discovery is validated, ignored for managed mode, and never persisted
   localStorage.removeItem(SERVER_MODE_KEY)
 })
 
+test('a session sent with the configuration is never persisted', () => {
+  writeCachedServerInfo({ mode: 'managed', managed: null, session: { user: { login: 'me' }, csrfToken: 'csrf' } })
+  assert.equal(localStorage.getItem(SERVER_MODE_KEY), JSON.stringify({ mode: 'managed', managed: null }))
+  localStorage.removeItem(SERVER_MODE_KEY)
+})
+
 test('parseServerInfo: managed object with a malformed shape degrades to managed:null', () => {
   assert.deepEqual(parseServerInfo({ mode: 'managed', managed: { loginPath: 5 } }), { mode: 'managed', managed: null })
   assert.deepEqual(parseServerInfo({ mode: 'managed', managed: { loginPath: '/x' } }), { mode: 'managed', managed: null })
@@ -163,6 +169,8 @@ test('mode probing distinguishes confirmed protocols and standalone from inconcl
   for (const [name, response, expected] of [
     ['e2e', () => Response.json({ mode: 'e2e' }), { mode: 'e2e', managed: null }],
     ['managed', () => Response.json({ mode: 'managed' }), { mode: 'managed', managed: null }],
+    ['managed signed in', () => Response.json({ mode: 'managed', session: { user: { login: 'me' } } }), { mode: 'managed', managed: null, session: { user: { login: 'me' } } }],
+    ['managed signed out', () => Response.json({ mode: 'managed', session: null }), { mode: 'managed', managed: null, session: null }],
     ['managed+e2e', () => Response.json({ mode: 'managed+e2e' }), { mode: 'managed+e2e', managed: null }],
     ['e2e+managed', () => Response.json({ mode: 'e2e+managed' }), { mode: 'e2e+managed', managed: null }],
     ['standalone', () => new Response('Not found', { status: 404 }), 'standalone'],

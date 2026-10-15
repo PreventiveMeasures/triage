@@ -135,12 +135,22 @@ export interface State {
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number; end?: number; anchor?: number } | null
   bundleSourceWrap: boolean
   bundleSourcePretty: boolean
+  bundleCodeTerminal: boolean
+  bundleSourceLockfile: boolean
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
-  // The npm lookup page: what it was asked for, whether that is opening,
-  // and why it did not.
-  npmLookup: { input: string; pending: boolean; error: string | null }
+  // The npm lookup page: what it was asked for, and why it did not open.
+  npmLookup: { input: string; error: string | null }
+  // The npm version opening, as its route names it, while its page shows
+  // its header (render-bundle.js renderNpmOpening).
+  npmOpening: { name: string; spec: string | null; tab: string } | null
+  // A repository's directory opening in the code viewer, or why it didn't
+  // (ui/view/repository-code.js).
+  repositoryCodeOpening: { repoId: number; commit: string | null; path: string; tab: string; repo: string | null; error: string | null } | null
+  // Another directory, or revision, opening in place of the one shown, by its
+  // integrity, while the navigation that asked for it is current.
+  repositoryCodePending: { integrity: string; generation: number; repository: object } | null
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
@@ -653,12 +663,22 @@ export const state: State = store<State>({
   bundleSourceWrap: readSavedBundleSourceWrap() ?? true,
   // Whether the Code tab shows minified files pretty-printed (pretty-source.js).
   bundleSourcePretty: false,
+  // Whether the Code tab shows the Terminal tab's shell under its code panel
+  // (render-bundle.js renderBundleCodeTerminal). Kept across bundles and tabs
+  // for the page session, like the rail's width.
+  bundleCodeTerminal: false,
+  // Whether the Code tab shows a lockfile's packages in the lockfile viewer
+  // rather than its text (lockfile-view.js).
+  bundleSourceLockfile: false,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab
   // has the sources to read it from, and dropped with any other bundle or
   // tab.
   bundleCodeFileRequest: null,
-  npmLookup: { input: '', pending: false, error: null },
+  npmLookup: { input: '', error: null },
+  npmOpening: null,
+  repositoryCodeOpening: null,
+  repositoryCodePending: null,
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',
