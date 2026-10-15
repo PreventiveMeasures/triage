@@ -14,9 +14,11 @@ import { fetchRepositoryItem } from '../client-managed.js'
 import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
 import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
+import { githubUser, githubUsers } from '../github-users.js'
 import proseCSS from '../../styles/prose.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-repository-item.css'
+import appUserCSS from '../../styles/app-user.css'
 
 const SESSION_STATES = { open: ['open', 'Open'], merged: ['merged', 'Merged'], closed: ['closed', 'Closed'], branch: ['draft', 'A branch alone'] }
 const date = at => at == null ? '' : new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -25,7 +27,7 @@ const external = (href, label, primary = false) => href
   ? html`<a class=${primary ? 'primary' : ''} href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : nothing
 
 class RepositoryItemDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(styles)]
+  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
   static properties = { repository: { attribute: false }, target: { attribute: false }, _trail: { state: true }, _items: { state: true } }
 
   constructor() {
@@ -96,8 +98,8 @@ class RepositoryItemDialog extends AppDialog {
     const body = html`
       <p class="repo-item-meta">
         ${item ? html`<span class=${`repo-item-badge is-${stateClass}`}>${stateName}</span>` : nothing}
-        ${item?.author ? html`<span><strong>${item.author}</strong> opened ${date(item.createdAt)}</span>` : item?.createdAt ? html`<span>Opened ${date(item.createdAt)}</span>` : nothing}
-        ${item?.state === 'merged' ? html`<span>merged${full?.mergedBy ? html` by <strong>${full.mergedBy}</strong>` : nothing} ${date(item.mergedAt ?? item.closedAt)}</span>`
+        ${item?.author ? html`<span><strong>${githubUser(item.author)}</strong> opened ${date(item.createdAt)}</span>` : item?.createdAt ? html`<span>Opened ${date(item.createdAt)}</span>` : nothing}
+        ${item?.state === 'merged' ? html`<span>merged${full?.mergedBy ? html` by <strong>${githubUser(full.mergedBy)}</strong>` : nothing} ${date(item.mergedAt ?? item.closedAt)}</span>`
           : item?.closedAt && item.state !== 'open' ? html`<span>closed ${date(item.closedAt)}</span>` : nothing}
         ${item?.comments > 0 ? html`<span class="repo-item-mark">${COMMENT_ICON}${plural(item.comments, 'comment')}</span>` : nothing}
       </p>
@@ -145,7 +147,7 @@ class RepositoryItemDialog extends AppDialog {
     const body = html`
       <p class="repo-item-meta">
         <span class=${`repo-item-badge is-${stateClass}`}>${stateName}</span>
-        ${session.authors.length > 0 ? html`<span><strong>${session.authors.join(', ')}</strong></span>` : nothing}
+        ${session.authors.length > 0 ? html`<span><strong>${githubUsers(session.authors).map((login, at) => html`${at > 0 ? ', ' : ''}${githubUser(login)}`)}</strong></span>` : nothing}
         ${session.startedAt == null ? nothing : html`<span>${date(session.startedAt)}${session.updatedAt != null && date(session.updatedAt) !== date(session.startedAt)
           ? ` – ${date(session.updatedAt)}` : ''}</span>`}
         <span>${tasks > 0 ? plural(tasks, 'task') : 'no pull request'}</span>

@@ -4,7 +4,7 @@ import { checkManagedIssueFixes } from './_managed-issue-fixes.js'
 import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import { checkViewSessions } from './_managed-view-sessions.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
-import { checkGithubLinks } from './_managed-github-links.js'
+import { checkGithubLinks, checkUsersByLogin } from './_managed-github-links.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -268,6 +268,11 @@ test('Postgres adds team npm scopes to existing installations', async t => {
 test('Postgres linked GitHub accounts share their SQLite semantics', async t => {
   const { db } = await database(t)
   await checkGithubLinks(db)
+})
+
+test('Postgres resolves activity\'s GitHub logins to the app\'s users as SQLite does', async t => {
+  const { db } = await database(t)
+  await checkUsersByLogin(db)
 })
 
 test('Postgres adds linked GitHub accounts to existing installations, keeping names as the sign-in accounts\' own', async t => {

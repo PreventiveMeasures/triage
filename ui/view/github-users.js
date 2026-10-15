@@ -1,0 +1,138 @@
+// GitHub logins as the app shows their users. A repository's activity (its
+// commits, issues, pull requests, agents and pulse) names GitHub logins; the
+// server answers with the app's users among them (server-managed/github-users.ts),
+// a linked account's as its user, which are kept here as they come for each
+// tab to show by their avatar and the name they chose, for the session they
+// came to.
+import { html } from 'lit'
+import { namedLogins } from '../../common/managed/github-logins.ts'
+import { providerIcon } from './provider-icons.js'
+
+const known = new Map()
+
+// Keep what an answer says of each login it names, GitHub matching them
+// regardless of case: its user (`users`, by login), or none, one unlinked,
+// whose user lost access or that another user claims since; answered as it
+// came.
+export function knowGithubUsers(answer) {
+  const { users: told, ...rest } = answer ?? {}
+  const users = told ?? {}
+  for (const login of namedLogins(rest)) if (!Object.hasOwn(users, login)) known.delete(login.toLowerCase())
+  for (const [login, user] of Object.entries(users)) {
+    if (typeof user?.id === 'string' && typeof user.login === 'string') {
+      known.set(login.toLowerCase(), { id: user.id, login: user.login, name: typeof user.name === 'string' && user.name.trim() ? user.name.trim() : null })
+    } else known.delete(login.toLowerCase())
+  }
+  return answer
+}
+
+// Forget them all, for another session, whose answers say who they are.
+let generation = 0
+export function forgetGithubUsers() {
+  known.clear()
+  generation++
+}
+
+// What `read` answers, its users kept as knowGithubUsers keeps them, unless
+// they were forgotten while it was read: it was another session's. A profile
+// change saved while it was read is newer than what it says of that user.
+export async function knowingGithubUsers(read) {
+  const at = generation, changes = profileChanges
+  const answer = await read()
+  if (at !== generation) return answer
+  knowGithubUsers(answer)
+  if (changes !== profileChanges) applyProfile(latestProfile.userId, latestProfile.profile)
+  return answer
+}
+
+// How many times each user changed their avatar in this page: their avatar's
+// address changes with it, as the page would show its image as first loaded.
+const avatarRevisions = new Map()
+
+// The signed-in user's latest profile change in this page, and how many.
+let latestProfile = null
+let profileChanges = 0
+
+// The signed-in user (`userId`) changed their profile in this session, as
+// `profile` now is: what was kept of them takes it, before an answer kept a
+// while is asked again. An account they unlinked is no longer theirs.
+export function knowProfile(userId, profile, avatarChanged = false) {
+  if (avatarChanged) avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
+  latestProfile = { userId, profile }
+  profileChanges++
+  applyProfile(userId, profile)
+}
+
+function applyProfile(userId, profile) {
+  const theirs = new Set([profile.login, ...profile.accounts.map(account => account.login)].map(login => login.toLowerCase()))
+  for (const [login, user] of known) {
+    if (user.id !== userId) continue
+    if (theirs.has(login)) known.set(login, { ...user, login: profile.login, name: profile.name?.trim() || null })
+    else known.delete(login)
+  }
+}
+
+// The app's user signing in with, or having linked, `login`; null for one
+// the app does not know.
+export const appUser = login => typeof login === 'string' ? known.get(login.toLowerCase()) ?? null : null
+
+// What `login` shows as: its user's name, else their login; else itself.
+export function githubUserName(login) {
+  const user = appUser(login)
+  return user ? user.name ?? user.login : login
+}
+
+// Who `login` is, by their user's avatar and name, the login GitHub names in
+// its tooltip; `fallback` (the login itself) for one the app does not know.
+export function githubUser(login, fallback = login) {
+  const user = appUser(login)
+  if (!user) return fallback
+  return html`<span class="app-user" data-tooltip=${`@${login} on GitHub`}><span class="app-user-avatar" aria-hidden="true">${(user.name ?? user.login)[0].toUpperCase()}<img
+    src=${`/api/avatar/${encodeURIComponent(user.id)}${avatarRevisions.has(user.id) ? `?v=${avatarRevisions.get(user.id)}` : ''}`} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}></span><span class="app-user-name">${user.name ?? user.login}</span></span>`
+}
+
+// The users `logins` name, each once, in their order: a user's sign-in and
+// linked accounts as the one user they are; logins the app does not know as
+// themselves.
+export function githubUsers(logins) {
+  const seen = new Map()
+  for (const login of logins) {
+    const key = appUser(login)?.id ?? `login:${login.toLowerCase()}`
+    if (!seen.has(key)) seen.set(key, login)
+  }
+  return [...seen.values()]
+}
+
+// Agents by their own GitHub identities: Claude Code's commits, authored as
+// Claude <noreply@anthropic.com>, which GitHub names `claude`, the Claude
+// GitHub App's and Codex's; one GitHub names no account for, authored as
+// Claude or Codex by name alone. Codex otherwise commits as whoever ran it,
+// and those commits are theirs.
+const AGENT_LOGINS = new Map([['claude', 'claude'], ['claude[bot]', 'claude'], ['chatgpt-codex-connector[bot]', 'codex']])
+const AGENT_NAMES = new Map([['claude', 'claude'], ['codex', 'codex']])
+// Each agent's name and mark, as the Agents tab draws it (provider-icons.js).
+const AGENTS = { claude: ['Claude', 'anthropic'], codex: ['Codex', 'openai'] }
+
+// The agent that authored a commit, by its author's login and name; null for
+// one an agent didn't.
+export function commitAgent(login, name = null) {
+  if (typeof login === 'string') return AGENT_LOGINS.get(login.toLowerCase()) ?? null
+  return typeof name === 'string' ? AGENT_NAMES.get(name.trim().toLowerCase()) ?? null : null
+}
+
+// A commit's author as the app shows them: an agent by its bare mark, as the
+// Agents tab's header draws it, and its name; a
+// user of the app as githubUser does; else `fallback`, their name, else login.
+export function commitAuthor(login, name = null, fallback = name ?? login ?? '') {
+  const agent = commitAgent(login, name)
+  if (!agent) return githubUser(login, fallback)
+  const [title, mark] = AGENTS[agent]
+  return html`<span class="app-user" data-tooltip=${login ? `@${login} on GitHub` : name}><span class=${`app-user-mark is-${agent}`}
+    aria-hidden="true">${providerIcon(mark)}</span><span class="app-user-name">${title}</span></span>`
+}
+
+// What a commit's author shows as, in words.
+export function commitAuthorName(login, name = null) {
+  const agent = commitAgent(login, name)
+  return agent ? AGENTS[agent][0] : login ? githubUserName(login) : name
+}

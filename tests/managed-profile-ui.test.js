@@ -13,6 +13,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   unlinkGithubAccount: (...args) => { requests.push(['unlink', ...args]); return answered() },
 } })
 const { ManagedProfile } = await import('../ui/view/managed-profile.js')
+const { appUser, knowGithubUsers } = await import('../ui/view/github-users.js')
 // Lit reads `document` as it loads; the page tells the account control of
 // changes through it only once one is made.
 const events = []
@@ -71,6 +72,9 @@ test('profile shows the account and its linked GitHub accounts, each offering it
 })
 
 test('profile choices save through the API and tell the account control, keeping the profile on failure', async () => {
+  // A repository's activity read before names both accounts.
+  knowGithubUsers({ commits: [{ authorLogin: 'alice' }, { authorLogin: 'alice-work' }], users: {
+    alice: { id: 'alice-id', login: 'alice', name: 'Alice' }, 'alice-work': { id: 'alice-id', login: 'alice', name: 'Alice' } } })
   const element = loaded()
   requests.length = 0
   events.length = 0
@@ -79,6 +83,7 @@ test('profile choices save through the API and tell the account control, keeping
   assert.deepEqual(requests[0].slice(0, 3), ['choose', { name: work.id }, 'csrf'])
   assert.equal(element._profile.nameAccount, work.id)
   assert.deepEqual(events.map(event => [event.type, event.detail]), [['managed-profile-change', { userId: 'alice-id', name: 'Alice at Work', avatarChanged: false }]])
+  assert.equal(appUser('alice-work')?.name, 'Alice at Work', 'activity read before shows the name chosen')
   answer = { ...element._profile, avatarAccount: work.id }
   await element._choose('avatar', work.id)
   assert.equal(events.at(-1).detail.avatarChanged, true)
@@ -95,6 +100,8 @@ test('profile choices save through the API and tell the account control, keeping
   await element._unlink(work)
   assert.deepEqual(requests.at(-1).slice(0, 3), ['unlink', work.id, 'csrf'])
   assert.deepEqual(element._profile.accounts, [])
+  assert.equal(appUser('alice-work'), null, 'nor the account unlinked as theirs')
+  assert.equal(appUser('alice')?.id, 'alice-id')
 })
 
 test('profile is read only in an admin\'s view and the preview; link refusals are explained', async () => {

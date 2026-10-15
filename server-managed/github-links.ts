@@ -52,6 +52,15 @@ export interface ManagedProfile {
   accounts: LinkedGithubAccount[]
 }
 
+// A user as the app shows them where a GitHub login of theirs is named: by
+// their id, whose avatar /api/avatar/<id> serves (the one they chose), their
+// sign-in login and the name they chose.
+export interface AppUser {
+  id: string
+  login: string
+  name: string | null
+}
+
 // Which account the displayed name and avatar each come from: a linked
 // account's id, or null for the sign-in account. An absent key is unchanged.
 export interface ProfileChoice {
@@ -72,10 +81,35 @@ export interface GithubLinkStore {
   setProfileChoice(sessionId: string, choice: ProfileChoice, now: number): Promise<void>
   // The avatar to serve for `id`: a user's chosen linked account's, else `id`'s own.
   getAvatarKey(id: string): Promise<string>
+  // The approved users signing in with, or having linked, each of `logins`
+  // (matched regardless of case, as GitHub matches them), by the login as
+  // asked. A login more than one user claims, one renamed on GitHub since
+  // another signed in with it or linked it, is left out, as are logins of No
+  // access users.
+  listUsersByLogin(logins: readonly string[]): Promise<Record<string, AppUser>>
 }
 
 type LinkRow = { id: string; login: string; name: string | null; linkedAt: number }
 const accountOf = (row: LinkRow): LinkedGithubAccount => ({ id: row.id, login: row.login, name: row.name, linkedAt: row.linkedAt })
+
+// GithubLinkStore.listUsersByLogin.
+async function usersByLogin(db: ManagedSql, logins: readonly string[]): Promise<Record<string, AppUser>> {
+  if (logins.length === 0) return {}
+  const rows = await db.prepare(`SELECT a.login, u.id, u.login AS appLogin, u.name, u.role FROM (
+      SELECT login, id AS claimant FROM managed_user UNION ALL SELECT login, user_id AS claimant FROM managed_github_link
+    ) a JOIN managed_user u ON u.id = a.claimant
+    WHERE lower(a.login) IN (SELECT lower(value) FROM json_each(?))`).all(JSON.stringify(logins)) as
+    { login: string; id: string; appLogin: string; name: string | null; role: string }[]
+  const claims = new Map<string, typeof rows>()
+  for (const row of rows) claims.set(row.login.toLowerCase(), [...claims.get(row.login.toLowerCase()) ?? [], row])
+  const users: Record<string, AppUser> = {}
+  for (const login of logins) {
+    const [user, ...others] = claims.get(login.toLowerCase()) ?? []
+    if (!user || user.role === 'none' || others.some(other => other.id !== user.id)) continue
+    users[login] = { id: user.id, login: user.appLogin, name: user.name }
+  }
+  return users
+}
 
 export function githubLinkMethods(db: ManagedSql): GithubLinkStore {
   // Linking is the session user's own act: never an admin's view as them,
@@ -154,5 +188,6 @@ export function githubLinkMethods(db: ManagedSql): GithubLinkStore {
       const row = await db.prepare('SELECT avatar_link AS link FROM managed_user WHERE id = ?').get(id) as { link: string | null } | undefined
       return row?.link ?? id
     },
+    listUsersByLogin: logins => usersByLogin(db, logins),
   }
 }

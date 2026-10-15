@@ -52,11 +52,11 @@ async function fixture(t, { role = 'admin', tokens = null } = {}) {
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async (query, { method = 'GET' } = {}) => {
+  return Object.assign(async (query, { method = 'GET' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/history?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
-  }
+  }, { db })
 }
 
 test('a revision\'s history reads a page of its commits, each with its parents, subject, author and time, and the branches and tags naming commits', async t => {
@@ -72,6 +72,7 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
       { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, committedAt: Date.parse('2026-10-02T10:00:00Z') },
     ],
     branches: [{ name: 'main', sha: a }, { name: 'feature', sha: c }], tags: [{ name: 'v1', sha: d }],
+    users: {},
   })
   assert.deepEqual(asked.find(entry => entry.path === '/repos/org/repo/commits').query, { sha: a, per_page: '100', page: '1' })
   // A later page has no branches and tags to read again.
@@ -83,6 +84,17 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   const on = await request({ repoId: '1', ref: a, page: '2', from: `${c},${d}` })
   assert.deepEqual([on.body.page, on.body.more], [2, true])
   assert.deepEqual(asked.filter(entry => entry.path === '/repos/org/repo/commits').slice(-2).map(entry => entry.query.sha).toSorted(), [c, d])
+})
+
+test('a commit by a user of the app names them as the app does', async t => {
+  const request = await fixture(t)
+  github(t)
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual(body.users, {}, 'octo is no user of the app')
+  const db = request.db
+  const octo = await createSession(config, db, { githubUserId: 2, login: 'Octo', name: 'Octo Cat', avatarUrl: null }, Date.now())
+  await db.setUserRole(octo.userId, 'view')
+  assert.deepEqual((await request({ repoId: '1', ref: 'heads/main' })).body.users, { octo: { id: octo.userId, login: 'Octo', name: 'Octo Cat' } })
 })
 
 test('with a token, a revision\'s commits are named by every branch All branches reads and the latest tags, not GitHub\'s first page of each by name', async t => {
@@ -191,7 +203,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   const later = await request({ repoId: '1', all: 'true', page: '2', from: `${c},${d},${c}` })
   assert.equal(later.status, 200)
   assert.deepEqual(later.body, { all: true, page: 2, commits: [node(c, [d]), node(d, [])].map(item => ({ sha: item.oid, parents: item.parents.nodes.map(parent => parent.oid),
-    subject: item.messageHeadline, authorName: null, authorLogin: null, committedAt: Date.parse(item.committedDate) })), more: true })
+    subject: item.messageHeadline, authorName: null, authorLogin: null, committedAt: Date.parse(item.committedDate) })), more: true, users: {} })
   const query = asked.findLast(entry => entry.path === '/graphql')
   assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', o0: c, o1: d })
   assert.match(query.body.query, /b1: object\(oid: \$o1\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
