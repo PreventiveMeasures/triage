@@ -20,7 +20,7 @@ import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { sourceFolderIcon } from './source-file-icon.js'
 import { installShadowTooltipListener } from './tooltip.js'
-import { currentViewSignal } from './view-navigation.js'
+import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
 import './repository-selector.js'
 import './revision-select.js'
 
@@ -151,6 +151,15 @@ function showOpening(opening) {
   render({ animate: false })
 }
 
+// The directory opening in place of `entry`, the one shown, while it loads
+// (openRepositoryCodeRoute): for its header to name it, and its body to show
+// the one shown as it waits. Null once it opens or fails, or a navigation
+// since has left both.
+export function repositoryCodePending(entry) {
+  const pending = state.repositoryCodePending
+  return pending?.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
+}
+
 // Failures a directory's own entries get past: one too large to read whole,
 // or none to read, as an ancestor of a manager's grants is, which lists those
 // alone.
@@ -189,8 +198,13 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
     // Its branches and tags as they are now, for its header.
     headerData.delete(`refs\0${repoId}`)
-    // Another directory, or revision, keeps the one shown until it opens.
-    if (!shown) {
+    // Another directory, or revision, keeps the one shown, dimmed, until it
+    // opens, its header naming it meanwhile (repositoryCodePending).
+    const pending = shown ? { integrity: shown.integrity, generation: currentViewGeneration(), repository: { repoId, repo: opening.repo, commit, path, revision } } : null
+    if (pending) {
+      state.repositoryCodePending = pending
+      render({ animate: false })
+    } else {
       showOpening(opening)
       renderSidebar()
     }
@@ -203,6 +217,12 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       showOpening({ ...opening, error: err.message })
       void listDirectories(opening, err)
       return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+    } finally {
+      // Given up, superseded or failed, the one shown is itself again.
+      if (pending && state.repositoryCodePending === pending) {
+        state.repositoryCodePending = null
+        if (state.currentView === 'bundles' && state.selectedBundle === pending.integrity) render({ animate: false })
+      }
     }
     if (!isCurrent() || !isManagedUiMode()) return false
     if (revision) revisionNames.set(`${repoId}\0${data.commit}`, revision)

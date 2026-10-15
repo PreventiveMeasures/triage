@@ -647,7 +647,7 @@ class ManagedAdminRepos extends ManagedPage {
       return html`<li class="repo-item"><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
         ${copy}<span class="repo-code-slot" aria-hidden="true"></span><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
       </button>${repo.active === false ? nothing : html`<a class="repo-code" href=${managedRoutePath({ view: 'repository-code', repoId: repo.id })}
-        aria-label=${`Open ${repo.fullName}'s code`} data-tooltip="Code" @click=${event => this._openCode(event, repo)}>${adminIcon('code')}</a>`}</li>`
+        aria-label=${`Open ${repo.fullName}'s code`} @click=${event => this._openCode(event, repo)}>${adminIcon('code')}</a>`}</li>`
     }
     return html`<li class="repo-row">${copy}
       ${repo.selected ? html`<span class="connected"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>Connected</span>`

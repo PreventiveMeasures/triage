@@ -3317,6 +3317,23 @@ repository-code-source {
   }
   & > [aria-current] { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 }
+/* A repository's directory opening (repository-code.js): a bar runs along
+   the header's foot, and a directory shown in its place dims, after a moment,
+   so a quick switch doesn't flicker. */
+.bundles-slide-bar:has(> .bundles-slide-progress) { position: relative; }
+.bundles-slide-progress {
+  position: absolute; inset: auto .5rem -1px; height: 2px; overflow: hidden; pointer-events: none;
+  &::before {
+    content: ''; position: absolute; inset: 0 auto 0 -30%; width: 30%;
+    background: var(--accent); animation: bundles-slide-progress 1.2s ease-in-out infinite;
+  }
+}
+@keyframes bundles-slide-progress { 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .bundles-slide-progress::before { left: 0; width: 100%; opacity: .5; animation: none; }
+}
+.bundles-slide-body.is-pending { opacity: .45; transition: opacity .2s .2s; }
+
 /* What a directory that failed to open lists to open instead. */
 .bundles-slide-placeholder.repository-code-failed {
   flex-direction: column;

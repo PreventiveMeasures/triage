@@ -23,7 +23,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryRefs: () => Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { openRepositoryCodeRoute, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
+const { openRepositoryCodeRoute, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 
 const commit = 'c'.repeat(40)
@@ -142,6 +142,34 @@ test('opening a directory shows it in the bundle view at the file its route name
   answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code', filePath: 'src/index.js' }, () => true, () => {})
   assert.deepEqual(state.bundleCodeFileRequest, { bundle: `repository:7:${commit}:packages/app`, path: 'src/index.js' })
+})
+
+test('another revision loading names itself in place of the directory shown, which waits under it till it opens, fails or is given up', async () => {
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'code' }, () => true, () => {})
+  const shown = state.bundles[0]
+  assert.equal(repositoryCodePending(shown), null)
+  let finish
+  const develop = 'e'.repeat(40)
+  answer = (repoId, ref, path) => new Promise(resolve => { finish = () => resolve({ ...data, commit: develop, path }) })
+  const switching = openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
+    path: '', bundleTab: 'code' }, () => true, () => {})
+  assert.equal(state.currentView, 'bundles')
+  assert.equal(state.bundles[0], shown, 'the directory shown stays')
+  assert.deepEqual({ ...repositoryCodePending(shown), repo: undefined }, { repoId: 7, repo: undefined, commit: null, path: '', revision: { kind: 'branch', name: 'develop' } })
+  finish()
+  await switching
+  assert.equal(state.bundles[0].repository.commit, develop)
+  assert.equal(state.repositoryCodePending, null)
+
+  // Given up, or superseded, the one shown is itself again.
+  answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
+  assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/main', revision: { kind: 'branch', name: 'main' }, path: '', bundleTab: 'code' },
+    () => true, () => {}), false)
+  assert.equal(state.repositoryCodePending, null)
+  assert.equal(state.bundles[0].repository.commit, develop)
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
+  assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'code' }, () => false, () => {}), false)
+  assert.equal(state.repositoryCodePending, null)
 })
 
 test('a directory that fails to open says why at its route, and lists its directories to open instead where it is too large or has none to read', async () => {
