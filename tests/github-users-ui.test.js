@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { templateText } from './_lit.js'
-import { appUser, commitAgent, commitAuthor, commitAuthorName, githubUser, githubUserName, githubUsers, knowGithubUsers } from '../ui/view/github-users.js'
+import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers } from '../ui/view/github-users.js'
 
 test('GitHub logins the server names as the app\'s users show by their avatar and chosen name, a linked account as its user; others as themselves', () => {
   const answer = { items: [], users: {
@@ -44,4 +44,20 @@ test('commits by Claude or Codex show by their marks: by the identities GitHub n
   assert.match(templateText(commitAuthor('mona', 'M. L.')), /app-user-name">Mona Lisa</u, 'a user of the app as the app shows them')
   assert.deepEqual([commitAuthorName('claude[bot]'), commitAuthorName(null, 'Codex'), commitAuthorName('mona'), commitAuthorName(null, 'Ada'), commitAuthorName('ada', 'Ada L')],
     ['Claude', 'Codex', 'Mona Lisa', 'Ada', 'ada'])
+})
+
+test('an answer naming a login the server resolves to no one forgets what was kept of it; another session forgets them all', () => {
+  forgetGithubUsers()
+  knowGithubUsers({ commits: [{ authorLogin: 'alice-work' }, { authorLogin: 'bob' }], users: {
+    'alice-work': { id: 'alice-id', login: 'alice', name: 'Alice' }, bob: { id: 'bob-id', login: 'bob', name: null } } })
+  knowGithubUsers({ items: [{ author: 'alice' }], users: { alice: { id: 'alice-id', login: 'alice', name: 'Alice' } } })
+  assert.deepEqual(['alice-work', 'alice', 'bob'].map(login => appUser(login)?.id ?? null), ['alice-id', 'alice-id', 'bob-id'])
+  // Unlinked since: a later answer names it, resolved to no one.
+  knowGithubUsers({ items: [{ author: 'Alice-Work' }, { author: 'bob' }], users: { bob: { id: 'bob-id', login: 'bob', name: null } } })
+  assert.deepEqual(['alice-work', 'alice', 'bob'].map(login => appUser(login)?.id ?? null), [null, 'alice-id', 'bob-id'],
+    'one it names alone, not those its users are, nor those it doesn\'t name')
+  knowGithubUsers({ commits: [{ authorLogin: 'carol-work' }], users: { 'carol-work': { id: 'carol-id', login: 'alice', name: 'Carol' } } })
+  assert.equal(appUser('alice')?.id, 'alice-id', 'a user\'s own login, in `users`, is not one the answer names')
+  forgetGithubUsers()
+  assert.deepEqual(['alice', 'bob', 'carol-work'].map(appUser), [null, null, null])
 })

@@ -2,21 +2,33 @@
 // commits, issues, pull requests, agents and pulse) names GitHub logins; the
 // server answers with the app's users among them (server-managed/github-users.ts),
 // a linked account's as its user, which are kept here as they come for each
-// tab to show by their avatar and the name they chose.
+// tab to show by their avatar and the name they chose, for the session they
+// came to.
 import { html } from 'lit'
+import { namedLogins } from '../../common/managed/github-logins.ts'
 import { providerIcon } from './provider-icons.js'
 
 const known = new Map()
 
-// Keep the users an answer names (its `users`, by login), whose own logins
-// GitHub matches regardless of case; answered as it came.
+// Keep what an answer says of each login it names, GitHub matching them
+// regardless of case: its user (`users`, by login), or none, one unlinked,
+// whose user lost access or that another user claims since; answered as it
+// came.
 export function knowGithubUsers(answer) {
-  for (const [login, user] of Object.entries(answer?.users ?? {})) {
+  const { users: told, ...rest } = answer ?? {}
+  const users = told ?? {}
+  for (const login of namedLogins(rest)) if (!Object.hasOwn(users, login)) known.delete(login.toLowerCase())
+  for (const [login, user] of Object.entries(users)) {
     if (typeof user?.id === 'string' && typeof user.login === 'string') {
       known.set(login.toLowerCase(), { id: user.id, login: user.login, name: typeof user.name === 'string' && user.name.trim() ? user.name.trim() : null })
-    }
+    } else known.delete(login.toLowerCase())
   }
   return answer
+}
+
+// Forget them all, for another session, whose answers say who they are.
+export function forgetGithubUsers() {
+  known.clear()
 }
 
 // The app's user signing in with, or having linked, `login`; null for one

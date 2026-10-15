@@ -254,6 +254,7 @@
     "common/linked-workspace-groups.js",
     "common/managed/agent-tasks.ts",
     "common/managed/comments.ts",
+    "common/managed/github-logins.ts",
     "common/managed/npm-packages.d.ts",
     "common/managed/npm-packages.js",
     "common/managed/permissions.ts",
