@@ -42,9 +42,10 @@ import './lockfile-graph.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
-import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
+import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import './repository-history.js'
+import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -1992,7 +1993,15 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
   ['overview', 'Overview']]
 
 // The tabs a repository's directory shows (repository-code.js).
-const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History']]
+const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History'], ['issues', 'Issues'],
+  ['pulls', 'Pull requests']]
+
+// The body of a tab of a repository's directory reading none of its files
+// (REPOSITORY_FILELESS_TABS): its History, Issues or Pull requests.
+function repositoryFilelessTab(repository, tab) {
+  return tab === 'history' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
+    : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
+}
 
 // The bundle slide: its header, with the bundle's name, or an npm version's
 // with the package's versions to switch to, and its `tabs`, `tab` the one
@@ -2056,8 +2065,8 @@ export function renderRepositoryCodeOpening(opening) {
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
   const repository = { repoId, repo, commit, path, revision }
   const tabsOpen = Boolean(commit && (historyOnly || error))
-  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && tab === 'history'
-    ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repoId)}></repository-history>`
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
+    ? repositoryFilelessTab(repository, tab)
     : error
       ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
       : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
@@ -2081,7 +2090,8 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search, Treemap and History alone.
+  // A repository's directory shows its Code, Search, Treemap, History, Issues
+  // and Pull requests alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2164,12 +2174,13 @@ function renderBundleSlide(entry) {
           ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
           ['code', () => renderBundleCodeView(details, entry)],
           ['search', () => renderBundleSearchView(details, entry)],
-          ['history', () => html`<repository-history .repository=${entry.repository} .refs=${repositoryRefs(entry.repository.repoId)}></repository-history>`],
+          ['history', () => repositoryFilelessTab(entry.repository, 'history')],
+          ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`],
           ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
             .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
-          ['issues', () => renderBundleIssuesList(details)],
+          ['issues', () => repository ? repositoryFilelessTab(entry.repository, 'issues') : renderBundleIssuesList(details)],
           ['advisories', () => renderBundleAdvisoriesTab(details, render,
             canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
         ])

@@ -164,6 +164,7 @@
     "server-managed/repository-browser.ts",
     "server-managed/repository-code.ts",
     "server-managed/repository-history.ts",
+    "server-managed/repository-issues.ts",
     "server-managed/repository-aliases.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",

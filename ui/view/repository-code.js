@@ -9,7 +9,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
-import { REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
+import { REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
 import { fetchBrowsableRepositories, fetchRepositoryCode, fetchRepositoryContents, fetchRepositoryRefs } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { fileRowDetails } from './bundle-sources.js'
@@ -205,11 +205,12 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     showOpening({ ...failed, tab })
     return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
   }
-  // History reads none of its files: a directory at a commit shows it alone,
-  // its other tabs opening them; at a revision named, at the commit listing
-  // the repository's root reads it at, the directory there or not, as its
-  // history lists the commits that touched it all the same.
-  if (!entry && tab === 'history') {
+  // History, Issues and Pull requests read none of its files: a directory at
+  // a commit shows them alone, its other tabs opening them; at a revision
+  // named, at the commit listing the repository's root reads it at, the
+  // directory there or not, as its history lists the commits that touched it
+  // all the same.
+  if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
     headerData.delete(`refs\0${repoId}`)

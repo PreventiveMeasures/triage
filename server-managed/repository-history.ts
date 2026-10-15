@@ -77,7 +77,7 @@ export async function repositoryRefTips(fullName: string, token: string | null, 
 
 // One GraphQL query with `token`, answered with its `data`: one GitHub answers
 // with errors is rate limited, names what isn't there, or else is malformed.
-async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch) {
+export async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch) {
   const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }) as { data?: unknown; errors?: { type?: unknown }[] } | null
   if (Array.isArray(body?.errors) && body.errors.length > 0) {
     if (body.errors.some(error => error?.type === 'RATE_LIMITED')) throw new GithubApiError(429, 'github-rate-limited', 60)
