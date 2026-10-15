@@ -136,13 +136,20 @@ const CHECKS = {
   failure: ['Checks failed', icon(svg`<path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>`)],
   pending: ['Checks running', icon(svg`<circle class="fill" cx="8" cy="8" r="3"/>`)],
 }
-const REVIEWS = { approved: 'Approved', changes: 'Changes requested', required: 'Review required' }
+// A review's state by its icon, each its own shape: approved a ringed check,
+// changes requested a diff, required an eye, awaiting one.
+const REVIEWS = {
+  approved: ['Approved', icon(svg`${ring}<path d="M5.4 8.3l1.8 1.8 3.4-3.7"/>`)],
+  changes: ['Changes requested', icon(svg`<path d="M3.75 1.75h5.5l3 3v9.5h-8.5z"/><path d="M8 4.5v4M6 6.5h4M6 11h4"/>`)],
+  required: ['Review required', icon(svg`<path d="M1.25 8S3.75 3.5 8 3.5 14.75 8 14.75 8 12.25 12.5 8 12.5 1.25 8 1.25 8z"/><circle cx="8" cy="8" r="2"/>`)],
+}
+const compactCount = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 // A tile's labels, each by a dot of its color: the first few, then how many
 // more.
 function labelChips(item) {
   const more = item.labels.length - MAX_LABELS + (item.moreLabels ?? 0)
-  return html`${item.labels.slice(0, MAX_LABELS).map(label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})}>${label.name}</span>`)}${more > 0
+  return html`${item.labels.slice(0, MAX_LABELS).map(label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})} title=${label.name}>${label.name}</span>`)}${more > 0
     ? html`<span class="issue-label is-more">+${more}</span>` : nothing}`
 }
 
@@ -249,28 +256,33 @@ class RepositoryIssues extends LitElement {
     </div>`
   }
 
+  // A tile: its state's icon, and under it a pull request's review and
+  // checks and how many comments, as a rail beside its title, number, author
+  // and age, labels, and a pull request's branches and size.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
     const time = item.updatedAt == null ? null : new Date(item.updatedAt)
     const checks = pulls && item.checks ? CHECKS[item.checks] : null
     const review = pulls && item.state === 'open' && item.review ? REVIEWS[item.review] : null
-    return html`<span class="issue-title">
+    const comments = item.comments > 0 ? `${item.comments.toLocaleString('en-US')} comment${item.comments === 1 ? '' : 's'}` : null
+    const marked = (kind, [name, glyph]) => html`<span class=${`issue-${kind} is-${item[kind]}`} role="img" aria-label=${name} title=${name}>${glyph}</span>`
+    return html`<span class="issue-rail">
         <span class="issue-state" role="img" aria-label=${stateName}>${STATE_ICONS[this.kind][stateClass]}</span>
+        ${review ? marked('review', review) : nothing}
+        ${checks ? marked('checks', checks) : nothing}
+        ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} title=${comments}>${COMMENT_ICON}<span>${compactCount.format(item.comments)}</span></span>` : nothing}
+      </span>
+      <span class="issue-lines">
         <span class="issue-name">${item.title || '(no title)'}</span>
-      </span>
-      <span class="issue-meta">
-        <span class="issue-number">#${item.number}</span>
-        <span class="issue-author">${item.author ?? 'ghost'}</span>
-        ${time ? html`<time datetime=${time.toISOString()}>${compactTime(item.updatedAt)}</time>` : nothing}
-        ${review ? html`<span class=${`issue-review is-${item.review}`}>${review}</span>` : nothing}
-        ${labelChips(item)}
-        <span class="issue-tail">
-          ${checks ? html`<span class=${`issue-checks is-${item.checks}`} role="img" aria-label=${checks[0]}>${checks[1]}</span>` : nothing}
-          ${item.comments > 0 ? html`<span class="issue-comments">${COMMENT_ICON}${item.comments}<span class="sr-only"> comment${item.comments === 1 ? '' : 's'}</span></span>` : nothing}
+        <span class="issue-meta">
+          <span class="issue-number">#${item.number}</span>
+          <span class="issue-author">${item.author ?? 'ghost'}</span>
+          ${time ? html`<time datetime=${time.toISOString()}>${compactTime(item.updatedAt)}</time>` : nothing}
         </span>
-      </span>
-      ${pulls && item.head ? html`<span class="issue-branch"><code>${item.head}</code>${item.base ? html`<span aria-hidden="true">→</span><code>${item.base}</code>` : nothing}
-        <span class="issue-diff"><span class="is-added">+${item.additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${item.deletions.toLocaleString('en-US')}</span></span></span>` : nothing}`
+        ${item.labels.length > 0 || item.moreLabels > 0 ? html`<span class="issue-labels">${labelChips(item)}</span>` : nothing}
+        ${pulls && item.head ? html`<span class="issue-branch"><code>${item.head}</code>${item.base ? html`<span aria-hidden="true">→</span><code>${item.base}</code>` : nothing}
+          <span class="issue-diff"><span class="is-added">+${item.additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${item.deletions.toLocaleString('en-US')}</span></span></span>` : nothing}
+      </span>`
   }
 }
 if (!customElements.get('repository-issues')) customElements.define('repository-issues', RepositoryIssues)
