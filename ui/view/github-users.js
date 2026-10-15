@@ -31,6 +31,23 @@ export function forgetGithubUsers() {
   known.clear()
 }
 
+// How many times each user changed their avatar in this page: their avatar's
+// address changes with it, as the page would show its image as first loaded.
+const avatarRevisions = new Map()
+
+// The signed-in user (`userId`) changed their profile in this session, as
+// `profile` now is: what was kept of them takes it, before an answer kept a
+// while is asked again. An account they unlinked is no longer theirs.
+export function knowProfile(userId, profile, avatarChanged = false) {
+  if (avatarChanged) avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
+  const theirs = new Set([profile.login, ...profile.accounts.map(account => account.login)].map(login => login.toLowerCase()))
+  for (const [login, user] of known) {
+    if (user.id !== userId) continue
+    if (theirs.has(login)) known.set(login, { ...user, login: profile.login, name: profile.name?.trim() || null })
+    else known.delete(login)
+  }
+}
+
 // The app's user signing in with, or having linked, `login`; null for one
 // the app does not know.
 export const appUser = login => typeof login === 'string' ? known.get(login.toLowerCase()) ?? null : null
@@ -47,7 +64,7 @@ export function githubUser(login, fallback = login) {
   const user = appUser(login)
   if (!user) return fallback
   return html`<span class="app-user" data-tooltip=${`@${login} on GitHub`}><span class="app-user-avatar" aria-hidden="true">${(user.name ?? user.login)[0].toUpperCase()}<img
-    src=${`/api/avatar/${encodeURIComponent(user.id)}`} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}></span><span class="app-user-name">${user.name ?? user.login}</span></span>`
+    src=${`/api/avatar/${encodeURIComponent(user.id)}${avatarRevisions.has(user.id) ? `?v=${avatarRevisions.get(user.id)}` : ''}`} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}></span><span class="app-user-name">${user.name ?? user.login}</span></span>`
 }
 
 // The users `logins` name, each once, in their order: a user's sign-in and

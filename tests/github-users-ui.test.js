@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { templateText } from './_lit.js'
-import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers } from '../ui/view/github-users.js'
+import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers, knowProfile } from '../ui/view/github-users.js'
 
 test('GitHub logins the server names as the app\'s users show by their avatar and chosen name, a linked account as its user; others as themselves', () => {
   const answer = { items: [], users: {
@@ -60,4 +60,20 @@ test('an answer naming a login the server resolves to no one forgets what was ke
   assert.equal(appUser('alice')?.id, 'alice-id', 'a user\'s own login, in `users`, is not one the answer names')
   forgetGithubUsers()
   assert.deepEqual(['alice', 'bob', 'carol-work'].map(appUser), [null, null, null])
+})
+
+test('the signed-in user\'s own profile change shows in what was kept of them: their name, a fresh avatar, an account unlinked theirs no more', () => {
+  forgetGithubUsers()
+  knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'yan' }], users: {
+    zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, yan: { id: 'yan-id', login: 'yan', name: 'Yan' } } })
+  assert.doesNotMatch(templateText(githubUser('zoe')), /\?v=/u)
+  knowProfile('zoe-id', { login: 'zoe', name: ' Zoe at Work ', accounts: [{ login: 'Zoe-Work' }] }, true)
+  assert.deepEqual(['zoe', 'zoe-work', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Yan'], 'another user\'s as it was')
+  assert.match(templateText(githubUser('zoe-work')), /src=\/api\/avatar\/zoe-id\?v=1/u, 'their avatar asked for again')
+  assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] })
+  assert.deepEqual(['zoe', 'zoe-work'].map(login => appUser(login)?.name ?? null), [null, null])
+  assert.equal(appUser('zoe-work'), null, 'unlinked')
+  assert.equal(appUser('zoe')?.id, 'zoe-id')
+  forgetGithubUsers()
 })

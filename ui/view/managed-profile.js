@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { chooseProfileAccounts, fetchProfile, getPreviewRole, unlinkGithubAccount } from './client-managed.js'
+import { knowProfile } from './github-users.js'
 
 // Where linking another GitHub account starts (server-managed/github-link-oauth.ts):
 // a top-level navigation to GitHub and back to this page.
@@ -49,7 +50,9 @@ export class ManagedProfile extends LitElement {
       const avatarChanged = profile.avatarAccount !== this._profile?.avatarAccount
       if (avatarChanged) this._avatarRevision++
       this._profile = profile
-      // The account control shows the displayed name and avatar too.
+      // The account control shows the displayed name and avatar too, as
+      // does a repository's activity read before (github-users.js).
+      knowProfile(this.session.id, profile, avatarChanged)
       document.dispatchEvent(new CustomEvent('managed-profile-change', { detail: { userId: this.session.id, name: profile.name, avatarChanged } }))
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) { this._busy = false; this._pending = null } }
