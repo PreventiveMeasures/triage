@@ -245,6 +245,11 @@ test('a file a version changes as its code now loads it, told as newly loaded al
     { id: 'large-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: large.length + 1 }] },
     { id: 'now-unreadable', severity: 'critical', files: [{ path: 'notes.md', was: 3000, now: 3000 }] },
   ], 'a byte changed hides neither')
+  const moved = version('reworked', '1.0.2', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'lib/payload.js': `${large}z`, 'notes.md': `${long}z` }, meta, ago(30))
+  const renamed = version('reworked', '1.0.3', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'payload.txt': `${large}z`, 'notes.md': `${long}z` }, meta, ago(20))
+  npm(t, [{ name: 'reworked', versions: [before, after, moved, renamed] }])
+  assert.ok(!(await assessNpm('reworked', '1.0.3', { oldVersion: '1.0.2', now: NOW, downloads: false })).findings.some(({ id }) => id === 'large-code'),
+    'nor is one renamed from a script by its name, which ran before')
 })
 
 test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {

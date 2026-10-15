@@ -12,6 +12,7 @@ import { npmLoadedScripts, npmVersionFileRisk, npmVersionHosts } from './files.j
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
+import { npmIsScript } from '../files/script.js'
 import { SEVERITIES } from '../files/stamps.js'
 import { CREDENTIAL_TAGS, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeTagged, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
@@ -20,15 +21,17 @@ import { npmInstallScripts } from './install-scripts.js'
 import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
 
 // The files the open version (`other`) runs as scripts that the one compared
-// with (`base`) held, changed or not, but didn't run (npm/files.js
-// npmLoadedScripts), as its code now loads them, each a row as npmFilesDiff's
+// with (`base`) held, changed or not, but didn't run, by their names
+// (script.js npmIsScript, a `.js` renamed `.txt`) or as code loaded them
+// (npm/files.js npmLoadedScripts), as its code now loads them, each a row as npmFilesDiff's
 // `changed` holds one, its own where it has one: what node runs of them is
 // new, as a changed file's is.
 function npmWokenFiles(base, other, files) {
   const added = new Set(files.onlyOther.map(row => row.path)), rows = new Map(files.changed.map(row => [row.path, row]))
-  const loadedBefore = npmLoadedScripts(base)
+  const before = bundleFilesAsMap(base), loadedBefore = npmLoadedScripts(base)
+  const ran = path => loadedBefore.has(path) || npmIsScript(path, before.get(path))
   return [...npmLoadedScripts(other)].filter(path => !added.has(path)).map(path => rows.get(path) ?? { path })
-    .filter(row => !loadedBefore.has(row.renamedFrom ?? row.path))
+    .filter(row => !ran(row.renamedFrom ?? row.path))
 }
 
 // What the open version does to its files that calls for a look, as red
