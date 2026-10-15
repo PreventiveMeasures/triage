@@ -83,7 +83,15 @@ export class RevisionSelect extends LitElement {
     /* Its ring shows where the keyboard moved focus into it, as the
        repository picker's does, not where a pointer did. */
     .revision.keyboard:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-    .revision-name { flex: 1; }
+    /* The name as wide as it is, a full commit's included, as far as the
+       host lets it (its widest is its max-content), else as the host is. */
+    .revision-size { display: grid; flex: 1 1 auto; align-self: stretch; min-width: 0; }
+    .revision-size > input, .revision-size::after { grid-area: 1 / 1; }
+    .revision-size > input { width: 100%; }
+    .revision-size::after {
+      content: attr(data-value); visibility: hidden; height: 0; overflow: hidden; white-space: pre;
+      min-width: 8rem; padding: 0 calc(.6rem + 2px) 0 .6rem; font-size: .76rem;
+    }
     .revision input {
       height: 100%; min-height: 0; padding: .3rem .6rem; min-width: 0; border: 0; border-radius: 0;
       background: transparent; color: var(--text); font-size: .76rem;
@@ -333,12 +341,12 @@ export class RevisionSelect extends LitElement {
       @submit=${event => { event.preventDefault(); this.change('submit', this.kind, this.name) }}>
       <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label: name, icon }) => html`<button type="button" aria-label=${name} data-tooltip=${name}
         aria-pressed=${this.kind === kind} ?disabled=${this.disabled} @click=${() => this.pickKind(kind)}>${icon}</button>`)}</div>
-      <input class="revision-name" type="text" aria-label=${label} role=${ifDefined(listed ? 'combobox' : undefined)} aria-autocomplete=${ifDefined(listed ? 'list' : undefined)}
+      <span class="revision-size" data-value=${this.name}><input class="revision-name" type="text" size="1" aria-label=${label} role=${ifDefined(listed ? 'combobox' : undefined)} aria-autocomplete=${ifDefined(listed ? 'list' : undefined)}
         aria-expanded=${ifDefined(listed ? String(this._open) : undefined)} aria-controls=${ifDefined(listed ? 'revisions' : undefined)}
         aria-activedescendant=${ifDefined(this._open && this._active >= 0 ? `revision-${this._active}` : undefined)} autocomplete="off" spellcheck="false"
         placeholder=${listed ? `Choose or enter a ${this.kind}…` : 'Commit SHA…'} .value=${live(this.name)} ?disabled=${this.disabled}
         @focus=${() => this.show()} @click=${() => this.show()} @keydown=${this.keyDown}
-        @input=${event => { this.change('input', this.kind, event.target.value); this.show({ query: event.target.value }) }}>
+        @input=${event => { this.change('input', this.kind, event.target.value); this.show({ query: event.target.value }) }}></span>
       ${listed ? html`<button type="button" class="revision-expand" aria-label=${`Show ${this.kind} suggestions`} aria-expanded=${this._open} ?disabled=${this.disabled}
         @mousedown=${event => event.preventDefault()} @click=${() => { if (this._open) this.close(); else { this.focusName(); this.show() } }}>${chevronIcon}</button>` : nothing}
       <div class="revision-menu" id="revisions" popover="auto" role="listbox" aria-label=${`${label} suggestions`}
