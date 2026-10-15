@@ -132,7 +132,7 @@ test('link authorization asks for GitHub\'s account picker and lands on the prof
   const linked = await linkOAuthCallback(config, db, session, query, cookie, { ...options, avatarStore: avatars })
   assert.deepEqual({ ...linked, setCookie: undefined }, { location: '/my/profile', linked: 'alice-work', setCookie: undefined })
   const [account] = (await db.getProfile(alice.userId)).accounts
-  assert.deepEqual(account, { id: account.id, login: 'alice-work', name: 'Alice at Work', linkedAt: now })
+  assert.deepEqual(account, { id: account.id, githubId: 2, login: 'alice-work', name: 'Alice at Work', linkedAt: now })
   assert.equal(avatars.map.get(account.id).bytes.toString(), 'linked-avatar', 'its avatar is cached under the link')
   assert.equal(await db.getUserTokens(alice.userId), null, 'the linked account\'s token is never kept')
   const again = await linkOAuthCallback(config, db, session, query, cookie, { ...options, fetchImpl: github({ ...work, name: 'Renamed' }) })
@@ -182,7 +182,7 @@ test('profile routes: workspace access, CSRF, read-only views, avatar choice and
   const { profile } = (await send('GET', '/api/auth/profile', as(alice))).json()
   const [work] = profile.accounts
   assert.deepEqual(profile, { login: 'alice', name: 'Alice', githubName: 'Alice', nameAccount: null, avatarAccount: null,
-    accounts: [{ id: work.id, login: 'alice-work', name: 'Alice at Work', linkedAt: work.linkedAt }] })
+    accounts: [{ id: work.id, githubId: 4, login: 'alice-work', name: 'Alice at Work', linkedAt: work.linkedAt }] })
   assert.deepEqual((await send('GET', '/api/auth/profile', viewing)).json().profile, profile, 'an admin\'s view reads it')
 
   // Choices: CSRF, a body naming linked accounts, never through a view.

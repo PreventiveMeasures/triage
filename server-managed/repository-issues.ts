@@ -7,13 +7,12 @@
 // nonpublic repository's are read with its GitHub App's installation, which
 // reads pull requests only with their own permission (README).
 import { GithubApiError } from './github-app.ts'
-import { type GraphqlError, githubGraphql } from './repository-history.ts'
+import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
 
 export const ISSUES_PAGE = 50
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
-const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const COLOR = /^[a-f\d]{6}$/iu
 // A page's cursor as GitHub gives it, to read on from: opaque, base64 or
 // base64url as it is now (`…rOrK_u7Q==`), passed back to GitHub alone, so any
@@ -23,7 +22,7 @@ export const ISSUES_CURSOR = /^[!-~]{1,256}$/u
 export type IssuesKind = 'issues' | 'pulls'
 export type IssuesState = 'open' | 'closed'
 
-const shared = `number title createdAt updatedAt closedAt author { login } comments { totalCount } labels(first: ${MAX_LABELS}) { totalCount nodes { name color } }`
+const shared = `number title createdAt updatedAt closedAt author { ${ACTOR} } comments { totalCount } labels(first: ${MAX_LABELS}) { totalCount nodes { name color } }`
 const fields = {
   issues: `${shared} state stateReason`,
   pulls: `${shared} state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName
@@ -45,7 +44,7 @@ const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: Strin
   }
 }`
 
-type Node = { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: { login?: unknown } | null
+type Node = { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
   comments?: { totalCount?: unknown }; labels?: { totalCount?: unknown; nodes?: { name?: unknown; color?: unknown }[] }; state?: unknown; stateReason?: unknown
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] } }
@@ -66,12 +65,12 @@ const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: '
 // number for.
 function item(kind: IssuesKind, node: Node | null) {
   if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
-  const login = typeof node.author?.login === 'string' && LOGIN.test(node.author.login) ? node.author.login : null
+  const author = actorOf(node.author)
   const labels = (node.labels?.nodes ?? []).flatMap(label => {
     const name = nameOf(label?.name)
     return name ? [{ name, color: typeof label?.color === 'string' && COLOR.test(label.color) ? label.color.toLowerCase() : null }] : []
   })
-  const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: login, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
+  const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
     closedAt: timeOf(node.closedAt), comments: count(node.comments?.totalCount), labels, moreLabels: Math.max(0, count(node.labels?.totalCount) - labels.length) }
   if (kind === 'issues') {
     return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
@@ -103,14 +102,14 @@ const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
       ... on Issue { ${shared} issueState: state stateReason body
         closedByPullRequestsReferences(first: ${LINKED}, includeClosedPrs: true) { totalCount nodes { number title pullState: state isDraft } } }
       ... on PullRequest { ${shared} pullState: state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName body changedFiles
-        commits(last: 1) { totalCount nodes { commit { statusCheckRollup { state } } } } mergedBy { login }
+        commits(last: 1) { totalCount nodes { commit { statusCheckRollup { state } } } } mergedBy { ${ACTOR} }
         closingIssuesReferences(first: ${LINKED}) { totalCount nodes { number title issueState: state stateReason } } }
     }
   }
 }`
 type Linked = { number?: unknown; title?: unknown; issueState?: unknown; pullState?: unknown; stateReason?: unknown; isDraft?: unknown } | null
 type ItemNode = Node & { __typename?: unknown; issueState?: unknown; pullState?: unknown; body?: unknown; changedFiles?: unknown
-  commits?: Node['commits'] & { totalCount?: unknown }; mergedBy?: { login?: unknown } | null
+  commits?: Node['commits'] & { totalCount?: unknown }; mergedBy?: GraphAccount
   closedByPullRequestsReferences?: Links; closingIssuesReferences?: Links }
 type Links = { totalCount?: unknown; nodes?: Linked[] } | null
 
@@ -135,9 +134,10 @@ export async function repositoryItem(fullName: string, token: string, number: nu
   const links = kind === 'issues' ? node.closedByPullRequestsReferences : node.closingIssuesReferences
   const named = linked(kind === 'issues' ? 'pulls' : 'issues', links?.nodes)
   const described = { body: written.slice(0, MAX_BODY), bodyShortened: written.length > MAX_BODY, moreLinked: Math.max(0, count(links?.totalCount) - named.length) }
+  const merger = actorOf(node.mergedBy)
   return kind === 'issues' ? { kind, ...tile, ...described, closedBy: named }
     : { kind, ...tile, ...described, closes: named, commits: count(node.commits?.totalCount), files: count(node.changedFiles),
-      mergedBy: typeof node.mergedBy?.login === 'string' && LOGIN.test(node.mergedBy.login) ? node.mergedBy.login : null }
+      mergedBy: merger.login, mergedById: merger.id }
 }
 
 // A page of the repository's issues or pull requests in `state`, after the

@@ -52,8 +52,9 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 function checked(answer) {
   if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new Error('The server answered with no pull requests or commits.')
   const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
-    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim() && typeof agent.avatar === 'string'
-    && AGENT_AVATAR.test(agent.avatar)).map(({ id, name, avatar }) => [id, { id, name: name.trim().slice(0, 64), avatar }])
+    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim()
+    && (agent.avatar === undefined || (typeof agent.avatar === 'string' && AGENT_AVATAR.test(agent.avatar))))
+    .map(({ id, name, avatar }) => [id, { id, name: name.trim().slice(0, 64), avatar: avatar ?? null }])
   const signed = item => Array.isArray(item?.signals?.sessions) && Array.isArray(item.signals.tasks)
   // An artifact's app agents, by id.
   const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents)

@@ -89,7 +89,7 @@ const firstPage = () => ({ data: { repository: {
     commitNode('1'.repeat(40), 'Not Copilot', { author: { email: '1+Copilot@users.noreply.github.com', user: null } }),
     commitNode('2'.repeat(40), 'Not Copilot', { author: { email: '198982749+ada@users.noreply.github.com', user: null } }),
   ] } } },
-  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada' } },
+  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada', databaseId: 7 } },
     { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
 } } })
 // An agent's branches as GitHub lists them, by name, a page at a time; a
@@ -141,8 +141,12 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
   assert.deepEqual(asked.find(query => query.query.includes('author: { emails: $emails }')).variables.emails, ['198982749+Copilot@users.noreply.github.com',
     '198982749+copilot-swe-agent@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
-  assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', createdAt: null, updatedAt: null },
-    { number: 13, title: 'History', state: 'closed', author: null, createdAt: null, updatedAt: null }])
+  const moved = body.commits.find(commit => commit.oid === 'f'.repeat(40))
+  assert.deepEqual([moved.author, moved.authorId], ['Copilot', 198982749], 'each by its author\'s login and account id')
+  assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: null },
+    { number: 13, title: 'History', state: 'closed', author: null, authorId: null, createdAt: null, updatedAt: null }])
+  assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, 'dependabot[bot]': { agent: 'dependabot' } },
+    'its agents\' accounts as the app draws them; `dependabot`, named by Dependabot\'s account and another, no one\'s')
   // Every page of each agent's branches read, the newest first, named in full.
   assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],
     ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']],
@@ -150,7 +154,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // A bot's commit, named by its no-reply address, GitHub naming no user for it.
   assert.deepEqual([body.commits.find(commit => commit.oid === 'f'.repeat(40)).author, body.branches.at(-1).author], ['Copilot', 'dependabot[bot]'])
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
-  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' },
+  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot' },
     { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])
   assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: `${'c'.repeat(40)} 99` }], 'read on from GitHub\'s cursors, a commit\'s with its space')
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')

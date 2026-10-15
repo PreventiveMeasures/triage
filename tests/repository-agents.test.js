@@ -21,6 +21,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   unwatchNearViewport(target) { watching.delete(target) },
 } })
 const { agentStats, filterSessions, sessionLink } = await import('../ui/view/repository-agents.js')
+const { agentIcon } = await import('../ui/view/repository-tiles.js')
 const Agents = customElements.get('repository-agents')
 
 let session = 0
@@ -199,13 +200,14 @@ test('an agent the server knows by its app: picked after Claude and Codex, count
   answer = () => Promise.resolve({ pulls: [pull(12, 'neo/links', { ...neo, claude: true }), pull(11, 'neo/bump', neo), pull(10, 'claude/one', claude('session_A'))],
     commits: [], issues: [], branches: [],
     agents: [{ id: 'neo', name: ' Neo ', avatar: 'app-3115942' }, { id: 'claude', name: 'Not Claude', avatar: 'app-1' }, { id: 'odd one', name: 'Odd', avatar: 'app-2' },
-      { id: 'nameless', avatar: 'app-3' }, { id: 'odd-avatar', name: 'Odd', avatar: '../x' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }],
+      { id: 'nameless', avatar: 'app-3' }, { id: 'odd-avatar', name: 'Odd', avatar: '../x' }, { id: 'copilot', name: 'Copilot' }],
     more: false, after: null })
   const view = shown('org/repo')
   view.render()
   await setImmediate()
-  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }],
-    'only well formed, never Claude or Codex')
+  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: null }],
+    'only well formed, never Claude or Codex; one the app draws its mark for, without an avatar')
+  assert.match(templateText(agentIcon('copilot')), /^<span class="agent-logo" aria-hidden="true"><svg [^>]*viewBox="0 0 24 24"/u, 'Copilot\'s mark, drawn, not fetched')
   const text = templateText(view.render())
   assert.match(text, />Claude<span class="n">2<[^]*>Codex<span class="n">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo<span class="n">2</u)
   assert.doesNotMatch(text, /agent-pick is-copilot/u, 'an agent the server knows with no session read is not picked among')

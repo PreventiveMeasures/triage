@@ -26,7 +26,7 @@ function text(value) {
   return value == null || typeof value === 'symbol' || typeof value === 'function' ? '' : String(value)
 }
 
-const work = { id: '11111111-1111-4111-8111-111111111111', login: 'alice-work', name: 'Alice at Work', linkedAt: Date.UTC(2026, 9, 15) }
+const work = { id: '11111111-1111-4111-8111-111111111111', githubId: 4, login: 'alice-work', name: 'Alice at Work', linkedAt: Date.UTC(2026, 9, 15) }
 const profile = { login: 'alice', name: 'Alice', githubName: 'Alice', nameAccount: null, avatarAccount: null, accounts: [work] }
 function page(session = {}) {
   const element = new ManagedProfile()
@@ -72,9 +72,11 @@ test('profile shows the account and its linked GitHub accounts, each offering it
 })
 
 test('profile choices save through the API and tell the account control, keeping the profile on failure', async () => {
-  // A repository's activity read before names both accounts.
-  knowGithubUsers({ commits: [{ authorLogin: 'alice' }, { authorLogin: 'alice-work' }], users: {
-    alice: { id: 'alice-id', login: 'alice', name: 'Alice' }, 'alice-work': { id: 'alice-id', login: 'alice', name: 'Alice' } } })
+  // A repository's activity read before names both accounts, the work
+  // account by the login it had before it was renamed too.
+  knowGithubUsers({ commits: [{ authorLogin: 'alice' }, { authorLogin: 'alice-work' }, { authorLogin: 'alice-job', authorId: 4 }], users: {
+    alice: { id: 'alice-id', login: 'alice', name: 'Alice' }, 'alice-work': { id: 'alice-id', login: 'alice', name: 'Alice' },
+    'alice-job': { id: 'alice-id', login: 'alice', name: 'Alice' } } })
   const element = loaded()
   requests.length = 0
   events.length = 0
@@ -100,7 +102,7 @@ test('profile choices save through the API and tell the account control, keeping
   await element._unlink(work)
   assert.deepEqual(requests.at(-1).slice(0, 3), ['unlink', work.id, 'csrf'])
   assert.deepEqual(element._profile.accounts, [])
-  assert.equal(appUser('alice-work'), null, 'nor the account unlinked as theirs')
+  assert.deepEqual(['alice-work', 'alice-job'].map(appUser), [null, null], 'nor the account unlinked as theirs, by any login of it')
   assert.equal(appUser('alice')?.id, 'alice-id')
 })
 

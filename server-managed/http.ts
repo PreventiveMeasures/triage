@@ -46,8 +46,8 @@
 //        year, its contributors and when in the week they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
-//        History, issues, item, agents and pulse each carry `users`: the app's users the GitHub logins they name are
-//        (github-users.ts), by login
+//        History, issues, item, agents and pulse each carry `users`: the app's users and agents the GitHub accounts they
+//        name are (github-users.ts), by login
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -425,7 +425,7 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 // each its mark on the Agents tab. Each is fetched from GitHub once and
 // kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
 // an account's, `…-0001-<id>`.
-const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.map(agent => agent.avatar))
+const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.flatMap(agent => agent.avatar ?? []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
@@ -1615,8 +1615,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     // Each commit as the tab draws it: what Pulse counts of it (its lines, its
     // author's time) not sent.
-    const commits = (body as { commits: HistoryCommit[] }).commits.map(({ sha, parents, subject, authorName, authorLogin, committedAt }) =>
-      ({ sha, parents, subject, authorName, authorLogin, committedAt }))
+    const commits = (body as { commits: HistoryCommit[] }).commits.map(({ sha, parents, subject, authorName, authorLogin, authorId, committedAt }) =>
+      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, committedAt }))
     sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits }))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }

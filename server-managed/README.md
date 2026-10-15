@@ -116,21 +116,32 @@ account's ID, or null for the sign-in account); `DELETE
 and CSRF. Database upgrades keep existing names as the sign-in accounts' own.
 
 A repository's activity in the code viewer (its commits, issues, pull requests,
-agents and pulse) shows a GitHub login that an approved user signs in with, or
-linked to theirs, as that user: their chosen avatar and name, the login itself
-in the tooltip. A linked account shows as its user, and Pulse counts a user's
-accounts as one contributor. The server resolves the logins each answer names
-as it sends the answer, in a `users` map by login, never kept with what is
-cached of the repository; readers are never sent a list of users. Logins match
-regardless of case. A login two users claim, which happens once one of them
-renames on GitHub, shows as the login alone.
+agents and pulse) shows a GitHub account that an approved user signs in with,
+or linked to theirs, as that user: their chosen avatar and name, the login
+itself in the tooltip. A linked account shows as its user, and Pulse counts a
+user's accounts as one contributor. The server resolves the accounts each
+answer names as it sends the answer, in a `users` map by login, never kept
+with what is cached of the repository; readers are never sent a list of users.
+An account is matched by its numeric GitHub ID wherever GitHub names one, so
+an account renamed since its user signed in with it or linked it still shows as
+theirs, and its old login, taken by another account, does not; else by its
+login, regardless of case. A login two users claim, which happens once one of
+them renames on GitHub, shows as the login alone. Commits GitHub's GraphQL API
+names no user for, as a GitHub App's bot's, are matched by the account their
+noreply address (`<id>+<login>@users.noreply.github.com`) names, as GitHub's
+REST API matches them. Commits read before IDs were kept show by login.
 
-Commits by Claude or Codex show by their marks, as the Agents tab draws them:
-those GitHub names `claude` (Claude Code's, authored as
-`Claude <noreply@anthropic.com>`), `claude[bot]` or
-`chatgpt-codex-connector[bot]`, and those GitHub names no account for authored
-as Claude or Codex. Codex otherwise commits as whoever ran it, and those
-commits show as theirs. Pulse counts each agent as one contributor.
+Agents show as the Agents tab draws them, the server naming them in `users`
+as `{ "agent": <id> }`: Claude, Codex and Copilot by their marks, which the
+app draws itself, Dependabot by its avatar. Each is matched by its accounts' logins, the account's ID
+confirming it wherever both are known, as the Agents tab tells them: Claude's
+`claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
+and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
+agent's `Copilot` and Dependabot's `dependabot[bot]`
+(`common/managed/github-agents.ts`). Commits GitHub names no account for are
+matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
+Codex otherwise commits as whoever ran it, and those commits show as theirs.
+Pulse counts each agent as one contributor.
 
 # Managed browser navigation
 

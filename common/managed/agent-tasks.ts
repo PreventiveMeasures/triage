@@ -25,8 +25,9 @@ export type Agent = string
 
 // An agent known by its GitHub App or account, as the server names it to the
 // client: its id, its name, and its avatar, its mark (/api/avatar/<avatar>:
-// `app-<id>` a GitHub App's, `user-<id>` a GitHub account's).
-export interface AppAgent { id: string; name: string; avatar: string }
+// `app-<id>` a GitHub App's, `user-<id>` a GitHub account's), where the app
+// draws no mark of its own for it (Copilot's, ui/view/repository-tiles.js).
+export interface AppAgent { id: string; name: string; avatar?: string }
 // How the server tells one: its fingerprint, a line of an artifact's texts
 // starting with it; the GitHub account its work is authored by, its id and
 // the logins GitHub names it by; its branches' prefix.
@@ -40,15 +41,17 @@ export interface AgentAuthor { login: string; id: number }
 // whose fingerprints they carry, or whose branch it is.
 export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean; agents: string[] }
 
-export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null
+// Each by its author's login, and their account's numeric id (`authorId`)
+// where GitHub names it.
+export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null; authorId?: number | null
   // Its branch, and the owner of the fork it is in, null where it is in the
   // repository itself.
   createdAt: number | null; updatedAt: number | null; head: string | null; fork: string | null; additions: number; deletions: number; commits: number
   closes: number[]; signals: AgentSignals }
-export interface AgentIssue { number: number; title: string; state: 'open' | 'closed'; author: string | null; createdAt: number | null; updatedAt: number | null }
-export interface AgentBranch { name: string; at: number | null; author: string | null; signals: AgentSignals }
+export interface AgentIssue { number: number; title: string; state: 'open' | 'closed'; author: string | null; authorId?: number | null; createdAt: number | null; updatedAt: number | null }
+export interface AgentBranch { name: string; at: number | null; author: string | null; authorId?: number | null; signals: AgentSignals }
 // A commit to the default branch no pull request merged.
-export interface AgentCommit { oid: string; title: string; at: number | null; author: string | null; additions: number; deletions: number
+export interface AgentCommit { oid: string; title: string; at: number | null; author: string | null; authorId?: number | null; additions: number; deletions: number
   signals: AgentSignals }
 
 export interface AgentSession {

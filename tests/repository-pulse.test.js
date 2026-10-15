@@ -7,16 +7,19 @@ import { templateText } from './_lit.js'
 const state = {}
 const requests = []
 let answer = null
+// The app's users and agents an answer names kept as client-managed.js keeps them.
+let knowing = read => read()
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchRepositoryPulse(repoId, weeks) { requests.push([repoId, weeks]); return answer(repoId, weeks) },
+  fetchRepositoryPulse(repoId, weeks) { requests.push([repoId, weeks]); return knowing(() => answer(repoId, weeks)) },
   fetchRepositoryHistory: () => new Promise(() => {}),
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 const { niceScale, periodContributors, pulseSummary } = await import('../ui/view/repository-pulse.js')
-const { knowGithubUsers } = await import('../ui/view/github-users.js')
+const { knowGithubUsers, knowingGithubUsers } = await import('../ui/view/github-users.js')
+knowing = knowingGithubUsers
 const Pulse = customElements.get('repository-pulse')
 
 const DAY = 86_400_000
@@ -53,7 +56,7 @@ const item = (number, more = {}) => ({ number, title: `Item ${number}`, author: 
 const pulse = (more = {}) => ({ weeks: 4, since: SINCE, previousSince: SINCE - 4 * WEEK,
   merged: { count: 12, previous: 8, items: [item(5), item(4, { title: '' })] }, opened: { count: 2, previous: 2, items: [item(6, { state: 'open', draft: true })] },
   closed: { count: 0, previous: 3, items: [] }, created: { count: 1, previous: 0, items: [item(3, { kind: 'issues', state: 'open', reason: null })] },
-  stats: stats(), reading: null, pending: false, ...more })
+  stats: stats(), reading: null, pending: false, users: { 'claude[bot]': { agent: 'claude' } }, ...more })
 const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
 
 test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
@@ -75,15 +78,18 @@ test('the period\'s contributors, the most commits first, and a scale\'s round t
 })
 
 test('a user of the app is one contributor whichever of their GitHub accounts committed', () => {
-  knowGithubUsers({ users: { mona: { id: 'mona-id', login: 'mona', name: 'Mona' }, 'mona-work': { id: 'mona-id', login: 'mona', name: 'Mona' } } })
+  knowGithubUsers({ users: { mona: { id: 'mona-id', login: 'mona', name: 'Mona' }, 'mona-work': { id: 'mona-id', login: 'mona', name: 'Mona' },
+    claude: { agent: 'claude' }, 'claude[bot]': { agent: 'claude' }, 'dependabot[bot]': { agent: 'dependabot' } } })
   const week = (commits, additions) => [[SINCE, commits, additions, 1]]
   assert.deepEqual(periodContributors([{ login: 'mona-work', name: 'M', weeks: week(4, 10) }, { login: 'other', name: null, weeks: week(5, 1) },
     { login: 'mona', name: 'Mona', weeks: week(2, 5) }, { login: null, name: 'Mona', weeks: week(1, 1) }], SINCE), [
     { login: 'mona-work', name: 'M', commits: 6, additions: 15, deletions: 2 }, { login: 'other', name: null, commits: 5, additions: 1, deletions: 1 },
     { login: null, name: 'Mona', commits: 1, additions: 1, deletions: 1 }], 'one known by name alone is no user\'s')
   assert.deepEqual(periodContributors([{ login: 'claude', name: 'Claude', weeks: week(1, 1) }, { login: 'claude[bot]', name: null, weeks: week(2, 2) },
-    { login: null, name: 'Claude', weeks: week(3, 3) }, { login: null, name: 'Codex', weeks: week(1, 1) }], SINCE), [
-    { login: 'claude', name: 'Claude', commits: 6, additions: 6, deletions: 3 }, { login: null, name: 'Codex', commits: 1, additions: 1, deletions: 1 }],
+    { login: null, name: 'Claude', weeks: week(3, 3) }, { login: null, name: 'Codex', weeks: week(1, 1) },
+    { login: 'dependabot[bot]', name: 'dependabot[bot]', weeks: week(4, 4) }, { login: null, name: 'dependabot[bot]', weeks: week(1, 1) }], SINCE), [
+    { login: 'claude', name: 'Claude', commits: 6, additions: 6, deletions: 3 }, { login: 'dependabot[bot]', name: 'dependabot[bot]', commits: 5, additions: 5, deletions: 2 },
+    { login: null, name: 'Codex', commits: 1, additions: 1, deletions: 1 }],
   'an agent is one contributor whichever of its identities committed')
 })
 

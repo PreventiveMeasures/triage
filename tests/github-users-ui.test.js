@@ -27,6 +27,8 @@ test('GitHub logins the server names as the app\'s users show by their avatar an
 })
 
 test('commits by Claude or Codex show by their marks: by the identities GitHub names, else by name alone where it names none', () => {
+  // As the server names them (server-managed/github-users.ts).
+  knowGithubUsers({ users: { claude: { agent: 'claude' }, 'Claude[bot]': { agent: 'claude' }, 'chatgpt-codex-connector[bot]': { agent: 'codex' } } })
   assert.deepEqual([['claude', 'Claude'], ['Claude[bot]', null], ['chatgpt-codex-connector[bot]', null], [null, ' Codex '], [null, 'claude'],
     ['claudette', 'Claude'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]].map(([login, name]) => commitAgent(login, name)),
   ['claude', 'claude', 'codex', 'codex', 'claude', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
@@ -44,6 +46,50 @@ test('commits by Claude or Codex show by their marks: by the identities GitHub n
   assert.match(templateText(commitAuthor('mona', 'M. L.')), /app-user-name">Mona Lisa</u, 'a user of the app as the app shows them')
   assert.deepEqual([commitAuthorName('claude[bot]'), commitAuthorName(null, 'Codex'), commitAuthorName('mona'), commitAuthorName(null, 'Ada'), commitAuthorName('ada', 'Ada L')],
     ['Claude', 'Codex', 'Mona Lisa', 'Ada', 'ada'])
+})
+
+test('Copilot shows by its mark and Dependabot by its avatar, as Agents draws them: by the accounts the server names theirs, else their commits\' names', () => {
+  forgetGithubUsers()
+  // As the server names them: one GitHub names by Dependabot's login, but
+  // another account by its id, is none; an agent the app does not draw neither.
+  knowGithubUsers({ items: [{ author: 'Copilot', authorId: 198982749 }, { author: 'dependabot', authorId: 1 }],
+    users: { Copilot: { agent: 'copilot' }, ghost: { agent: 'nobody' } } })
+  assert.deepEqual([['Copilot', null], ['dependabot', null], [null, 'Copilot'], [null, 'dependabot[bot]'], ['copilot-fan', 'Copilot'], ['ghost', null]]
+    .map(([login, name]) => commitAgent(login, name)), ['copilot', null, 'copilot', 'dependabot', null, null])
+  assert.equal(appUser('Copilot'), null, 'no user of the app')
+  assert.equal(githubUser('dependabot'), 'dependabot')
+  const copilot = templateText(githubUser('copilot'))
+  assert.match(copilot, /class=app-user-mark is-copilot/u, 'bare, no avatar\'s disc')
+  assert.match(copilot, /<svg [^>]*viewBox="0 0 24 24"/u, 'its mark, as the Agents tab draws it, not its avatar fetched')
+  assert.doesNotMatch(copilot, /<img/u)
+  assert.match(copilot, /app-user-name">Copilot</u)
+  assert.match(copilot, /data-tooltip=@copilot on GitHub/u)
+  const dependabot = templateText(commitAuthor(null, 'dependabot[bot]'))
+  assert.match(dependabot, /src=\/api\/avatar\/app-29110 /u, 'a commit GitHub named no account for, by its name')
+  assert.match(dependabot, /data-tooltip=dependabot\[bot\]/u)
+  knowGithubUsers({ commits: [{ authorLogin: 'dependabot[bot]', authorId: 49699333 }], users: { 'dependabot[bot]': { agent: 'dependabot' } } })
+  assert.deepEqual([githubUserName('dependabot[bot]'), commitAuthorName(null, 'Copilot'), commitAuthorName('Copilot')], ['Dependabot', 'Copilot', 'Copilot'])
+  assert.deepEqual(githubUsers(['dependabot[bot]', 'Copilot', 'DEPENDABOT[BOT]', 'copilot']), ['dependabot[bot]', 'Copilot'], 'each agent once')
+  forgetGithubUsers()
+})
+
+test('a login this session\'s answers name by more than one account, one GitHub named by it once and one it names by it now, is no one\'s till another session', () => {
+  forgetGithubUsers()
+  // History kept from before the login was renamed and taken by another account.
+  knowGithubUsers({ commits: [{ authorLogin: 'octo', authorId: 2 }], users: { octo: { id: 'octo-id', login: 'octo', name: 'Octo' } } })
+  assert.equal(appUser('octo')?.id, 'octo-id')
+  knowGithubUsers({ items: [{ author: 'Octo', authorId: 9 }], users: { Octo: { id: 'cat-id', login: 'cat', name: 'Cat' } } })
+  assert.equal(appUser('octo'), null, 'neither account\'s')
+  assert.equal(githubUser('octo'), 'octo', 'the login itself')
+  knowGithubUsers({ commits: [{ authorLogin: 'octo', authorId: 2 }, { authorLogin: 'dependabot', authorId: 1 }, { authorLogin: 'dependabot', authorId: 49699333 }],
+    users: { octo: { id: 'octo-id', login: 'octo', name: 'Octo' }, dependabot: { agent: 'dependabot' } } })
+  assert.deepEqual([appUser('octo'), commitAgent('dependabot')], [null, null], 'nor once an answer names one of them again; nor one an answer names by two')
+  knowGithubUsers({ commits: [{ authorLogin: 'ada', authorId: 7 }, { authorLogin: 'ada', authorId: null }], users: { ada: { id: 'ada-id', login: 'ada', name: null } } })
+  assert.equal(appUser('ada')?.id, 'ada-id', 'one named once with its id and once without is that account')
+  forgetGithubUsers()
+  knowGithubUsers({ items: [{ author: 'Octo', authorId: 9 }], users: { Octo: { id: 'cat-id', login: 'cat', name: 'Cat' } } })
+  assert.equal(appUser('octo')?.id, 'cat-id', 'another session\'s answers say anew')
+  forgetGithubUsers()
 })
 
 test('an answer naming a login the server resolves to no one forgets what was kept of it; another session forgets them all', () => {
@@ -64,17 +110,26 @@ test('an answer naming a login the server resolves to no one forgets what was ke
 
 test('the signed-in user\'s own profile change shows in what was kept of them: their name, a fresh avatar, an account unlinked theirs no more', () => {
   forgetGithubUsers()
-  knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'yan' }], users: {
-    zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, yan: { id: 'yan-id', login: 'yan', name: 'Yan' } } })
+  // `zoe-old`, the login Zoe signed in with before renaming on GitHub, theirs by their account's id.
+  knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'zoe-old', authorId: 1 }, { authorLogin: 'yan' }], users: {
+    zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-old': { id: 'zoe-id', login: 'zoe', name: 'Zoe' },
+    yan: { id: 'yan-id', login: 'yan', name: 'Yan' } } })
   assert.doesNotMatch(templateText(githubUser('zoe')), /\?v=/u)
   knowProfile('zoe-id', { login: 'zoe', name: ' Zoe at Work ', accounts: [{ login: 'Zoe-Work' }] }, true)
-  assert.deepEqual(['zoe', 'zoe-work', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Yan'], 'another user\'s as it was')
+  assert.deepEqual(['zoe', 'zoe-work', 'zoe-old', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Zoe at Work', 'Yan'],
+    'under every login of theirs, one before renaming too; another user\'s as it was')
   assert.match(templateText(githubUser('zoe-work')), /src=\/api\/avatar\/zoe-id\?v=1/u, 'their avatar asked for again')
   assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
-  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] })
-  assert.deepEqual(['zoe', 'zoe-work'].map(login => appUser(login)?.name ?? null), [null, null])
-  assert.equal(appUser('zoe-work'), null, 'unlinked')
-  assert.equal(appUser('zoe')?.id, 'zoe-id')
+  // `zoe-job`, the login Zoe's work account had before it was renamed, theirs by its id.
+  knowGithubUsers({ commits: [{ authorLogin: 'zoe-job', authorId: 2 }], users: { 'zoe-job': { id: 'zoe-id', login: 'zoe', name: 'Zoe at Work' } } })
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [{ login: 'zoe-side' }] }, false, { login: 'Zoe-Work', githubId: 2 })
+  assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.name ?? null), [null, null])
+  assert.deepEqual(['zoe-work', 'zoe-job'].map(appUser), [null, null], 'unlinked, by any login of it')
+  assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.id), ['zoe-id', 'zoe-id'])
+  // `zoe-old` again, by Zoe's sign-in account's id, its login now another
+  // account's of theirs, linked, unlinked: still the sign-in account's.
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, { login: 'zoe-old', githubId: 4 })
+  assert.equal(appUser('zoe-old')?.id, 'zoe-id', 'by the id answers named it by, not the login')
   forgetGithubUsers()
 })
 
@@ -99,7 +154,7 @@ test('an answer read across the signed-in user\'s profile change keeps others\' 
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' } } })
   const late = Promise.withResolvers()
   const reading = knowingGithubUsers(() => late.promise)
-  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] })
+  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] }, false, { login: 'wil-work', githubId: 5 })
   // Read before the change was saved, as it was then.
   late.resolve({ commits: [{ authorLogin: 'wil' }, { authorLogin: 'wil-work' }, { authorLogin: 'vic' }], users: {
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' }, vic: { id: 'vic-id', login: 'vic', name: 'Vic' } } })

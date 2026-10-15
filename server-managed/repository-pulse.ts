@@ -12,7 +12,7 @@
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
 import { GithubApiError, githubJson } from './github-app.ts'
-import { type HistoryCommit, type HistoryPages, githubGraphql, historyFrom } from './repository-history.ts'
+import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 const WEEK_MS = 7 * 24 * 60 * 60_000
@@ -35,7 +35,6 @@ const YEAR_STARTS = 10
 // parent dated in it.
 const YEAR_SKEW_MS = 30 * DAY_MS
 const MAX_TITLE = 1000
-const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const SHA = /^[a-f\d]{40}$/u
 
 // GitHub still computing a statistic.
@@ -44,9 +43,10 @@ export class StatsPending extends Error {
 }
 
 export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null }
-// A contributor, by their login, else by the name their commits carry, and
-// their weeks, each `[week, commits, additions, deletions]`, those with any.
-export interface PulseContributor { login: string | null; name: string | null; weeks: [number, number, number, number][] }
+// A contributor, by their login and their account's numeric id (`id`, where
+// GitHub named it), else by the name their commits carry, and their weeks,
+// each `[week, commits, additions, deletions]`, those with any.
+export interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][] }
 // Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
 // each commit's own time zone; `lines` false where GitHub counts none, null
 // while it is counting them.
@@ -63,7 +63,6 @@ const timeOf = (value: unknown) => {
   const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
   return Number.isSafeInteger(at) ? at : null
 }
-const loginOf = (author: { login?: unknown } | null | undefined) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
 const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
 
@@ -99,7 +98,7 @@ async function statistics(fullName: string, token: string | null, kinds: string[
 }
 
 type ActivityRow = { week?: unknown; days?: unknown; total?: unknown }
-type ContributorRow = { author?: { login?: unknown } | null; weeks?: { w?: unknown; a?: unknown; d?: unknown; c?: unknown }[] }
+type ContributorRow = { author?: { login?: unknown; id?: unknown } | null; weeks?: { w?: unknown; a?: unknown; d?: unknown; c?: unknown }[] }
 
 // The default branch's commits over the last year as GitHub's statistics
 // count them, for a year past YEAR_COMMITS: a week a row, the oldest first,
@@ -116,13 +115,13 @@ export async function repositoryStats(fullName: string, token: string | null, fe
   }).toSorted((a, b) => a.week - b.week)
   const first = weeks[0]?.week ?? Number.POSITIVE_INFINITY
   const contributors = ((contributorRows ?? []) as ContributorRow[]).flatMap(row => {
-    const login = loginOf(row?.author)
+    const { login, id } = accountOf(row?.author)
     const theirs = (row?.weeks ?? []).flatMap(item => {
       const week = count(item?.w) * 1000
       return week >= first && count(item?.c) > 0 ? [[week, count(item?.c), 0, 0] as [number, number, number, number]] : []
     })
-    return login && theirs.length > 0 ? [{ login, name: null, weeks: theirs, commits: theirs.reduce((sum, item) => sum + item[1], 0) }] : []
-  }).toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, name, weeks: theirs }) => ({ login, name, weeks: theirs }))
+    return login && theirs.length > 0 ? [{ login, id, name: null, weeks: theirs, commits: theirs.reduce((sum, item) => sum + item[1], 0) }] : []
+  }).toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, id, name, weeks: theirs }) => ({ login, id, name, weeks: theirs }))
   const punch = emptyPunch()
   for (const row of (punchRows ?? []) as unknown[][]) {
     if (Array.isArray(row) && Number.isSafeInteger(row[0]) && Number.isSafeInteger(row[1]) && punch[row[0] as number]?.[row[1] as number] !== undefined) {
@@ -142,7 +141,7 @@ export async function repositoryLines(fullName: string, token: string | null, si
   const weeks = frequency.flatMap(row => Array.isArray(row) && Number.isSafeInteger(row[0]) && (row[0] as number) * 1000 >= since
     ? [[(row[0] as number) * 1000, count(row[1]), count(Math.abs(Number(row[2])))] as [number, number, number]] : [])
   const contributors = ((contributorRows ?? []) as ContributorRow[]).flatMap(row => {
-    const login = loginOf(row?.author)
+    const { login } = accountOf(row?.author)
     const theirs = (row?.weeks ?? []).flatMap(item => count(item?.w) * 1000 >= since && count(item?.a) + count(item?.d) > 0
       ? [[count(item?.w) * 1000, count(item?.a), count(item?.d)] as [number, number, number]] : [])
     return login && theirs.length > 0 ? [{ login, weeks: theirs }] : []
@@ -191,12 +190,17 @@ export async function yearCommits(fullName: string, token: string, head: string,
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed; its contributors,
-// by login, else name (as many as MAX_CONTRIBUTORS, the most commits first),
+// by account (its id, by the login it committed as first listed, the newest,
+// whatever it was renamed from; a login's commits read before ids were, the
+// one account's that committed as it, where only one did), else login, each
+// matched as GitHub matches logins, regardless of case, else name (as many
+// as MAX_CONTRIBUTORS, the most commits first),
 // and their weeks; and its commits by day of the week and hour, in each
 // author's own time zone (else UTC, where GitHub told none).
 export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0 }))
-  const people = new Map<string, { login: string | null; name: string | null; weeks: Map<number, [number, number, number]>; commits: number }>()
+  const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Map<number, [number, number, number]>
+    commits: number }>()
   const punch = emptyPunch()
   for (const commit of commits) {
     if (commit.parents.length > 1 || commit.committedAt === null || commit.committedAt < first) continue
@@ -209,16 +213,34 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
     week.deletions += deletions
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     punch[local.getUTCDay()]![local.getUTCHours()]!++
-    const key = commit.authorLogin ? `@${commit.authorLogin}` : commit.authorName ? `=${commit.authorName}` : null
+    const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin.toLowerCase()}`
+      : commit.authorName ? `=${commit.authorName}` : null
     if (!key) continue
-    const person = people.get(key) ?? { login: commit.authorLogin, name: commit.authorName, weeks: new Map<number, [number, number, number]>(), commits: 0 }
+    const person = people.get(key) ?? { login: commit.authorLogin, logins: new Set<string>(), id: commit.authorId ?? null, name: commit.authorName,
+      weeks: new Map<number, [number, number, number]>(), commits: 0 }
+    if (commit.authorLogin) person.logins.add(commit.authorLogin.toLowerCase())
     const theirs = person.weeks.get(week.week) ?? [0, 0, 0]
     person.weeks.set(week.week, [theirs[0] + 1, theirs[1] + additions, theirs[2] + deletions])
     person.commits++
     people.set(key, person)
   }
-  const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, name, weeks: theirs }) => ({
-    login, name, weeks: [...theirs].toSorted(([a], [b]) => a - b).map(([week, [made, added, removed]]) => [week, made, added, removed] as [number, number, number, number]) }))
+  // A login one account committed as, those of its commits read before ids
+  // were that account's; one more did, theirs apart, no one's.
+  const accounts = Map.groupBy([...people.values()].filter(person => person.id !== null).flatMap(person => [...person.logins].map(login => ({ login, person }))),
+    ({ login }) => login)
+  for (const [key, person] of people) {
+    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login.toLowerCase()) ?? [] : []
+    if (!owner || others.length > 0) continue
+    const account = owner.person
+    for (const [week, [made, added, removed]] of person.weeks) {
+      const theirs = account.weeks.get(week) ?? [0, 0, 0]
+      account.weeks.set(week, [theirs[0] + made, theirs[1] + added, theirs[2] + removed])
+    }
+    account.commits += person.commits
+    people.delete(key)
+  }
+  const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, id, name, weeks: theirs }) => ({
+    login, id, name, weeks: [...theirs].toSorted(([a], [b]) => a - b).map(([week, [made, added, removed]]) => [week, made, added, removed] as [number, number, number, number]) }))
   return { weeks, contributors, punch, lines: true }
 }
 
@@ -263,11 +285,11 @@ const ACTIVITY_QUERY = `query($merged: String!, $mergedBefore: String!, $opened:
   ${SEARCH('created', 'issue', LISTED)}
   ${SEARCH('createdBefore', 'issue')}
 }
-fragment pull on PullRequest { number title pullState: state isDraft createdAt mergedAt author { login } }
-fragment issue on Issue { number title issueState: state stateReason createdAt closedAt author { login } }`
+fragment pull on PullRequest { number title pullState: state isDraft createdAt mergedAt author { ${ACTOR} } }
+fragment issue on Issue { number title issueState: state stateReason createdAt closedAt author { ${ACTOR} } }`
 
 type SearchNode = { number?: unknown; title?: unknown; pullState?: unknown; issueState?: unknown; isDraft?: unknown; stateReason?: unknown
-  createdAt?: unknown; mergedAt?: unknown; closedAt?: unknown; author?: { login?: unknown } | null } | null
+  createdAt?: unknown; mergedAt?: unknown; closedAt?: unknown; author?: GraphAccount } | null
 type Search = { issueCount?: unknown; nodes?: SearchNode[] } | null | undefined
 const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 
@@ -276,7 +298,8 @@ const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: '
 function listed(node: SearchNode, at: unknown) {
   if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
   const title = typeof node.title === 'string' ? node.title.trim().slice(0, MAX_TITLE) : ''
-  const common = { number: node.number as number, title, author: loginOf(node.author), at: timeOf(at), createdAt: timeOf(node.createdAt) }
+  const author = actorOf(node.author)
+  const common = { number: node.number as number, title, author: author.login, authorId: author.id, at: timeOf(at), createdAt: timeOf(node.createdAt) }
   return node.pullState === undefined
     ? { ...common, kind: 'issues', state: node.issueState === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
     : { ...common, kind: 'pulls', state: node.pullState === 'MERGED' ? 'merged' : node.pullState === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true }
