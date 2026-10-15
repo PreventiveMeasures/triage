@@ -556,7 +556,7 @@ function pulseStats(now: number) {
 // one holding several pull requests and commits pushed to main, one the
 // Claude GitHub App ran for an issue; Codex tasks on branches of their own, one
 // a Codex cloud task linked; Neo's pull requests, a session each, one of them
-// Claude Code's too, and a branch of its; Copilot's; work no agent touched; read ten pull requests
+// Claude Code's too, and a branch of its; Copilot's; Dependabot's; work no agent touched; read ten pull requests
 // and twenty commits at a time, as the server answers, its texts read.
 const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
 
@@ -617,6 +617,9 @@ function agentsData(now: number) {
   pull(827, 'Retry the flaky upload test, with a backoff', 'neo/retry-flaky-upload', 33, neo)
   // Copilot: a pull request its account opened, on a branch of its.
   pull(825, 'Move the database adapters into one module', 'copilot/move-db-adapters', 15, { ...none, agents: ['copilot'] }, { author: 'Copilot' })
+  // Dependabot: a dependency bumped, opened as its app.
+  pull(187, 'build(deps): bump ws from 8.20.1 to 8.21.0', 'dependabot/npm_and_yarn/npm_and_yarn-b3b4accef5', 27, { ...none, agents: ['dependabot'] },
+    { author: 'dependabot' })
   // A commit Claude authored straight to main, naming no session.
   commits.push({ oid: createHash('sha1').update('direct').digest('hex'), title: 'Fix a flaky upload test', at: hours(26), author: null, additions: 3, deletions: 1,
     signals: { ...none, claude: true } })
