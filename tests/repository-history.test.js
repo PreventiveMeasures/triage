@@ -143,14 +143,15 @@ test('this revision\'s history reads a page at a time, from the commit shown; ev
   assert.match(text, /aria-pressed=true [^\n]*>This revision</u)
   assert.match(text, /Every branch needs your GitHub sign-in/u)
   assert.match(text, /1\+ commit</u)
-  // Held long, it reads its next page all the same, not its first again.
+  // Held long, it reads its next page all the same, not its first again, on
+  // from where those listed stop.
   const held = view.history('revision')
   held.entry.until = 0
   held.more()
   view.render()
   await setImmediate()
   text = templateText(view.render())
-  assert.deepEqual(requests.slice(2), [[7, a, '', { page: 2, all: false }]])
+  assert.deepEqual(requests.slice(2), [[7, a, '', { page: 2, all: false, from: [b] }]])
   assert.match(text, /2 commits</u)
   assert.doesNotMatch(text, /Older commits/u, 'the last page read')
 })
@@ -161,7 +162,7 @@ test('this revision\'s history comes from every branch\'s where that holds its c
   const fromB = revisionFromAll(all, b)
   assert.deepEqual(fromB.commits.map(item => item.sha[0]), ['b', 'd'])
   assert.equal(fromB.more, true, 'd\'s parent is not among them')
-  assert.equal(fromB.page, 0, 'older commits read from the first page')
+  assert.deepEqual([fromB.page, fromB.next], [1, [x]], 'older commits read on from where those it holds stop')
   assert.deepEqual(revisionFromAll({ ...all, commits: [commit(a, [b], 20), commit(b, [], 10)] }, a).more, false, 'a root reached is all of it')
   assert.equal(revisionFromAll(all, e), null, 'a commit every branch\'s doesn\'t hold')
 })
@@ -180,7 +181,7 @@ test('switching from every branch to this revision reads nothing again where eve
   view.history('revision').more()
   await setImmediate()
   text = templateText(view.render())
-  assert.deepEqual(requests.at(-1), [7, b, '', { page: 1, all: false }], 'older commits read from its first page')
+  assert.deepEqual(requests.at(-1), [7, b, '', { page: 2, all: false, from: [x] }], 'older commits read on from where every branch\'s stop')
   assert.match(text, /2 commits</u)
   // From this revision, every branch's is read: this one's says nothing of
   // the others.

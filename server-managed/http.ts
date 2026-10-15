@@ -107,7 +107,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyPageStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -175,7 +175,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
@@ -1524,9 +1524,12 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
 // GitHub access, within their grants as the code is. From a revision (`ref`),
 // a page at a time (`page`), the commits touching `path` where it names a
 // directory, with the branches and tags naming commits on the first page; or,
-// with `all`, across the repository's most recently updated branches, then,
-// a later page, on from the commits `from` names, which needs the whole
-// repository and a GitHub token. Access is checked again once it is read,
+// with `all`, across the repository's most recently updated branches, which
+// needs a GitHub token. A whole repository's history, from a revision or all
+// branches, is read from commits a page each, kept by the commit each starts
+// at, and those kept glued on (historyFrom); a later page reads on from the
+// commits `from` names. The branches and tags naming commits are kept as an
+// issue's page is (keptAnswer). Access is checked again once it is read,
 // before any of it is sent.
 async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
@@ -1534,11 +1537,12 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   const { repoId, ref, path } = asked
   const page = Number(query.get('page') ?? '1')
   const all = query.get('all') === 'true'
-  // Every branch's later pages read on from where those before stop.
+  // A whole repository's later pages read on from where those before stop:
+  // all branches', always; a revision's, where the client names them.
   const from = query.get('from')
   const starts = from === null ? null : historyStarts(from)
   if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || (page > 1) !== (starts !== null)))
-    || (from !== null && (!all || starts === null))) { sendJson(res, 400, { error: 'bad-request' }); return }
+    || (from !== null && (starts === null || path !== '' || page === 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, path)
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1550,17 +1554,24 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
+    const pages = historyPages(deps, repoId)
     let body: object
     if (all) {
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
       // What a later page reads on from, the client knows; whether one may
       // follow, the deepest page says.
-      body = starts ? { all: true, page, ...await repositoryAllHistoryFrom(repo, token, starts), more: page < MAX_HISTORY_PAGE }
-        : { all: true, ...await repositoryAllHistory(repo, token) }
+      body = starts ? { all: true, page, commits: (await historyFrom(repo, token, starts, pages)).commits, more: page < MAX_HISTORY_PAGE }
+        : { all: true, ...await repositoryAllHistory(repo, token, (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token))).value, pages) }
     } else {
       const commit = await reader.commit(ref)
-      const [history, tips] = await Promise.all([repositoryHistory(repo, token, commit, path, page), page === 1 ? repositoryRefTips(repo, token) : null])
-      body = { commit, path, page, ...history, ...tips }
+      const tips = page === 1 ? keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value) : null
+      // A whole repository's from its commit, or on from those `from` names
+      // (a page by its number where none are, as GitHub lists them); a
+      // directory's by its number.
+      const history = path !== '' || (page > 1 && !starts) ? repositoryHistory(repo, token, commit, path, page)
+        : historyFrom(repo, token, starts ?? [commit], pages).then(read => ({ commits: read.commits, more: (starts !== null || read.more) && page < MAX_HISTORY_PAGE }))
+      const [read, named] = await Promise.all([history, tips])
+      body = { commit, path, page, ...read, ...named }
     }
     await reader.recheckAccess()
     const current = await authorize()
@@ -1583,16 +1594,63 @@ const repositoryRereads = new Set<string>()
 const refusedRead = (err: unknown) => err instanceof GithubApiError
   && (err.status === 401 || err.status === 403 || err.status === 404 || err.message === 'github-status-403')
 
+// What `read` answers of a repository, kept by `key` (its id first) for every
+// reader (repositoryReadStore), each one's access checked as they ask before
+// this: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
+// kept, answered at once and read again behind it for the next to ask, where
+// the instance outlives its answer (not serverless, where it is read again
+// before it is answered); `kept` where it was. One GitHub refuses to read
+// again is no longer kept: the next to ask is refused as GitHub refused it.
+async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>): Promise<{ value: T; kept: boolean }> {
+  const store = repositoryReadStore(deps.db, deps.config.debug)
+  // One kept longer than a day, not yet removed (pruneKept removes them as
+  // others are written), is none.
+  const stored = await store.read(key)
+  const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
+  const readKept = async () => {
+    try {
+      const value = await read()
+      await store.write(key, value, Date.now())
+      return value
+    } catch (err) {
+      if (refusedRead(err)) await store.remove(key)
+      throw err
+    }
+  }
+  const age = held ? Date.now() - held.at : Infinity
+  if (held && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
+    if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
+      repositoryRereads.add(key)
+      deps.track(readKept().catch((err: unknown) => { if (deps.config.debug) console.warn('managed: repository read failed:', err) })
+        .finally(() => repositoryRereads.delete(key)))
+    }
+    return { value: held.value as T, kept: true }
+  }
+  return { value: await readKept(), kept: false }
+}
+
+// The pages of repository `repoId`'s history kept (historyPageStore), each by
+// the commit it starts at (repository-history.ts historyFrom).
+function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
+  const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
+  const keyOf = (top: string) => `${repoId}\0${top}`
+  return {
+    async read(tops) {
+      const kept = await store.readMany(tops.map(keyOf))
+      return new Map(tops.flatMap(top => {
+        const page = kept.get(keyOf(top))?.value
+        return Array.isArray(page) ? [[top, page] as const] : []
+      }))
+    },
+    write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
+  }
+}
+
 // What the whole of repository `repoId` gives in GraphQL (`read`, with its
 // name and a token), read as browsing is, with the reader's own GitHub
 // access: only by a reader whose grants reach all of it, with a token, and
-// sent once access is checked again after it is read. What `key` names is
-// kept for every reader (repositoryReadStore), each one's access checked as
-// they ask: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
-// kept, answered at once and read again behind it for the next to ask, where
-// the instance outlives its answer (not serverless, where it is read again
-// before it is answered). One GitHub refuses to read again is no longer
-// kept: the next to ask is refused as GitHub refused it.
+// sent once access is checked again after it is read; what `key` names kept
+// (keptAnswer), sent as kept, its reader's access checked as they ask.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   read: (fullName: string, token: string) => Promise<object>, key: string | null = null): Promise<void> {
   const authorize = async () => {
@@ -1606,32 +1664,10 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-    const kept = key === null ? null : { store: repositoryReadStore(deps.db, deps.config.debug), key: `${repoId}\0${key}` }
-    // One kept longer than a day, not yet removed (pruneKept removes them as
-    // others are written), is none.
-    const stored = kept ? await kept.store.read(kept.key) : null
-    const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
-    const readKept = async () => {
-      try {
-        const body = await read(access.repo.fullName, token)
-        if (kept) await kept.store.write(kept.key, body, Date.now())
-        return body
-      } catch (err) {
-        if (kept && refusedRead(err)) await kept.store.remove(kept.key)
-        throw err
-      }
-    }
-    const age = held ? Date.now() - held.at : Infinity
-    if (held && kept && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
-      if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(kept.key)) {
-        repositoryRereads.add(kept.key)
-        deps.track(readKept().catch((err: unknown) => { if (deps.config.debug) console.warn('managed: repository read failed:', err) })
-          .finally(() => repositoryRereads.delete(kept.key)))
-      }
-      sendJson(res, 200, held.value)
-      return
-    }
-    const body = await readKept()
+    const answer = key === null ? { value: await read(access.repo.fullName, token), kept: false }
+      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(access.repo.fullName, token))
+    if (answer.kept) { sendJson(res, 200, answer.value); return }
+    const body = answer.value
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return

@@ -8,7 +8,8 @@
 // keeps it, and what a scan read of GitHub, for a day, and of npm's
 // advisories, for an hour (repository-risk.ts); and what the code viewer read
 // of a repository's GitHub, its issues, pull requests and agents' work, for a
-// day (http.ts readWholeRepository). Each store removes its own rows kept longer
+// day (http.ts keptAnswer), and its history, a page from a commit at a time,
+// for a month (repository-history.ts historyFrom). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -99,3 +100,8 @@ export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'loc
 export const REPOSITORY_READ_KEPT_MS = 24 * 60 * 60_000
 export const repositoryReadStore = (db: UpstreamCacheStore, debug = false): KeptStore<object> =>
   keptStore<object>(db, 'repository/reads', REPOSITORY_READ_KEPT_MS, debug)
+// Pages of a repository's history (repository-history.ts historyFrom), by its
+// id and the commit each starts at, which never change: kept a month after
+// they were last read from GitHub.
+export const HISTORY_PAGE_KEPT_MS = 30 * 24 * 60 * 60_000
+export const historyPageStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/history', HISTORY_PAGE_KEPT_MS, debug)
