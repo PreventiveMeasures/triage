@@ -443,6 +443,13 @@ test('a lockfile a package or advisory is used in links to it on GitHub, at the 
   assert.ok(templateText(page.render()).includes(link), 'packages')
   page._tab = 'advisories'
   assert.ok(templateText(page.render()).includes(link), 'advisories')
+  // Locked by two: how many, opening into a link to each.
+  page._tab = 'packages'
+  page._apply({ type: 'repo', id: 1, commit: 'c'.repeat(40), lockfiles: [{ path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm' }, { path: 'package-lock.json', format: 'npm' }] })
+  page._apply({ type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] })
+  const text = templateText(page.render())
+  assert.match(text, /<details class="risk-used-all"><summary class="risk-used">[^]*?<span>2 lockfiles<\/span><\/summary>/u)
+  assert.ok(text.includes(link) && text.includes(`href=https://github.com/org/one/blob/${'c'.repeat(40)}/package-lock.json`), 'each linked')
 })
 
 test('the packages\' filter is a toggle of those it has any of, but All and the one chosen, each saying how many; none where All alone is left', () => {

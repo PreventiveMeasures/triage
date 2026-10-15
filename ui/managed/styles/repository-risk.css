@@ -34,6 +34,19 @@ a:hover { text-decoration: underline; }
 .risk-version { color: var(--muted); font-variant-numeric: tabular-nums; }
 .risk-package .risk-dev { margin-left: 0; }
 .risk-used .risk-clip { min-width: 0; }
+/* Several lockfiles: how many, opening into a link to each, a line each,
+   under the mark. Rows are drawn by their package, so one opened stays with
+   it as a scan sorts them. */
+.risk-used-all summary { cursor: pointer; list-style: none; }
+.risk-used-all summary::-webkit-details-marker { display: none; }
+.risk-used-all summary:hover, .risk-used-all[open] summary { color: var(--accent); }
+.risk-used-all ul {
+  display: grid;
+  gap: .15rem;
+  margin: .25rem 0 0;
+  padding: 0 0 0 calc(14px + .4rem);
+  list-style: none;
+}
 /* Lockfiles, a line a repository: its name, then its lockfiles, wrapping. */
 .risk-repos { margin: 0; padding: 0; list-style: none; font-size: .8rem; }
 .risk-repos > li {
