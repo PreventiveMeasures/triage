@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, findingsOf, malwareOf, malwareSaid, putOff, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, differs, findingsOf, malwareOf, malwareSaid, putOff, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -129,7 +129,7 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-eslint', true]], 'development\'s, malware among them')
   const advisories = templateText(page.render())
   assert.match(advisories, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need these versions[^>]*>dev</u)
-  assert.match(advisories, /aria-label="Which advisories">[^]*?aria-pressed=false[^]*?>Production \(2\)<\/button>[^]*?aria-pressed=true[^]*?>Development \(2\)<\/button><\/div><input type="search"/u,
+  assert.match(advisories, /aria-label=Which advisories>[^]*?aria-pressed=false[^]*?>Production \(2\)<\/button>[^]*?aria-pressed=true[^]*?>Development \(2\)<\/button><\/div><input type="search"/u,
     'beside the search, each saying how many')
 })
 
@@ -363,4 +363,66 @@ test('a team is chosen among buttons, as the scope is, where there are five or f
   assert.deepEqual([page._state, page._repos.size], ['done', 1])
   page._choose('team', 't3')
   assert.deepEqual([page._state, page._repos.size], ['idle', 0])
+})
+
+test('packages are shown all in one list, or those production takes, or those only devDependencies need, as toggled beside the filter, malware either way', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' },
+      { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }, { name: 'crossenv', version: '1.0.0', source: 'registry', dev: true }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] },
+    { type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }] },
+    { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+  ]) page._apply(line)
+  const names = () => page._rows().map(row => row.name)
+  assert.deepEqual(names(), ['crossenv', 'left-pad', 'eslint'], 'all, those only devDependencies need after the rest but malware')
+  assert.match(templateText(page.render()), /aria-label=Which packages>[^]*?aria-pressed=true[^]*?>All \(3\)<[^]*?>Production \(2\)<[^]*?>Development \(2\)<\/button><\/div>\s*<select aria-label="Show packages"/u,
+    'beside the filter, each saying how many')
+  page._packageKind = 'production'
+  assert.deepEqual(names(), ['crossenv', 'left-pad'])
+  page._packageKind = 'development'
+  assert.deepEqual(names(), ['crossenv', 'eslint'])
+})
+
+test('a mirror\'s copy differing from npm\'s is flagged critical and listed first but for malware, not as one that couldn\'t be assessed', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const mirror = { source: 'mirror', from: 'https://npm.example.com/x.tgz', integrity: 'sha512-mirror' }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', ...mirror },
+      { name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'crossenv', version: '1.0.0', source: 'registry' }, { name: 'ms', version: '2.1.3', source: 'registry' }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch' },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'critical', score: 90, findings: [{ id: 'held-exfiltration', severity: 'critical' }] },
+    { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+    { type: 'risk', name: 'ms', version: '2.1.3', error: 'upstream-unavailable' },
+  ]) page._apply(line)
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'debug', 'ms'])
+  assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')))
+  page._filter = 'flagged'
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'debug'], 'flagged')
+  page._filter = 'failed'
+  assert.deepEqual(page._rows().map(row => row.name), ['ms'], 'not among those that couldn\'t be assessed')
+  page._filter = 'all'
+  assert.match(templateText(page.render()), /<li class="risk-critical" data-tooltip=Its lockfile’s integrity, a mirror’s, isn’t npm’s[^>]*>Differs from npm’s<\/li>/u)
+  assert.match(templateText(page.render()), / 3 flagged/u)
+})
+
+test('a lockfile a package or advisory is used in links to it on GitHub, at the commit read, as a package\'s name does', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'c'.repeat(40), lockfiles: [{ path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm' }] },
+    { type: 'lockfile', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] },
+    { type: 'advisories', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', advisories: [{ id: 'GHSA-left-pad', name: 'left-pad', title: 'x', severity: 'low', url: null, range: null, versions: ['1.3.0'], malware: false }] },
+  ]) page._apply(line)
+  const link = `<a class="risk-name risk-clip risk-used-in" href=https://github.com/org/one/blob/${'c'.repeat(40)}/apps/web%20%231/pnpm-lock.yaml target="_blank" rel="noopener noreferrer"`
+  assert.ok(templateText(page.render()).includes(link), 'packages')
+  page._tab = 'advisories'
+  assert.ok(templateText(page.render()).includes(link), 'advisories')
 })

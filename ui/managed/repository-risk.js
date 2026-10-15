@@ -3,8 +3,11 @@
 // tells of each, as the server finds them (GET /api/admin/repositories/risk,
 // server-managed/repository-risk.ts); npm's advisories of them on a tab of
 // their own, those of malware a package's risk too. Those only devDependencies
-// need are tagged so and listed after the rest; advisories are shown of the
-// versions production takes or of those, toggled, malware's either way.
+// need are tagged so and listed after the rest, and either kind shown alone
+// as toggled, as are advisories of the versions production takes or of those,
+// malware's either way. A mirror's copy differing from npm's is flagged
+// critical, listed first but for malware. Each lockfile used links to it on
+// GitHub, at the commit read.
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -84,11 +87,16 @@ const assessable = source => source === 'registry' || source === 'mirror'
 // one's name does, from npm's registry or a mirror. A mirror's copy can't be
 // held to npm's integrity where npm deleted the version, as it deletes every
 // one it finds malware in: it is npm's unless found otherwise.
-export const malwareOf = row => row.risk?.error === 'integrity-mismatch' ? null : row.malware ?? null
+export const malwareOf = row => differs(row) ? null : row.malware ?? null
+// Whether risk found a mirror's copy isn't npm's of its name and version, its
+// integrity not npm's: a private package of a public one's name, or one
+// tampered with. Flagged critical, and listed first but for malware, not as
+// one that couldn't be assessed.
+export const differs = row => row.risk?.error === 'integrity-mismatch'
 // A package row's most severe finding, its malware first, as critical: the
-// advisories', or risk's own of a package npm took down, once. What its rows
-// are flagged by.
-const severityOf = row => malwareOf(row) ? 'critical' : row.risk?.severity ?? null
+// advisories', or risk's own of a package npm took down, once; or its copy
+// differing from npm's. What its rows are flagged by.
+const severityOf = row => malwareOf(row) || differs(row) ? 'critical' : row.risk?.severity ?? null
 // A package row's risk, out of 100, as risk scores it (risk/npm/score.js):
 // malware's 100, the advisories' as risk's own; null where it isn't told.
 export const scoreOf = row => malwareOf(row) ? 100 : row.risk && !row.risk.error ? row.risk.score ?? null : null
@@ -105,6 +113,10 @@ export const malwareSaid = row => [...malwareOf(row) ?? [],
 // but not malware, which runs wherever it is installed, CI and a developer's
 // machine among them.
 export const putOff = row => Boolean(row.dev) && !findingsOf(row).some(({ id }) => id === 'malware')
+// Whether a package row is of `kind` (PACKAGE_KINDS): development's where
+// only devDependencies need it, production's where more do, or its lockfiles
+// don't say; malware of both, as it runs wherever it is installed.
+export const ofKind = (row, kind) => kind === 'all' || findingsOf(row).some(({ id }) => id === 'malware') || Boolean(row.dev) === (kind === 'development')
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
@@ -112,7 +124,7 @@ const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(
 const FILTERS = {
   all: ['All packages', () => true],
   flagged: ['Flagged', row => Boolean(severityOf(row))],
-  failed: ['Not assessed: failed', row => Boolean(row.risk?.error)],
+  failed: ['Not assessed: failed', row => Boolean(row.risk?.error) && !differs(row)],
   elsewhere: ['Not assessed: not from npm', row => !assessable(row.source)],
 }
 
@@ -121,12 +133,21 @@ const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long t
 // What a package's dev tag, or an advisory's, tells.
 const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest, and listed after them unless it is malware.'
 const ADVISORY_DEV_SAID = 'Only devDependencies need these versions, in every lockfile that locks them: an install without them leaves them out.'
+// What a package's copy differing from npm's tells.
+const DIFFERS_SAID = 'Its lockfile’s integrity, a mirror’s, isn’t npm’s of this name and version: not npm’s package, as a private one of a public one’s name is, or one tampered with.'
 // The advisories shown, by the versions they affect: those some lockfile
 // needs as more than devDependencies do, or doesn't tell (Yarn 1's), or those
 // only devDependencies need. Malware's are shown either way.
 const KINDS = {
   production: ['Production', 'Advisories of versions an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware’s are shown either way.'],
   development: ['Development', 'Advisories of versions only devDependencies need, in every lockfile that locks them. Malware’s are shown either way.'],
+}
+// The packages shown: all, those an install for production takes, or those
+// only devDependencies need (ofKind).
+const PACKAGE_KINDS = {
+  all: ['All', 'Every package the lockfiles lock, those only devDependencies need tagged dev and listed after the rest.'],
+  production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware is shown either way.'],
+  development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware is shown either way.'],
 }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
@@ -166,12 +187,15 @@ const formatCount = new Intl.NumberFormat()
 const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
   stale: rows.filter(row => row.risk?.stale).length })
 
-// Where a package or an advisory is locked: its lockfile, or how many, each
-// in the tooltip.
-function usedInCell(lockfiles) {
+// Where a package or an advisory is locked: its lockfile, a link to it on
+// GitHub where it is listed (`links`, _lockfileLinks), or how many, each in
+// the tooltip.
+function usedInCell(lockfiles, links) {
   const used = [...lockfiles]
-  return used.length === 1 ? html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
-    : html`<span class="risk-clip risk-used-in" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`
+  if (used.length !== 1) return html`<span class="risk-clip risk-used-in" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`
+  const href = links.get(used[0])
+  return href ? html`<a class="risk-name risk-clip risk-used-in" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</a>`
+    : html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
 }
 
 // The lines of a scan of `params` (`team` or `repo`, or neither),
@@ -185,9 +209,11 @@ const streamRisk = (params, signal, onLine) => request(`/api/admin/repositories/
 const riskKey = ({ name, version, integrity }) => `${name}@${version}\0${integrity ?? ''}`
 const packageKey = pkg => assessable(pkg.source) ? riskKey(pkg) : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
-// A package row's rank: by its risk, the highest first, then those still to
-// be told, those that couldn't be, those of none, and those not assessed.
+// A package row's rank: by its risk, the highest first, a copy differing from
+// npm's as malware's, then those still to be told, those that couldn't be,
+// those of none, and those not assessed.
 function rank(row) {
+  if (differs(row)) return -100
   const score = scoreOf(row)
   if (score > 0) return -score
   if (!assessable(row.source)) return 4
@@ -196,7 +222,8 @@ function rank(row) {
 }
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
-  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _query: { state: true }, _tab: { state: true },
+  static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
+    _query: { state: true }, _tab: { state: true },
     _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
@@ -206,8 +233,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._state = 'idle'
     this._error = null
     this._filter = 'all'
-    // The advisories' KINDS shown.
+    // The advisories' KINDS shown, and the packages' PACKAGE_KINDS.
     this._kind = 'production'
+    this._packageKind = 'all'
     this._query = ''
     // packages or advisories.
     this._tab = 'packages'
@@ -462,10 +490,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
   }
 
+  // The package rows of the kind shown (`_packageKind`), filtered and
+  // searched for, the riskiest first, those only devDependencies need after
+  // the rest but malware (putOff), a copy differing from npm's after malware.
   _rows() {
     const query = this._query.trim().toLowerCase()
     const [, shown] = FILTERS[this._filter]
-    return [...this._packages.values()].filter(row => shown(row) && (!query || row.name.toLowerCase().includes(query)))
+    return [...this._packages.values()].filter(row => ofKind(row, this._packageKind) && shown(row) && (!query || row.name.toLowerCase().includes(query)))
       .toSorted((a, b) => Number(putOff(a)) - Number(putOff(b)) || rank(a) - rank(b) || findingsOf(b).length - findingsOf(a).length
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
@@ -510,10 +541,24 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
-  // Which of KINDS' advisories are shown, each with how many there are.
-  _kindToggle(kinds) {
-    return html`<div class="risk-scope" role="group" aria-label="Which advisories">${Object.entries(KINDS).map(([kind, [label, said]]) => html`<button type="button"
-      aria-pressed=${this._kind === kind} data-tooltip=${said} @click=${() => { this._kind = kind }}>${label} (${formatCount.format(kinds[kind].length)})</button>`)}</div>`
+  // Which of `kinds` ({ kind: [label, tooltip] }) of `what` are shown, the
+  // one `value` names pressed, each with how many there are (`counts`),
+  // another `choose`n.
+  _kindToggle(what, kinds, counts, value, choose) {
+    return html`<div class="risk-scope" role="group" aria-label=${`Which ${what}`}>${Object.entries(kinds).map(([kind, [label, said]]) => html`<button type="button"
+      aria-pressed=${value === kind} data-tooltip=${said} @click=${() => choose(kind)}>${label} (${formatCount.format(counts[kind])})</button>`)}</div>`
+  }
+
+  // Each listed lockfile's link on GitHub, at the commit it was read at, by
+  // where it is used (`${fullName}/${path}`, as `usedIn` names it).
+  _lockfileLinks() {
+    const links = new Map()
+    for (const repo of this._repos.values()) {
+      for (const path of repo.commit ? repo.lockfiles?.keys() ?? [] : []) {
+        links.set(`${repo.fullName}/${path}`, `https://github.com/${repo.fullName}/blob/${repo.commit}/${path.split('/').map(encodeURIComponent).join('/')}`)
+      }
+    }
+    return links
   }
 
   render() {
@@ -624,20 +669,24 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _packageTable() {
     const rows = this._rows()
+    const all = [...this._packages.values()]
+    const counts = Object.fromEntries(Object.keys(PACKAGE_KINDS).map(kind => [kind, all.filter(row => ofKind(row, kind)).length]))
+    const links = this._lockfileLinks()
     return html`<section class="risk-section" aria-label="Packages">
-      ${this._resultsHead(html`<select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
+      ${this._resultsHead(html`${this._kindToggle('packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
+        <select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
           ${Object.entries(FILTERS).map(([value, [label]]) => html`<option value=${value}>${label}</option>`)}
         </select>
-        ${this._search(rows.length, this._packages.size, 'packages')}`)}
+        ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
       <div class="link-table"><table>
         <thead><tr><th>Package</th><th>Version</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
-        <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row))}</tbody>
+        <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row, links))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
     </section>`
   }
 
-  _packageRow(row) {
+  _packageRow(row, links) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
       <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}${row.dev ? devTag(DEV_SAID) : nothing}</td>
@@ -645,7 +694,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
-      <td>${usedInCell(row.usedIn)}</td>
+      <td>${usedInCell(row.usedIn, links)}</td>
     </tr>`
   }
 
@@ -675,28 +724,30 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     }
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
     if (!row.risk) return this._pending('Waiting…', 'Not assessed')
+    if (differs(row)) return html`<ul class="risk-findings"><li class="risk-critical" data-tooltip=${DIFFERS_SAID}>${errorText(row.risk.error)}</li></ul>`
     if (row.risk.error) return html`<span class="risk-error" data-tooltip=${row.risk.detail ?? nothing}>${errorText(row.risk.error)}</span>`
     return html`<span class="risk-none">None found</span>`
   }
 
   _advisoryTable() {
     const kinds = this._advisoryKinds()
+    const links = this._lockfileLinks()
     const rows = this._advisoryRows(kinds)
     const failed = [...this._repos.values()].flatMap(repo => [...repo.lockfiles?.values() ?? []]
       .filter(lockfile => lockfile.advisoriesError).map(lockfile => `${repo.fullName}/${lockfile.path}`))
     const none = this._kind === 'production' ? 'npm has no advisories of the versions an install for production takes.' : 'npm has no advisories of the versions only devDependencies need.'
     return html`<section class="risk-section" aria-label="Advisories">
-      ${this._resultsHead(html`${this._kindToggle(kinds)}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
+      ${this._resultsHead(html`${this._kindToggle('advisories', KINDS, { production: kinds.production.length, development: kinds.development.length }, this._kind, kind => { this._kind = kind })}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
       ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : none}</p>` : html`<div class="link-table"><table>
         <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
-        <tbody>${rows.slice(0, MAX_ROWS).map(row => this._advisoryRow(row))}</tbody>
+        <tbody>${rows.slice(0, MAX_ROWS).map(row => this._advisoryRow(row, links))}</tbody>
       </table></div>`}
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}
     </section>`
   }
 
-  _advisoryRow(row) {
+  _advisoryRow(row, links) {
     const versions = [...row.versions]
     const severity = row.malware ? 'critical' : row.severity
     return html`<tr>
@@ -707,7 +758,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${isHttpUrl(row.url) ? html`<a href=${row.url} target="_blank" rel="noopener noreferrer">${row.id}</a>` : row.id}</td>
       <td><span class="risk-clip" data-tooltip-truncated data-tooltip=${row.title ?? nothing}>${row.title ?? ''}</span></td>
       <td class="mono">${[...row.ranges].join(' || ')}</td>
-      <td>${usedInCell(row.usedIn)}</td>
+      <td>${usedInCell(row.usedIn, links)}</td>
     </tr>`
   }
 }

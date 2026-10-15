@@ -967,7 +967,13 @@ lockfile's line; one every lockfile of the scan locks so is assessed only once
 all the rest are, the stale ones among them, as an install of no
 devDependencies leaves it out, and the page tags it `dev` and lists it after
 the rest, but for malware, which runs wherever it is installed, CI and a
-developer's machine among them. Its Advisories tab shows those of the
+developer's machine among them; toggled beside the filter, it shows all
+packages, or those an install for production takes, or those only
+devDependencies need, malware either way. A mirror's copy that risk finds
+differs from npm's (`integrity-mismatch`) is flagged critical and listed
+first but for malware, not among those that couldn't be assessed. Each
+lockfile a package or an advisory is used in links to it on GitHub, at the
+commit read. Its Advisories tab shows those of the
 versions an install for production takes (some lockfile needs them as more
 than devDependencies do, or doesn't say, as Yarn 1's doesn't), or, toggled
 beside the search, those of the versions only devDependencies need, each
