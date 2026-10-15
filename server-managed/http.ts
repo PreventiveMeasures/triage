@@ -113,7 +113,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyPageStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyPageStore, historySquashStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -182,7 +182,8 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
+  repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
@@ -1609,15 +1610,29 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       const [read, named] = await Promise.all([history, tips])
       body = { commit, path, page, ...read, ...named }
     }
+    // The pull requests squashed into a whole repository's commits, drawn as
+    // the merges they were, and on its first page the open ones' heads,
+    // naming commits: with a token, as far as GitHub answers them, the
+    // history sent all the same where it doesn't.
+    const listed = (body as { commits: HistoryCommit[] }).commits
+    const quiet = <T>(fallback: T) => (err: unknown) => {
+      if (deps.config.debug) console.warn('managed: history pull requests read failed:', err)
+      return fallback
+    }
+    const [pulls, openPulls] = token && path === '' ? await Promise.all([
+      squashedPulls(repo, token, listed, historySquashes(deps, repoId)).catch(quiet<SquashedPull[]>([])),
+      page === 1 ? keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token)).then(answer => answer.value.pulls, quiet(null)) : null,
+    ]) : [[], null]
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     // Each commit as the tab draws it: what Pulse counts of it (its lines, its
     // author's time) not sent.
-    const commits = (body as { commits: HistoryCommit[] }).commits.map(({ sha, parents, subject, authorName, authorLogin, authorId, committedAt }) =>
-      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, committedAt }))
-    sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits }))
+    const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, committedAt }: HistoryCommit) =>
+      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, committedAt })
+    sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits: listed.map(shown),
+      ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1693,6 +1708,23 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): His
       }))
     },
     write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
+  }
+}
+
+// The pull requests squashed into repository `repoId`'s commits, kept by
+// each commit, null for one none was (repository-history.ts squashedPulls).
+function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
+  const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
+  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  return {
+    async read(shas) {
+      const kept = await store.readMany(shas.map(keyOf))
+      return new Map(shas.flatMap(sha => {
+        const entry = kept.get(keyOf(sha))
+        return entry && (entry.value === null || Array.isArray(entry.value.commits)) ? [[sha, entry.value] as const] : []
+      }))
+    },
+    write: (sha, pull) => store.write(keyOf(sha), pull, Date.now()),
   }
 }
 

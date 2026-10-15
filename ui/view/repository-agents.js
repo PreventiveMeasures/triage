@@ -265,7 +265,7 @@ class RepositoryAgents extends LitElement {
       const stats = agentStats(entry.sessions, agent)
       return html`<span class="agent-stats" role="group" aria-label=${agentName(agent)}>
         <span class=${`agent-mark is-${agent}`}>${agentIcon(agent)}</span>
-        ${STATS.filter(([kind]) => kind !== 'commits' || stats.commits > 0).map(([kind, glyph, one, many]) => {
+        ${STATS.filter(([kind]) => stats[kind] > 0).map(([kind, glyph, one, many]) => {
           const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
           return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
@@ -305,7 +305,9 @@ class RepositoryAgents extends LitElement {
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
   // title, of two at most, opening its popup (where it ran, as a link); its
-  // author, age, how many tasks and lines; its pull requests, commits and
+  // author, age, how many tasks (where more than one, and not as many as its
+  // pull requests' or commits' alone, which their chips count) and lines;
+  // its pull requests, commits and
   // issues, those that fit, each with how many follow it, seen only past the
   // last of them shown (report.css); and its branch.
   renderSession(session) {
@@ -313,6 +315,9 @@ class RepositoryAgents extends LitElement {
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const tasks = session.pulls.length + session.commits.length
+    // How many tasks, said where its chips don't: more than one, and not as
+    // many as its pull requests' or its commits' alone.
+    const counted = tasks !== 1 && tasks !== session.pulls.length && tasks !== session.commits.length
     const chips = [
       ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`,
         { kind: 'pulls', ...pull }]),
@@ -329,7 +334,7 @@ class RepositoryAgents extends LitElement {
         <span class="issue-meta">
           ${session.authors[0] ? html`<span class="issue-author">${githubUser(session.authors[0])}</span>` : nothing}
           ${time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing}
-          <span>${tasks > 0 ? `${tasks} task${tasks === 1 ? '' : 's'}` : 'no pull request'}</span>
+          ${tasks === 0 ? html`<span>no pull request</span>` : counted ? html`<span>${tasks} tasks</span>` : nothing}
           ${session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
             <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing}
         </span>

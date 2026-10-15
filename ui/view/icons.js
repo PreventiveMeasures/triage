@@ -83,6 +83,7 @@ export const GITHUB_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" 
 export const DEPENDABOT_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v2"/><rect x="2" y="3.5" width="12" height="10" rx="2.5"/><path d="M6 7.5v2m4-2v2"/></svg>'
 
 export const COMMIT_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M1 8h3.5m7 0H15"/><circle cx="8" cy="8" r="3.5"/></svg>'
+export const PULL_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/></svg>'
 export const TAG_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>'
 
 export const EDIT_ICON_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 2 4 4-8 8H2v-4l8-8Zm-1 1 4 4"/></svg>'

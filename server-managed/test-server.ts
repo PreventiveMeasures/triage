@@ -370,7 +370,7 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
   ['cv3', 'Code viewer: a History tab with the graph of branches', ['cv2'], 3, 'Grace Hopper'],
   ['bp2', 'Bundle picker: remember the last repository picked', ['bp1'], 5, 'Linus Torvalds'],
   ['develop', 'Experimental: read trees lazily', ['d2'], 9, 'Margaret Hamilton'],
-  ['m9', 'Fix a flaky upload test', ['m8'], 20, 'Ada Lovelace'],
+  ['m9', 'Fix a flaky upload test (#43)', ['m8'], 20, 'Ada Lovelace'],
   ['cv2', 'Code viewer: the repository as a dropdown', ['cv1'], 26, 'Grace Hopper'],
   ['bp1', 'Bundle picker: list the repositories connected', ['m8'], 30, 'Linus Torvalds'],
   ['d2', 'Merge branch main into develop', ['d1', 'm8'], 34, 'Margaret Hamilton'],
@@ -382,7 +382,7 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
   ['m6', 'Bump dependencies', ['m5'], 160, 'Dependabot'],
   ['m5', 'Merge pull request #40 from org/feature/treemap', ['m4', 't2'], 200, 'Ada Lovelace'],
   ['t2', 'Treemap: label the largest files', ['t1'], 230, 'Barbara Liskov'],
-  ['m4', 'Docs: the managed mode', ['m3'], 260, 'Ada Lovelace'],
+  ['m4', 'Docs: the managed mode (#39)', ['m3'], 260, 'Ada Lovelace'],
   ['t1', 'Treemap: size files by their bytes', ['m3'], 300, 'Barbara Liskov'],
   ['m3', 'Search: match case and whole words', ['m2'], 400, 'Edsger Dijkstra'],
   ['m2', 'Release 0.19.0', ['m1'], 600, 'Ada Lovelace'],
@@ -391,7 +391,15 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
     [`o${index + 1}`, `Older work, part ${140 - index}`, index === 139 ? [] : [`o${index + 2}`], 1000 + index * 40, index % 3 === 0 ? 'Ada Lovelace' : 'Alan Turing']),
 ]
 const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
-const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3']]
+const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3'], ['fix/flaky-upload', 's43b']]
+// Pull requests squashed into main, each its own commits: #43's branch still
+// at its head, #39's deleted. And develop, an open pull request's head.
+const HISTORY_SQUASHES: [string, number, [string, string, string[], number, string][]][] = [
+  ['m9', 43, [['s43a', 'Upload test: wait for the server', ['m8'], 40, 'Ken Thompson'], ['s43b', 'Upload test: retry once', ['s43a'], 24, 'Ken Thompson']]],
+  ['m4', 39, [['s39a', 'Docs: managed mode, a first draft', ['m3'], 330, 'Ada Lovelace'], ['s39b', 'Docs: managed mode, reviewed', ['s39a'], 290, 'Ada Lovelace'],
+    ['s39c', 'Docs: managed mode, links', ['s39b'], 270, 'Grace Hopper']]],
+]
+const HISTORY_OPEN_PULLS = [[44, 'develop']] as const
 // Read on from, by All branches' Older commits: as if past the most recently
 // committed to.
 const HISTORY_STALE_BRANCHES = [['release/0.x', 'o90']]
@@ -639,9 +647,20 @@ function agentsData(now: number) {
 
 function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
-  const commits = HISTORY_FIXTURE.map(([label, subject, parents, hours, author]) => ({
+  const commitOf = ([label, subject, parents, hours, author]: [string, string, string[], number, string]) => ({
     sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
-  }))
+  })
+  const commits = HISTORY_FIXTURE.map(commitOf)
+  // A pull request's branch still at its head is read as any branch is.
+  const branchTips = new Map(HISTORY_SQUASHES.flatMap(([, , own]) => own.map(commitOf)).map(item => [item.sha, item]))
+  // The pull requests squashed into those answered, and on a first page the open ones' heads.
+  const squashedInto = (answered: { sha: string }[]) => {
+    const shas = new Set(answered.map(item => item.sha))
+    const pulls = HISTORY_SQUASHES.filter(([merge]) => shas.has(historySha(merge))).map(([merge, number, own]) => ({ merge: historySha(merge), number,
+      head: historySha(own.at(-1)![0]), commits: own.map(commitOf), more: false }))
+    return pulls.length > 0 ? { pulls } : {}
+  }
+  const openPulls = HISTORY_OPEN_PULLS.map(([number, label]) => ({ number, sha: historySha(label) }))
   const branches = HISTORY_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!) }))
   const tags = HISTORY_TAGS.map(([name, label]) => ({ name, sha: historySha(label!) }))
   const bySha = new Map(commits.map(item => [item.sha, item]))
@@ -659,11 +678,12 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const page = Number(url.searchParams.get('page') ?? '1')
   if (url.searchParams.get('all') === 'true') {
     const from = url.searchParams.get('from')?.split(',') ?? null
-    const read = new Map((from ?? branches.map(branch => branch.sha)).flatMap(sha => reaching(sha).slice(0, HISTORY_ALL_DEPTH)).map(item => [item.sha, item]))
-    if (from) { sendJson(res, 200, { all: true, page, commits: [...read.values()], more: page < 100 }); return }
+    const read = new Map((from ?? branches.map(branch => branch.sha)).flatMap(sha => branchTips.has(sha) ? [branchTips.get(sha)!, ...[...branchTips.values()]
+      .filter(item => item.sha !== sha && branchTips.get(sha)!.parents.includes(item.sha))] : reaching(sha).slice(0, HISTORY_ALL_DEPTH)).map(item => [item.sha, item]))
+    if (from) { sendJson(res, 200, { all: true, page, commits: [...read.values()], more: page < 100, ...squashedInto([...read.values()]) }); return }
     const stale = HISTORY_STALE_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!), at: bySha.get(historySha(label!))!.committedAt }))
     sendJson(res, 200, { all: true, commits: [...read.values()], branches: [...branches, ...stale.filter(head => read.has(head.sha)).map(({ name, sha }) => ({ name, sha }))],
-      tags, defaultBranch: 'main', unread: stale.filter(head => !read.has(head.sha)), more: true })
+      tags, defaultBranch: 'main', unread: stale.filter(head => !read.has(head.sha)), more: true, ...squashedInto([...read.values()]), openPulls })
     return
   }
   const ref = url.searchParams.get('ref') ?? ''
@@ -672,11 +692,14 @@ function historyFixture(url: URL, res: ServerResponse): void {
   // A whole repository's later pages on from the commits the client names.
   const from = path ? null : url.searchParams.get('from')?.split(',') ?? null
   if (from) {
-    sendJson(res, 200, { commit, path, page, commits: [...new Map(from.flatMap(sha => reaching(sha).slice(0, 100)).map(item => [item.sha, item])).values()], more: page < 100 })
+    const later = [...new Map(from.flatMap(sha => reaching(sha).slice(0, 100)).map(item => [item.sha, item])).values()]
+    sendJson(res, 200, { commit, path, page, commits: later, more: page < 100, ...squashedInto(later) })
     return
   }
   const listed = reaching(commit).filter(item => !path || commits.indexOf(item) % 3 === 0)
-  sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
+  const answered = listed.slice((page - 1) * 100, page * 100)
+  sendJson(res, 200, { commit, path, page, commits: answered, more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {},
+    ...path ? {} : { ...squashedInto(answered), ...page === 1 ? { openPulls } : {} } })
 }
 
 // The fixture repository's package-lock.json, as npm 11 writes one, for the

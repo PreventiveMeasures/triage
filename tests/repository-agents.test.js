@@ -71,10 +71,31 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^]*?data-rest=>/u)
   // A Codex branch's pull request, one left without any; work no agent did is none.
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
+  // A tile's tasks counted only where its chips don't: one, or as many as its pull requests' or its commits' alone, not.
+  assert.doesNotMatch(text, /\b1 task\b/u)
+  assert.equal(text.match(/\d+ tasks?\b/gu)?.length, 1, 'the session of pull requests and a commit alone')
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
   assert.doesNotMatch(text, /Pull 4/u)
   assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
+})
+
+test('a tile says how many tasks only where its chips don\'t: not as many as its pull requests\' or its commits\' alone', async () => {
+  const pushed = (char, id) => ({ oid: char.repeat(40), title: `Pushed ${char}`, at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude(id) })
+  // And a Codex task's commit, more pull requests to read.
+  answer = () => Promise.resolve({ pulls: [pull(9, 'claude/one', claude('session_P')), pull(8, 'claude/one', claude('session_P'))],
+    commits: [pushed('d', 'session_C'), pushed('e', 'session_C'), { ...pushed('f', null), signals: { sessions: [], tasks: ['task_e_123456'], claude: false, agents: [] } }],
+    issues: [], branches: [], more: true, after: { pulls: 'p_1', commits: null } })
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  const text = templateText(view.render())
+  assert.match(text, />Pull 8</u)
+  assert.match(text, />Pushed [de]</u)
+  assert.doesNotMatch(text, /\d+ tasks?\b/u)
+  // The bar's counts none of none, more to read or not: Codex's commit alone.
+  assert.match(text, /role="group" aria-label=Codex>[^]*?aria-label=1 commit to the default branch without a pull request[^]*?<\/span>\s*<\/span>/u)
+  assert.doesNotMatch(text, /aria-label=0\+? /u)
 })
 
 test('more read on from the cursors a page ended at, each pull request and commit once, the sessions made again of all read', async () => {

@@ -1649,8 +1649,15 @@ commit shown first. Either's **Older commits** reads on from where those
 listed stop, their parents not listed (and, for All branches, the branches
 not read yet), the newest 25 first (a parent by its child's time), a hundred
 commits from each, each commit once; a branch not read joins those named
-once a commit listed is its tip. A directory's reads a hundred at a time,
-**Older commits** reading the next hundred. Older
+once a commit listed is its tip. A pull request squashed into a commit
+listed is drawn as the merge it was: the squash commit's other parent its
+head as merged, and its own commits on a lane of their own from where it
+began, as GitHub keeps them (`refs/pull/<n>/head`), however its branch was
+reused or pushed over since; a branch reused for another pull request shares
+the commits both had, drawn once. A pull request's head is named by its
+number, `#123`, beside the branch still at it, an open one's too. A
+directory's reads a hundred at a time, **Older commits** reading the next
+hundred. Older
 commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
@@ -1682,6 +1689,11 @@ the page for the session five minutes, and on the server for every reader:
   pages are: two minutes as read, then answered while they are read again.
 - A directory's history, whose commits a page from a commit doesn't list
   alone, is read from GitHub each time.
+- The pull requests squashed into a whole repository's commits are kept by
+  each commit (`repository/squashes`, a month, as its pages are): a merged
+  pull request's commits never change, and a commit no pull request merged,
+  or one merged by a rebase, is kept as none. The open pull requests' heads
+  move, and are kept as the branches are.
 
 `GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
 page of a revision's history, `{ commit, path, page, commits, more }`, each
@@ -1706,7 +1718,17 @@ never to be read, the tab then saying so; and the latest hundred tags, an
 annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
 names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
 `{ all, page, commits, more }`, the latest hundred commits of each, each
-once, `more` but for the deepest page. GraphQL needs a token: a public repository read without one is `403
+once, `more` but for the deepest page. With a token, a whole repository's
+answers, with `commits`, the pull requests squashed into them, `pulls`, each
+`{ merge, number, head, commits, more }`: a merged pull request whose merge
+commit, of one parent, a commit listed is, unless its own last commit's
+subject is the merge's (a rebase), its head when merged and its latest
+hundred commits, `more` where it had more; and, on a first page, the open
+ones' heads, `openPulls`, `{ number, sha }` each, the latest hundred updated.
+GraphQL looks up, of each answer's commits of one parent not yet kept, five
+hundred at most, a hundred commits or twenty pull requests a query, four at
+once; where GitHub refuses them (an App without Pull requests: read), the
+history is sent without them. GraphQL needs a token: a public repository read without one is `403
 github-token-required`, and the tab then shows the revision's history. It is
 read as the code is, with the reader's own GitHub access, only where the
 reader's grants reach the whole directory, and access is checked again before
@@ -1829,7 +1851,9 @@ session whose pull request closes it, or whose branch the Claude GitHub App
 named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
 mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
 wrapping: its title (its first task's, of two lines at most); its author,
-age, how many tasks and lines it holds; its pull requests, commits and
+age, how many tasks it holds (only where more than one, and not as many as
+its pull requests' or its commits' alone, which their chips count; its popup
+always says) and its lines; its pull requests, commits and
 issues in their states' colors, as many as fit and how many more; and its
 branch. An app agent's mark is its GitHub App's or account's avatar, which the
 server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
@@ -1847,7 +1871,8 @@ picks by any word of a title, author, branch, number or session. The bar's
 end shows, beside the mark of each agent with sessions among those read
 (app agents first, Claude's and Codex's last, so theirs keep their places),
 by icon and count, the pull requests, branches and commits to the default
-branch without a pull request (where there are any) among its sessions. Pages read on as the end of the scroll nears, as Commits'
+branch without a pull request among its sessions, each only where there are
+any, more to read or not. Pages read on as the end of the scroll nears, as Commits'
 do, the sessions made again of all read, but only while each adds a session:
 most pull requests and commits may be no agent's, so after a page adding
 none, the next waits for **More** to be clicked rather than read the whole

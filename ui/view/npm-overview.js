@@ -11,6 +11,8 @@ import { compareSemver } from '../../common/bundle-compare-versions.js'
 import { fetchNpmAdvisories, fetchNpmProvenance, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
 import { factFile, npmAge, npmDeprecation, npmPackageData, npmPublishedDay, npmPublishedOn } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
+import { PULL_ICON_SVG } from './icons.js'
+import { appMarkup } from './markup.js'
 import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import { render } from './render.js'
 import { state } from '#client/index.js'
@@ -192,7 +194,7 @@ export function npmStatsRow(entry, actions, badges = nothing) {
 
 const STAR_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.75 1.9 3.9 4.3.6-3.1 3 .75 4.25L8 11.5l-3.85 2 .75-4.25-3.1-3 4.3-.6Z"/></svg>`
 const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/></svg>`
-const PULL_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/></svg>`
+const PULL_ICON = appMarkup(PULL_ICON_SVG)
 const FORK_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><circle cx="4.5" cy="3.25" r="1.5"/><circle cx="11.5" cy="3.25" r="1.5"/><circle cx="8" cy="12.75" r="1.5"/><path d="M4.5 4.75v.75a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-.75M8 7.5v3.75"/></svg>`
 
 // Its repository's stars, forks, open issues and pull requests, beside the
