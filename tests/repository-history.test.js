@@ -13,6 +13,11 @@ mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryHistory(repoId, ref, path, options) { requests.push([repoId, ref, path, options]); return answer(repoId, ref, path, options) },
 } })
+const watching = new Map()
+mock.module('../ui/view/lazy-render.js', { exports: {
+  watchNearViewport(target, cb) { watching.set(target, cb) },
+  unwatchNearViewport(target) { watching.delete(target) },
+} })
 mock.module('../ui/view/repository-code.js', { exports: {
   navigateToRepositoryCode(route) { navigations.push(route) },
   shownRevision: ({ revision, commit }) => revision?.name ? revision : { kind: 'commit', name: commit },
@@ -187,6 +192,78 @@ test('switching from every branch to this revision reads nothing again where eve
   fromRevision.pick('all')
   fromRevision.render()
   assert.deepEqual(requests.at(-1), [7, '', '', { page: 1, all: true }])
+})
+
+test('every branch\'s older commits read on from where those listed stop and from the branches not read, the newest first, naming those reached', async () => {
+  // b's parent c isn't listed; old, a branch not read, is older than b.
+  answer = (repoId, ref, path, { page, from }) => Promise.resolve(page === 1
+    ? { all: true, commits: [commit(a, [b], 50), commit(b, [c], 40)], branches: [{ name: 'main', sha: a }], tags: [], defaultBranch: 'main',
+      unread: [{ name: 'old', sha: e, at: 10 }, { name: 'bad', sha: 'e', at: 60 }], more: true }
+    : { all: true, page, commits: from.includes(c) ? [commit(c, [d], 30), commit(d, [x], 20), commit(e, [d], 10)] : [], more: true })
+  const view = shownAt(a)
+  view.pick('all')
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /2\+ commits on 1 branch</u)
+  view.history('all').more()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.deepEqual(requests.slice(1), [[7, '', '', { page: 2, all: true, from: [c, e] }]])
+  assert.match(text, /5\+ commits on 2 branches</u, 'old, its tip read, among them')
+  assert.match(text, /<span>old<\/span>/u)
+  // On from d's parent, x, which reads nothing: nothing is left to read.
+  view.history('all').more()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.deepEqual(requests.at(-1), [7, '', '', { page: 3, all: true, from: [x] }])
+  assert.match(text, /5 commits on 2 branches</u)
+  assert.doesNotMatch(text, /Older commits/u)
+  assert.doesNotMatch(text, /first 1,000 branches/u)
+})
+
+test('every branch\'s history, where branches past those GitHub listed are left out, says so, however far it reads', async () => {
+  answer = () => Promise.resolve({ ...allAnswer, cut: true, more: true })
+  const view = shownAt(a)
+  view.pick('all')
+  view.render()
+  await setImmediate()
+  const text = templateText(view.render())
+  assert.match(text, /2\+ commits on 1 branch</u, 'nothing left to read, but some never read')
+  assert.match(text, /Only the first 1,000 branches by name are read\./u)
+  assert.doesNotMatch(text, /Older commits/u)
+})
+
+test('older commits read as their button nears the end of the scroll, again after each page while it stays near, but not after one failed', () => {
+  const view = new History()
+  let alert = null, clicks = 0
+  const button = { isConnected: true, disabled: false, parentElement: { querySelector: () => alert }, click() { clicks++ } }
+  let shown = button
+  view.querySelector = () => shown
+  // Each update watches it again, and reads where it is then.
+  const updated = near => { watching.delete(button); view.updated(); watching.get(button)(near) }
+  updated(false)
+  assert.equal(clicks, 0, 'not near yet')
+  updated(true)
+  assert.equal(clicks, 1)
+  // Reading, it waits; read, and still near, it reads the next; moved
+  // away by the lines read, it doesn't.
+  button.disabled = true
+  updated(true)
+  assert.equal(clicks, 1)
+  button.disabled = false
+  updated(true)
+  assert.equal(clicks, 2)
+  updated(false)
+  assert.equal(clicks, 2)
+  // A page that failed waits for a click.
+  alert = {}
+  updated(true)
+  assert.equal(clicks, 2)
+  // Nothing left to read, its button gone, it watches nothing.
+  shown = null
+  view.updated()
+  assert.equal(watching.has(button), false)
 })
 
 test('a directory\'s history lists the commits touching it, in a line, and says why where it can\'t', async () => {

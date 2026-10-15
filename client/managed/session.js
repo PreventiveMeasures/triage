@@ -65,11 +65,13 @@ function sessionFrom(body) {
 }
 
 // The server's App classification of a team's published workspace: App teams
-// open collapsed to their findings. An unknown one is left out (expanded).
+// open collapsed to their findings. A team none of whose reports open in App
+// mode alone (`appReports: 0`) collapses too, to its `findings`; a mixed one
+// stays expanded. An unknown one is left out (expanded); a malformed count too.
 function teamApp(app) {
-  if (app?.appMode === false) return { appMode: false }
-  return app?.appMode === true && Number.isSafeInteger(app.appFindings) && app.appFindings >= 0
-    ? { appMode: true, appFindings: app.appFindings } : null
+  const count = key => Number.isSafeInteger(app?.[key]) && app[key] >= 0
+  if (app?.appMode === false) return { appMode: false, ...count('appReports') && { appReports: app.appReports }, ...count('findings') && { findings: app.findings } }
+  return app?.appMode === true && count('appFindings') ? { appMode: true, appFindings: app.appFindings } : null
 }
 
 // The cached details and tags of the commit a bundle records, in the repository

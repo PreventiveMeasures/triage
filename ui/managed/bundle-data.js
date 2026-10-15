@@ -157,10 +157,27 @@ const REPOSITORY_HISTORY_ERRORS = {
 }
 
 // The History tab's commits: from a revision, a page at a time (`page`), or
-// across the repository's most recently updated branches (`all`).
-export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, signal } = {}) {
-  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {} })}`,
+// across the repository's most recently updated branches (`all`), a later
+// page on from the commits `from` names.
+export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, from = null, signal } = {}) {
+  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...from ? { from: from.join(',') } : {} })}`,
     REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
+}
+
+const REPOSITORY_ISSUES_ERRORS = {
+  ...REPOSITORY_CODE_ERRORS,
+  'no-directory': 'Issues and pull requests show only with access to the whole repository.',
+  'github-malformed': 'GitHub answered with a list that couldn’t be read.',
+  'github-token-required': 'Reading issues and pull requests needs your GitHub sign-in.',
+  'github-status-403': 'GitHub refused to list these. The GitHub App reading this repository needs Issues: read and Pull requests: read, which an owner of its installation approves.',
+  400: 'Not a repository’s issues or pull requests.',
+}
+
+// The Issues and Pull requests tabs' tiles (`kind` 'issues' or 'pulls'): those
+// open or closed (`state`), a page at a time, on from the cursor `after`.
+export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = null, signal } = {}) {
+  return request(`/api/admin/repositories/issues?${new URLSearchParams({ repoId, kind, state, ...after ? { after } : {} })}`,
+    REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
 }
 
 export function fetchNpmPackage(name, version, { signal } = {}) {

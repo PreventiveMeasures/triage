@@ -1,8 +1,9 @@
-// A package's files from its tarball, as npm installs them: gunzipped, read as
-// a tar archive (ustar, pax and GNU long names), each file by the path npm
-// installs it at, its first component dropped, none escaping the package; a
-// text where it is UTF-8 with no NUL, else null. Held to the npm viewer's
-// bounds (server-managed/npm-packages.ts readNpmTar).
+// A package's files from its tarball, as it holds them, whatever installs it
+// (npm renames a .gitignore .npmignore, pnpm and yarn keep it): gunzipped,
+// read as a tar archive (ustar, pax and GNU long names), each file by its path
+// there, its first component dropped, none escaping the package; a text where
+// it is UTF-8 with no NUL, else null. Held to the npm viewer's bounds
+// (server-managed/npm-packages.ts readNpmTar).
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
 
 const MAX_PACKAGE_FILES = 20_000

@@ -73,7 +73,8 @@ test('a team whose security restriction leaves only other analyzers\' findings s
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000, allowShare: true }
 
 // Teams in one repository: `app` holds an App report, `mixed` adds a source
-// report the App does not cover, `empty` publishes nothing.
+// report the App does not cover, `code` holds only a source report, `empty`
+// publishes nothing.
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -94,7 +95,7 @@ async function fixture(t) {
     await db.insertReport({ id, filename: `${id}.json`, analyzer: null, contentType: 'application/json', repoId: 1, repoDirectory: directory, visible,
       byteSize: bytes.length, sha256: bytes.toString('base64'), uploadedBy: sessions.admin.userId, bundleId: null, bundleIntegrity: null }, Date.now())
   }
-  for (const team of ['app', 'mixed', 'empty']) {
+  for (const team of ['app', 'mixed', 'code', 'empty']) {
     await db.createTeam(team, team, Date.now())
     await db.setTeamRepo(team, 1, team)
     for (const login of ['reader', 'peer']) await db.setTeamMember(team, sessions[login].userId, { dependencies: true, security: true })
@@ -102,6 +103,7 @@ async function fixture(t) {
   await seed('app-report', 'app', { findings: [app('A'), app('B')] })
   await seed('mixed-app', 'mixed', { findings: [app('C')] })
   await seed('mixed-source', 'mixed', { findings: [source('S')] })
+  await seed('code-source', 'code', { findings: [source('T')] })
   const handler = createManagedRequestHandler({ config, db, reportStore: store, originGate: { isOriginAllowed: () => true },
     isShuttingDown: () => false, track() {} })
   async function request(path, { login = 'reader', headers = {} } = {}) {
@@ -124,8 +126,9 @@ async function fixture(t) {
 test('the team catalog says which teams open as App teams before any team is opened', async t => {
   const h = await fixture(t)
   const { apps } = await h.catalog('reader')
-  assert.deepEqual(apps, { app: { appMode: true, appFindings: 2 }, mixed: { appMode: false }, empty: { appMode: false } })
-  assert.deepEqual(h.reads.toSorted(), ['app-report', 'mixed-app', 'mixed-source'], 'only published team reports are read')
+  assert.deepEqual(apps, { app: { appMode: true, appFindings: 2 }, mixed: { appMode: false, appReports: 1, findings: 2 },
+    code: { appMode: false, appReports: 0, findings: 1 }, empty: { appMode: false } }, 'a non-App team counts its findings and its reports open as App alone')
+  assert.deepEqual(h.reads.toSorted(), ['app-report', 'code-source', 'mixed-app', 'mixed-source'], 'only published team reports are read')
   h.reads.length = 0
   assert.deepEqual((await h.catalog('reader')).apps, apps)
   assert.deepEqual((await h.catalog('peer')).apps, apps, 'the same access shares one classification')
@@ -142,7 +145,7 @@ test('catalog changes reclassify teams under a new revision', async t => {
   await h.db.setReportVisible('draft', true)
   const published = await h.catalog('reader')
   assert.notEqual(published.revision, first.revision)
-  assert.deepEqual(published.apps.app, { appMode: false }, 'an uncovered source report takes the team out of App mode')
+  assert.deepEqual(published.apps.app, { appMode: false, appReports: 1, findings: 3 }, 'an uncovered source report takes the team out of App mode')
   await h.db.setReportVisible('draft', false)
   assert.deepEqual((await h.catalog('reader')).apps.app, { appMode: true, appFindings: 2 })
   await h.seed('links', 'app', { source: 'links', findings: [], links: [['A', 'B']] })
@@ -178,7 +181,7 @@ test('unavailable reports leave a team unclassified until a later catalog read s
   const h = await fixture(t)
   t.mock.method(console, 'warn', () => {})
   h.store.failing = true
-  assert.deepEqual((await h.catalog('reader')).apps, { app: null, mixed: null, empty: { appMode: false } })
+  assert.deepEqual((await h.catalog('reader')).apps, { app: null, mixed: null, code: null, empty: { appMode: false } })
   h.store.failing = false
   assert.deepEqual((await h.catalog('reader')).apps.app, { appMode: true, appFindings: 2 })
 })
@@ -194,12 +197,14 @@ test('public links carry their workspace classification', async t => {
 
 test('the client keeps only well-formed App classifications from the catalog', async t => {
   const { probeTeams } = await import('../client/managed/session.js')
-  const sent = [{ appMode: true, appFindings: 3 }, { appMode: false, appFindings: 9 }, { appMode: true }, { appMode: true, appFindings: -1 },
-    { appMode: true, appFindings: 1.5 }, { appMode: 'true', appFindings: 1 }, null, undefined]
+  const sent = [{ appMode: true, appFindings: 3 }, { appMode: false, appFindings: 9 }, { appMode: false, appReports: 0, findings: 4 }, { appMode: false, appReports: 2 },
+    { appMode: false, appReports: -1, findings: -4 }, { appMode: false, appReports: 0.5, findings: '4' },
+    { appMode: true }, { appMode: true, appFindings: -1 }, { appMode: true, appFindings: 1.5 }, { appMode: 'true', appFindings: 1 }, null, undefined]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
     teams: sent.map((value, i) => ({ id: `team-${i}`, name: `Team ${i}`, reports: [], bundles: [], app: value })),
   })))
   const kept = (await probeTeams()).map(team => team.app)
-  assert.deepEqual(kept.slice(0, 2), [{ appMode: true, appFindings: 3 }, { appMode: false }])
-  assert.ok(kept.slice(2).every(value => value === undefined), 'malformed or missing classifications leave the team expanded')
+  assert.deepEqual(kept.slice(0, 6), [{ appMode: true, appFindings: 3 }, { appMode: false }, { appMode: false, appReports: 0, findings: 4 }, { appMode: false, appReports: 2 },
+    { appMode: false }, { appMode: false }], 'malformed counts are dropped, leaving the team expanded')
+  assert.ok(kept.slice(6).every(value => value === undefined), 'malformed or missing classifications leave the team expanded')
 })

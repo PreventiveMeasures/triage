@@ -350,7 +350,50 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
 ]
 const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
 const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3']]
+// Read on from, by All branches' Older commits: as if past the most recently
+// committed to.
+const HISTORY_STALE_BRANCHES = [['release/0.x', 'o90']]
 const HISTORY_TAGS = [['v1.0.0', 'm7'], ['v0.19.0', 'm2']]
+// All branches' commits from each tip, fewer than GitHub's, so that it reads
+// on.
+const HISTORY_ALL_DEPTH = 40
+
+// A repository's issues and pull requests for its Issues and Pull requests
+// tabs: a few of each kind of state, review and checks, then a long tail of
+// older ones, read twenty at a time.
+const ISSUE_LABELS: [string, string][] = [['bug', 'd73a4a'], ['enhancement', 'a2eeef'], ['ui', '7057ff'], ['performance', 'fbca04'], ['docs', '0075ca'],
+  ['good first issue', '7057ff'], ['security', 'b60205'], ['dependencies', '0366d6']]
+const ISSUE_AUTHORS = ['ada', 'grace-hopper', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]']
+const ISSUE_TITLES = ['Treemap labels overlap on narrow screens', 'History graph: merge lanes cross when a branch is reverted',
+  'Search: match case is lost when switching files', 'Support .tgz bundles in the uploader', 'Code viewer opens the wrong line after a rename',
+  'Slow first paint for reports with 2,000 findings', 'Document the managed mode\'s team grants', 'Bump lit from 3.2.1 to 3.3.0',
+  'Advisories: show the fixed version beside the affected range', 'Keyboard: Escape should close the revision picker',
+  'The bundle picker forgets the last repository', 'Dark mode: tag chips are hard to read']
+const ISSUES_FIXTURE_PAGE = 20
+
+function issuesFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const kind = url.searchParams.get('kind') === 'pulls' ? 'pulls' : 'issues'
+  const all = Array.from({ length: kind === 'pulls' ? 46 : 63 }, (_, index) => {
+    const hours = index < 6 ? [1, 3, 9, 20, 30, 50][index]! : 60 + index * index * 2
+    const labels = ISSUE_LABELS.flatMap(([name, color], at) => (index * 7 + at * 3) % 11 < (index % 4 === 0 ? 3 : 1) ? [{ name, color }] : [])
+    const common = { number: (kind === 'pulls' ? 900 : 880) - index * 3, title: `${ISSUE_TITLES[index % ISSUE_TITLES.length]}${index >= ISSUE_TITLES.length ? ` (${Math.floor(index / ISSUE_TITLES.length) + 1})` : ''}`,
+      author: ISSUE_AUTHORS[index % ISSUE_AUTHORS.length]!, createdAt: now - (hours + 40) * 3_600_000, updatedAt: now - hours * 3_600_000, comments: (index * 5) % 13,
+      labels: labels.slice(0, 3), moreLabels: Math.max(0, labels.length - 3) }
+    const closed = index % 3 === 2
+    if (kind === 'issues') return { ...common, state: closed ? 'closed' : 'open', closedAt: closed ? common.updatedAt : null, reason: closed ? index % 2 ? 'not-planned' : 'completed' : null }
+    const state = closed ? index % 2 ? 'closed' : 'merged' : 'open'
+    return { ...common, state, closedAt: closed ? common.updatedAt : null, mergedAt: state === 'merged' ? common.updatedAt : null, draft: state === 'open' && index % 5 === 3,
+      review: state === 'open' ? (['approved', 'changes', 'required', null] as const)[index % 4]! : null, checks: (['success', 'failure', 'pending', null] as const)[(index * 3) % 4]!,
+      additions: (index * 37) % 400 + 2, deletions: (index * 19) % 150, head: `feature/${common.title.toLowerCase().replaceAll(/[^a-z\d]+/gu, '-').slice(0, 24).replace(/-$/u, '')}`, base: 'main' }
+  })
+  const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open'
+  const listed = all.filter(item => (item.state === 'open') === (state === 'open'))
+  const from = Number(url.searchParams.get('after') ?? '0')
+  const end = from + ISSUES_FIXTURE_PAGE
+  sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
+    more: end < listed.length, after: end < listed.length ? String(end) : null })
+}
 
 function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
@@ -359,20 +402,32 @@ function historyFixture(url: URL, res: ServerResponse): void {
   }))
   const branches = HISTORY_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!) }))
   const tags = HISTORY_TAGS.map(([name, label]) => ({ name, sha: historySha(label!) }))
-  if (url.searchParams.get('all') === 'true') { sendJson(res, 200, { all: true, commits, branches, tags, defaultBranch: 'main', more: false }); return }
+  const bySha = new Map(commits.map(item => [item.sha, item]))
+  // The commits `commit` reaches, newest first.
+  const reaching = (commit: string) => {
+    const reached = new Set<string>()
+    for (const queue = [commit]; queue.length > 0;) {
+      const sha = queue.pop()!
+      if (reached.has(sha) || !bySha.has(sha)) continue
+      reached.add(sha)
+      queue.push(...bySha.get(sha)!.parents)
+    }
+    return commits.filter(item => reached.has(item.sha))
+  }
+  const page = Number(url.searchParams.get('page') ?? '1')
+  if (url.searchParams.get('all') === 'true') {
+    const from = url.searchParams.get('from')?.split(',') ?? null
+    const read = new Map((from ?? branches.map(branch => branch.sha)).flatMap(sha => reaching(sha).slice(0, HISTORY_ALL_DEPTH)).map(item => [item.sha, item]))
+    if (from) { sendJson(res, 200, { all: true, page, commits: [...read.values()], more: page < 100 }); return }
+    const stale = HISTORY_STALE_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!), at: bySha.get(historySha(label!))!.committedAt }))
+    sendJson(res, 200, { all: true, commits: [...read.values()], branches: [...branches, ...stale.filter(head => read.has(head.sha)).map(({ name, sha }) => ({ name, sha }))],
+      tags, defaultBranch: 'main', unread: stale.filter(head => !read.has(head.sha)), more: true })
+    return
+  }
   const ref = url.searchParams.get('ref') ?? ''
   const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
-  const bySha = new Map(commits.map(item => [item.sha, item]))
-  const reached = new Set<string>()
-  for (const queue = [commit]; queue.length > 0;) {
-    const sha = queue.pop()!
-    if (reached.has(sha) || !bySha.has(sha)) continue
-    reached.add(sha)
-    queue.push(...bySha.get(sha)!.parents)
-  }
   const path = url.searchParams.get('path') ?? ''
-  const listed = commits.filter((item, index) => reached.has(item.sha) && (!path || index % 3 === 0))
-  const page = Number(url.searchParams.get('page') ?? '1')
+  const listed = reaching(commit).filter(item => !path || commits.indexOf(item) % 3 === 0)
   sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
 }
 
@@ -400,6 +455,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
+  if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
@@ -616,7 +672,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return
