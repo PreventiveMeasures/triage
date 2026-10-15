@@ -153,7 +153,7 @@ export const commentCount = count => count < 1000 ? String(count) : compactThous
 // more.
 function labelChips(item) {
   const more = item.labels.length - MAX_LABELS + (item.moreLabels ?? 0)
-  return html`${item.labels.slice(0, MAX_LABELS).map(label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})} title=${label.name}>${label.name}</span>`)}${more > 0
+  return html`${item.labels.slice(0, MAX_LABELS).map(label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})} data-tooltip-truncated data-tooltip=${label.name}>${label.name}</span>`)}${more > 0
     ? html`<span class="issue-label is-more">+${more}</span>` : nothing}`
 }
 
@@ -269,12 +269,12 @@ class RepositoryIssues extends LitElement {
     const checks = pulls && item.checks ? CHECKS[item.checks] : null
     const review = pulls && item.state === 'open' && item.review ? REVIEWS[item.review] : null
     const comments = item.comments > 0 ? `${item.comments.toLocaleString('en-US')} comment${item.comments === 1 ? '' : 's'}` : null
-    const marked = (kind, [name, glyph]) => html`<span class=${`issue-${kind} is-${item[kind]}`} role="img" aria-label=${name} title=${name}>${glyph}</span>`
+    const marked = (kind, [name, glyph]) => html`<span class=${`issue-${kind} is-${item[kind]}`} role="img" aria-label=${name} data-tooltip=${name}>${glyph}</span>`
     return html`<span class="issue-rail">
         <span class="issue-state" role="img" aria-label=${stateName}>${STATE_ICONS[this.kind][stateClass]}</span>
         ${review ? marked('review', review) : nothing}
         ${checks ? marked('checks', checks) : nothing}
-        ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} title=${comments}>${COMMENT_ICON}<span>${commentCount(item.comments)}</span></span>` : nothing}
+        ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} data-tooltip=${comments}>${COMMENT_ICON}<span>${commentCount(item.comments)}</span></span>` : nothing}
       </span>
       <span class="issue-lines">
         <span class="issue-name">${item.title || '(no title)'}</span>
