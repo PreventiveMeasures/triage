@@ -3,7 +3,7 @@
 // dialog opens, so neither view.js nor client-managed.js carries them. Built
 // with them, it takes lit and the client state from the same chunks, and so
 // the same instances. Its exports are lazy-dialogs.js's stand-ins, name for
-// name, but for the proxy-auth dialog, which sidebar.js holds up front.
+// name, but for the two dialogs view.js holds up front (lazy-dialogs.js).
 export { openAdvisoryDetailsDialog } from './view/dialogs/advisory-details-dialog.js'
 export { openCommentDialog } from './view/dialogs/comment-dialog.js'
 export { openDeleteBundleDialog } from './view/dialogs/delete-bundle-dialog.js'
@@ -38,7 +38,6 @@ export { openSyncDownloadDialog } from './view/dialogs/sync-download-dialog.js'
 export { openSyncSuggestDialog } from './view/dialogs/sync-suggest-dialog.js'
 export { openSyncUploadDialog } from './view/dialogs/sync-upload-dialog.js'
 export { openTriageComparisonDialog } from './view/dialogs/triage-comparison-dialog.js'
-export { resolveTriageConflicts } from './view/dialogs/triage-conflict-dialog.js'
 export { openTriageExportDialog } from './view/dialogs/triage-export-dialog.js'
 export { openWhyDialog } from './view/dialogs/why-dialog.js'
 export { openWorkspaceExportDialog } from './view/dialogs/workspace-export-dialog.js'

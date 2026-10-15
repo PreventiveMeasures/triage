@@ -87,6 +87,7 @@ test('Scans stays closed, with a toast, when its bundle cannot load', async () =
   await openScan({ integrity: 'shared' })
   assert.equal(rendered, false)
   assert.equal(state.currentView, 'bundles')
+  assert.equal(state.selectedBundle, 'shared', 'the open bundle stays open')
   assert.equal(state.scanSelection, null)
   assert.deepEqual(toasts, ['Couldn’t load Scans. Try again.'])
 })

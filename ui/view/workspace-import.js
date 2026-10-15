@@ -7,7 +7,9 @@ import {
   state,
 } from '#client/index.js'
 import { render } from './render.js'
-import { openWorkspaceUnlockBundleDialog, resolveTriageConflicts } from './lazy-dialogs.js'
+import { openWorkspaceUnlockBundleDialog } from './lazy-dialogs.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
+import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 
 // Thin DOM wrapper around the pure import pipeline. Drives the
 // conflict-resolution and unlock dialogs; the pure layer handles state

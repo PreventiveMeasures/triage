@@ -36,12 +36,15 @@ export async function openScan(entry = null, { mode } = {}) {
     return
   }
   if (!currentScanServer()) return
+  // `<local-scan-page>` comes with Scans' own bundle, loaded before leaving
+  // the view, so one that doesn't load leaves the view as it was.
+  const loaded = await loadScanPage().then(() => true, () => false)
+  if (!currentScanServer() || initialGeneration !== currentViewGeneration()) return
+  if (!loaded) { showToast('Couldn’t load Scans. Try again.', { kind: 'warning' }); return }
   const home = goHome()
   const generation = currentViewGeneration()
-  // `<local-scan-page>` comes with Scans' own bundle, fetched on the way home.
-  const [, loaded] = await Promise.all([home, loadScanPage().then(() => true, () => false)])
+  await home
   if (!currentScanServer() || generation !== currentViewGeneration()) return
-  if (!loaded) { showToast('Couldn’t load Scans. Try again.', { kind: 'warning' }); return }
   state.scanSelection = entry ? { bundleId: entry.integrity, ...(workspaceId ? { repoId: workspaceId } : {}), ...(mode ? { mode } : {}) } : null
   state.currentView = 'scan'
   render()

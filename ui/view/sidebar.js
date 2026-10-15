@@ -59,8 +59,7 @@ import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openDeleteBundleDialog, openDeleteReportDialog, openDetachBundleDialog, openDetachReportDialog, openLeaveWorkspaceDialog, openNewWorkspaceDialog, openPersistenceDegradedDialog, openWorkspaceShareLinkDialog } from './lazy-dialogs.js'
-// Up front, not in the dialogs' bundle: it opens when this origin's requests
-// are being redirected to a login proxy, which the bundle's would be too.
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf, isLinksFile, reportGroup } from './file-display.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'

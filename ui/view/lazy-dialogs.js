@@ -2,7 +2,12 @@
 // opens: every dialog in dialogs/, with its styles and what only dialogs use.
 // Each opener here stands for the dialog's own, under its name: it takes the
 // same arguments and returns the same promise, of the dialog's result, once
-// the bundle is in. Outside dialogs/, dialogs open through here.
+// the bundle is in. Outside dialogs/, dialogs open through here, but for two
+// that their callers import directly, held up front because a dialog that
+// can't load there costs more than its bytes: the proxy-auth notice, which
+// opens when this origin's requests are redirected to a login proxy (the
+// bundle's would be too), and the triage conflict dialog, whose callers keep
+// local values when it can't open, the user's choice lost.
 import { lazyEntry } from './lazy-entry.js'
 
 const dialogs = lazyEntry('./dialogs.js')
@@ -42,7 +47,6 @@ export const openSyncDownloadDialog = opener('openSyncDownloadDialog')
 export const openSyncSuggestDialog = opener('openSyncSuggestDialog')
 export const openSyncUploadDialog = opener('openSyncUploadDialog')
 export const openTriageComparisonDialog = opener('openTriageComparisonDialog')
-export const resolveTriageConflicts = opener('resolveTriageConflicts')
 export const openTriageExportDialog = opener('openTriageExportDialog')
 export const openWhyDialog = opener('openWhyDialog')
 export const openWorkspaceExportDialog = opener('openWorkspaceExportDialog')
