@@ -3499,7 +3499,9 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
   & .read-gauge-check { width: .85rem; height: .85rem; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
 }
 @keyframes read-gauge-pulse { 100% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .read-gauge .read-gauge-arc { transition: none; animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .read-gauge .read-gauge-arc, .read-gauge.is-reading .read-gauge-arc { transition: none; animation: none; }
+}
 /* Activity's views (repository-activity.js), first in each view's bar, an
    icon each, picked as the graph's layouts are. As tall as the buttons and
    filter beside them, a line of their text with their padding and border,
