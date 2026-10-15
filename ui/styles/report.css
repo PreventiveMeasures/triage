@@ -1208,6 +1208,7 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path,
 .bundle-code-github-link,
 .bundle-source-pretty-toggle,
+.bundle-source-lockfile-toggle,
 .bundle-source-wrap-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1221,13 +1222,19 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path:hover,
 .bundle-code-github-link:hover,
 .bundle-source-pretty-toggle:hover,
+.bundle-source-lockfile-toggle:hover,
 .bundle-source-wrap-toggle:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
 .bundle-source-pretty-toggle[aria-pressed=true],
+.bundle-source-lockfile-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
-/* Busy while its copy is asked for; red where that failed. */
-.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: default; }
-.bundle-source-pretty-toggle.is-error { color: var(--critical); }
+/* Busy while its copy is asked for, or its lockfile read; red where that
+   failed. */
+.bundle-source-pretty-toggle.is-loading,
+.bundle-source-lockfile-toggle.is-loading { opacity: .55; cursor: default; }
+.bundle-source-pretty-toggle.is-error,
+.bundle-source-lockfile-toggle.is-error { color: var(--critical); }
+.bundle-source-lockfile-toggle svg { width: 13px; height: 13px; }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
 /* A grid of one cell, the stats over the room kept for them where the file
@@ -1298,6 +1305,11 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-terminal-slot {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
+}
+/* A lockfile's packages, in place of its text (renderBundleCodeMain). */
+.bundle-code-main-body > lockfile-graph {
+  flex: 1; min-width: 0;
+  -webkit-app-region: no-drag; app-region: no-drag;
 }
 .bundle-code-placeholder,
 .bundle-code-empty {

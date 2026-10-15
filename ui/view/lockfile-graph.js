@@ -20,10 +20,11 @@ export const LOCKFILE_LAYOUTS = ['graph', 'matrix', 'dependencies']
 class LockfileGraph extends LitElement {
   static properties = { lockfile: { attribute: false } }
 
+  // The page frames the element, as the bundle Graph tab frames its graph.
   static styles = css`
     :host { display: flex; flex-direction: column; min-height: 0; }
     .slot { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-    graph-layout { flex: 1; min-height: 0; }
+    graph-layout { flex: 1; min-height: 0; border: none; border-radius: 0; }
     .empty { color: var(--muted); }
   `
 

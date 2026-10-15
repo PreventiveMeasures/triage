@@ -21,6 +21,7 @@ import { startViewTransition } from './render-transition.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { keepSourceLine } from './source-wrap.js'
 import { togglePrettySource } from './pretty-source.js'
+import { toggleLockfileView } from './lockfile-view.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFindingSourceDialog } from './dialogs/finding-source-dialog.js'
@@ -330,6 +331,12 @@ function handleBundleSourceClick(e) {
     togglePrettySource()
     render()
     resetBundleSourceScroll()
+    return true
+  }
+  // A lockfile's packages, in the lockfile viewer, in place of its text.
+  if (e.target.closest('[data-bundle-source-lockfile]')) {
+    toggleLockfileView()
+    render()
     return true
   }
   const historyButton = e.target.closest('[data-bundle-code-history]')
@@ -906,8 +913,12 @@ report.addEventListener('click', (e) => {
     const lineAttr = sourceOpen.dataset.bundleViewLine
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     // A line is the file's as published, not a pretty-printed copy's
-    // (pretty-source.js), so following one shows the file as published.
-    if (Number.isFinite(line)) state.bundleSourcePretty = false
+    // (pretty-source.js), so following one shows the file as published,
+    // and a lockfile as its text rather than its packages.
+    if (Number.isFinite(line)) {
+      state.bundleSourcePretty = false
+      state.bundleSourceLockfile = false
+    }
     const pathChanged = state.bundleSourceFile !== path
     selectBundleSourceFile(path)
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
