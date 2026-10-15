@@ -145,6 +145,9 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
   background: var(--bg);
 }
 .risk-scope button, .risk-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
   padding: .3rem .65rem;
   border: 0;
   border-radius: var(--ui-radius, 3px);
@@ -156,16 +159,24 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-scope button[aria-pressed=true],
 .risk-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
 .risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
-/* A toggle's or a tab's count, in a balloon (common.css .count), sized to
-   the button, and of its accent where pressed. */
-.risk-scope button .count, .risk-tabs button .count {
-  min-width: 1.25rem;
-  margin-left: .4rem;
-  padding: 0 .3rem;
-  font-size: .68rem;
+/* A toggle's or a tab's count: the bubble the severity and triage filters
+   count their chips in (toolbar.css .sev-chip .n), in flow, lifted to the
+   button's top edge, of the button's color where pressed. */
+.risk-scope .n, .risk-tabs .n {
+  align-self: flex-start;
+  margin: -1px -5px 0 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 8.5px;
+  font-weight: 600;
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 0 3px;
+  min-width: 11px;
+  text-align: center;
+  line-height: 11px;
 }
-.risk-scope button[aria-pressed=true] .count,
-.risk-tabs button[aria-selected=true] .count { color: inherit; border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.risk-scope button[aria-pressed=true] .n, .risk-tabs button[aria-selected=true] .n { color: inherit; }
 /* A few teams, chosen as the scope is: wrapping where they don't fit. */
 .risk-scope { flex-wrap: wrap; max-width: 100%; box-sizing: border-box; }
 .risk-scope-bar select { min-width: 14rem; }
