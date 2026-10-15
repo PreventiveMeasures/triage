@@ -2,7 +2,8 @@
 // virtual-shell runtime (`@preventive/terminal`) and the lit
 // component don't land in the main view.js bundle. `ui/view/
 // terminal-attach.js` `await import('./terminal.js')`s this module
-// lazily the first time the Terminal tab opens.
+// lazily the first time the Terminal tab, or the Code tab's terminal
+// pane, opens.
 //
 // The component is mostly scaffolding (scrollable output, an input
 // row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
@@ -219,7 +220,7 @@ class BundleTerminal extends LitElement {
     this.#clearNotes()
   }
 
-  firstUpdated() { this.#focusInput() }
+  firstUpdated() { this.focusInput() }
 
   // Only follow the bottom when output actually grew (a new command
   // ran, or the bundle / banner reset). Typing into the input
@@ -230,7 +231,9 @@ class BundleTerminal extends LitElement {
     if (changed.has('_lines') || changed.has('sources')) this.#scrollToBottom()
   }
 
-  #focusInput() {
+  // Public for a host that shows the terminal again, where firstUpdated's
+  // focus has been spent (terminal-attach.js focusTerminal).
+  focusInput() {
     const input = this.renderRoot.querySelector('.input')
     if (input) input.focus()
   }
@@ -508,7 +511,7 @@ class BundleTerminal extends LitElement {
     this._input = cmd
     this.#histIdx = -1
     this.#draft = ''
-    this.#focusInput()
+    this.focusInput()
   }
 
   // Click-anywhere-to-focus is convenient for "I want to type",
@@ -522,7 +525,7 @@ class BundleTerminal extends LitElement {
   #onClickOutput = () => {
     const sel = this.renderRoot.getSelection?.() ?? document.getSelection()
     if (sel && !sel.isCollapsed) return
-    this.#focusInput()
+    this.focusInput()
   }
 
   render() {

@@ -86,7 +86,8 @@ import { renderHighlighted } from './render-finding.js'
 // for hoisted function declarations, and the call sites are async
 // (always after init).
 import { render } from './render.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
+import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
+import { focusTerminal } from './terminal-attach.js'
 
 // Bundles graph — like the findings-tab graph but sourced from a
 // parsed bundle (sourcemap / stasis). The refresh helpers below
@@ -994,6 +995,30 @@ function collapseBundleTree(tree) {
   render()
 }
 
+// The rail's terminal toggle, and the pane's close. Opening puts the caret
+// on the terminal's command line; closing hands focus back to the toggle,
+// as the close button that had it goes with the pane.
+function showBundleCodeTerminal(open) {
+  state.bundleCodeTerminal = open
+  render()
+  if (open) void focusTerminal()
+  else document.querySelector('[data-bundle-code-terminal-toggle]')?.focus()
+}
+
+// The Code tab's terminal pane, under the code panel: the Terminal tab's own
+// terminal, attached into the slot by render.js, so one session carries
+// between the two.
+function renderBundleCodeTerminal() {
+  return html`<section class="bundle-code-terminal" aria-label="Terminal">
+    <header class="bundle-code-terminal-bar">
+      <span class="bundle-code-rail-label">Terminal</span>
+      <button type="button" class="bundle-code-rail-action" aria-label="Close terminal" data-tooltip="Close terminal"
+        @click=${() => showBundleCodeTerminal(false)}>×</button>
+    </header>
+    <div id="bundle-terminal-slot" class="bundle-code-terminal-slot"></div>
+  </section>`
+}
+
 // Aggregate issue count + worst severity across every file under a
 // dir node — the rollup chip a directory row shows so issue
 // hotspots stay visible while the subtree is collapsed. Walks the
@@ -1530,6 +1555,10 @@ function renderBundleCodeView(details, entry = null) {
         <span class="bundle-code-rail-label">Files</span>
         <span class="bundle-code-rail-count">${allPaths.length}</span>
         <span class="bundle-code-rail-actions">
+          <button type="button" class="bundle-code-rail-action" aria-label="Terminal" data-tooltip="Terminal" data-bundle-code-terminal-toggle
+            aria-pressed=${state.bundleCodeTerminal ? 'true' : 'false'} @click=${() => showBundleCodeTerminal(!state.bundleCodeTerminal)}>
+            ${TERMINAL_ICON}
+          </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Reveal current file" data-tooltip="Reveal current file"
             ?disabled=${!path} @click=${() => revealBundleTreeFile(path, prefix)}>
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
@@ -1558,6 +1587,7 @@ function renderBundleCodeView(details, entry = null) {
       ${path
         ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
+      ${state.bundleCodeTerminal ? renderBundleCodeTerminal() : nothing}
     </div>
   </div>`
 }

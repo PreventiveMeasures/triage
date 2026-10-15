@@ -794,6 +794,7 @@
 }
 .bundle-code-rail-action:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
 .bundle-code-rail-action:disabled { opacity: .35; }
+.bundle-code-rail-action[aria-pressed=true] { color: var(--accent); }
 .bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
@@ -1274,6 +1275,29 @@ body:is(.theme-light, .theme-pink, .theme-paper)
   flex: 1; min-width: 0;
   overflow: auto;
   -webkit-app-region: no-drag; app-region: no-drag;
+}
+/* Terminal pane — under the code panel, across the right column: a
+   bar naming it, with its close, over the Terminal tab's terminal
+   (render-bundle.js renderBundleCodeTerminal). The code panel above
+   gives up the height. */
+.bundle-code-terminal {
+  flex: 0 0 40%;
+  min-height: 9rem;
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.bundle-code-terminal-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .2rem .5rem .2rem .75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+
+  & > .bundle-code-rail-action { font-size: 1rem; line-height: 1; }
+}
+.bundle-code-terminal-slot {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
 }
 .bundle-code-placeholder,
 .bundle-code-empty {

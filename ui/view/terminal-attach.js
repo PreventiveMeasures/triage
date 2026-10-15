@@ -9,7 +9,9 @@
 // The slide body's `choose(tab, …)` rebuilds the DOM whenever the
 // active tab changes, so the `<div id="bundle-terminal-slot">` we
 // targeted on the last attach is gone by the time the user
-// returns to Terminal. To keep the running shell session alive
+// returns to Terminal — or to the Code tab's terminal pane, which
+// renders the same slot and shows the same terminal. To keep the
+// running shell session alive
 // (history, output, cwd), the `<bundle-terminal>` element itself
 // is cached at the module level — detached from the document when
 // Lit blows away its parent, re-appended to the new slot on
@@ -24,6 +26,14 @@ let loadPromise = null
 let cached = null
 
 export function resetBundleTerminal() { cached = null }
+
+// Put the caret on the shown terminal's command line, once it is attached.
+// A terminal focuses itself on its first render only, so the Code tab's
+// pane, opening on one already used, asks for it here.
+export async function focusTerminal() {
+  const el = await cached?.promise.catch(() => null)
+  if (el?.isConnected) el.focusInput()
+}
 
 function loadTerminal() {
   if (loadPromise) return loadPromise
@@ -54,9 +64,12 @@ function loadTerminal() {
 // path — see MOUNT in terminal.js, where the tree is mounted).
 //
 // Values ride through untouched: this rewrites keys only, so the
-// Uint8Array a binary file arrives as reaches the terminal as one.
+// Uint8Array a binary file arrives as reaches the terminal as one. An
+// npm package's or a repository directory's binary arrives as its
+// digest alone, with no bytes to hold, and the terminal refuses it:
+// it is left out, as the Code tab's tree leaves it out.
 function buildSourcesFromDetails(details) {
-  const raw = bundleFilesAsMap(details)
+  const raw = new Map([...bundleFilesAsMap(details)].filter(([, file]) => file?.format !== 'digest'))
   if (raw.size === 0) return raw
   const keys = [...raw.keys()]
   const { stripped } = stripCommonPathPrefix(keys)
