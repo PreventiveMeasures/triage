@@ -30,9 +30,18 @@ export function filterManagedTeams(teams, query = '') {
 
 // Collapse a team whose reports are all one kind: an App team, or one none of
 // whose reports open in App mode alone (the catalog's `appReports`). A team
-// mixing the two lists its reports. Local workspaces keep their own rule.
+// mixing the two lists its reports. So, deliberately, does a team whose reports
+// each open as App while their combined workspace does not: it has App
+// findings that fail to combine, which expanded is where it shows. Local
+// workspaces keep their own rule.
 export function managedTeamCollapses(app, reportCount) {
   return app?.appMode === true || (app?.appReports === 0 && reportCount > 0)
+}
+
+// The findings a collapsed team's badge counts: an App team's App findings,
+// any other team's rows. Null when the catalog sent none.
+export function managedTeamFindings(app) {
+  return (app?.appMode ? app.appFindings : app?.findings) ?? null
 }
 
 // Match local workspace section behavior: reveal selection on navigation,

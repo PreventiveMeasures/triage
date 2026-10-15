@@ -126,8 +126,8 @@ async function fixture(t) {
 test('the team catalog says which teams open as App teams before any team is opened', async t => {
   const h = await fixture(t)
   const { apps } = await h.catalog('reader')
-  assert.deepEqual(apps, { app: { appMode: true, appFindings: 2 }, mixed: { appMode: false, appReports: 1 },
-    code: { appMode: false, appReports: 0 }, empty: { appMode: false } }, 'a non-App team says how many reports open as App alone')
+  assert.deepEqual(apps, { app: { appMode: true, appFindings: 2 }, mixed: { appMode: false, appReports: 1, findings: 2 },
+    code: { appMode: false, appReports: 0, findings: 1 }, empty: { appMode: false } }, 'a non-App team counts its findings and its reports open as App alone')
   assert.deepEqual(h.reads.toSorted(), ['app-report', 'code-source', 'mixed-app', 'mixed-source'], 'only published team reports are read')
   h.reads.length = 0
   assert.deepEqual((await h.catalog('reader')).apps, apps)
@@ -145,7 +145,7 @@ test('catalog changes reclassify teams under a new revision', async t => {
   await h.db.setReportVisible('draft', true)
   const published = await h.catalog('reader')
   assert.notEqual(published.revision, first.revision)
-  assert.deepEqual(published.apps.app, { appMode: false, appReports: 1 }, 'an uncovered source report takes the team out of App mode')
+  assert.deepEqual(published.apps.app, { appMode: false, appReports: 1, findings: 3 }, 'an uncovered source report takes the team out of App mode')
   await h.db.setReportVisible('draft', false)
   assert.deepEqual((await h.catalog('reader')).apps.app, { appMode: true, appFindings: 2 })
   await h.seed('links', 'app', { source: 'links', findings: [], links: [['A', 'B']] })
@@ -197,14 +197,14 @@ test('public links carry their workspace classification', async t => {
 
 test('the client keeps only well-formed App classifications from the catalog', async t => {
   const { probeTeams } = await import('../client/managed/session.js')
-  const sent = [{ appMode: true, appFindings: 3 }, { appMode: false, appFindings: 9 }, { appMode: false, appReports: 0 }, { appMode: false, appReports: 2 },
-    { appMode: false, appReports: -1 }, { appMode: false, appReports: 0.5 },
+  const sent = [{ appMode: true, appFindings: 3 }, { appMode: false, appFindings: 9 }, { appMode: false, appReports: 0, findings: 4 }, { appMode: false, appReports: 2 },
+    { appMode: false, appReports: -1, findings: -4 }, { appMode: false, appReports: 0.5, findings: '4' },
     { appMode: true }, { appMode: true, appFindings: -1 }, { appMode: true, appFindings: 1.5 }, { appMode: 'true', appFindings: 1 }, null, undefined]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
     teams: sent.map((value, i) => ({ id: `team-${i}`, name: `Team ${i}`, reports: [], bundles: [], app: value })),
   })))
   const kept = (await probeTeams()).map(team => team.app)
-  assert.deepEqual(kept.slice(0, 6), [{ appMode: true, appFindings: 3 }, { appMode: false }, { appMode: false, appReports: 0 }, { appMode: false, appReports: 2 },
-    { appMode: false }, { appMode: false }], 'a malformed App report count is dropped, leaving the team expanded')
+  assert.deepEqual(kept.slice(0, 6), [{ appMode: true, appFindings: 3 }, { appMode: false }, { appMode: false, appReports: 0, findings: 4 }, { appMode: false, appReports: 2 },
+    { appMode: false }, { appMode: false }], 'malformed counts are dropped, leaving the team expanded')
   assert.ok(kept.slice(6).every(value => value === undefined), 'malformed or missing classifications leave the team expanded')
 })

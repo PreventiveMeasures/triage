@@ -24,11 +24,14 @@ function onlyUnjudgedImports(groups) {
 
 // Evaluate the entire workspace, independent of triage, filters, or the lens
 // left active by another report. Use the same merge and link rules as the view.
-export function workspaceAppMetadata(reports, duplicatesOf = () => []) {
+// `countFindings` has a workspace that is not App count its rows too, after
+// the same merging, for a caller that shows it collapsed (managed teams).
+export function workspaceAppMetadata(reports, duplicatesOf = () => [], { countFindings = false } = {}) {
   const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
-  if (conflicts.size > 0) return { appMode: false }
   const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
-  if (!onlyUnjudgedImports(linked) && !canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' })) return { appMode: false }
+  const notApp = countFindings ? { appMode: false, findings: linked.length } : { appMode: false }
+  if (conflicts.size > 0) return notApp
+  if (!onlyUnjudgedImports(linked) && !canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' })) return notApp
   return {
     appMode: true,
     appFindings: linked.filter((group) => appTabs(group).some((f) => f.isApp)).length,

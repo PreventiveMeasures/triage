@@ -76,6 +76,12 @@ describe('workspace App promotion', () => {
       assert.deepEqual(workspaceAppMetadata(reports), { appMode: false })
     }
   })
+  it('counts the rows of a workspace that is not App only when asked', () => {
+    const reports = [report('source', [source('S')], [source('T')]), report('copy', [source('S')])]
+    assert.deepEqual(workspaceAppMetadata(reports, () => [], { countFindings: true }), { appMode: false, findings: 2 }, 'duplicate rows merge before counting')
+    assert.deepEqual(workspaceAppMetadata(reports, links(['S', 'T']), { countFindings: true }), { appMode: false, findings: 1 }, 'linked rows count once')
+    assert.deepEqual(workspaceAppMetadata([report('app', [app('A')])], () => [], { countFindings: true }), { appMode: true, appFindings: 1 }, 'an App workspace keeps its App count')
+  })
   it('promotes a workspace of nothing but unjudged imports, which is its own App view', () => {
     const imported = (id, extra = {}) => source(id, { isApp: true, _source: 'codex-security', confidence: undefined, ...extra })
     assert.deepEqual(workspaceAppMetadata([report('import', [imported('I')], [imported('J')])]), { appMode: true, appFindings: 2 })
