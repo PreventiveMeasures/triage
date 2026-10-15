@@ -3372,8 +3372,9 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 }
 repository-code-source {
   display: flex; align-items: center; gap: .55rem; min-width: 0;
-  & > .repository-code-repo { flex: 0 1 17rem; min-width: 8rem; }
-  & > .repository-code-revision { flex: 0 1 16rem; min-width: 10rem; }
+  & > .repository-code-repo { flex: 0 1 17rem; min-width: 8rem; max-width: max-content; }
+  /* The revision grows into room left, as wide as a full one it names. */
+  & > .repository-code-revision { flex: 1 1 16rem; min-width: 10rem; max-width: max-content; }
 }
 .repository-code-path {
   display: inline-flex; align-items: center; gap: .3rem; min-width: 0; flex: none; max-width: 18rem;
