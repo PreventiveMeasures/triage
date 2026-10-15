@@ -350,7 +350,13 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
 ]
 const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
 const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3']]
+// Read on from, by All branches' Older commits: as if past the most recently
+// committed to.
+const HISTORY_STALE_BRANCHES = [['release/0.x', 'o90']]
 const HISTORY_TAGS = [['v1.0.0', 'm7'], ['v0.19.0', 'm2']]
+// All branches' commits from each tip, fewer than GitHub's, so that it reads
+// on.
+const HISTORY_ALL_DEPTH = 40
 
 function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
@@ -359,20 +365,32 @@ function historyFixture(url: URL, res: ServerResponse): void {
   }))
   const branches = HISTORY_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!) }))
   const tags = HISTORY_TAGS.map(([name, label]) => ({ name, sha: historySha(label!) }))
-  if (url.searchParams.get('all') === 'true') { sendJson(res, 200, { all: true, commits, branches, tags, defaultBranch: 'main', more: false }); return }
+  const bySha = new Map(commits.map(item => [item.sha, item]))
+  // The commits `commit` reaches, newest first.
+  const reaching = (commit: string) => {
+    const reached = new Set<string>()
+    for (const queue = [commit]; queue.length > 0;) {
+      const sha = queue.pop()!
+      if (reached.has(sha) || !bySha.has(sha)) continue
+      reached.add(sha)
+      queue.push(...bySha.get(sha)!.parents)
+    }
+    return commits.filter(item => reached.has(item.sha))
+  }
+  const page = Number(url.searchParams.get('page') ?? '1')
+  if (url.searchParams.get('all') === 'true') {
+    const from = url.searchParams.get('from')?.split(',') ?? null
+    const read = new Map((from ?? branches.map(branch => branch.sha)).flatMap(sha => reaching(sha).slice(0, HISTORY_ALL_DEPTH)).map(item => [item.sha, item]))
+    if (from) { sendJson(res, 200, { all: true, page, commits: [...read.values()], more: page < 100 }); return }
+    const stale = HISTORY_STALE_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!), at: bySha.get(historySha(label!))!.committedAt }))
+    sendJson(res, 200, { all: true, commits: [...read.values()], branches: [...branches, ...stale.filter(head => read.has(head.sha)).map(({ name, sha }) => ({ name, sha }))],
+      tags, defaultBranch: 'main', unread: stale.filter(head => !read.has(head.sha)), more: true })
+    return
+  }
   const ref = url.searchParams.get('ref') ?? ''
   const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
-  const bySha = new Map(commits.map(item => [item.sha, item]))
-  const reached = new Set<string>()
-  for (const queue = [commit]; queue.length > 0;) {
-    const sha = queue.pop()!
-    if (reached.has(sha) || !bySha.has(sha)) continue
-    reached.add(sha)
-    queue.push(...bySha.get(sha)!.parents)
-  }
   const path = url.searchParams.get('path') ?? ''
-  const listed = commits.filter((item, index) => reached.has(item.sha) && (!path || index % 3 === 0))
-  const page = Number(url.searchParams.get('page') ?? '1')
+  const listed = reaching(commit).filter(item => !path || commits.indexOf(item) % 3 === 0)
   sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
 }
 

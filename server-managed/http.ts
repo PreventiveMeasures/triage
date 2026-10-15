@@ -27,8 +27,9 @@
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
 //   GET /api/admin/repositories/code?repoId=&ref=&path= → the files of a directory at a revision, within the reader's grants,
 //        Brotli-encoded | 400/401/403/404/409/413/429/502
-//   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true] → the commits a revision reaches, a page at a time,
-//        or across the most recently updated branches, with the branches and tags naming them | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true[&from=]] → the commits a revision reaches, a page at a time,
+//        or across the most recently updated branches, with the branches and tags naming them, then on from the commits `from`
+//        names | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -159,7 +160,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { MAX_HISTORY_PAGE, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -1441,16 +1442,21 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
 // GitHub access, within their grants as the code is. From a revision (`ref`),
 // a page at a time (`page`), the commits touching `path` where it names a
 // directory, with the branches and tags naming commits on the first page; or,
-// with `all`, across the repository's most recently updated branches, which
-// needs the whole repository and a GitHub token. Access is checked again once
-// it is read, before any of it is sent.
+// with `all`, across the repository's most recently updated branches, then,
+// a later page, on from the commits `from` names, which needs the whole
+// repository and a GitHub token. Access is checked again once it is read,
+// before any of it is sent.
 async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
   const { repoId, ref, path } = asked
   const page = Number(query.get('page') ?? '1')
   const all = query.get('all') === 'true'
-  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || page !== 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  // Every branch's later pages read on from where those before stop.
+  const from = query.get('from')
+  const starts = from === null ? null : historyStarts(from)
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || (page > 1) !== (starts !== null)))
+    || (from !== null && (!all || starts === null))) { sendJson(res, 400, { error: 'bad-request' }); return }
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, path)
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1465,7 +1471,10 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     let body: object
     if (all) {
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-      body = { all: true, ...await repositoryAllHistory(repo, token) }
+      // What a later page reads on from, the client knows; whether one may
+      // follow, the deepest page says.
+      body = starts ? { all: true, page, ...await repositoryAllHistoryFrom(repo, token, starts), more: page < MAX_HISTORY_PAGE }
+        : { all: true, ...await repositoryAllHistory(repo, token) }
     } else {
       const commit = await reader.commit(ref)
       const [history, tips] = await Promise.all([repositoryHistory(repo, token, commit, path, page), page === 1 ? repositoryRefTips(repo, token) : null])

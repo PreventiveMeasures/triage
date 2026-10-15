@@ -149,11 +149,51 @@ test('all branches reads the 25 most recently committed to, the default branch f
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })
 })
 
-test('a history that names no page, or all branches of a directory, is a bad request', async t => {
+test('all branches names the branches it didn\'t read, newest first, and reads on from the commits a later page names, each commit once', async t => {
+  const head = (name, oid, committedDate) => ({ name, target: { oid, committedDate } })
+  // main and 24 others read; of those not, stale's tip isn't listed, older's is.
+  const recent = Array.from({ length: 24 }, (_, index) => head(`recent-${index}`, a, '2026-10-01T00:00:00Z'))
+  const branches = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [head('older', b, '2019-01-01T00:00:00Z'), ...recent, head('stale', c, '2020-01-01T00:00:00Z')] }
+  const node = (oid, parents) => ({ oid, messageHeadline: `Commit ${oid[0]}`, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: head('main', a, '2026-10-02T10:00:00Z'), branches, tags: { nodes: [] } }
+    : variables.o0 === a ? { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(a, [b]), node(b, [c])] } } }
+    : { b0: { history: { pageInfo: { hasNextPage: true }, nodes: [node(c, [d]), node(d, [])] } }, b1: { history: { pageInfo: { hasNextPage: false }, nodes: [node(d, [])] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const first = await request({ repoId: '1', all: 'true' })
+  assert.deepEqual(first.body.unread, [{ name: 'stale', sha: c, at: Date.parse('2020-01-01T00:00:00Z') }])
+  assert.equal(first.body.cut, false)
+  assert.ok(first.body.branches.some(branch => branch.name === 'older'), 'a branch not read, its tip listed, names it')
+  const later = await request({ repoId: '1', all: 'true', page: '2', from: `${c},${d},${c}` })
+  assert.equal(later.status, 200)
+  assert.deepEqual(later.body, { all: true, page: 2, commits: [node(c, [d]), node(d, [])].map(item => ({ sha: item.oid, parents: item.parents.nodes.map(parent => parent.oid),
+    subject: item.messageHeadline, authorName: null, authorLogin: null, committedAt: Date.parse(item.committedDate) })), more: true })
+  const query = asked.findLast(entry => entry.path === '/graphql')
+  assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', o0: c, o1: d })
+  assert.match(query.body.query, /b1: object\(oid: \$o1\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
+  assert.equal((await request({ repoId: '1', all: 'true', page: '100', from: c })).body.more, false, 'page 101 is no page to read')
+})
+
+test('all branches says where branches past the ten pages it lists are left out', async t => {
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-02T10:00:00Z' } }, tags: { nodes: [] },
+      branches: { pageInfo: { hasNextPage: true, endCursor: `p${variables.after ?? 0}+` }, nodes: [{ name: `b-${variables.after}`, target: { oid: a, committedDate: null } }] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const { body } = await request({ repoId: '1', all: 'true' })
+  assert.equal(body.cut, true)
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('refs/heads/')).length, 10)
+})
+
+test('a history that names no page, all branches of a directory, or reads on from what is no commit, is a bad request', async t => {
   const request = await fixture(t)
   github(t)
+  const starts = count => Array.from({ length: count }, (_, index) => index.toString(16).padStart(40, '0')).join(',')
   for (const query of [{ repoId: '1', page: '0' }, { repoId: '1', page: '1.5' }, { repoId: '1', page: '101' }, { repoId: '1', all: 'true', path: 'src' },
-    { repoId: '1', all: 'true', page: '2' }]) {
+    { repoId: '1', all: 'true', page: '2' }, { repoId: '1', all: 'true', from: a }, { repoId: '1', page: '2', from: a },
+    { repoId: '1', all: 'true', page: '2', from: '' }, { repoId: '1', all: 'true', page: '2', from: `${a},main` }, { repoId: '1', all: 'true', page: '2', from: starts(26) }]) {
     assert.equal((await request(query)).status, 400, JSON.stringify(query))
   }
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)

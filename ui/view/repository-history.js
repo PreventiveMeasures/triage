@@ -15,6 +15,7 @@ import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
 import { firstParentLine, historyLayout, historyOrder } from './history-graph.js'
 import { TAG_ICON_SVG } from './icons.js'
+import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
@@ -26,6 +27,9 @@ const LANE_COLORS = 8
 const MAX_REFS = 3
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
+// Where every branch's next page reads on from, as many as the server reads
+// branches at first (repository-history.ts ALL_BRANCHES).
+const ALL_STARTS = 25
 
 const histories = new Map()
 const shownElements = new Set()
@@ -51,7 +55,7 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'ready' with its `commits`, `more` and the `branches` and `tags` naming
 // them, or 'error' with its `error`; read again once old, or an error's retry
 // is due.
-function historyRead(key, ask) {
+function historyRead(key, ask, settle) {
   const data = sessionHistories()
   const held = data.get(key)
   if (held && Date.now() < held.until) return held
@@ -59,8 +63,11 @@ function historyRead(key, ask) {
   data.set(key, loading)
   ask(1).then(answer => {
     if (data.get(key) === loading) {
-      data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
-        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, loadingMore: false, moreError: null })
+      const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
+        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
+        loadingMore: false, moreError: null }
+      settle?.(entry)
+      data.set(key, entry)
     }
     return null
   }, err => {
@@ -91,20 +98,40 @@ export function revisionFromAll(all, commit) {
     branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, loadingMore: false, moreError: null }
 }
 
+// Every branch's history read on (`settle`, as a page is read): the branches
+// not read that now name a commit listed join those naming one, and the next
+// page reads on from the commits where those listed stop, the parents not
+// listed, and from the branches not read, the newest first (a parent by its
+// child's time), as many as the first page read branches, none twice.
+function settleAll(entry) {
+  const listed = new Set(entry.commits.map(commit => commit.sha))
+  entry.branches = [...entry.branches, ...entry.unread.flatMap(({ name, sha }) => listed.has(sha) ? [{ name, sha }] : [])]
+  entry.unread = entry.unread.filter(head => !listed.has(head.sha))
+  entry.asked ??= new Set()
+  const starts = new Map()
+  const start = (sha, at) => { if (!entry.asked.has(sha)) starts.set(sha, Math.max(starts.get(sha) ?? Number.NEGATIVE_INFINITY, at ?? 0)) }
+  for (const commit of entry.commits) for (const parent of commit.parents) if (!listed.has(parent)) start(parent, commit.committedAt)
+  for (const head of entry.unread) start(head.sha, head.at)
+  entry.next = [...starts].toSorted((a, b) => b[1] - a[1]).slice(0, ALL_STARTS).map(([sha]) => sha)
+  for (const sha of entry.next) entry.asked.add(sha)
+  entry.more &&= entry.next.length > 0
+}
+
 // The next page of a history read a page at a time, after those it holds.
-function readMore(key, entry, ask) {
+function readMore(key, entry, ask, settle) {
   if (entry.loadingMore || !entry.more) return
   entry.loadingMore = true
   entry.moreError = null
   // Kept while the next page reads, however long it was held already.
   entry.until = Date.now() + KEEP_MS
   repaint()
-  ask(entry.page + 1).then(answer => {
+  ask(entry.page + 1, entry).then(answer => {
     if (sessionHistories().get(key) !== entry) return null
     const held = new Set(entry.commits.map(commit => commit.sha))
     entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
     entry.page += 1
     entry.more = answer.more === true
+    settle?.(entry)
     entry.until = Date.now() + KEEP_MS
     return null
   }, err => {
@@ -116,11 +143,14 @@ function readMore(key, entry, ask) {
   })
 }
 
-// A server's answer, its commits those it names by id.
+// A server's answer, its commits and the branches it didn't read those it
+// names by id.
+const SHA = /^[a-f\d]{40}$/u
 function checked(answer) {
   if (!Array.isArray(answer?.commits)) throw new Error('The server answered with no history.')
-  const commits = answer.commits.filter(commit => typeof commit?.sha === 'string' && /^[a-f\d]{40}$/u.test(commit.sha) && Array.isArray(commit.parents))
-  return { ...answer, commits }
+  const commits = answer.commits.filter(commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents))
+  const unread = Array.isArray(answer.unread) ? answer.unread.filter(head => typeof head?.name === 'string' && typeof head.sha === 'string' && SHA.test(head.sha)) : []
+  return { ...answer, commits, unread }
 }
 
 const MINUTE = 60_000
@@ -209,6 +239,7 @@ class RepositoryHistory extends LitElement {
     this.repository = null
     this.refs = null
     this._drawn = null
+    this._moreButton = null
   }
 
   connectedCallback() {
@@ -219,6 +250,24 @@ class RepositoryHistory extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback()
     shownElements.delete(this)
+    if (this._moreButton) unwatchNearViewport(this._moreButton)
+    this._moreButton = null
+  }
+
+  // Older commits read as their button nears the end of the scroll, a
+  // screen before it shows, as though clicked, and again after each page
+  // while it stays near; not after one failed, which waits for a click.
+  // Watched again after every update, so that whether it is near is where
+  // it is now, below the lines that update added, never where it was.
+  updated() {
+    const button = this.querySelector('.history-more > button')
+    if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
+    this._moreButton = button
+    if (button) watchNearViewport(button, near => { if (near) this.readNear(button) })
+  }
+
+  readNear(button) {
+    if (button === this._moreButton && button.isConnected && !button.disabled && !button.parentElement.querySelector('[role=alert]')) button.click()
   }
 
   // What it lists: a directory's commits ('path'), every branch's ('all'),
@@ -233,7 +282,8 @@ class RepositoryHistory extends LitElement {
   history(mode) {
     const { repoId, commit, path } = this.repository
     const key = mode === 'all' ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
-    const ask = page => fetchRepositoryHistory(repoId, mode === 'all' ? '' : commit, path, { page, all: mode === 'all' }).then(answer => {
+    const ask = (page, held) => fetchRepositoryHistory(repoId, mode === 'all' ? '' : commit, path,
+      { page, all: mode === 'all', ...mode === 'all' && page > 1 ? { from: held.next } : {} }).then(answer => {
       if (mode !== 'all' && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
       return checked(answer)
     })
@@ -244,12 +294,13 @@ class RepositoryHistory extends LitElement {
     const all = mode === 'revision' && !fresh(held.get(key)) ? held.get(`all\0${repoId}`) : null
     const derived = all?.status === 'ready' && fresh(all) ? revisionFromAll(all, commit) : null
     if (derived) held.set(key, derived)
-    const entry = historyRead(key, ask)
+    const settle = mode === 'all' ? settleAll : null
+    const entry = historyRead(key, ask, settle)
     if (mode === 'all' && entry.status === 'error' && entry.code === 'github-token-required') {
       allRefused.add(repoId)
       return { mode: 'revision', ...this.history('revision') }
     }
-    return { mode, key, entry, more: () => readMore(key, entry, ask) }
+    return { mode, key, entry, more: () => readMore(key, entry, ask, settle) }
   }
 
   // The graph of what it holds, laid out again only as that changes.
@@ -293,7 +344,7 @@ class RepositoryHistory extends LitElement {
     const { mode, key, entry, more } = this.history(this.mode())
     const ready = entry.status === 'ready'
     const branches = ready && mode === 'all' ? entry.branches.length : 0
-    const count = ready ? `${entry.commits.length}${entry.more && mode !== 'all' ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
+    const count = ready ? `${entry.commits.length}${entry.more || entry.cut ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
     return html`<div class="history-bar">
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : html`<div class="history-modes" role="group" aria-label="History">
@@ -339,8 +390,8 @@ class RepositoryHistory extends LitElement {
           </li>`
         })}</ol>
       </div>
-      ${mode === 'all' && entry.more ? html`<p class="history-note">The latest commits of the most recently updated branches.</p>` : nothing}
-      ${mode !== 'all' && (entry.more || entry.moreError) ? html`<div class="history-more">
+      ${entry.cut ? html`<p class="history-note">Only the first 1,000 branches by name are read.</p>` : nothing}
+      ${entry.more || entry.moreError ? html`<div class="history-more">
         ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
         <button type="button" ?disabled=${entry.loadingMore} @click=${more}>${entry.loadingMore ? 'Reading…' : 'Older commits'}</button>
       </div>` : nothing}
