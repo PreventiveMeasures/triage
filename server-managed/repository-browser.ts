@@ -4,6 +4,7 @@ import { GithubApiError, githubJson, githubRepoReadPermission, githubUserIdentit
 import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
 import { parseGithubCommit } from './bundle-commits.ts'
+import { dependabotAlerts } from './dependabot-alerts.ts'
 
 const REFS_PAGE = 100
 
@@ -53,7 +54,12 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
         if (!cached) tokens.set(repo.installationId, token)
         return token
       }
+      // Its open Dependabot alerts of npm's (dependabot-alerts.ts), once it
+      // is read, asked with the signed-in user's own token alone, never the
+      // App's installation's: GitHub shows them only to those it lets see
+      // them, beyond reading it.
       return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl)
+        .then(reader => ({ ...reader, dependabotAlerts: () => dependabotAlerts(repo.fullName, user.token, fetchImpl) }))
     },
   }
 }

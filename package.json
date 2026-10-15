@@ -118,6 +118,7 @@
     "server-managed/db-schema.ts",
     "server-managed/db-table-names.ts",
     "server-managed/db.ts",
+    "server-managed/dependabot-alerts.ts",
     "server-managed/dependency-reviews.ts",
     "server-managed/github-app.ts",
     "server-managed/github-errors.ts",

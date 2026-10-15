@@ -1848,9 +1848,10 @@ function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
 // (repository-browser.ts), and that access checked again once it is read,
 // before any of it is told; packages as the npm viewer's admins read them, in
 // spare assessments (npm-risk.ts), trusted however new where a team lists
-// their scope, and each lockfile's asked of npm's advisories at once. The
-// reader leaving, losing their admin role or the server shutting down stops
-// it.
+// their scope, and each lockfile's asked of npm's advisories at once; each
+// repository's open Dependabot alerts asked with the admin's own GitHub
+// token. The reader leaving, losing their admin role or the server shutting
+// down stops it.
 async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
   if (!s) return
@@ -1888,6 +1889,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         lockfiles: async () => (await upstreamGithub(() => client.findRepoLockfiles({ repo: repo.fullName, sha: commit }))).lockfiles,
         file: path => upstreamGithub(() => client.getRepoFile({ repo: repo.fullName, path, ref: commit })),
         recheck: async () => { await reader.recheckAccess() },
+        // As GitHub has them now, with the admin's own access to them.
+        dependabot: () => reader.dependabotAlerts(),
       }
     },
     teamScoped,

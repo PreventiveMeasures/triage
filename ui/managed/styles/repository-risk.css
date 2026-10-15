@@ -141,6 +141,19 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-used-in { max-width: 14rem; }
 .risk-pending, .risk-none { color: var(--muted); }
+/* What Dependabot told, small, beneath the advisories' controls: its mark,
+   how many alerts of how many repositories, and, of the high color, of how
+   many they couldn't be had. */
+.risk-dependabot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .25rem .5rem;
+  margin: .25rem 0 .5rem;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.risk-dependabot-failed { color: var(--high); }
 .risk-error { color: var(--critical); }
 .risk-chip {
   display: inline-block;
