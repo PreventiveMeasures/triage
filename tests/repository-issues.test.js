@@ -63,6 +63,17 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   view.pick('open')
 })
 
+test('a tile\'s labels, as many as the narrowest has room for as dots: eight, else seven and how many more', async () => {
+  const named = count => Array.from({ length: count }, (_, at) => ({ name: `l${at}`, color: null }))
+  answer = () => Promise.resolve({ items: [issue(3, { labels: named(8) }), issue(2, { labels: named(9) }), issue(1, { labels: named(6), moreLabels: 4 })],
+    counts: { open: 3, closed: 0 }, more: false })
+  const view = shown()
+  view.render()
+  await setImmediate()
+  const tiles = templateText(view.render()).split('<li ').slice(1)
+  assert.deepEqual(tiles.map(tile => [(tile.match(/class="issue-label" /gu) ?? []).length, /is-more">\+(\d+)</u.exec(tile)?.[1] ?? null]), [[8, null], [7, '2'], [6, '4']])
+})
+
 test('a tile\'s state: open, merged, closed or draft for a pull request; open, completed or not planned for an issue', () => {
   assert.deepEqual([pull(1), pull(1, { draft: true }), pull(1, { state: 'merged' }), pull(1, { state: 'closed' })].map(item => issueState('pulls', item)[0]),
     ['open', 'draft', 'merged', 'closed'])
