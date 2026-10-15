@@ -231,8 +231,29 @@ describe('<lockfile-graph>', () => {
     // No graph module to load here: the slot says so, as on a failed load.
     const slot = {}
     el.renderRoot = { querySelector: selector => selector === '.slot' ? slot : null }
+    Object.defineProperty(el, 'isConnected', { value: true })
     await el._attach()
     assert.equal(graph2.bundleLayout, 'graph')
     assert.match(slot.textContent, /^Graph failed to load/u)
+  })
+
+  it('mounts only its latest attachment, and none once off the page, so a late one leaves the graph on screen alone', async t => {
+    keep(t, 'bundleLayout')
+    const el = new (customElements.get('lockfile-graph'))()
+    el.lockfile = pnpm
+    el.willUpdate(new Map([['lockfile', undefined]]))
+    // Each mount, here a failed one (no graph module to load), writes the slot.
+    const mounts = []
+    const slot = { get textContent() { return mounts.at(-1) }, set textContent(message) { mounts.push(message) } }
+    el.renderRoot = { querySelector: selector => selector === '.slot' ? slot : null }
+    let connected = true
+    Object.defineProperty(el, 'isConnected', { get: () => connected })
+    await Promise.all([el._attach(), el._attach()])
+    assert.equal(mounts.length, 1, 'the earlier attachment, superseded while it waited, mounts nothing')
+    const leaving = el._attach()
+    connected = false
+    el._detach()
+    await leaving
+    assert.equal(mounts.length, 1, 'nor one whose element left the page while it waited')
   })
 })
