@@ -91,10 +91,12 @@ export function knowProfile(userId, profile, avatarChanged = false, unlinkedAcco
   applyProfile(userId, profile)
 }
 
+// An account unlinked by the id answers named its login by, else by its
+// login: one that another account of theirs had before is still theirs.
 function applyProfile(userId, profile) {
   for (const [login, user] of known) {
     if (user.id !== userId) continue
-    if (unlinked.has(login) || unlinkedIds.has(accounts.get(login))) known.delete(login)
+    if (accounts.has(login) ? unlinkedIds.has(accounts.get(login)) : unlinked.has(login)) known.delete(login)
     else known.set(login, { ...user, login: profile.login, name: profile.name?.trim() || null })
   }
 }

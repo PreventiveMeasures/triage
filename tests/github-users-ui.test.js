@@ -122,10 +122,14 @@ test('the signed-in user\'s own profile change shows in what was kept of them: t
   assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
   // `zoe-job`, the login Zoe's work account had before it was renamed, theirs by its id.
   knowGithubUsers({ commits: [{ authorLogin: 'zoe-job', authorId: 2 }], users: { 'zoe-job': { id: 'zoe-id', login: 'zoe', name: 'Zoe at Work' } } })
-  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, { login: 'Zoe-Work', githubId: 2 })
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [{ login: 'zoe-side' }] }, false, { login: 'Zoe-Work', githubId: 2 })
   assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.name ?? null), [null, null])
   assert.deepEqual(['zoe-work', 'zoe-job'].map(appUser), [null, null], 'unlinked, by any login of it')
   assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.id), ['zoe-id', 'zoe-id'])
+  // `zoe-old` again, by Zoe's sign-in account's id, its login now another
+  // account's of theirs, linked, unlinked: still the sign-in account's.
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, { login: 'zoe-old', githubId: 4 })
+  assert.equal(appUser('zoe-old')?.id, 'zoe-id', 'by the id answers named it by, not the login')
   forgetGithubUsers()
 })
 
