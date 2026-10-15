@@ -115,6 +115,18 @@ if (mode === 'build') {
     chunkNames: 'chunk-[hash]',
     metafile: true,
   })
+  // One module, one output. Lazy entries (graph.js, scan.js, dialogs.js…)
+  // take lit and the client state from the chunks view.js loads; a copy of
+  // their own would be a second lit, a second set of custom elements, a
+  // second state, which splitting in this one build rules out. Hold to it.
+  const owners = new Map()
+  for (const [output, { inputs }] of Object.entries(metafile.outputs)) {
+    if (!output.endsWith('.js')) continue
+    for (const input of Object.keys(inputs)) {
+      if (owners.has(input)) throw new Error(`${input} is in both ${owners.get(input)} and ${output}`)
+      owners.set(input, output)
+    }
+  }
   // Control characters esbuild prints raw, escaped again (build-controls.js).
   await Promise.all(Object.keys(metafile.outputs).filter(path => path.endsWith('.js')).map(async path => {
     const text = await readFile(path, 'utf8'), escaped = escapedControls(text)
