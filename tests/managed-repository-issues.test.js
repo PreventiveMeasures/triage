@@ -4,7 +4,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 
-const baseConfig = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60 * 60_000 }
+const baseConfig = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 2 * 24 * 60 * 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 const userTokens = { accessToken: 'login-token', refreshToken: null, expiresAt: null }
@@ -158,6 +158,10 @@ test('a page read is kept for every reader: answered as kept a while, then at on
   held = null
   await Promise.all(tracked)
   assert.equal(await titled({ repoId: '1', kind: 'issues' }), 'Changed', 'the next to ask has what was read behind it')
+  // A day on, kept but not yet removed, it is read again before it is answered.
+  title = 'A day on'
+  t.mock.timers.setTime(Date.now() + 24 * 60 * 60_000 + 60_000)
+  assert.equal(await titled({ repoId: '1', kind: 'issues' }), 'A day on')
   // Serverless, where nothing outlives an answer: read again before it.
   const first = await fixture(t, { serverless: true, tracked })
   title = 'Before'
@@ -171,7 +175,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   const common = { createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', closedAt: '2026-10-02T00:00:00Z', comments: { totalCount: 2 }, labels: labels('bug') }
   const items = {
     7: { __typename: 'PullRequest', ...common, number: 7, title: 'Fix the chips', pullState: 'MERGED', isDraft: false, mergedAt: '2026-10-02T00:00:00Z', reviewDecision: 'APPROVED',
-      additions: 30, deletions: 4, headRefName: 'claude/fix-chips', baseRefName: 'main', body: '  Fixes #3.\n\nhttps://claude.ai/code/session_X  ', changedFiles: 2,
+      additions: 30, deletions: 4, headRefName: 'claude/fix-chips', baseRefName: 'main', body: '\n \n    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X  \n', changedFiles: 2,
       commits: { totalCount: 4, nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, mergedBy: { login: 'ada' }, author: { login: 'grace' },
       closingIssuesReferences: { nodes: [{ number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED' }, null] } },
     3: { __typename: 'Issue', ...common, number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED', body: 'x'.repeat(30_000), author: null,
@@ -185,7 +189,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   assert.deepEqual(pull.body, { kind: 'pulls', number: 7, title: 'Fix the chips', author: 'grace', createdAt: Date.parse(common.createdAt), updatedAt: Date.parse(common.updatedAt),
     closedAt: Date.parse(common.closedAt), comments: 2, labels: [{ name: 'bug', color: 'd73a4a' }], moreLabels: 1, state: 'merged', draft: false,
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
-    body: 'Fixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
+    body: '    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
     commits: 4, files: 2, mergedBy: 'ada' })
   const issue = await item('3')
   // A description too long shortened, and the linked past those named counted, each said so.

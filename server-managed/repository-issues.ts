@@ -129,7 +129,9 @@ export async function repositoryItem(fullName: string, token: string, number: nu
   const kind: IssuesKind | null = node?.__typename === 'Issue' ? 'issues' : node?.__typename === 'PullRequest' ? 'pulls' : null
   const tile = kind && node ? item(kind, { ...node, state: kind === 'issues' ? node.issueState : node.pullState }) : null
   if (!kind || !node || !tile) throw new GithubApiError(404, 'github-not-found')
-  const written = typeof node.body === 'string' ? node.body.trim() : ''
+  // As written, but for blank lines before it and spaces after: a first
+  // line's indent, an indented code block's, kept.
+  const written = typeof node.body === 'string' ? node.body.replace(/^(?:[ \t]*\r?\n)+/u, '').trimEnd() : ''
   const links = kind === 'issues' ? node.closedByPullRequestsReferences : node.closingIssuesReferences
   const named = linked(kind === 'issues' ? 'pulls' : 'issues', links?.nodes)
   const described = { body: written.slice(0, MAX_BODY), bodyShortened: written.length > MAX_BODY, moreLinked: Math.max(0, count(links?.totalCount) - named.length) }

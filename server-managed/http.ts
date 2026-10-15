@@ -107,7 +107,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -1601,7 +1601,10 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
     const kept = key === null ? null : { store: repositoryReadStore(deps.db, deps.config.debug), key: `${repoId}\0${key}` }
-    const held = kept ? await kept.store.read(kept.key) : null
+    // One kept longer than a day, not yet removed (pruneKept removes them as
+    // others are written), is none.
+    const stored = kept ? await kept.store.read(kept.key) : null
+    const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
     const readKept = async () => {
       const body = await read(access.repo.fullName, token)
       if (kept) await kept.store.write(kept.key, body, Date.now())
