@@ -3599,12 +3599,12 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
    readily as the label before it, so that the label shrinks by less than a
    pixel can show, and no further than to the run's dots. */
 .issue-labels {
-  --label-dot: calc(1.15rem + 2px);
-  gap: .3rem; overflow: hidden;
+  --label-dot: calc(1.05rem + 2px); --label-gap: .25rem;
+  gap: var(--label-gap); overflow: hidden;
 }
 .issue-labels-rest {
-  display: flex; gap: .3rem; flex: 0 1000000 auto;
-  min-width: calc(var(--labels) * var(--label-dot) + (var(--labels) - 1) * .3rem);
+  display: flex; gap: var(--label-gap); flex: 0 1000000 auto;
+  min-width: calc(var(--labels) * var(--label-dot) + (var(--labels) - 1) * var(--label-gap));
 }
 .issue-branch {
   gap: .3rem;
@@ -3619,13 +3619,26 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 .is-deleted { color: var(--critical); }
 /* A label's dot in its padding, its name clipped to its content, so that the
    label shortened to its dot, as narrow as its padding and border, shows the
-   dot alone, centered, and none of its name. */
+   dot alone, centered, and none of its name. Between the dot and the name, an
+   inline box, the first on the line, so that it is the box rather than the
+   name's first letter that the shortening must keep: the name shortens to
+   its ellipsis alone, never to a letter of it. Where the ellipsis has room
+   only by the gap the box keeps, the box gives of it, down to .1rem; where
+   it has none even so, the box takes every room left, and the name and its
+   ellipsis show none of them rather than a sliver. (An ellipsis is taken as
+   1em wide, more than any font's is. Each term of the margin is naught where
+   the label is measured for its own width, its percentages then naught.) */
 .issue-label {
-  flex: 0 1 auto; min-width: var(--label-dot); max-width: 9rem; padding: 0 .35rem 0 .8rem;
+  flex: 0 1 auto; min-width: var(--label-dot); max-width: 9rem; padding: 0 .3rem 0 .75rem;
   border: 1px solid var(--border); border-radius: 999px; overflow: clip; overflow-clip-margin: content-box;
-  background: radial-gradient(circle at .575rem 50%, var(--label, var(--muted)) .225rem, transparent calc(.225rem + .5px));
-  color: var(--text); font-size: .68rem; line-height: 1.35; text-indent: .25rem; text-overflow: ellipsis;
-  &.is-more { flex: none; padding-left: .35rem; background: none; color: var(--muted); text-indent: 0; }
+  background: radial-gradient(circle at .525rem 50%, var(--label, var(--muted)) .225rem, transparent calc(.225rem + .5px));
+  color: var(--text); font-size: .68rem; line-height: 1.35; text-overflow: ellipsis;
+  &::before {
+    content: ''; display: inline-block; width: .25rem;
+    margin-right: calc(clamp(-.15rem, 100% - .25rem - 1em, 0px) + max(0px, .15rem - 100% * 1000)
+      + max(0px, min(100%, 1em + .1rem - 100%) * 1000));
+  }
+  &.is-more { flex: none; padding-left: .3rem; background: none; color: var(--muted); &::before { display: none; } }
 }
 /* A pull request's review and checks, as tall as the two are where it has
    one, that one centered, or none: its comments level with its neighbors'. */
