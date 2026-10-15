@@ -398,11 +398,13 @@ test('a declaration file is read as node runs it, its types stripped', () => {
   assert.equal(found('lib.dom.d.ts', 'interface I {\n    eval?: Values;\n}\n'), null, 'a property typed optional')
   assert.deepEqual(found('a.js', 'const run = c ? eval : f\n'), { eval: [1] }, 'eval chosen in a ternary')
   assert.equal(found('a.js', 'navigator.credentials.get({ publicKey: { extensions: { prf: { eval: { first: salt } } } } })\n'
-    + 'const o={prf:{eval:{first:r}}}\nconst { eval: run } = vm\nouter: eval : for (;;) break outer\n'), null,
-  'eval as a key: WebAuthn\'s, minified or not, destructured, a label')
-  assert.equal(found('lib.d.ts', 'interface Extensions {\n  eval: { first: BufferSource }\n}\n'), null, 'a member typed')
-  assert.deepEqual(found('a.js', 'const o = { eval }\nconst p = { run: eval }\nconst q = c ? /* c */ window.eval : f\nconst r = c\n  ? eval\n  : f\n'),
-    { eval: [1, 2, 3, 5] }, 'eval read: a shorthand property, a value, and a ternary\'s choice, the global object\'s, a comment or a line between')
+    + 'const o={prf:{eval:{first:r}}}\nconst { eval: run } = vm\nconst p = { a: 1, /* c */ eval: 2 }\n'), null,
+  'eval as a key: WebAuthn\'s, minified or not, destructured, after another')
+  assert.equal(found('lib.d.ts', 'interface Extensions {\n  eval: { first: BufferSource };\n  other: string;\n  eval: number\n}\n'), null, 'a member typed')
+  assert.deepEqual(found('a.js', 'const o = { eval }\nconst p = { run: eval }\nconst q = c ? /* c */ window.eval : f\nconst r = c\n  ? eval\n  : f\n'
+    + 'const s = useEval ? true && eval : JSON.parse\nconst t = c ?\n  eval :\n  f\nswitch (f) { case eval: break }\n'),
+  { eval: [1, 2, 3, 5, 7, 9, 11] }, 'eval read: a shorthand property, a value, a ternary\'s choice, the global object\'s, a comment or a line between, '
+    + 'last of its branch, and a case')
   assert.deepEqual(found('a.js', 'new Worker(code, { eval: true })\nnew Q(A,{eval:!0}).on("error",f)\nnew Worker(file, { eval: false })\n'), { eval: [1, 2] },
     'a worker told to run its string as code, minified or not')
 })

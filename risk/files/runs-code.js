@@ -118,12 +118,14 @@ const ABSENT_ENDS = String.raw`\s{0,4}(?:(?:\)\s{0,4}){1,4}(?![\s)]{0,8}(?:[.[(]
 const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!\b(?:const|let|var)\s{1,4})`
   + String.raw`(?:(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})|(?!${TOKEN_VAR}${ABSENT_ENDS}))`
   + String.raw`${TOKEN_VAR}(?![\p{ID_Continue}$])(?!${TYPED})(?:(?!${SET})|(?<=[{,]\s{0,64}${TOKEN_VAR}))`
-// eval as a key, not read: a property's name (`{ eval: x }`, WebAuthn's
-// `extensions: { prf: { eval: { first } } }`, `const { eval: run } = vm`), a
-// member typed or a label; not a ternary's choice (`c ? eval : f`), nor a
-// worker told to run its string as code (`new Worker(code, { eval: true })`,
-// minified `{eval:!0}`).
-const KEYED = String.raw`(?<!\?${GAP}(?:(?:${GLOBAL})${GAP}\??\.${GAP})?eval)\s*:(?!${GAP}(?:true|!0)(?![\p{ID_Continue}$]))`
+// eval as a key, not read: a property's name or a member typed, coming
+// first or after another (`{ eval: x }`, WebAuthn's `extensions: { prf: {
+// eval: { first } } }`, `const { eval: run } = vm`, `{ a: 1, eval: 2 }`, `a;
+// eval: T`); not where anything else comes before it, as a ternary's choice
+// does, whole or last of its branch (`c ? eval : f`, `c ? x && eval : f`),
+// nor a worker told to run its string as code (`new Worker(code, { eval:
+// true })`, minified `{eval:!0}`).
+const KEYED = String.raw`(?<=[{,;]${GAP}eval)\s*:(?!${GAP}(?:true|!0)(?![\p{ID_Continue}$]))`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
