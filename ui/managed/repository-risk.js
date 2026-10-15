@@ -12,6 +12,7 @@
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
@@ -609,7 +610,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
       ${this._scopeBar()}
-      <p class="risk-progress" role="status">${this._progress()}</p>
+      <div class="risk-progress" role="status">${this._progress()}</div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size === 0 ? nothing : html`<div class="manage-list">${this._lockfiles()}
         ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}</div>`}
@@ -657,18 +658,39 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </select>`
   }
 
-  _progress() {
-    if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.'
+  // The scan's progress, a metric each: its `label`, how many (`value`), of
+  // how many where it reads them (`of`), those an install for production
+  // takes and those only devDependencies need apart (`detail`) where there
+  // are any of the latter, and a `tone` where it calls for one.
+  _metrics() {
     const counts = this._counts()
     const { needed, dev } = counts
-    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
-    // Packages' counts, those of devDependencies alone apart where there are any.
-    const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
-    const state = this._state === 'running' && this._parts > 1 ? `Scanning, part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
-      packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
-      ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],
-      ...counts.advisories > 0 ? [`${formatCount.format(counts.advisories)} advisories${counts.malware > 0 ? `, ${formatCount.format(counts.malware)} of malware` : ''}`] : []].join(' · ')
+    const count = value => formatCount.format(value)
+    const split = said => dev.total === 0 ? null : `${said(needed)} prod · ${said(dev)} dev`
+    const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale
+    return [
+      { label: 'Repositories', value: counts.reposRead, of: counts.repos },
+      { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles },
+      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, detail: split(({ told, total }) => `${count(told)}/${count(total)}`) },
+      { label: 'Flagged', value: flagged, detail: split(({ flagged: some }) => count(some)), tone: flagged > 0 ? 'high' : null },
+      ...stale > 0 ? [{ label: 'Stale', value: stale, detail: split(({ stale: some }) => count(some)),
+        tooltip: `Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
+      ...counts.advisories > 0 ? [{ label: 'Advisories', value: counts.advisories,
+        detail: counts.malware > 0 ? `${count(counts.malware)} of malware` : null, tone: counts.malware > 0 ? 'critical' : null }] : [],
+    ]
+  }
+
+  // The scan's state, and its metrics (_metrics), each read with a bar.
+  _progress() {
+    if (this._state === 'idle') return html`<p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p>`
+    const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
+    return html`<span class="risk-state" data-state=${this._state}>${state}</span>
+      ${this._metrics().map(({ label, value, of, detail, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
+        <span class="risk-metric-label">${label}</span>
+        <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}</span>
+        ${of === undefined ? nothing : html`<span class="risk-bar" aria-hidden="true"><span style=${styleMap({ width: `${of === 0 ? 0 : Math.round(value / of * 100)}%` })}></span></span>`}
+        ${detail ? html`<span class="risk-metric-detail">${detail}</span>` : nothing}
+      </span>`)}`
   }
 
   _pending(running, otherwise) {
