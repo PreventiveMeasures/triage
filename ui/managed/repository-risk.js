@@ -517,8 +517,18 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       lockfiles: lockfiles.length, lockfilesRead: lockfiles.filter(lockfile => lockfile.packages !== null || lockfile.error).length,
       // Those more than devDependencies need, and those only they need, apart.
       needed: tally(assessed.filter(row => !row.dev)), dev: tally(assessed.filter(row => row.dev)),
-      advisories: this._advisories.size, malware: [...this._advisories.values()].filter(row => row.malware).length,
+      advisories: this._adviseCounts(),
     }
+  }
+
+  // The advisories, how many in all and apart: those of malware, those of
+  // versions an install for production takes, and those only of versions
+  // only devDependencies need.
+  _adviseCounts() {
+    const kinds = this._advisoryKinds()
+    const needed = new Set(kinds.production.filter(row => !row.malware).map(row => `${row.id}\0${row.name}`))
+    const malware = [...this._advisories.values()].filter(row => row.malware).length
+    return { total: this._advisories.size, malware, needed: needed.size, dev: this._advisories.size - malware - needed.size }
   }
 
   // The package rows of the kind shown (`_packageKind`), filtered and
@@ -659,39 +669,43 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // The scan's progress, a metric each: its `label`, how many (`value`), of
-  // how many where it reads them (`of`), those an install for production
-  // takes and those only devDependencies need apart (`detail`) where there
-  // are any of the latter, and a `tone` where it calls for one.
+  // how many where it reads them (`of`), its bar's segments, each of a kind
+  // and how many (`bar`: read; those an install for production takes and
+  // those only devDependencies need; malware), the rest of `of` unfilled, said
+  // in its `tooltip`, and a `tone` where it calls for one.
   _metrics() {
     const counts = this._counts()
-    const { needed, dev } = counts
+    const { needed, dev, advisories } = counts
     const count = value => formatCount.format(value)
-    const split = said => dev.total === 0 ? null : `${said(needed)} prod · ${said(dev)} dev`
+    // Its parts' counts said, those of none left out.
+    const said = parts => parts.filter(([, value, total = value]) => total > 0)
+      .map(([kind, value, total]) => `${count(value)}${total === undefined ? '' : `/${count(total)}`} ${kind}`).join(' · ') || null
     const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale
     return [
-      { label: 'Repositories', value: counts.reposRead, of: counts.repos },
-      { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles },
-      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, detail: split(({ told, total }) => `${count(told)}/${count(total)}`) },
-      { label: 'Flagged', value: flagged, detail: split(({ flagged: some }) => count(some)), tone: flagged > 0 ? 'high' : null },
-      ...stale > 0 ? [{ label: 'Stale', value: stale, detail: split(({ stale: some }) => count(some)),
-        tooltip: `Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
-      ...counts.advisories > 0 ? [{ label: 'Advisories', value: counts.advisories,
-        detail: counts.malware > 0 ? `${count(counts.malware)} of malware` : null, tone: counts.malware > 0 ? 'critical' : null }] : [],
+      { label: 'Repositories', value: counts.reposRead, of: counts.repos, bar: [['read', counts.reposRead]] },
+      { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles, bar: [['read', counts.lockfilesRead]] },
+      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, bar: [['prod', needed.told], ['dev', dev.told]],
+        tooltip: said([['prod', needed.told, needed.total], ['dev', dev.told, dev.total]]) },
+      { label: 'Flagged', value: flagged, bar: [['prod', needed.flagged], ['dev', dev.flagged]],
+        tooltip: said([['prod', needed.flagged], ['dev', dev.flagged]]), tone: flagged > 0 ? 'high' : null },
+      ...stale > 0 ? [{ label: 'Stale', value: stale, bar: [['prod', needed.stale], ['dev', dev.stale]],
+        tooltip: `${said([['prod', needed.stale], ['dev', dev.stale]])}: assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
+      ...advisories.total > 0 ? [{ label: 'Advisories', value: advisories.total,
+        bar: [['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]],
+        tooltip: said([['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]]) }] : [],
     ]
   }
 
-  // The scan's state, and its metrics (_metrics), each read with a bar; where
-  // any has a detail, room beneath each for it (risk-details).
+  // The scan's state, and its metrics (_metrics), each read with a bar.
   _progress() {
     if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
     const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    const metrics = this._metrics()
-    return html`<div class=${metrics.some(({ detail }) => detail) ? 'risk-progress risk-details' : 'risk-progress'} role="status"><span class="risk-state" data-state=${this._state}>${state}</span>
-      ${metrics.map(({ label, value, of, detail, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
+    return html`<div class="risk-progress" role="status"><span class="risk-state" data-state=${this._state}>${state}</span>
+      ${this._metrics().map(({ label, value, of, bar, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
         <span class="risk-metric-label">${label}</span>
         <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}</span>
-        ${of === undefined ? nothing : html`<span class="risk-bar" aria-hidden="true"><span style=${styleMap({ width: `${of === 0 ? 0 : Math.round(value / of * 100)}%` })}></span></span>`}
-        ${detail ? html`<span class="risk-metric-detail">${detail}</span>` : nothing}
+        <span class="risk-bar" aria-hidden="true">${bar.filter(([, some]) => some > 0).map(([kind, some]) => html`<span class=${`risk-bar-${kind}`}
+          style=${styleMap({ width: `${some / (of ?? value) * 100}%` })}></span>`)}</span>
       </span>`)}</div>`
   }
 

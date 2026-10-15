@@ -1,8 +1,6 @@
-/* The scan's progress: its state, then a metric each, read with a bar where
-   it counts toward a total, wrapping where they don't fit, their labels on
-   one line. The state is centered on the metrics' labels and bars: a
-   metric's detail hangs beneath them, out of flow, in room each item keeps
-   for it (risk-details). */
+/* The scan's progress: its state, centered on them, then a metric each, its
+   label and count on a line, its bar beneath, wrapping where they don't
+   fit. */
 .risk-progress {
   display: flex;
   flex-wrap: wrap;
@@ -43,26 +41,21 @@
   justify-content: start;
   align-items: baseline;
   gap: .2rem .45rem;
-  position: relative;
   min-width: 6rem;
 }
-.risk-details > .risk-metric, .risk-details > .risk-state { margin-bottom: 1.2rem; }
 .risk-metric-label { font-size: .7rem; letter-spacing: .02em; text-transform: uppercase; }
 .risk-metric-value { color: var(--text); font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .risk-metric-of { color: var(--muted); font-weight: 400; }
 .risk-metric.risk-high .risk-metric-value { color: var(--high); }
-.risk-metric.risk-critical .risk-metric-detail { color: var(--critical); }
-.risk-metric-detail {
-  position: absolute;
-  top: calc(100% + .2rem);
-  left: 0;
-  font-size: .68rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1rem;
-  white-space: nowrap;
-}
-.risk-bar { display: block; grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: var(--border); }
-.risk-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s; }
+/* A metric's bar, unfilled the border's grey, filled a segment each: what
+   is read the accent, what an install for production takes a brighter shade
+   of it and what only devDependencies need a darker one, malware red. */
+.risk-bar { display: flex; grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: var(--border); }
+.risk-bar > span { height: 100%; transition: width .25s; }
+.risk-bar-read { background: var(--accent); }
+.risk-bar-prod { background: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+.risk-bar-dev { background: color-mix(in srgb, var(--accent) 50%, var(--bg)); }
+.risk-bar-malware { background: var(--critical); }
 .risk-section { margin-top: 1rem; }
 .risk-section:first-child { margin-top: 0; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
