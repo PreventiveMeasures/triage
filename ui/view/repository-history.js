@@ -72,6 +72,25 @@ function historyRead(key, ask) {
   return loading
 }
 
+// This revision's history from every branch's, where that holds the commit
+// shown, read again of none: the commits it reaches among them, its history
+// going on where one has a parent not among them. Its older commits read from
+// its first page, which those it holds need not fill.
+export function revisionFromAll(all, commit) {
+  const bySha = new Map(all.commits.map(item => [item.sha, item]))
+  if (!bySha.has(commit)) return null
+  const reached = new Set()
+  for (const queue = [commit]; queue.length > 0;) {
+    const sha = queue.pop()
+    if (reached.has(sha) || !bySha.has(sha)) continue
+    reached.add(sha)
+    queue.push(...bySha.get(sha).parents)
+  }
+  const commits = all.commits.filter(item => reached.has(item.sha))
+  return { status: 'ready', until: all.until, page: 0, commits, more: commits.some(item => item.parents.some(parent => !bySha.has(parent))),
+    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, loadingMore: false, moreError: null }
+}
+
 // The next page of a history read a page at a time, after those it holds.
 function readMore(key, entry, ask) {
   if (entry.loadingMore || !entry.more) return
@@ -218,6 +237,13 @@ class RepositoryHistory extends LitElement {
       if (mode !== 'all' && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
       return checked(answer)
     })
+    // This revision's history, where All branches' holds its commit, comes
+    // from that, unread again; All branches' own is read all the same.
+    const held = sessionHistories()
+    const fresh = entry => entry && Date.now() < entry.until
+    const all = mode === 'revision' && !fresh(held.get(key)) ? held.get(`all\0${repoId}`) : null
+    const derived = all?.status === 'ready' && fresh(all) ? revisionFromAll(all, commit) : null
+    if (derived) held.set(key, derived)
     const entry = historyRead(key, ask)
     if (mode === 'all' && entry.status === 'error' && entry.code === 'github-token-required') {
       allRefused.add(repoId)
