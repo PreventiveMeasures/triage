@@ -14,6 +14,7 @@
 // that read it; a period read anew shows the last one read, faded, till it
 // is.
 import { LitElement, html, nothing } from 'lit'
+import { styleMap } from './style-map.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryPulse } from './client-managed.js'
 import { compactTime } from './repository-history.js'
@@ -297,7 +298,7 @@ class RepositoryPulse extends LitElement {
           <div class="pulse-columns">${stats.weeks.map(week => {
             const name = `${weekName(week.week)}: ${plural(week.commits, 'commit')}`
             return html`<span class=${`pulse-column${marked(week)}`} role="img" aria-label=${name} data-tooltip=${name}>
-              <span class="pulse-bar" style=${`--value: ${week.commits / commits.top}`}></span></span>`
+              <span class="pulse-bar" style=${styleMap({ '--value': `${week.commits / commits.top}` })}></span></span>`
           })}</div>
         </div>
         ${lines ? html`<div class="pulse-head is-sub"><h3>Lines</h3><span>added and removed a week</span>
@@ -307,8 +308,8 @@ class RepositoryPulse extends LitElement {
             <div class="pulse-columns">${stats.weeks.map(week => {
               const name = `${weekName(week.week)}: +${number(week.additions)} −${number(week.deletions)} lines`
               return html`<span class=${`pulse-column${marked(week)}`} role="img" aria-label=${name} data-tooltip=${name}>
-                <span class="pulse-half"><span class="pulse-bar is-added" style=${`--value: ${week.additions / lines.top}`}></span></span>
-                <span class="pulse-half is-below"><span class="pulse-bar is-removed" style=${`--value: ${week.deletions / lines.top}`}></span></span></span>`
+                <span class="pulse-half"><span class="pulse-bar is-added" style=${styleMap({ '--value': `${week.additions / lines.top}` })}></span></span>
+                <span class="pulse-half is-below"><span class="pulse-bar is-removed" style=${styleMap({ '--value': `${week.deletions / lines.top}` })}></span></span></span>`
             })}</div>
           </div>` : html`<p class="pulse-note">GitHub doesn’t count lines added and removed in a repository of 10,000 commits or more.</p>`}
         <div class="pulse-months" aria-hidden="true">${stats.weeks.map((week, at) => {
@@ -324,7 +325,7 @@ class RepositoryPulse extends LitElement {
 
   // A plot's scale: a hairline at each tick, its label beside.
   renderTicks(ticks) {
-    return html`<div class="pulse-ticks" aria-hidden="true">${ticks.map(([at, label]) => html`<span style=${`--at: ${at}`}><span>${label}</span></span>`)}</div>`
+    return html`<div class="pulse-ticks" aria-hidden="true">${ticks.map(([at, label]) => html`<span style=${styleMap({ '--at': `${at}` })}><span>${label}</span></span>`)}</div>`
   }
 
   renderContributors(answer) {
@@ -335,7 +336,7 @@ class RepositoryPulse extends LitElement {
       <figcaption class="pulse-head"><h3>Contributors</h3><span>by their commits in the period</span></figcaption>
       ${people.length === 0 ? html`<p class="pulse-note">No commits in the period.</p>` : html`<ol class="pulse-ranks">${people.slice(0, TOP_CONTRIBUTORS).map(person => html`<li>
         <a class="pulse-rank-name" href=${profile(person.login)} target="_blank" rel="noopener noreferrer">${person.login}</a>
-        <span class="pulse-rank-bar"><span style=${`--value: ${person.commits / top}`}></span><span class="pulse-rank-value">${number(person.commits)}</span></span>
+        <span class="pulse-rank-bar"><span style=${styleMap({ '--value': `${person.commits / top}` })}></span><span class="pulse-rank-value">${number(person.commits)}</span></span>
         ${lines ? html`<span class="pulse-rank-lines">+${compact(person.additions)} −${compact(person.deletions)}</span>` : nothing}
       </li>`)}</ol>
       ${people.length > TOP_CONTRIBUTORS ? html`<p class="pulse-note">and ${plural(people.length - TOP_CONTRIBUTORS, 'more', 'more')}</p>` : nothing}`}

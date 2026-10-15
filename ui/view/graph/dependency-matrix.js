@@ -1,4 +1,5 @@
 import { LitElement, html, unsafeCSS } from 'lit'
+import { styleMap } from '../style-map.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { buildDependencyMatrix } from './matrix-model.js'
@@ -217,7 +218,7 @@ class DependencyMatrix extends LitElement {
     const hoverImports = hoverCol && hoverRow ? this.model.cells.get(hoverRow.id)?.get(hoverCol.id)?.count ?? 0 : 0
     const packagesOnly = this.graph.packagesOnly, terms = graphTerms(this.graph)
     return html`<div class="matrix-layout">
-      <div class="matrix-stage" style=${`--matrix-label-width: ${MATRIX_LEFT}px`}>
+      <div class="matrix-stage" style=${styleMap({ '--matrix-label-width': `${MATRIX_LEFT}px` })}>
         <select class="matrix-order" aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.dirty = true; this.requestUpdate() }}>
           <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>${terms.mostImported} ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most ${terms.links} ↓</option>
         </select>

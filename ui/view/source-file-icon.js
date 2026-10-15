@@ -1,4 +1,5 @@
 import { html, svg } from 'lit'
+import { styleMap } from './style-map.js'
 import { langForPath } from '../../common/code-language.js'
 
 const pythonMark = svg`<path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#3776ab"/><path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#ffd43b" transform="rotate(180 8 8)"/><circle cx="6" cy="2.8" r=".65" fill="#fff"/><circle cx="10" cy="13.2" r=".65" fill="#fff"/>`
@@ -143,10 +144,10 @@ const pageMark = svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="n
 
 export function sourceFileIcon(path, format) {
   const type = sourceFileType(path, format)
-  return html`<svg class="source-file-icon" data-file-type=${type} width="16" height="16" viewBox="0 0 16 16" style="flex: none" aria-hidden="true">${MARKS[type] ?? pageMark}</svg>`
+  return html`<svg class="source-file-icon" data-file-type=${type} width="16" height="16" viewBox="0 0 16 16" style=${styleMap({ flex: 'none' })} aria-hidden="true">${MARKS[type] ?? pageMark}</svg>`
 }
 
-export const sourceFolderIcon = html`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" style="flex: none" aria-hidden="true"><path d="M1.5 4V2.5h5L8 4h6.5v9h-13Z" stroke-linejoin="round"/></svg>`
+export const sourceFolderIcon = html`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" style=${styleMap({ flex: 'none' })} aria-hidden="true"><path d="M1.5 4V2.5h5L8 4h6.5v9h-13Z" stroke-linejoin="round"/></svg>`
 
 export const sourceNpmIcon = html`<svg class="bundle-code-tree-npm" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M1 1h14v14H1Zm3 3v8h4V6h2v6h2V4Z"/></svg>`
 

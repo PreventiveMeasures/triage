@@ -89,6 +89,9 @@ header .meta { color: var(--muted); font-size: .85rem; margin-top: .25rem; }
 .text-block {
   white-space: pre-wrap; overflow-wrap: break-word; font-size: .875rem;
 }
+.text-block.quiet { color: var(--muted); }
+.text-block.system-text { font-size: .825rem; }
+.mono.uuid { font-size: .7rem; }
 .text-block + .text-block, .text-block + details, details + .text-block, details + details {
   margin-top: .4rem;
 }

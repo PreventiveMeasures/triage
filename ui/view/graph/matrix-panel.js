@@ -1,4 +1,5 @@
 import { html } from 'lit'
+import { styleMap } from '../style-map.js'
 import { formatBytes } from '../format.js'
 import { pkgColor } from './utils.js'
 import { countsTowardsCycles } from './cycle-imports.js'
@@ -8,7 +9,7 @@ const number = (n) => n.toLocaleString('en-US')
 
 function rowButton(row, count, select) {
   return html`<button class="g2-dist-item matrix-row-link" @click=${() => select(row.id)}>
-    <span class="g2-dist-dot" style=${`background:${pkgColor(row.pkg)}`}></span><span class="g2-dist-name" data-tooltip-truncated data-tooltip=${row.label}>${row.label}</span><span class="g2-dist-count">${number(count)}</span>
+    <span class="g2-dist-dot" style=${styleMap({ background: pkgColor(row.pkg) })}></span><span class="g2-dist-name" data-tooltip-truncated data-tooltip=${row.label}>${row.label}</span><span class="g2-dist-count">${number(count)}</span>
   </button>`
 }
 

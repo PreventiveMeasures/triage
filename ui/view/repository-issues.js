@@ -9,7 +9,7 @@
 // session that read it.
 import { LitElement, html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryIssues } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'

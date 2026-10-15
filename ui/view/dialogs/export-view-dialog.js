@@ -39,6 +39,7 @@
 // Sibling of `<export-confirm-dialog>`: extends `AppDialog` for the
 // shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
 import { html, nothing, unsafeCSS } from 'lit'
+import { styleMap } from '../style-map.js'
 import { AppDialog } from './app-dialog.js'
 import { highlight, splitHighlightedLines } from '../prism-highlight.js'
 import { unwatchNearViewport, watchNearViewport } from '../lazy-render.js'
@@ -164,11 +165,11 @@ class ExportViewDialog extends AppDialog {
         >${COPY_ICON}${copyLabel}</button>
       </header>
       <div class="evd-code" tabindex="0">
-        <div class="evd-lines" style="--evd-lineno-width: ${String(count).length}ch">
+        <div class="evd-lines" style=${styleMap({ '--evd-lineno-width': `${String(count).length}ch` })}>
           ${this._chunks.map((chunk, i) => html`<div
             class="evd-chunk evd-pending"
             data-chunk=${i}
-            style="--evd-chunk-lines: ${chunk.end - chunk.start}"
+            style=${styleMap({ '--evd-chunk-lines': `${chunk.end - chunk.start}` })}
           ></div>`)}
         </div>
       </div>

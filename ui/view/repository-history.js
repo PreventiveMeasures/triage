@@ -9,7 +9,7 @@
 // it answered is kept a while, for the session that read it.
 import { LitElement, html, nothing, svg } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
