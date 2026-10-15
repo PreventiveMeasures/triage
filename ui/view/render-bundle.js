@@ -2120,9 +2120,10 @@ function renderBundleSlide(entry) {
   const canCompare = npm || state.bundleDetailsTab === 'compare'
     || bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
   // Managed bundles have no Issues tab: Code shows each file's issues. A
-  // persisted or routed 'issues' selection coerces back to Overview.
+  // persisted or routed 'issues' selection coerces back to Overview. A
+  // repository's Issues are its GitHub issues, another tab of the same name.
   const showIssues = !isManagedUiMode()
-  if (state.bundleDetailsTab === 'issues' && !showIssues) {
+  if (state.bundleDetailsTab === 'issues' && !showIssues && !repository) {
     state.bundleDetailsTab = 'overview'
   }
   const tab = state.bundleDetailsTab
