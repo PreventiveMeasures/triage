@@ -206,15 +206,36 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
   }
   // History reads none of its files: a directory at a commit shows it alone,
-  // its other tabs opening them.
-  if (!entry && commit && tab === 'history') {
-    const revision = route.revision === undefined ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.revision
+  // its other tabs opening them; at a revision named, at the commit listing
+  // the directory reads it at.
+  if (!entry && tab === 'history') {
+    const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
     headerData.delete(`refs\0${repoId}`)
     const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
-    showOpening({ repoId, commit, ref: null, path, tab, repo: route.repo ?? known ?? null, revision, error: null, historyOnly: true })
+    const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
+    let at = commit
+    if (!at) {
+      showOpening(opening)
+      renderSidebar()
+      try {
+        const listed = await fetchRepositoryContents(repoId, routeRef(route), path, { signal: currentViewSignal() })
+        at = COMMIT.test(listed?.commit ?? '') ? listed.commit.toLowerCase() : null
+      } catch (err) {
+        if (err?.name === 'AbortError' || !isCurrent()) return false
+        showOpening({ ...opening, error: err.message, code: err?.code ?? null })
+        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+      }
+      if (!isCurrent()) return false
+      if (!at) {
+        showOpening({ ...opening, error: 'The server answered with no commit.' })
+        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+      }
+      if (revision) revisionNames.set(`${repoId}\0${at}`, revision)
+    }
+    showOpening({ ...opening, commit: at, ref: null, historyOnly: true })
     renderSidebar()
-    return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+    return { view: 'repository-code', repoId, commit: at, path, bundleTab: tab }
   }
   if (!entry) {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
