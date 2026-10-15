@@ -148,7 +148,8 @@ export class RevisionSelect extends LitElement {
     this._active = -1
     this._expanded = new Set()
     // Whether focus came by the keyboard, for the ring; a pointer pressing
-    // in it says the next focus didn't, until a key is pressed.
+    // in it clears the ring, and says the next focus didn't come by the
+    // keyboard either, until a key is pressed.
     this._keyboard = false
     this._pointer = false
     this._onViewport = () => this.position()
@@ -326,7 +327,7 @@ export class RevisionSelect extends LitElement {
     const choices = this.entries()
     const label = this.kind === 'commit' ? 'Commit SHA' : this.kind === 'tag' ? 'Tag' : 'Branch'
     const listed = this.kind !== 'commit'
-    return html`<form class=${this._keyboard ? 'revision keyboard' : 'revision'} @pointerdown=${() => { this._pointer = true }}
+    return html`<form class=${this._keyboard ? 'revision keyboard' : 'revision'} @pointerdown=${() => { this._pointer = true; this._keyboard = false }}
       @focusin=${() => { this._keyboard = !this._pointer }}
       @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) { this._keyboard = false; this.close() } }}
       @submit=${event => { event.preventDefault(); this.change('submit', this.kind, this.name) }}>
