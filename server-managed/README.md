@@ -1534,10 +1534,12 @@ GitHub's list of commits gives them (`repository-history.ts`), with, on the
 first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
 GitHub's first page of each lists them. With `all=true`, at the root and first
 page alone, it answers `{ all, commits, branches, tags, defaultBranch, more }`
-from one GraphQL query: the latest hundred commits of the 25 most recently
-updated branches, each commit once, and the latest hundred tags, an annotated
-one by the commit it tags; `more` where a branch or a branch's commits are left
-out. GraphQL needs a token: a public repository read without one is `403
+from GraphQL: the branches' tips with their commits' times, a hundred a page
+for up to ten pages (GitHub orders heads by name alone), then, in one query,
+the latest hundred commits of the default branch and the 24 others most
+recently committed to, each commit once; every branch naming a commit listed;
+and the latest hundred tags, an annotated one by the commit it tags. `more`
+where a branch or a branch's commits are left out. GraphQL needs a token: a public repository read without one is `403
 github-token-required`, and the tab then shows the revision's history. It is
 read as the code is, with the reader's own GitHub access, only where the
 reader's grants reach the whole directory, and access is checked again before

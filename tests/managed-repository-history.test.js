@@ -34,7 +34,7 @@ function github(t, { graphql = null, full = false } = {}) {
     }
     if (path === '/repos/org/repo/branches') return Promise.resolve(Response.json([{ name: 'main', commit: { sha: a } }, { name: 'feature', commit: { sha: c } }, { name: 'odd', commit: {} }]))
     if (path === '/repos/org/repo/tags') return Promise.resolve(Response.json([{ name: 'v1', commit: { sha: d } }]))
-    if (path === '/graphql' && graphql) return Promise.resolve(Response.json(graphql))
+    if (path === '/graphql' && graphql) return Promise.resolve(Response.json(graphql(JSON.parse(options.body))))
     return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
   })
   return asked
@@ -94,34 +94,46 @@ test('a directory\'s history lists the commits touching it, read only where the 
   for (const path of ['', 'src', 'src/other']) assert.deepEqual((await manager({ repoId: '1', ref: a, path })).body, { error: 'no-directory' }, path)
 })
 
-test('all branches read at once, each commit once, an annotated tag by the commit it tags, and with a token alone', async t => {
-  const graphql = { data: { repository: {
-    defaultBranchRef: { name: 'main' },
-    branches: { totalCount: 2, nodes: [
-      { name: 'main', target: { oid: a, history: { pageInfo: { hasNextPage: false }, nodes: [
-        { oid: a, messageHeadline: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo' } }, parents: { nodes: [{ oid: b }, { oid: c }] } },
-        { oid: b, messageHeadline: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'Octo', user: null }, parents: { nodes: [{ oid: d }] } },
-      ] } } },
-      { name: 'feature', target: { oid: c, history: { pageInfo: { hasNextPage: true }, nodes: [
-        { oid: c, messageHeadline: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
-        { oid: d, messageHeadline: 'Root', committedDate: '2026-09-30T10:00:00Z', author: null, parents: { nodes: [] } },
-      ] } } },
-    ] },
-    tags: { nodes: [{ name: 'v1', target: { oid: 'e'.repeat(40), target: { oid: d } } }, { name: 'light', target: { oid: c } }] },
-  } } }
+test('all branches reads the 25 most recently committed to, the default branch first, each commit once, an annotated tag by the commit it tags, and with a token alone', async t => {
+  // GitHub lists heads by name: 28 stale ones before main, the newest last.
+  const head = (name, oid, committedDate) => ({ name, target: { oid, committedDate } })
+  const stale = Array.from({ length: 28 }, (_, index) => head(`aa-old-${index}`, d, '2020-01-01T00:00:00Z'))
+  const heads = {
+    null: { branches: { pageInfo: { hasNextPage: true, endCursor: 'p2' }, nodes: [...stale, head('main', a, '2026-10-02T10:00:00Z')] },
+      tags: { nodes: [{ name: 'v1', target: { oid: 'e'.repeat(40), target: { oid: d } } }, { name: 'light', target: { oid: c } }] } },
+    p2: { branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [head('feature', c, '2026-10-01T12:00:00Z')] } },
+  }
+  const histories = {
+    b0: { history: { pageInfo: { hasNextPage: false }, nodes: [
+      { oid: a, messageHeadline: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo' } }, parents: { nodes: [{ oid: b }, { oid: c }] } },
+      { oid: b, messageHeadline: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'Octo', user: null }, parents: { nodes: [{ oid: d }] } },
+    ] } },
+    b1: { history: { pageInfo: { hasNextPage: true }, nodes: [
+      { oid: c, messageHeadline: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
+      { oid: d, messageHeadline: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } },
+    ] } },
+    b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, messageHeadline: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
+  }
+  const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main' }, ...heads[variables.after] } : histories } })
   const request = await fixture(t, { tokens: userTokens })
   const asked = github(t, { graphql })
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
   assert.deepEqual(body.commits.map(commit => commit.sha), [a, b, c, d])
-  assert.deepEqual(body.branches, [{ name: 'main', sha: a }, { name: 'feature', sha: c }])
+  assert.deepEqual(body.branches.map(branch => branch.name), [...stale.map(ref => ref.name), 'main', 'feature'], 'every branch naming a commit listed')
   assert.deepEqual(body.tags, [{ name: 'v1', sha: d }, { name: 'light', sha: c }])
   assert.equal(body.defaultBranch, 'main')
-  assert.equal(body.more, true, 'a branch with older commits leaves some out')
-  const query = asked.find(entry => entry.path === '/graphql')
-  assert.equal(query.method, 'POST')
-  assert.equal(query.auth, 'Bearer login-token')
-  assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', branches: 25, depth: 100, tags: 100 })
+  assert.equal(body.more, true, 'branches and older commits left out')
+  const queries = asked.filter(entry => entry.path === '/graphql')
+  assert.ok(queries.every(query => query.method === 'POST' && query.auth === 'Bearer login-token'))
+  assert.deepEqual(queries.map(query => query.body.variables), [
+    { owner: 'org', name: 'repo', after: null, tags: 100, first: true },
+    { owner: 'org', name: 'repo', after: 'p2', tags: 100, first: false },
+    // main, then the newest, feature, then 23 of the stale, all at one tip.
+    { owner: 'org', name: 'repo', o0: a, o1: c, o2: d },
+  ])
+  assert.match(queries[2].body.query, /b2: object\(oid: \$o2\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
 
   const anonymous = await fixture(t)
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })

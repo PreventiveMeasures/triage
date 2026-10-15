@@ -4,16 +4,18 @@
 // the branches and tags pointing at commits. From a revision, a page at a
 // time, of the whole repository or of the commits touching a directory, as
 // GitHub's REST API lists them, for any reader; or, as `--all`, across the
-// repository's most recently updated branches at once, in one GraphQL query,
-// which needs a token.
+// repository's most recently committed to branches at once, in GraphQL
+// queries, which need a token.
 import { GithubApiError, githubJson } from './github-app.ts'
 
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
 export const MAX_HISTORY_PAGE = 100
-// `--all`: the branches most recently committed to, the latest commits of
-// each (as many as a GraphQL connection gives), and the latest tags.
+// `--all`: the branches most recently committed to, of as many as ten pages
+// of them list, the latest commits of each (as many as a GraphQL connection
+// gives), and the latest tags.
 export const ALL_BRANCHES = 25
+const MAX_HEAD_PAGES = 10
 const ALL_DEPTH = 100
 const ALL_TAGS = 100
 const REF_TIPS = 100
@@ -85,52 +87,88 @@ async function githubGraphql(query: string, variables: Record<string, unknown>, 
   return body?.data
 }
 
-const ALL_QUERY = `query($owner: String!, $name: String!, $branches: Int!, $depth: Int!, $tags: Int!) {
+// The branches' tips, a page at a time, each with its commit's date (GitHub
+// orders heads by name alone), and, on the first page, the latest tags.
+const HEADS_QUERY = `query($owner: String!, $name: String!, $after: String, $tags: Int!, $first: Boolean!) {
   repository(owner: $owner, name: $name) {
     defaultBranchRef { name }
-    branches: refs(refPrefix: "refs/heads/", first: $branches, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) {
-      totalCount
-      nodes { name target { ... on Commit { oid history(first: $depth) { pageInfo { hasNextPage } nodes { ...historyCommit } } } } }
+    branches: refs(refPrefix: "refs/heads/", first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { name target { oid ... on Commit { committedDate } } }
     }
-    tags: refs(refPrefix: "refs/tags/", first: $tags, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) {
+    tags: refs(refPrefix: "refs/tags/", first: $tags, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) @include(if: $first) {
       nodes { name target { oid ... on Tag { target { oid } } } }
     }
+  }
+}`
+
+// The latest commits of each tip, by its id, `b<n>` the `n`th's.
+const historiesQuery = (count: number) => `query($owner: String!, $name: String!, ${Array.from({ length: count }, (_, at) => `$o${at}: GitObjectID!`).join(', ')}) {
+  repository(owner: $owner, name: $name) {
+    ${Array.from({ length: count }, (_, at) => `b${at}: object(oid: $o${at}) { ... on Commit { history(first: ${ALL_DEPTH}) { pageInfo { hasNextPage } nodes { ...historyCommit } } } }`).join('\n    ')}
   }
 }
 fragment historyCommit on Commit { oid messageHeadline committedDate author { name user { login } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
 
 type GraphCommit = { oid?: unknown; messageHeadline?: unknown; committedDate?: unknown; author?: { name?: unknown; user?: { login?: unknown } | null } | null
   parents?: { nodes?: { oid?: unknown }[] } }
-type GraphRef = { name?: unknown; target?: { oid?: unknown; target?: { oid?: unknown }; history?: { pageInfo?: { hasNextPage?: unknown }; nodes?: GraphCommit[] } } | null }
+type GraphRef = { name?: unknown; target?: { oid?: unknown; committedDate?: unknown; target?: { oid?: unknown } } | null }
+type HeadsPage = { repository?: { defaultBranchRef?: { name?: unknown } | null
+  branches?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphRef[] }; tags?: { nodes?: GraphRef[] } } | null }
+type Histories = { repository?: Record<string, { history?: { pageInfo?: { hasNextPage?: unknown }; nodes?: GraphCommit[] } } | null> | null }
 
-// `--all`: the latest commits of the repository's most recently updated
-// branches, each commit once, its branches and latest tags (an annotated tag
-// by the commit it tags), and whether any is left out (`more`).
-export async function repositoryAllHistory(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch) {
-  const [owner, name] = fullName.split('/')
-  const data = await githubGraphql(ALL_QUERY, { owner, name, branches: ALL_BRANCHES, depth: ALL_DEPTH, tags: ALL_TAGS }, token, fetchImpl) as {
-    repository?: { defaultBranchRef?: { name?: unknown } | null; branches?: { totalCount?: unknown; nodes?: GraphRef[] }; tags?: { nodes?: GraphRef[] } } | null
+// The repository's branches, as many as MAX_HEAD_PAGES of them list, each
+// with its tip's time, its default branch and latest tags (an annotated tag
+// by the commit it tags), and whether any branch is left out.
+async function repositoryHeads(owner: string, name: string, token: string, fetchImpl: typeof fetch) {
+  const heads: (HistoryRef & { at: number | null })[] = []
+  let first: HeadsPage['repository'] = null
+  let after: string | null = null
+  for (let page = 0; page < MAX_HEAD_PAGES; page++) {
+    const data = await githubGraphql(HEADS_QUERY, { owner, name, after, tags: ALL_TAGS, first: page === 0 }, token, fetchImpl) as HeadsPage
+    const repository = data?.repository
+    if (!repository) throw new GithubApiError(404, 'github-not-found')
+    first ??= repository
+    for (const ref of repository.branches?.nodes ?? []) {
+      const sha = ref?.target?.oid
+      if (typeof ref?.name === 'string' && ref.name && typeof sha === 'string' && SHA.test(sha)) heads.push({ name: ref.name.slice(0, MAX_NAME), sha, at: timeOf(ref.target?.committedDate) })
+    }
+    const next = repository.branches?.pageInfo
+    if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') return { heads, repository: first, cut: false }
+    after = next.endCursor
   }
-  const repository = data?.repository
-  if (!repository) throw new GithubApiError(404, 'github-not-found')
+  return { heads, repository: first, cut: true }
+}
+
+// `--all`: the latest commits of the repository's most recently committed to
+// branches, its default branch's among them, each commit once; the branches
+// naming them and the latest tags; and whether any is left out (`more`).
+export async function repositoryAllHistory(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const { heads, repository, cut } = await repositoryHeads(owner, name, token, fetchImpl)
+  const defaultBranch = textOf(repository?.defaultBranchRef?.name, MAX_NAME)
+  const shown = heads.toSorted((a, b) => Number(b.name === defaultBranch) - Number(a.name === defaultBranch) || (b.at ?? 0) - (a.at ?? 0))
+    .slice(0, ALL_BRANCHES)
+  const tips = [...new Set(shown.map(head => head.sha))]
   const commits = new Map<string, HistoryCommit>()
-  const branches: HistoryRef[] = []
-  let more = typeof repository.branches?.totalCount === 'number' && repository.branches.totalCount > ALL_BRANCHES
-  for (const ref of repository.branches?.nodes ?? []) {
-    const target = ref?.target
-    if (typeof ref?.name !== 'string' || typeof target?.oid !== 'string' || !SHA.test(target.oid)) continue
-    branches.push({ name: ref.name.slice(0, MAX_NAME), sha: target.oid })
-    if (target.history?.pageInfo?.hasNextPage === true) more = true
-    for (const node of target.history?.nodes ?? []) {
-      const commit = historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name,
-        node?.author?.user?.login, node?.committedDate)
-      if (commit && !commits.has(commit.sha)) commits.set(commit.sha, commit)
+  let more = cut || heads.length > shown.length
+  if (tips.length > 0) {
+    const data = await githubGraphql(historiesQuery(tips.length), { owner, name, ...Object.fromEntries(tips.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
+    for (const at of tips.keys()) {
+      const history = data?.repository?.[`b${at}`]?.history
+      if (history?.pageInfo?.hasNextPage === true) more = true
+      for (const node of history?.nodes ?? []) {
+        const commit = historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid), node?.messageHeadline, node?.author?.name,
+          node?.author?.user?.login, node?.committedDate)
+        if (commit && !commits.has(commit.sha)) commits.set(commit.sha, commit)
+      }
     }
   }
-  const tags = (repository.tags?.nodes ?? []).flatMap(ref => {
+  const tags = (repository?.tags?.nodes ?? []).flatMap(ref => {
     const sha = ref?.target?.target?.oid ?? ref?.target?.oid
     return typeof ref?.name === 'string' && typeof sha === 'string' && SHA.test(sha) ? [{ name: ref.name.slice(0, MAX_NAME), sha }] : []
   })
-  const defaultBranch = textOf(repository.defaultBranchRef?.name, MAX_NAME)
+  // Every branch naming a commit listed, those not read among them.
+  const branches = heads.flatMap(({ name: branch, sha }) => commits.has(sha) ? [{ name: branch, sha }] : [])
   return { commits: [...commits.values()], branches, tags, defaultBranch, more }
 }
