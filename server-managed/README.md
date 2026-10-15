@@ -971,7 +971,8 @@ developer's machine among them; toggled beside the filter, it shows all
 packages, or those an install for production takes, or those only
 devDependencies need, malware either way. A mirror's copy that risk finds
 differs from npm's (`integrity-mismatch`) is flagged critical and listed
-first but for malware, not among those that couldn't be assessed. Each
+first but for malware, not among those that couldn't be assessed, and, as
+malware, shown and listed so whatever needs it. Each
 lockfile a package or an advisory is used in links to it on GitHub, at the
 commit read. Its Advisories tab shows those of the
 versions an install for production takes (some lockfile needs them as more

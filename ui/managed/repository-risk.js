@@ -108,15 +108,18 @@ export const findingsOf = row => {
 // naming it, and its package taken down by npm, as risk finds it.
 export const malwareSaid = row => [...malwareOf(row) ?? [],
   ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
+// Whether a package row is told whatever needs it: malware, or a copy
+// differing from npm's, either of which runs wherever it is installed, CI and
+// a developer's machine among them.
+const regardless = row => differs(row) || findingsOf(row).some(({ id }) => id === 'malware')
 // Whether a package row is listed after the rest: only devDependencies need
 // it, in every lockfile that locks it, as an install of none leaves it out;
-// but not malware, which runs wherever it is installed, CI and a developer's
-// machine among them.
-export const putOff = row => Boolean(row.dev) && !findingsOf(row).some(({ id }) => id === 'malware')
+// but not one told regardless.
+export const putOff = row => Boolean(row.dev) && !regardless(row)
 // Whether a package row is of `kind` (PACKAGE_KINDS): development's where
 // only devDependencies need it, production's where more do, or its lockfiles
-// don't say; malware of both, as it runs wherever it is installed.
-export const ofKind = (row, kind) => kind === 'all' || findingsOf(row).some(({ id }) => id === 'malware') || Boolean(row.dev) === (kind === 'development')
+// don't say; one told regardless of both.
+export const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolean(row.dev) === (kind === 'development')
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
@@ -146,8 +149,8 @@ const KINDS = {
 // only devDependencies need (ofKind).
 const PACKAGE_KINDS = {
   all: ['All', 'Every package the lockfiles lock, those only devDependencies need tagged dev and listed after the rest.'],
-  production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware is shown either way.'],
-  development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware is shown either way.'],
+  production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware, and a copy differing from npm’s, is shown either way.'],
+  development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware, and a copy differing from npm’s, is shown either way.'],
 }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
