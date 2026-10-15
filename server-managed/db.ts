@@ -8,6 +8,7 @@ import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
 import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA, VIEW_SESSION_INDEX } from './db-schema.ts'
+import { GITHUB_LINK_USER_COLUMNS } from './github-links.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
@@ -79,6 +80,10 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       ensureColumn(db, table, 'storage_encrypted', 'INTEGER NOT NULL DEFAULT 0')
     }
     ensureColumn(db, 'managed_user', 'gh_tokens_encrypted', 'INTEGER NOT NULL DEFAULT 0')
+    // Existing names are the sign-in accounts' own: none was chosen yet.
+    for (const [column, type] of GITHUB_LINK_USER_COLUMNS) {
+      if (ensureColumn(db, 'managed_user', column, type) && column === 'github_name') db.exec('UPDATE managed_user SET github_name = name')
+    }
     ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
     ensureColumn(db, 'managed_github_metadata', 'attempted_at', 'INTEGER')
     // Existing public links must opt in too; never preserve an implicit grant.

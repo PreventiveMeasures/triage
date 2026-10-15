@@ -13,13 +13,15 @@ import { hashToken, randomToken } from './crypto.ts'
 // `cookieName` when cookies are Secure.
 export const STATE_COOKIE = 'dvstate'
 
-// Base names for GitHub issue authorization state (github-issue-oauth.ts) and
-// an administrator's read-only view as another user (view-as.ts).
+// Base names for GitHub issue authorization state (github-issue-oauth.ts),
+// linking another GitHub account (github-link-oauth.ts) and an
+// administrator's read-only view as another user (view-as.ts).
 export const ISSUE_STATE_COOKIE = 'dvissuestate'
+export const LINK_STATE_COOKIE = 'dvlinkstate'
 export const VIEW_COOKIE = 'dvview'
 // The session cookie cannot share a name with these, or one would overwrite
 // or be read as the other.
-export const RESERVED_COOKIES: readonly string[] = [STATE_COOKIE, ISSUE_STATE_COOKIE, VIEW_COOKIE]
+export const RESERVED_COOKIES: readonly string[] = [STATE_COOKIE, ISSUE_STATE_COOKIE, LINK_STATE_COOKIE, VIEW_COOKIE]
 
 // `__Host-`-prefix the base name when cookies are Secure (the prefix mandates
 // Secure + Path=/ + no Domain, which `buildCookie` already emits).
@@ -55,13 +57,15 @@ export function parseCookies(header: string | undefined): Map<string, string> {
 
 // Mint a session for a freshly-authenticated user. Upserts the identity, then
 // stores the session keyed by the cookie token's hash. Returns the cookie to
-// set and the CSRF token (also persisted on the row).
+// set and the CSRF token (also persisted on the row), or null for an account
+// a user linked to theirs, which can neither sign in nor register.
 export async function createSession(
   config: ManagedConfig, db: ManagedDb, user: ManagedUser, now: number,
-): Promise<{ setCookie: string; csrfToken: string; userId: string }> {
+): Promise<{ setCookie: string; csrfToken: string; userId: string } | null> {
   const token = randomToken()
   const csrfToken = randomToken()
   const userId = await db.upsertUser(user, now, config.initialAdminGithubId)
+  if (userId == null) return null
   await db.createSession({ id: hashToken(token), userId, csrfToken, expiresAt: now + config.sessionTtlMs }, now)
   const setCookie = buildCookie(config.sessionCookieName, token, {
     maxAgeS: Math.floor(config.sessionTtlMs / 1000), secure: config.cookieSecure, sameSite: 'Lax',

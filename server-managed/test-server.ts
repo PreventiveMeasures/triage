@@ -216,6 +216,46 @@ function userById(id: string) {
   return users.find((user) => user.id === id)
 }
 
+// The fixture user's profile: a linked GitHub account to take the name or
+// avatar from, unlinked in memory. Linking needs GitHub, so it is not faked.
+const linkedAccounts = [{ id: 'fixture-linked', login: 'managed-preview-work', name: 'Preview at Work', linkedAt: 1_757_000_000_000 }]
+const profileChoice: { name: string | null; avatar: string | null } = { name: null, avatar: null }
+function fixtureProfile() {
+  const linked = linkedAccounts.find(account => account.id === profileChoice.name)
+  return { login: 'managed-preview', name: linked ? linked.name : 'Managed preview', githubName: 'Managed preview',
+    nameAccount: profileChoice.name, avatarAccount: profileChoice.avatar, accounts: linkedAccounts }
+}
+
+// The fixture user's avatar is the one chosen on their profile, as the server's.
+function fixtureAvatar(requested: string, own: boolean) {
+  const id = requested === 'fixture-user' && !own ? profileChoice.avatar ?? requested : requested
+  return { id, user: userById(id) ?? linkedAccounts.find(account => account.id === id) }
+}
+
+async function handleProfile(req: IncomingMessage, res: ServerResponse, method: string, path: string): Promise<void> {
+  const route = /^\/api\/auth\/profile(?:\/accounts\/([^/]+))?$/u.exec(path)
+  if (!route) { sendJson(res, 404, { error: 'not-found' }); return }
+  const unlink = route[1] == null ? null : decodeURIComponent(route[1])
+  if (unlink != null) {
+    if (method !== 'DELETE') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    const index = linkedAccounts.findIndex(account => account.id === unlink)
+    if (index < 0) { sendJson(res, 404, { error: 'no-account' }); return }
+    linkedAccounts.splice(index, 1)
+    for (const key of ['name', 'avatar'] as const) if (profileChoice[key] === unlink) profileChoice[key] = null
+  } else if (method === 'POST') {
+    let raw = ''
+    for await (const chunk of req) raw += String(chunk)
+    const body = JSON.parse(raw) as Partial<typeof profileChoice>
+    for (const key of ['name', 'avatar'] as const) {
+      const value = body[key]
+      if (value === undefined) continue
+      if (value !== null && !linkedAccounts.some(account => account.id === value)) { sendJson(res, 404, { error: 'no-account' }); return }
+      profileChoice[key] = value
+    }
+  } else if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  sendJson(res, 200, { profile: fixtureProfile() })
+}
+
 function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .map((id) => reportMetadata.find((report) => report.id === id))
@@ -996,11 +1036,12 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   if (url.pathname === '/api/auth/session') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     sendJson(res, 200, {
-      user: { id: 'fixture-user', login: 'managed-preview', name: 'Managed preview', role },
+      user: { id: 'fixture-user', login: 'managed-preview', name: fixtureProfile().name, role },
       csrfToken: 'fixture-csrf-token',
     })
     return
   }
+  if (url.pathname.startsWith('/api/auth/profile')) { void handleProfile(req, res, method, url.pathname).catch(() => sendJson(res, 400, { error: 'bad-request' })); return }
   if (url.pathname === '/api/teams') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     const teams = currentTeams()
@@ -1046,8 +1087,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     // A tiny same-origin SVG means the account menu can exercise its avatar
     // path without needing an image fixture or a CDN. Use the fixture user's
     // initials so the admin user list doesn't show four identical avatars.
-    const id = decodeURIComponent(url.pathname.slice('/api/avatar/'.length))
-    const user = userById(id)
+    const { id, user } = fixtureAvatar(decodeURIComponent(url.pathname.slice('/api/avatar/'.length)), url.searchParams.has('own'))
     const initials = (user?.name ?? user?.login ?? '?')
       .split(/\s+/u).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     const palette = ['#4b83c4', '#b66d42', '#6d8f55', '#8a6db0']

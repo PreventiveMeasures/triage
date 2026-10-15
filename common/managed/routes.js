@@ -38,6 +38,7 @@ export function managedRoutePath(route) {
   if (!route) return null
   if (route.view === 'home') return '/'
   if (route.view === 'reviews') return '/my/reviews'
+  if (route.view === 'profile') return '/my/profile'
   if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'repository-code') return repositoryCodePath(route)
   if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
@@ -194,6 +195,12 @@ export function parseManagedRoute(url) {
   const path = url.pathname.replace(/\/$/u, '') || '/'
   if (path === '/' || path === '/index.html') return { view: 'home' }
   if (path === '/my/reviews') return { view: 'reviews' }
+  // Linking an account lands here, naming why GitHub's answer was refused,
+  // which the page shows once: the address it settles on drops it.
+  if (path === '/my/profile') {
+    const linkError = url.searchParams.get('link-error')
+    return { view: 'profile', ...(linkError && /^[a-z-]{1,64}$/u.test(linkError) ? { linkError } : {}) }
+  }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) {
     const createRepoId = Number(url.searchParams.get('createRepo'))

@@ -63,7 +63,10 @@ export async function handleCallback(
   }
   const tokens = await exchangeCode(config, code, now, fetchImpl)
   const user = await fetchIdentity(tokens.accessToken, fetchImpl)
-  const { setCookie, userId } = await createSession(config, db, user, now)
+  const session = await createSession(config, db, user, now)
+  // Linked to another user's account on their profile (github-links.ts).
+  if (session == null) throw new OAuthError(403, 'github-account-linked')
+  const { setCookie, userId } = session
   // Persist the user token so the repositories page can list repos on demand.
   await db.setUserTokens(userId, tokens)
   // Cache the avatar for same-origin serving (the page's CSP forbids loading
@@ -216,7 +219,7 @@ function parseGithubUser(body: unknown): ManagedUser | null {
 // Fetch the user's GitHub avatar and cache it for same-origin serving. The host
 // is validated (githubusercontent.com over https) as SSRF defence-in-depth,
 // even though the URL comes from GitHub's own /user response.
-async function cacheAvatar(store: AvatarStore, id: string, avatarUrl: string, fetchImpl: typeof fetch): Promise<void> {
+export async function cacheAvatar(store: AvatarStore, id: string, avatarUrl: string, fetchImpl: typeof fetch): Promise<void> {
   if (!isGithubAvatarUrl(avatarUrl)) return
   // `redirect: 'manual'` so a 3xx off the (validated) avatars host can't bounce
   // the fetch to an internal address — an opaque-redirect / 3xx fails the

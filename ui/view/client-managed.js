@@ -244,6 +244,18 @@ export async function stopViewing(csrfToken) {
   return (await loadManagedBundle()).stopViewing(csrfToken)
 }
 
+export async function fetchProfile(options) {
+  return (await loadManagedBundle()).fetchProfile(options)
+}
+
+export async function chooseProfileAccounts(choice, csrfToken, options) {
+  return (await loadManagedBundle()).chooseProfileAccounts(choice, csrfToken, options)
+}
+
+export async function unlinkGithubAccount(id, csrfToken, options) {
+  return (await loadManagedBundle()).unlinkGithubAccount(id, csrfToken, options)
+}
+
 export async function fetchBundleMetadata(id, options) {
   return (await loadManagedBundle()).fetchBundleMetadata(id, options)
 }

@@ -9,4 +9,5 @@ export interface CachedAvatar {
 export interface AvatarStore {
   put(id: string, contentType: string, bytes: Buffer): Promise<void>
   get(id: string): Promise<CachedAvatar | null>
+  delete(id: string): Promise<void>
 }

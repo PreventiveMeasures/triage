@@ -4,6 +4,7 @@ import { checkManagedIssueFixes } from './_managed-issue-fixes.js'
 import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import { checkViewSessions } from './_managed-view-sessions.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
+import { checkGithubLinks } from './_managed-github-links.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -262,6 +263,31 @@ test('Postgres adds team npm scopes to existing installations', async t => {
   assert.deepEqual(await upgraded.listTeamNpmScopes(), {})
   assert.deepEqual(await upgraded.setTeamNpmScopes(sid, 'team', ['@acme']), { added: ['@acme'], removed: [] })
   assert.deepEqual(await upgraded.listTeamNpmScopes(), { team: ['@acme'] })
+})
+
+test('Postgres linked GitHub accounts share their SQLite semantics', async t => {
+  const { db } = await database(t)
+  await checkGithubLinks(db)
+})
+
+test('Postgres adds linked GitHub accounts to existing installations, keeping names as the sign-in accounts\' own', async t => {
+  const { db, connect } = await database(t)
+  const user = await db.upsertUser({ ...identity(1), name: 'Alice' }, 1)
+  await db.setUserRole(user, 'view')
+  await db.createSession({ id: 'session', userId: user, csrfToken: 'csrf', expiresAt: 100 }, 1)
+  const legacy = await connect()
+  try {
+    await legacy.query(`ALTER TABLE managed_user DROP COLUMN avatar_link, DROP COLUMN name_link, DROP COLUMN github_name;
+      DROP TABLE managed_github_link; DELETE FROM managed_schema_version WHERE version = 28;`)
+  } finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.deepEqual(await upgraded.getProfile(user), { login: 'user1', name: 'Alice', githubName: 'Alice', nameAccount: null, avatarAccount: null, accounts: [] })
+  const { id } = await upgraded.linkGithubAccount('session', { ...identity(2), name: 'Work' }, 2)
+  assert.equal(await upgraded.upsertUser(identity(2), 3), null)
+  await upgraded.setProfileChoice('session', { name: id }, 3)
+  assert.equal((await upgraded.sessionWithUser('session', 3)).user.name, 'Work')
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {
