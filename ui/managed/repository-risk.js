@@ -208,20 +208,21 @@ const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).
 // An icon before a cell's text, muted (risk-icon).
 const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
 
-// A lockfile (`used`, a repository's name and its path), a link to it on
-// GitHub where it is listed (`links`, _lockfileLinks), cut short.
+// A lockfile (`used`, a repository's name and its path), cut short: a link
+// to it on GitHub, after GitHub's mark, where it is listed (`links`,
+// _lockfileLinks).
 function lockfileLink(used, links) {
   const href = links.get(used)
-  return href ? html`<a class="risk-name risk-clip risk-used-in" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip-truncated data-tooltip=${used}>${used}</a>`
-    : html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used}>${used}</span>`
+  const path = html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used}>${used}</span>`
+  return href ? html`<a class="risk-name risk-used" href=${href} target="_blank" rel="noopener noreferrer">${icon(GITHUB_ICON_SVG)}${path}</a>` : path
 }
 
-// Where a package or an advisory is locked, after GitHub's mark: its
-// lockfile, or how many, opening into each one's link.
+// Where a package or an advisory is locked: its lockfile, or how many,
+// opening into each one's.
 function usedInCell(lockfiles, links) {
   const used = [...lockfiles]
-  if (used.length === 1) return html`<span class="risk-used">${icon(GITHUB_ICON_SVG)}${lockfileLink(used[0], links)}</span>`
-  return html`<details class="risk-used-all"><summary class="risk-used">${icon(GITHUB_ICON_SVG)}<span>${formatCount.format(used.length)} lockfiles</span></summary>
+  if (used.length === 1) return lockfileLink(used[0], links)
+  return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} lockfiles</summary>
     <ul>${used.map(each => html`<li>${lockfileLink(each, links)}</li>`)}</ul></details>`
 }
 

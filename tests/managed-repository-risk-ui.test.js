@@ -439,7 +439,7 @@ test('a lockfile a package or advisory is used in links to it on GitHub, at the 
     { type: 'lockfile', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] },
     { type: 'advisories', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', advisories: [{ id: 'GHSA-left-pad', name: 'left-pad', title: 'x', severity: 'low', url: null, range: null, versions: ['1.3.0'], malware: false }] },
   ]) page._apply(line)
-  const link = `<a class="risk-name risk-clip risk-used-in" href=https://github.com/org/one/blob/${'c'.repeat(40)}/apps/web%20%231/pnpm-lock.yaml target="_blank" rel="noopener noreferrer"`
+  const link = `<a class="risk-name risk-used" href=https://github.com/org/one/blob/${'c'.repeat(40)}/apps/web%20%231/pnpm-lock.yaml target="_blank" rel="noopener noreferrer"><span class="risk-icon" aria-hidden="true">`
   assert.ok(templateText(page.render()).includes(link), 'packages')
   page._tab = 'advisories'
   assert.ok(templateText(page.render()).includes(link), 'advisories')
@@ -448,7 +448,7 @@ test('a lockfile a package or advisory is used in links to it on GitHub, at the 
   page._apply({ type: 'repo', id: 1, commit: 'c'.repeat(40), lockfiles: [{ path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm' }, { path: 'package-lock.json', format: 'npm' }] })
   page._apply({ type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] })
   const text = templateText(page.render())
-  assert.match(text, /<details class="risk-used-all"><summary class="risk-used">[^]*?<span>2 lockfiles<\/span><\/summary>/u)
+  assert.match(text, /<details class="risk-used-all"><summary>2 lockfiles<\/summary>/u, 'how many, GitHub\'s mark on each link alone')
   assert.ok(text.includes(link) && text.includes(`href=https://github.com/org/one/blob/${'c'.repeat(40)}/package-lock.json`), 'each linked')
 })
 
