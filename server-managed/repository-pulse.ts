@@ -190,14 +190,16 @@ export async function yearCommits(fullName: string, token: string, head: string,
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed; its contributors,
-// by account (its login and id; a login's commits read before ids were, its
-// one account's, where it has one), else name (as many as MAX_CONTRIBUTORS,
-// the most commits first),
+// by account (its id, by the login it committed as first listed, the newest,
+// whatever it was renamed from; a login's commits read before ids were, the
+// one account's that committed as it, where only one did), else login, else
+// name (as many as MAX_CONTRIBUTORS, the most commits first),
 // and their weeks; and its commits by day of the week and hour, in each
 // author's own time zone (else UTC, where GitHub told none).
 export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0 }))
-  const people = new Map<string, { login: string | null; id: number | null; name: string | null; weeks: Map<number, [number, number, number]>; commits: number }>()
+  const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Map<number, [number, number, number]>
+    commits: number }>()
   const punch = emptyPunch()
   for (const commit of commits) {
     if (commit.parents.length > 1 || commit.committedAt === null || commit.committedAt < first) continue
@@ -210,20 +212,25 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
     week.deletions += deletions
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     punch[local.getUTCDay()]![local.getUTCHours()]!++
-    const key = commit.authorLogin ? `@${commit.authorLogin}#${commit.authorId ?? ''}` : commit.authorName ? `=${commit.authorName}` : null
+    const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin}`
+      : commit.authorName ? `=${commit.authorName}` : null
     if (!key) continue
-    const person = people.get(key) ?? { login: commit.authorLogin, id: commit.authorId ?? null, name: commit.authorName, weeks: new Map<number, [number, number, number]>(), commits: 0 }
+    const person = people.get(key) ?? { login: commit.authorLogin, logins: new Set<string>(), id: commit.authorId ?? null, name: commit.authorName,
+      weeks: new Map<number, [number, number, number]>(), commits: 0 }
+    if (commit.authorLogin) person.logins.add(commit.authorLogin)
     const theirs = person.weeks.get(week.week) ?? [0, 0, 0]
     person.weeks.set(week.week, [theirs[0] + 1, theirs[1] + additions, theirs[2] + deletions])
     person.commits++
     people.set(key, person)
   }
-  // A login GitHub named one account by, those of its commits read before
-  // ids were that account's; one it named more by, theirs apart, no one's.
-  const accounts = Map.groupBy([...people.values()].filter(person => person.login !== null && person.id !== null), person => person.login)
+  // A login one account committed as, those of its commits read before ids
+  // were that account's; one more did, theirs apart, no one's.
+  const accounts = Map.groupBy([...people.values()].filter(person => person.id !== null).flatMap(person => [...person.logins].map(login => ({ login, person }))),
+    ({ login }) => login)
   for (const [key, person] of people) {
-    const [account, ...others] = person.login !== null && person.id === null ? accounts.get(person.login) ?? [] : []
-    if (!account || others.length > 0) continue
+    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login) ?? [] : []
+    if (!owner || others.length > 0) continue
+    const account = owner.person
     for (const [week, [made, added, removed]] of person.weeks) {
       const theirs = account.weeks.get(week) ?? [0, 0, 0]
       account.weeks.set(week, [theirs[0] + made, theirs[1] + added, theirs[2] + removed])

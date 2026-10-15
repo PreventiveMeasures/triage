@@ -162,14 +162,15 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   assert.equal(read.lines, true)
 })
 
-test('a year\'s contributors are its authors\' accounts: a login GitHub named two by, each apart; one\'s commits read before ids were, its one account\'s', () => {
+test('a year\'s contributors are its authors\' accounts, whatever they were renamed from: a login GitHub named two by, each apart; one\'s commits read before ids were, its one account\'s', () => {
   const first = Date.UTC(2025, 9, 19)
   const commit = (sha, authorLogin, authorId) => ({ sha, parents: ['p'], subject: '', authorName: null, authorLogin, authorId, committedAt: first + DAY, additions: 1, deletions: 0,
     authoredAt: null, authorZone: null })
+  // Ada committed as ada-old before renaming, a commit of each read before ids were.
   const read = commitStats([commit('a', 'octo', 2), commit('b', 'octo', 9), commit('c', 'octo', 9), commit('d', 'octo', undefined),
-    commit('e', 'ada', null), commit('f', 'ada', 7), commit('g', 'ada', 7)], first)
-  assert.deepEqual(read.contributors.map(person => [person.login, person.id, person.weeks[0][1]]), [['ada', 7, 3], ['octo', 9, 2], ['octo', 2, 1], ['octo', null, 1]],
-    'whose the commit with no id of a login named by two is, no telling')
+    commit('e', 'ada', null), commit('f', 'ada', 7), commit('g', 'ada-old', 7), commit('h', 'ada-old', null)], first)
+  assert.deepEqual(read.contributors.map(person => [person.login, person.id, person.weeks[0][1]]), [['ada', 7, 4], ['octo', 9, 2], ['octo', 2, 1], ['octo', null, 1]],
+    'one contributor by the login it committed as first listed; whose the commit with no id of a login named by two is, no telling')
   assert.deepEqual([...namedAccounts(read)], [['ada', 7], ['octo', 'ambiguous']], 'such a login no one\'s')
 })
 

@@ -120,9 +120,11 @@ test('the signed-in user\'s own profile change shows in what was kept of them: t
     'under every login of theirs, one before renaming too; another user\'s as it was')
   assert.match(templateText(githubUser('zoe-work')), /src=\/api\/avatar\/zoe-id\?v=1/u, 'their avatar asked for again')
   assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
-  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, 'Zoe-Work')
+  // `zoe-job`, the login Zoe's work account had before it was renamed, theirs by its id.
+  knowGithubUsers({ commits: [{ authorLogin: 'zoe-job', authorId: 2 }], users: { 'zoe-job': { id: 'zoe-id', login: 'zoe', name: 'Zoe at Work' } } })
+  knowProfile('zoe-id', { login: 'zoe', name: null, accounts: [] }, false, { login: 'Zoe-Work', githubId: 2 })
   assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.name ?? null), [null, null])
-  assert.equal(appUser('zoe-work'), null, 'unlinked')
+  assert.deepEqual(['zoe-work', 'zoe-job'].map(appUser), [null, null], 'unlinked, by any login of it')
   assert.deepEqual(['zoe', 'zoe-old'].map(login => appUser(login)?.id), ['zoe-id', 'zoe-id'])
   forgetGithubUsers()
 })
@@ -148,7 +150,7 @@ test('an answer read across the signed-in user\'s profile change keeps others\' 
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' } } })
   const late = Promise.withResolvers()
   const reading = knowingGithubUsers(() => late.promise)
-  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] }, false, 'wil-work')
+  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] }, false, { login: 'wil-work', githubId: 5 })
   // Read before the change was saved, as it was then.
   late.resolve({ commits: [{ authorLogin: 'wil' }, { authorLogin: 'wil-work' }, { authorLogin: 'vic' }], users: {
     wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' }, vic: { id: 'vic-id', login: 'vic', name: 'Vic' } } })

@@ -21,7 +21,7 @@ export async function checkGithubLinks(db) {
   assert.equal(await db.upsertUser(work, 3), null, 'a linked account cannot register')
   assert.equal((await db.listUsers()).length, 3)
   assert.deepEqual(await db.getProfile(alice), { login: 'alice', name: 'Alice', githubName: 'Alice', nameAccount: null, avatarAccount: null,
-    accounts: [{ id: first.id, login: 'alice-work', name: 'Alice at Work', linkedAt: 2 }] })
+    accounts: [{ id: first.id, githubId: 7010, login: 'alice-work', name: 'Alice at Work', linkedAt: 2 }] })
 
   await assert.rejects(db.linkGithubAccount('alice-session', identity(1, 'alice'), 3), /github-account-own/u)
   await assert.rejects(db.linkGithubAccount('alice-session', identity(2, 'bob'), 3), /github-account-registered/u)
@@ -52,7 +52,7 @@ export async function checkGithubLinks(db) {
   // Linking it again refreshes its snapshot, and the name it gives.
   assert.deepEqual(await db.linkGithubAccount('alice-session', { ...work, login: 'alice-job', name: 'A. Work' }, 6), { id: first.id, created: false })
   assert.equal((await userOf('alice-session')).name, 'A. Work')
-  assert.deepEqual((await db.getProfile(alice)).accounts, [{ id: first.id, login: 'alice-job', name: 'A. Work', linkedAt: 2 }])
+  assert.deepEqual((await db.getProfile(alice)).accounts, [{ id: first.id, githubId: 7010, login: 'alice-job', name: 'A. Work', linkedAt: 2 }])
 
   const nameless = await db.linkGithubAccount('alice-session', identity(12, 'alice-anon'), 7)
   await db.setProfileChoice('alice-session', { name: nameless.id }, 7)
@@ -65,10 +65,10 @@ export async function checkGithubLinks(db) {
   // Unlinking returns what it gave to the sign-in account; the account may
   // then sign in on its own.
   assert.equal(await db.unlinkGithubAccount('bob-session', first.id, 8), null)
-  assert.deepEqual(await db.unlinkGithubAccount('alice-session', first.id, 8), { id: first.id, login: 'alice-job', name: 'A. Work', linkedAt: 2 })
+  assert.deepEqual(await db.unlinkGithubAccount('alice-session', first.id, 8), { id: first.id, githubId: 7010, login: 'alice-job', name: 'A. Work', linkedAt: 2 })
   assert.equal(await db.unlinkGithubAccount('alice-session', first.id, 8), null)
   assert.deepEqual(await db.getProfile(alice), { login: 'alice-renamed', name: 'Alice R', githubName: 'Alice R', nameAccount: null, avatarAccount: null,
-    accounts: [{ id: nameless.id, login: 'alice-anon', name: null, linkedAt: 7 }] })
+    accounts: [{ id: nameless.id, githubId: 7012, login: 'alice-anon', name: null, linkedAt: 7 }] })
   assert.equal(await db.getAvatarKey(alice), alice)
   const registered = await db.upsertUser(work, 9)
   assert.ok(registered && registered !== alice)

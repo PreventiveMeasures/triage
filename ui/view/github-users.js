@@ -48,6 +48,7 @@ export function forgetGithubUsers() {
   accounts.clear()
   ambiguous.clear()
   unlinked.clear()
+  unlinkedIds.clear()
   generation++
 }
 
@@ -68,20 +69,23 @@ export async function knowingGithubUsers(read) {
 const avatarRevisions = new Map()
 
 // The signed-in user's latest profile change in this page, and how many;
-// the logins of the accounts they unlinked in it, lowercased.
+// the accounts they unlinked in it, by login, lowercased, and GitHub id.
 let latestProfile = null
 let profileChanges = 0
 const unlinked = new Set()
+const unlinkedIds = new Set()
 
 // The signed-in user (`userId`) changed their profile in this session, as
 // `profile` now is: what was kept of them takes it, before an answer kept a
 // while is asked again, under every login of theirs, those they signed in
 // or linked with before renaming on GitHub among them (the server knows them
-// by their account's id). The account they unlinked (`unlinkedLogin`) is no
-// longer theirs.
-export function knowProfile(userId, profile, avatarChanged = false, unlinkedLogin = null) {
+// by their account's id). The account they unlinked (`unlinkedAccount`, its
+// login and GitHub id) is no longer theirs, by any login this session's
+// answers named it by.
+export function knowProfile(userId, profile, avatarChanged = false, unlinkedAccount = null) {
   if (avatarChanged) avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
-  if (unlinkedLogin) unlinked.add(unlinkedLogin.toLowerCase())
+  if (unlinkedAccount) unlinked.add(unlinkedAccount.login.toLowerCase())
+  if (Number.isSafeInteger(unlinkedAccount?.githubId)) unlinkedIds.add(unlinkedAccount.githubId)
   latestProfile = { userId, profile }
   profileChanges++
   applyProfile(userId, profile)
@@ -90,7 +94,7 @@ export function knowProfile(userId, profile, avatarChanged = false, unlinkedLogi
 function applyProfile(userId, profile) {
   for (const [login, user] of known) {
     if (user.id !== userId) continue
-    if (unlinked.has(login)) known.delete(login)
+    if (unlinked.has(login) || unlinkedIds.has(accounts.get(login))) known.delete(login)
     else known.set(login, { ...user, login: profile.login, name: profile.name?.trim() || null })
   }
 }

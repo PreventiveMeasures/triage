@@ -35,6 +35,8 @@ export const GITHUB_LINK_USER_COLUMNS: readonly (readonly [string, string])[] = 
 
 export interface LinkedGithubAccount {
   id: string
+  // Its GitHub account's numeric id, which GitHub never gives another.
+  githubId: number
   login: string
   name: string | null
   linkedAt: number
@@ -94,8 +96,8 @@ export interface GithubLinkStore {
 // numeric id where GitHub told it.
 export interface GithubAccount { login: string; githubId: number | null }
 
-type LinkRow = { id: string; login: string; name: string | null; linkedAt: number }
-const accountOf = (row: LinkRow): LinkedGithubAccount => ({ id: row.id, login: row.login, name: row.name, linkedAt: row.linkedAt })
+type LinkRow = { id: string; githubId: number; login: string; name: string | null; linkedAt: number }
+const accountOf = (row: LinkRow): LinkedGithubAccount => ({ id: row.id, githubId: row.githubId, login: row.login, name: row.name, linkedAt: row.linkedAt })
 
 // GithubLinkStore.listUsersByAccount.
 async function usersByAccount(db: ManagedSql, accounts: readonly GithubAccount[]): Promise<Record<string, AppUser>> {
@@ -130,7 +132,7 @@ export function githubLinkMethods(db: ManagedSql): GithubLinkStore {
     if (row.role === 'none') throw new ManagedMutationError(403, 'forbidden')
     return row
   }
-  const linkOf = (userId: string, id: string) => db.prepare(`SELECT id, login, name, linked_at AS linkedAt FROM managed_github_link
+  const linkOf = (userId: string, id: string) => db.prepare(`SELECT id, github_user_id AS githubId, login, name, linked_at AS linkedAt FROM managed_github_link
     WHERE id = ? AND user_id = ?`).get(id, userId) as Promise<LinkRow | undefined>
 
   return {
@@ -138,7 +140,7 @@ export function githubLinkMethods(db: ManagedSql): GithubLinkStore {
       const user = await db.prepare(`SELECT login, name, github_name AS githubName, name_link AS nameAccount, avatar_link AS avatarAccount
         FROM managed_user WHERE id = ?`).get(userId) as Omit<ManagedProfile, 'accounts'> | undefined
       if (!user) return null
-      const accounts = await db.prepare(`SELECT id, login, name, linked_at AS linkedAt FROM managed_github_link
+      const accounts = await db.prepare(`SELECT id, github_user_id AS githubId, login, name, linked_at AS linkedAt FROM managed_github_link
         WHERE user_id = ? ORDER BY linked_at, id`).all(userId) as LinkRow[]
       return { ...user, accounts: accounts.map(accountOf) }
     },
