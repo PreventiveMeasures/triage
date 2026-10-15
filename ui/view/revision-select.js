@@ -67,7 +67,7 @@ export class RevisionSelect extends LitElement {
   static properties = {
     refs: { attribute: false }, kind: { type: String }, name: { type: String }, disabled: { type: Boolean },
     installTooltips: { attribute: false },
-    _open: { state: true }, _query: { state: true }, _active: { state: true }, _expanded: { state: true },
+    _open: { state: true }, _query: { state: true }, _active: { state: true }, _expanded: { state: true }, _keyboard: { state: true },
   }
 
   static styles = css`
@@ -80,7 +80,9 @@ export class RevisionSelect extends LitElement {
       display: flex; align-items: center; min-width: 0; height: 2rem; margin: 0;
       border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg);
     }
-    .revision:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    /* Its ring shows where the keyboard moved focus into it, as the
+       repository picker's does, not where a pointer did. */
+    .revision.keyboard:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .revision-name { flex: 1; }
     .revision input {
       height: 100%; min-height: 0; padding: .3rem .6rem; min-width: 0; border: 0; border-radius: 0;
@@ -145,18 +147,25 @@ export class RevisionSelect extends LitElement {
     this._query = ''
     this._active = -1
     this._expanded = new Set()
+    // Whether focus came by the keyboard, for the ring; a pointer pressing
+    // in it says the next focus didn't, until a key is pressed.
+    this._keyboard = false
+    this._pointer = false
     this._onViewport = () => this.position()
+    this._onKey = () => { this._pointer = false }
   }
 
   connectedCallback() {
     super.connectedCallback()
     globalThis.addEventListener('resize', this._onViewport)
     globalThis.addEventListener('scroll', this._onViewport, true)
+    globalThis.addEventListener('keydown', this._onKey, true)
   }
 
   disconnectedCallback() {
     globalThis.removeEventListener('resize', this._onViewport)
     globalThis.removeEventListener('scroll', this._onViewport, true)
+    globalThis.removeEventListener('keydown', this._onKey, true)
     super.disconnectedCallback()
   }
 
@@ -317,7 +326,9 @@ export class RevisionSelect extends LitElement {
     const choices = this.entries()
     const label = this.kind === 'commit' ? 'Commit SHA' : this.kind === 'tag' ? 'Tag' : 'Branch'
     const listed = this.kind !== 'commit'
-    return html`<form class="revision" @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) this.close() }}
+    return html`<form class=${this._keyboard ? 'revision keyboard' : 'revision'} @pointerdown=${() => { this._pointer = true }}
+      @focusin=${() => { this._keyboard = !this._pointer }}
+      @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) { this._keyboard = false; this.close() } }}
       @submit=${event => { event.preventDefault(); this.change('submit', this.kind, this.name) }}>
       <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label: name, icon }) => html`<button type="button" aria-label=${name} data-tooltip=${name}
         aria-pressed=${this.kind === kind} ?disabled=${this.disabled} @click=${() => this.pickKind(kind)}>${icon}</button>`)}</div>

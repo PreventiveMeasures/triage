@@ -218,6 +218,20 @@ test('the commit link opens the current directory at the pinned commit on GitHub
   assert.equal(link(), undefined, 'do not retain a link to the previous commit while loading a revision')
 })
 
+test('the revision field rings where the keyboard moved focus into it, as the repository picker does, not where a pointer did', () => {
+  const select = new RevisionSelect()
+  const form = () => select.render()
+  const [, pointerDown, focusIn, focusOut] = form().values
+  pointerDown()
+  focusIn()
+  assert.equal(form().values[0], 'revision', 'a click focuses it ringless, as the name it then focuses')
+  select._onKey()
+  focusIn()
+  assert.equal(form().values[0], 'revision keyboard', 'Tab into it rings')
+  focusOut({ currentTarget: { contains: () => false }, relatedTarget: null })
+  assert.equal(form().values[0], 'revision', 'leaving it clears the ring')
+})
+
 test('branch suggestions put the default first, retain filtering, and leave tag order unchanged', () => {
   const select = new RevisionSelect()
   select.refs = { defaultBranch: 'main', branches: ['develop', 'main', 'release'], tags: ['v1', 'v2'] }
