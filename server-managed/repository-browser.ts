@@ -54,7 +54,7 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
         if (!cached) tokens.set(repo.installationId, token)
         return token
       }
-      // Its open Dependabot alerts of npm's (dependabot-alerts.ts), once it
+      // Its Dependabot alerts of npm's, open or dismissed (dependabot-alerts.ts), once it
       // is read, asked with the signed-in user's own token alone, never the
       // App's installation's: GitHub shows them only to those it lets see
       // them, beyond reading it.

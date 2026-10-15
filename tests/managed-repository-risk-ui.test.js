@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, differs, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, alertSaid, differs, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -620,4 +620,57 @@ test('Dependabot alerts that couldn\'t be had are said small beside the advisori
   for (const line of lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')])) quiet._apply(line)
   quiet._apply(advised('package-lock.json', [lodashAdvisory]))
   assert.doesNotMatch(templateText(quiet.render()), /risk-dependabot/u)
+})
+
+const minimistAdvisory = { ...lodashAdvisory, id: 'GHSA-xvch-5gv4-984h', ghsa: 'GHSA-xvch-5gv4-984h', name: 'minimist', title: 'Prototype Pollution in minimist',
+  severity: 'critical', url: 'https://github.com/advisories/GHSA-xvch-5gv4-984h', range: '>=1.0.0 <1.2.6', versions: ['1.2.5'] }
+const tolerable = { reason: 'tolerable_risk', at: '2026-10-01T12:00:00Z', by: 'ada', comment: 'Only in a CLI we run ourselves.' }
+
+test('advisories npm tells whose Dependabot alerts were dismissed are paired with them all the same, where they are used struck through', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  page._tab = 'advisories'
+  const minimist = { ...lodashAlert('org/a', 2, 'package-lock.json', ['1.2.5']), name: 'minimist', ghsa: 'GHSA-xvch-5gv4-984h', aliases: [], dismissed: { auto: true } }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/a' }, { id: 2, fullName: 'org/b' }] },
+    ...lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20'), locked('minimist', '1.2.5')]),
+    advised('package-lock.json', [lodashAdvisory, minimistAdvisory]),
+    { type: 'dependabot', repo: 1, alerts: [lodashAlert('org/a', 1, 'package-lock.json', ['4.17.20'], { dismissed: tolerable }), minimist] },
+    ...lockfileOf(2, 'package-lock.json', [locked('lodash', '4.17.20')]), { type: 'advisories', repo: 2, path: 'package-lock.json', advisories: [lodashAdvisory] },
+    { type: 'dependabot', repo: 2, alerts: [lodashAlert('org/b', 5, 'package-lock.json', ['4.17.20'])] },
+  ]) page._apply(line)
+  assert.deepEqual(page._advisoryRows().map(row => [row.id, [...row.usedIn], [...row.alerts.values()].map(alert => [alert.number, Boolean(alert.dismissed)])]), [
+    ['GHSA-xvch-5gv4-984h', ['org/a/package-lock.json'], [[2, true]]],
+    ['GHSA-35jh-r3h4-6jhm', ['org/a/package-lock.json', 'org/b/package-lock.json'], [[5, false], [1, true]]],
+  ], 'two advisories, each paired with its dismissed alert, open ones taken first')
+  const text = templateText(page.render())
+  assert.match(text, /<a class=risk-name risk-used is-dismissed href=https:\/\/github\.com\/org\/a\/security\/dependabot\/2 [^]*?data-tooltip=org\/a\/package-lock\.json\nDependabot alert #2, auto-dismissed by a rule>org\/a\/package-lock\.json<\/span><span class="sr-only"> \(dismissed\)<\/span><\/a>/u,
+    'struck, linked to its alert')
+  assert.match(text, /<summary>2 lockfiles, 1 dismissed<\/summary>/u, 'how many dismissed, where several')
+  assert.match(text, /<a class=risk-name risk-used is-dismissed href=https:\/\/github\.com\/org\/a\/security\/dependabot\/1 /u)
+  assert.match(text, /<a class=risk-name risk-used href=https:\/\/github\.com\/org\/b\/security\/dependabot\/5 /u, 'the open one not struck')
+  assert.match(text, /<p class="risk-dependabot" role="status">[^]*?data-tooltip=org\/a: 0 open and 2 dismissed alerts\norg\/b: 1 open alert>1 open and 2 dismissed alerts of 2 repositories<\/span>/u)
+})
+
+test('a dismissed alert says why, by whom and when, and what they said', () => {
+  assert.equal(alertSaid({ number: 4 }), 'Dependabot alert #4')
+  assert.equal(alertSaid({ number: 4, dismissed: tolerable }), 'Dependabot alert #4, dismissed: Risk is tolerable to this project (by @ada, 2026-10-01)\n“Only in a CLI we run ourselves.”')
+  assert.equal(alertSaid({ number: 4, dismissed: {} }), 'Dependabot alert #4, dismissed')
+  assert.equal(alertSaid({ number: 4, dismissed: { auto: true, at: '2026-09-30T08:00:00Z' } }), 'Dependabot alert #4, auto-dismissed by a rule (2026-09-30)')
+})
+
+test('a dismissed alert of an advisory npm tells none of lists none of its own, but joins one an open alert lists, whichever repository tells it first', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const debug = { ...lodashAlert('org/a', 3, 'package.json', []), name: 'debug', ghsa: 'GHSA-gxpj-cx7g-858c', dismissed: tolerable }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/a' }, { id: 2, fullName: 'org/b' }] },
+    ...lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')]), advised('package-lock.json', []),
+    { type: 'dependabot', repo: 1, alerts: [lodashAlert('org/a', 1, 'package-lock.json', ['4.17.20'], { dismissed: tolerable }), debug] },
+  ]) page._apply(line)
+  assert.equal(page._advisories.size, 0, 'dismissed alone: none listed')
+  for (const line of lockfileOf(2, 'package-lock.json', [locked('lodash', '4.17.20')])) page._apply(line)
+  page._apply({ type: 'dependabot', repo: 2, alerts: [lodashAlert('org/b', 5, 'package-lock.json', ['4.17.20'])] })
+  assert.deepEqual([...page._advisories.values()].map(row => [row.id, [...row.usedIn]]), [['GHSA-35jh-r3h4-6jhm', ['org/b/package-lock.json', 'org/a/package-lock.json']]],
+    'listed by the open one, the dismissed one with it; debug\'s still none')
 })

@@ -1943,7 +1943,7 @@ function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
 // before any of it is told; packages as the npm viewer's admins read them, in
 // spare assessments (npm-risk.ts), trusted however new where a team lists
 // their scope, and each lockfile's asked of npm's advisories at once; each
-// repository's open Dependabot alerts asked with the admin's own GitHub
+// repository's Dependabot alerts, open or dismissed, asked with the admin's own GitHub
 // token. The reader leaving, losing their admin role or the server shutting
 // down stops it.
 async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {

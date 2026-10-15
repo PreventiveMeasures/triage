@@ -1,5 +1,6 @@
-// A repository's open Dependabot alerts of npm's ecosystem, as a repository
-// risk scan blends them into npm's advisories (repository-risk.ts): GitHub's
+// A repository's Dependabot alerts of npm's ecosystem, open or dismissed, as a
+// repository risk scan blends them into npm's advisories (repository-risk.ts),
+// a dismissed one with who dismissed it, when and why: GitHub's
 // `GET /repos/:repo/dependabot/alerts`, a page of 100 at a time, each found by
 // the cursor the one before's Link header names, MAX_PAGES at most. Asked with
 // the signed-in user's own token (repository-browser.ts), never the App's
@@ -16,8 +17,9 @@ import type { LockedPackage } from './locked-packages.ts'
 // there (`url`, built, never fetched), the manifest or lockfile it is of
 // (`manifest`, from the repository's root), its package and advisory, the
 // versions it affects as GitHub writes them (`range`, `>= 1.0.0, < 1.2.6`)
-// and the first that isn't (`patched`), and `dev` where GitHub tells the
-// dependency is only for development.
+// and the first that isn't (`patched`), `dev` where GitHub tells the
+// dependency is only for development, and `dismissed` where it is: by whom,
+// when, why and what they said, or by one of the repository's rules (`auto`).
 export interface DependabotAlert {
   number: number
   url: string
@@ -33,14 +35,20 @@ export interface DependabotAlert {
   patched?: string
   cwe: string[]
   dev?: true
+  dismissed?: AlertDismissal
 }
+
+// GitHub's `dismissed_reason`: `fix_started`, `inaccurate`, `no_bandwidth`,
+// `not_used` or `tolerable_risk`; `at` as GitHub writes it (ISO 8601).
+export interface AlertDismissal { auto?: true; reason?: string; at?: string; by?: string; comment?: string }
 
 const API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
-// Up to how many pages are asked: 2,000 open alerts of npm's in a repository,
-// past which the rest are left out.
+// Up to how many pages a listing asks: 2,000 alerts of npm's in a repository,
+// past which the rest are left out; where open and dismissed ones are more,
+// the open ones are listed again on their own (dependabotAlerts).
 const MAX_PAGES = 20
 // A page holds each advisory's whole text: given longer than githubJson's.
 const PAGE_TIMEOUT_MS = 20_000
@@ -51,14 +59,28 @@ const SEVERITIES = new Map([['critical', 'critical'], ['high', 'high'], ['medium
 const isRepoPath = (path: unknown): path is string => typeof path === 'string' && path.length <= 1024 && !/\p{Cc}/u.test(path)
   && path.split('/').every(part => part !== '' && part !== '.' && part !== '..')
 
+// The states asked: a fixed alert's dependency is no longer what it was.
+const STATES = ['open', 'dismissed', 'auto_dismissed']
+const REASONS = new Set(['fix_started', 'inaccurate', 'no_bandwidth', 'not_used', 'tolerable_risk'])
+const LOGIN = /^[\dA-Za-z](?:[\dA-Za-z-]{0,38})(?:\[bot\])?$/u
+
 const text = (value: unknown, most = 500) => typeof value === 'string' && value.trim() ? value.trim().slice(0, most) : undefined
 
-// An alert as GitHub answers it, or null for one that isn't an open one of
-// npm's, of a package and GHSA npm and GitHub would name.
+// How a dismissed alert was dismissed, as far as GitHub tells it soundly.
+function dismissalOf(state: string, raw: Record<string, any>): AlertDismissal {
+  const at = state === 'auto_dismissed' ? raw['auto_dismissed_at'] : raw['dismissed_at']
+  const when = typeof at === 'string' && at.length <= 40 && !Number.isNaN(Date.parse(at)) ? { at } : {}
+  if (state === 'auto_dismissed') return { auto: true, ...when }
+  const by = raw['dismissed_by']?.login, comment = text(raw['dismissed_comment'], 280), reason = raw['dismissed_reason']
+  return { ...REASONS.has(reason) ? { reason } : {}, ...when, ...typeof by === 'string' && LOGIN.test(by) ? { by } : {}, ...comment === undefined ? {} : { comment } }
+}
+
+// An alert as GitHub answers it, or null for one that isn't an open or
+// dismissed one of npm's, of a package and GHSA npm and GitHub would name.
 function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
   if (raw == null || typeof raw !== 'object') return null
   const { number, state, dependency, security_advisory: advisory, security_vulnerability: vulnerability } = raw as Record<string, any>
-  if (!Number.isSafeInteger(number) || number <= 0 || (state !== undefined && state !== 'open')) return null
+  if (!Number.isSafeInteger(number) || number <= 0 || !STATES.includes(state)) return null
   const ghsa = advisory?.ghsa_id, manifest = dependency?.manifest_path, name = dependency?.package?.name
   if (dependency?.package?.ecosystem !== 'npm' || !isNpmPackageName(name) || !isRepoPath(manifest) || typeof ghsa !== 'string' || !GHSA.test(ghsa)) return null
   const severity = SEVERITIES.get(vulnerability?.severity ?? advisory?.severity)
@@ -72,6 +94,7 @@ function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
     ...range === undefined ? {} : { range }, ...patched === undefined ? {} : { patched },
     cwe: [...new Set(cwes.flatMap(cwe => typeof cwe?.cwe_id === 'string' && /^CWE-\d{1,6}$/u.test(cwe.cwe_id) ? [cwe.cwe_id] : []))],
     ...dependency.scope === 'development' ? { dev: true as const } : {},
+    ...state === 'open' ? {} : { dismissed: dismissalOf(state, raw as Record<string, any>) },
   }
 }
 
@@ -116,25 +139,38 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
   return { alerts: body, link: res.headers.get('link') }
 }
 
-// `fullName`'s open Dependabot alerts of npm's ecosystem, as `token` may see
-// them, in GitHub's order; none asked without a token.
-export async function dependabotAlerts(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
-  if (!token) throw new GithubApiError(403, 'dependabot-forbidden')
+// `fullName`'s alerts in `states`, MAX_PAGES at most, in GitHub's order (the
+// newest first), and whether that is all of them.
+async function listAlerts(fullName: string, states: readonly string[], token: string, fetchImpl: typeof fetch) {
   const base = `${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/dependabot/alerts`
   const alerts: DependabotAlert[] = []
   const seen = new Set<number>()
   let cursor: [string, string] | null = null
   for (let pages = 0; pages < MAX_PAGES; pages++) {
-    const query = new URLSearchParams({ state: 'open', ecosystem: 'npm', per_page: String(PER_PAGE), ...cursor ? { [cursor[0]]: cursor[1] } : {} })
+    const query = new URLSearchParams({ state: states.join(','), ecosystem: 'npm', per_page: String(PER_PAGE), ...cursor ? { [cursor[0]]: cursor[1] } : {} })
     const answer = await askPage(`${base}?${query}`, token, fetchImpl)
     for (const raw of answer.alerts) {
       const alert = alertOf(fullName, raw)
       if (alert && !seen.has(alert.number)) { seen.add(alert.number); alerts.push(alert) }
     }
     cursor = answer.alerts.length === 0 ? null : nextPage(answer.link)
-    if (!cursor) break
+    if (!cursor) return { alerts, whole: true }
   }
-  return alerts
+  return { alerts, whole: false }
+}
+
+// `fullName`'s Dependabot alerts of npm's ecosystem, open or dismissed, as
+// `token` may see them, in GitHub's order; none asked without a token. Asked
+// at once, but where they are more than a listing holds, as newer dismissed
+// ones would leave older open ones out, the open ones are listed again on
+// their own, and the dismissed ones had kept after them.
+export async function dependabotAlerts(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
+  if (!token) throw new GithubApiError(403, 'dependabot-forbidden')
+  const all = await listAlerts(fullName, STATES, token, fetchImpl)
+  if (all.whole) return all.alerts
+  const open = await listAlerts(fullName, ['open'], token, fetchImpl)
+  const told = new Set(open.alerts.map(alert => alert.number))
+  return [...open.alerts, ...all.alerts.filter(alert => alert.dismissed && !told.has(alert.number))]
 }
 
 // The versions of an alert's package that a lockfile it is of locks
