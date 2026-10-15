@@ -29,8 +29,9 @@ const FOLDING_INTO = { i: '\u0131', k: '\u212A', s: '\u017F' }
 const foldsInto = char => new Set([char, char.toLowerCase(), char.toUpperCase(), ...FOLDING_INTO[char.toLowerCase()] ?? ''])
 
 // Each string a text writes out that may name a file of its package, its
-// value starting `.`, with an escape, or with `first` (its name's first
-// character, foldsInto): from any quote no backslash escapes (an even run of them
+// value starting `.`, with an escape, or with one of `firsts` (its name's
+// first character, foldsInto, and `#` where its package.json files map
+// specifiers of its own): from any quote no backslash escapes (an even run of them
 // before it, or none) to the next of its kind none escapes, a template's
 // across lines, the others' within their line, a line continuation aside.
 // Tried from every such quote, not only where code's tokens say a string
@@ -38,8 +39,8 @@ const foldsInto = char => new Set([char, char.toLowerCase(), char.toUpperCase(),
 // expression, a comment or a template's text taken for another): so one in
 // a comment, or in another string, is read too. Linear on any text, each
 // quote's string read to the next quote of its kind.
-function quoted(first) {
-  const starts = String.raw`(?=[.\\${first === null ? '' : [...foldsInto(first)].map(char => String.raw`\u{${char.codePointAt(0).toString(16)}}`).join('')}])`
+function quoted(firsts) {
+  const starts = String.raw`(?=[.\\${[...firsts].map(char => String.raw`\u{${char.codePointAt(0).toString(16)}}`).join('')}])`
   const line = quote => String.raw`${quote}(?=${starts}((?:[^${quote}\\\n]|\\(?:\r\n|[\s\S]))*)${quote})`
   return new RegExp(String.raw`(?<=(?:^|[^\\])(?:\\\\)*)(?:${line('"')}|${line("'")}|\x60(?=${starts}((?:[^\x60\\]|\\[\s\S])*)\x60))`, 'gu')
 }
@@ -168,20 +169,22 @@ function leaves(value) {
 // "./x"`, or conditions alone).
 function mapped(map, subpaths) {
   const keyed = map && typeof map === 'object' && !Array.isArray(map) && Object.keys(map).some(subpaths) ? Object.entries(map) : [['.', map]]
-  return keyed.flatMap(([key, value]) => leaves(value).map(target => ({ pattern: key.includes('*'), target })))
+  return keyed.flatMap(([key, value]) => leaves(value).map(target => ({ key, pattern: key.includes('*'), target })))
 }
 
 // A package.json's `name`, `main`, and the paths its `exports` and `imports`
-// name (`./x`, mapped), read past a byte order mark as node reads it; none
-// where it is no JSON object.
+// name (`./x`, mapped), its `imports` by their keys apart (`#x`), read past a
+// byte order mark as node reads it; none where it is no JSON object.
 function entriesOf(text) {
-  if (typeof text !== 'string') return { name: null, main: null, targets: [] }
+  const none = { name: null, main: null, targets: [], imports: [] }
+  if (typeof text !== 'string') return none
   try {
     const { name, main, exports, imports } = JSON.parse(text.replace(/^\uFEFF/u, ''))
-    const targets = [...mapped(exports, key => key.startsWith('.')), ...mapped(imports, key => key.startsWith('#'))].filter(({ target }) => target.startsWith('./'))
-    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets }
+    const own = mapped(imports, key => key.startsWith('#')).filter(({ key, target }) => key.startsWith('#') && target.startsWith('./'))
+    const targets = [...mapped(exports, key => key.startsWith('.')).filter(({ target }) => target.startsWith('./')), ...own]
+    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets, imports: own }
   } catch {
-    return { name: null, main: null, targets: [] }
+    return none
   }
 }
 
@@ -274,20 +277,28 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  // The files a path `require` takes may find, each as a filesystem tells
-  // them (`payload.JSON`), whichever it tries first: its own, one by its name
-  // and an extension it tries (`.js`, `.json`, `.node`), and a directory's
-  // package.json `main` found so, and its `index` by an extension alone.
-  const tries = (path, key, extensions) => path === '' ? [] : extensions.filter(extension => keyed(`${key}${extension}`).length > 0).map(extension => `${path}${extension}`)
-  const reached = (path, key) => [...tries(path, key, ['', ...TRIED]), ...tries(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)]
+  // The path of the first of `extensions` a path (and `key`, it folded)
+  // takes that names a file, each a filesystem tells for it its own (add):
+  // none at the package's top, which is no file.
+  const first = (path, key, extensions) => {
+    const extension = path === '' ? undefined : extensions.find(each => keyed(`${key}${each}`).length > 0)
+    return extension === undefined ? null : `${path}${extension}`
+  }
+  const indexFile = (path, key) => first(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)
+  const located = (path, key) => first(path, key, ['', ...TRIED]) ?? indexFile(path, key)
+  // A path `require` takes, as it finds it, the first it tries that names a
+  // file: its own, one by its name and an extension (`.js`, `.json`,
+  // `.node`, `payload.JSON` as a filesystem folding case finds it); else a
+  // directory's package.json `main`, found so or by its `index` and an
+  // extension; else the directory's `index` so, as node falls back to it.
   const requires = path => {
     if (path === null) return
     const key = folded(path)
-    for (const file of reached(path, key)) add(file, 'require')
-    for (const manifest of keyed(path === '' ? 'package.json' : `${key}/package.json`)) {
-      const { main } = entriesOf(files.get(manifest))
-      for (const at of main === null ? [] : [...separated(main)].map(spec => joined(root, path, spec))) if (at !== null) for (const file of reached(at, folded(at))) add(file, 'require')
-    }
+    const file = first(path, key, ['', ...TRIED])
+    if (file !== null) return add(file, 'require')
+    const mains = keyed(path === '' ? 'package.json' : `${key}/package.json`).map(manifest => entriesOf(files.get(manifest)).main).filter(main => main !== null)
+      .flatMap(main => [...separated(main)].map(spec => joined(root, path, spec))).filter(at => at !== null).map(at => located(at, folded(at))).filter(found => found !== null)
+    for (const found of mains.length > 0 ? mains : [indexFile(path, key)]) add(found, 'require')
   }
   requires('')
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
@@ -300,14 +311,33 @@ export function npmLoadedScripts(version) {
     for (const [dir, target, pattern] of targets) for (const file of exported(names, root, dir, target, pattern)) add(file, 'require')
   }
   for (const [path, text] of files) if (npmIsScript(path, text)) queue.push(path)
+  // The `#` specifiers each package.json maps (`imports`), from its
+  // directory.
+  const specifiers = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
+    .flatMap(([path, text]) => entriesOf(text).imports.map(({ key, target }) => ({ dir: path.slice(0, -'package.json'.length - 1), key, target })))
   // The package's own name, as a filesystem tells it (rootOf), a path from
   // it after a `/`, or a `\\` as on Windows.
   const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
     && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
-  const seen = new Set(), strings = quoted(root.length > 0 ? top.name[0] : null)
+  const seen = new Set(), strings = quoted([...root.length > 0 ? foldsInto(top.name[0]) : [], ...specifiers.length > 0 ? ['#'] : []])
+  // A `#` specifier as the package's `imports` map it: the target of a key
+  // that is it, or of a pattern's (`#lib/*`) its `*` matches, what it matches
+  // put in each of the target's, read as a URL (urlJoined), loaded as code
+  // takes it (`by`), once each.
+  const own = (value, by) => {
+    if (seen.has(`${by}\0#\0${value}`)) return
+    seen.add(`${by}\0#\0${value}`)
+    for (const { dir, key, target } of specifiers) {
+      const star = key.indexOf('*')
+      const after = key.length - star - 1
+      if (star === -1 ? key !== value : star !== key.lastIndexOf('*') || value.length < key.length || !value.startsWith(key.slice(0, star)) || !value.endsWith(key.slice(star + 1))) continue
+      add(urlJoined(root, dir, star === -1 ? target : target.replaceAll('*', value.slice(star, value.length - after))), by)
+    }
+  }
   // A string's value from the directory `dir`, a load `import` takes where
   // its place says so (`importing`), else one `require` may take, once each.
   const follow = (value, dir, importing) => {
+    if (value.startsWith('#')) return own(value, importing() ? 'import' : 'require')
     const [from, spec] = named(value) ? ['', `./${value.slice(top.name.length + 1)}`] : [dir, value]
     if (!RELATIVE.test(spec.replaceAll('\\', '/'))) return
     const by = importing() ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
