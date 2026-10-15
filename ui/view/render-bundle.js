@@ -1012,7 +1012,7 @@ function renderBundleCodeTerminal() {
   return html`<section class="bundle-code-terminal" aria-label="Terminal">
     <header class="bundle-code-terminal-bar">
       <span class="bundle-code-rail-label">Terminal</span>
-      <button type="button" class="bundle-code-rail-action" aria-label="Close terminal" data-tooltip="Close terminal"
+      <button type="button" class="bundle-code-rail-action" aria-label="Close terminal"
         @click=${() => showBundleCodeTerminal(false)}>×</button>
     </header>
     <div id="bundle-terminal-slot" class="bundle-code-terminal-slot"></div>
