@@ -1,0 +1,103 @@
+/* An issue's, pull request's or agent's session's popup
+   (repository-item-dialog.js), as wide as a kanban card's: its title, then
+   its facts, what it names, and its description, scrolling, over its links. */
+dialog {
+  --issue-open: var(--green); --issue-merged: #a371f7; --issue-closed: var(--critical); --issue-quiet: var(--muted); --claude: #d97757;
+  width: min(94vw, 52rem); max-width: none; max-height: calc(100dvh - 7rem); padding: 0; overflow: hidden;
+}
+dialog[open] { display: flex; flex-direction: column; }
+header {
+  display: flex; align-items: start; gap: .6rem; flex-shrink: 0;
+  padding: .8rem 1rem; border-bottom: 1px solid var(--border);
+}
+header h3 {
+  display: flex; align-items: baseline; gap: .5rem; flex: 1; min-width: 0; margin: 0;
+  font-size: 1rem; line-height: 1.35; overflow-wrap: anywhere;
+}
+header button {
+  flex-shrink: 0; border: 0; background: transparent; color: var(--muted);
+  font-family: inherit; font-size: 1.4rem; line-height: 1; padding: 0 .25rem;
+  &:hover { color: var(--text); }
+  &.back { font-size: 1.1rem; }
+}
+.repo-item-body {
+  display: flex; flex-direction: column; gap: .75rem; min-height: 0; padding: .9rem 1rem 1rem;
+  overflow: auto; overscroll-behavior: contain; font-size: .85rem;
+}
+.repo-item-number { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.repo-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; color: var(--muted); }
+.repo-item-meta strong { color: var(--text); font-weight: 500; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; color: var(--text); }
+.repo-item-badge {
+  --state: var(--issue-open);
+  padding: .1rem .55rem; border-radius: 999px; background: var(--state); color: var(--surface); font-weight: 500;
+  &.is-merged, &.is-completed { --state: var(--issue-merged); }
+  &.is-closed { --state: var(--issue-closed); }
+  &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
+}
+svg {
+  flex: none; width: 14px; height: 14px;
+  fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+svg .fill { fill: currentcolor; stroke: none; }
+svg .dotted { stroke-dasharray: 1 2.2; }
+.repo-item-state {
+  --state: var(--issue-open);
+  display: inline-flex; align-self: center; color: var(--state);
+  &.is-merged, &.is-completed { --state: var(--issue-merged); }
+  &.is-closed { --state: var(--issue-closed); }
+  &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
+}
+.repo-item-mark {
+  display: inline-flex; align-items: center; gap: .25rem;
+  & svg { width: 12px; height: 12px; }
+  &.is-approved, &.is-success { color: var(--green); }
+  &.is-changes, &.is-failure { color: var(--critical); }
+  &.is-pending { color: var(--medium); }
+}
+.is-added { color: var(--green); }
+.is-deleted { color: var(--critical); }
+.repo-item-labels { display: flex; flex-wrap: wrap; gap: .3rem; }
+.repo-item-label {
+  padding: 0 .45rem; border: 1px solid var(--border); border-radius: 999px; font-size: .75rem; line-height: 1.5;
+  &::before {
+    content: ''; display: inline-block; width: .5rem; height: .5rem; margin-right: .3rem; border-radius: 50%;
+    background: var(--label, var(--muted)); vertical-align: middle;
+  }
+}
+.repo-item-agents { display: inline-flex; gap: .25rem; align-self: center; }
+.agent-mark { display: inline-flex; }
+.agent-mark.is-claude svg { color: var(--claude); stroke-width: 1.6; }
+.agent-mark.is-codex svg { fill: currentcolor; stroke: none; }
+.agent-logo { display: inline-flex; }
+.repo-item-section {
+  & h4 { margin: 0 0 .3rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  & ul { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden; }
+  & li + li { border-top: 1px solid var(--border); }
+}
+.repo-item-row {
+  display: flex; align-items: center; gap: .5rem; width: 100%; padding: .35rem .6rem;
+  border: 0; background: none; color: var(--text); font: inherit; text-align: left; text-decoration: none;
+  &:hover { background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+.repo-item-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-item-description {
+  padding-top: .75rem; border-top: 1px solid var(--border);
+  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;
+}
+.repo-item-quiet { color: var(--muted); }
+.nwd-actions { margin: 0; padding: .6rem 1rem; }
+.nwd-actions a {
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); padding: .35rem .9rem;
+  color: var(--text); font-size: .8rem; text-decoration: none;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  &.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--surface);
+    &:hover { color: var(--surface); filter: brightness(1.08); }
+  }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+a, button { cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.repo-item-body:focus { outline: none; }

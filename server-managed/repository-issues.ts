@@ -87,6 +87,59 @@ function item(kind: IssuesKind, node: Node | null) {
 // field refused, the list is, as one without Pull requests: read is.
 const checksRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path) && error.path.includes('statusCheckRollup')
 
+// One issue or pull request, as its popup shows it (GET
+// /api/admin/repositories/item): as its tile does, with its description, its
+// Markdown as written (never GitHub's HTML of it); an issue's pull requests closing
+// it, a pull request's issues it closes, its commits and files changed, and
+// who merged it. Its state, of a different type each, named apart. A
+// description longer than MAX_BODY is shortened (`bodyShortened`), and the
+// linked past the first LINKED counted (`moreLinked`), the rest on GitHub.
+const MAX_BODY = 20_000
+const LINKED = 10
+const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    item: issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue { ${shared} issueState: state stateReason body
+        closedByPullRequestsReferences(first: ${LINKED}, includeClosedPrs: true) { totalCount nodes { number title pullState: state isDraft } } }
+      ... on PullRequest { ${shared} pullState: state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName body changedFiles
+        commits(last: 1) { totalCount nodes { commit { statusCheckRollup { state } } } } mergedBy { login }
+        closingIssuesReferences(first: ${LINKED}) { totalCount nodes { number title issueState: state stateReason } } }
+    }
+  }
+}`
+type Linked = { number?: unknown; title?: unknown; issueState?: unknown; pullState?: unknown; stateReason?: unknown; isDraft?: unknown } | null
+type ItemNode = Node & { __typename?: unknown; issueState?: unknown; pullState?: unknown; body?: unknown; changedFiles?: unknown
+  commits?: Node['commits'] & { totalCount?: unknown }; mergedBy?: { login?: unknown } | null
+  closedByPullRequestsReferences?: Links; closingIssuesReferences?: Links }
+type Links = { totalCount?: unknown; nodes?: Linked[] } | null
+
+// The issues or pull requests an item names, each by its number, title and
+// state, as `kind`'s tile names one.
+const linked = (kind: IssuesKind, nodes: Linked[] | undefined) => (nodes ?? []).flatMap(node => {
+  const tile = item(kind, node ? { number: node.number, title: node.title, state: node.issueState ?? node.pullState, stateReason: node.stateReason, isDraft: node.isDraft } : null)
+  return tile ? [{ number: tile.number, title: tile.title, state: tile.state, ...'reason' in tile ? { reason: tile.reason } : { draft: tile.draft } }] : []
+})
+
+// The issue or pull request numbered `number`, its `kind` with it.
+export async function repositoryItem(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const data = await githubGraphql(ITEM_QUERY, { owner, name, number }, token, fetchImpl, checksRefused) as { repository?: { item?: ItemNode | null } | null }
+  const node = data?.repository?.item
+  const kind: IssuesKind | null = node?.__typename === 'Issue' ? 'issues' : node?.__typename === 'PullRequest' ? 'pulls' : null
+  const tile = kind && node ? item(kind, { ...node, state: kind === 'issues' ? node.issueState : node.pullState }) : null
+  if (!kind || !node || !tile) throw new GithubApiError(404, 'github-not-found')
+  // As written, but for blank lines before it and spaces after: a first
+  // line's indent, an indented code block's, kept.
+  const written = typeof node.body === 'string' ? node.body.replace(/^(?:[ \t]*\r?\n)+/u, '').trimEnd() : ''
+  const links = kind === 'issues' ? node.closedByPullRequestsReferences : node.closingIssuesReferences
+  const named = linked(kind === 'issues' ? 'pulls' : 'issues', links?.nodes)
+  const described = { body: written.slice(0, MAX_BODY), bodyShortened: written.length > MAX_BODY, moreLinked: Math.max(0, count(links?.totalCount) - named.length) }
+  return kind === 'issues' ? { kind, ...tile, ...described, closedBy: named }
+    : { kind, ...tile, ...described, closes: named, commits: count(node.commits?.totalCount), files: count(node.changedFiles),
+      mergedBy: typeof node.mergedBy?.login === 'string' && LOGIN.test(node.mergedBy.login) ? node.mergedBy.login : null }
+}
+
 // A page of the repository's issues or pull requests in `state`, after the
 // page `after` ended (null for the first): its `items`, how many are open and
 // closed (`counts`), and, where more follow, the cursor reading them (`after`).

@@ -114,6 +114,10 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
     [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null]])
   assert.ok(asked.every(query => query.auth === 'Bearer login-token'))
+  // Asked again, kept: nothing read of GitHub's GraphQL again, branches neither.
+  const reads = asked.length
+  assert.deepEqual((await request({ repoId: '1' })).body, body)
+  assert.equal(asked.length, reads)
 })
 
 test('a later page reads on from the cursors it names alone, without issues and branches again', async t => {

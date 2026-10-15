@@ -6,7 +6,9 @@
 // then, as a version can be deprecated, its package made private, or itself
 // removed); and, for scans, each package's risk line, for as long as a scan
 // keeps it, and what a scan read of GitHub, for a day, and of npm's
-// advisories, for an hour (repository-risk.ts). Each store removes its own rows kept longer
+// advisories, for an hour (repository-risk.ts); and what the code viewer read
+// of a repository's GitHub, its issues, pull requests and agents' work, for a
+// day (http.ts readWholeRepository). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -22,6 +24,8 @@ export interface KeptStore<T> {
   // Those of `keys` kept, by key, in one read of the database.
   readMany(keys: string[]): Promise<Map<string, { at: number; value: T }>>
   write(key: string, value: T, at: number): Promise<void>
+  // Removes what is kept by `key`.
+  remove(key: string): Promise<void>
 }
 
 // When each database last had the rows under each prefix removed.
@@ -63,6 +67,9 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }
       await prune(at)
     },
+    async remove(key) {
+      try { await db.deleteUpstreamCacheEntries(keyOf(key), Number.MAX_SAFE_INTEGER) } catch (error) { warn('remove', error) }
+    },
   }
 }
 
@@ -87,3 +94,8 @@ export const riskLineStore = <T>(db: UpstreamCacheStore, keptMs: number, debug =
 // repositories a scan in parts told whole (`progress`).
 export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles' | 'advisories' | 'progress', keptMs: number, debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository-risk/${type}`, keptMs, debug)
+// What the code viewer read of a repository (http.ts readWholeRepository), by
+// its id and what was asked, each kept REPOSITORY_READ_KEPT_MS.
+export const REPOSITORY_READ_KEPT_MS = 24 * 60 * 60_000
+export const repositoryReadStore = (db: UpstreamCacheStore, debug = false): KeptStore<object> =>
+  keptStore<object>(db, 'repository/reads', REPOSITORY_READ_KEPT_MS, debug)

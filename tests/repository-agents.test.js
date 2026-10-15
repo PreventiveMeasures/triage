@@ -13,6 +13,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryHistory: () => new Promise(() => {}),
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
+const opened = []
+mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 const watching = new Map()
 mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
@@ -61,10 +63,10 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*aria-label=0 commits/u)
   // The session: its two pull requests and its commit to main, the issue it names.
   assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*3 tasks[^]*\+2,001[^]*−11/u)
-  assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^>]*>#9<[^]*pull\/8[^>]*>#8<[^]*commit\/c{40}[^>]*><code>ccccccc<\/code>[^]*issues\/3[^>]*><span class="sr-only">Issue <\/span>#3</u)
+  assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^]*?>#9<[^]*pull\/8[^]*?>#8<[^]*commit\/c{40}[^]*?><code>ccccccc<\/code>[^]*issues\/3[^]*?><span class="sr-only">Issue <\/span>#3</u)
   assert.match(text, /<code>claude\/one<\/code>/u)
   // Each chip with how many follow it, seen past the last that fits.
-  assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^>]*data-rest=>/u)
+  assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^]*?data-rest=>/u)
   // A Codex branch's pull request, one left without any; work no agent did is none.
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
@@ -159,4 +161,34 @@ test('more read as their button nears the end, but not while a filter picks; a l
   failed.render()
   await setImmediate()
   assert.match(templateText(failed.render()), /role="alert">Reading what Claude and Codex did needs your GitHub sign-in\.[^]*Retry/u)
+})
+
+test('a session clicked, its card or title, opens its popup; a pull request or issue of it, that one\'s; a commit, on GitHub; held with a key, a link', async () => {
+  answer = () => Promise.resolve(firstPage())
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  const claudeSession = view.list().entry.sessions.find(item => item.id === 'session_A')
+  const click = (more = {}) => ({ button: 0, target: { closest: () => null }, prevented: false, stopped: false,
+    preventDefault() { this.prevented = true }, stopPropagation() { this.stopped = true }, ...more })
+  opened.length = 0
+  const card = click()
+  view.openSession(card, claudeSession)
+  assert.equal(card.prevented, true)
+  assert.deepEqual(opened, [{ repository: view.repository, target: { session: claudeSession } }])
+  const commit = click({ target: { closest: selector => selector === '.agent-chip.is-commit' ? {} : null } })
+  view.openSession(commit, claudeSession)
+  assert.equal(commit.prevented, false, 'a commit opens on GitHub')
+  const held = click({ metaKey: true })
+  view.openSession(held, claudeSession)
+  assert.equal(held.prevented, false)
+  const chip = click()
+  view.openItem(chip, 9, { kind: 'pulls', ...claudeSession.pulls[0] })
+  assert.deepEqual([chip.prevented, chip.stopped], [true, true], 'its own popup, not its session\'s')
+  assert.deepEqual(opened.at(-1).target, { number: 9, preview: { kind: 'pulls', ...claudeSession.pulls[0] } })
+  assert.equal(opened.length, 2)
+  // Each chip of a pull request or issue opens its own; a commit's none.
+  const text = templateText(view.render())
+  assert.match(text, /pull\/9 [^]*?@click=event => this\.openItem\(event, preview\.number, preview\)[^]*?>#9</u)
+  assert.match(text, /commit\/c{40} [^]*?@click=\s+data-rest=1><code>/u)
 })
