@@ -205,8 +205,9 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents` or `pulse` (`history`, its earlier name, opens Commits) |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents` or `pulse` (`history`, its earlier name, opens Commits) |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
+| `/manage/code/:repoId/:commit/compare[/:otherCommit[/code\|/diff]][?path=:directory]` | Its Compare tab, with the directory at another commit, in its Code or Diff mode |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
@@ -1516,7 +1517,7 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Treemap, Code, Search and Activity tabs:
+as an npm version shows, with the Treemap, Code, Search, Compare and Activity tabs:
 from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
@@ -1549,6 +1550,23 @@ against the tree's id as bundle builds verify theirs, and kept in upstream's
 disk cache with them. Readers asking for the same directory meanwhile share
 one load, among the npm viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
+
+## Compare
+
+The **Compare** tab compares the directory with itself at another revision,
+as an npm version's compares it with another version
+(`ui/view/repository-compare.js`): its Overview lists the files each adds,
+removes and changes, each with its type's icon, and its Code reviews them as
+a diff. It shows none of a package's risk, alerts or dependencies, nor a
+bundle's Packages. Both sides pick a revision as the header does, a branch, a
+tag or a commit, the one compared with first: picking the first compares
+with it, picking the second opens the directory there, compared with the
+same first, and **Swap** opens the first, compared with the second. The one
+compared with is read as the directory is
+(`GET /api/admin/repositories/code`), its route then naming the commit read,
+`/compare/<commit>`, and `/code` past its Overview; for the session, its
+picker names it as it was picked. Another tab of the directory keeps it, for
+Compare to open with again.
 
 ## Activity
 
