@@ -150,12 +150,12 @@ test('a path a script writes out whole read wherever it is: whatever takes it, i
     "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
     "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require('../../@S/WHERE/folded.txt')", "require('@S/Where/named.txt')", "require('@s/where\\\\slashed.txt')", "require.resolve('./resolved.txt')",
     "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
-    "require(`./tmpl\\${x}.txt`)", "require(String.raw`./raw\\x2Etxt`)", "require('./lone\\uD800.txt')", "require('./cased.txt')", "require('./probed')", "require('./probedir')", "require('./caf\\u00e9.txt')",
+    "require(`./tmpl\\${x}.txt`)", "require(String.raw`./raw\\x2Etxt`)", "require('./lone\\uD800.txt')", "require('./cased.txt')", "require('./probed')", "require('./probedir')", "require('./bare')", "require('./caf\\u00e9.txt')",
     "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
   ].join('\n')
   const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'folded', 'named', 'slashed', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
-  const cased = ['tmpl${x}.txt', 'raw\\x2Etxt', 'lone\uFFFD.txt', 'probed.JSON', 'probedir/index.JSON', 'Cased.TXT', 'cafe\u0301.txt']
-  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
+  const cased = ['tmpl${x}.txt', 'raw\\x2Etxt', 'lone\uFFFD.txt', 'probed.JSON', 'probedir/index.JSON', 'bare/index.JSON', 'Cased.TXT', 'cafe\u0301.txt']
+  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, 'bare/index': 'x', ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
     'a template\'s escaped `\\${` its text, a raw one\'s escapes as written; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too, by an extension `require` tries, and a lone surrogate as the U+FFFD node writes; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
 })

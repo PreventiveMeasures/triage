@@ -274,25 +274,20 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  // A path `require` takes, as it finds it: its file, else one by its name
-  // and an extension it tries (`.js`, `.json`, `.node`, found as a
-  // filesystem tells them: `payload.JSON`); else a directory's package.json
-  // `main` found so, and its `index` alike.
-  const found = (path, key = folded(path)) => {
-    const extension = path === '' ? undefined : ['', ...TRIED].find(each => keyed(`${key}${each}`).length > 0)
-    return extension === undefined ? undefined : `${path}${extension}`
-  }
-  const indexed = (path, key = folded(path)) => found(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`) ?? null
+  // The files a path `require` takes may find, each as a filesystem tells
+  // them (`payload.JSON`), whichever it tries first: its own, one by its name
+  // and an extension it tries (`.js`, `.json`, `.node`), and a directory's
+  // package.json `main` found so, and its `index` by an extension alone.
+  const tries = (path, key, extensions) => path === '' ? [] : extensions.filter(extension => keyed(`${key}${extension}`).length > 0).map(extension => `${path}${extension}`)
+  const reached = (path, key) => [...tries(path, key, ['', ...TRIED]), ...tries(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`, TRIED)]
   const requires = path => {
     if (path === null) return
     const key = folded(path)
-    const file = found(path, key)
-    if (file !== undefined) return add(file, 'require')
+    for (const file of reached(path, key)) add(file, 'require')
     for (const manifest of keyed(path === '' ? 'package.json' : `${key}/package.json`)) {
       const { main } = entriesOf(files.get(manifest))
-      for (const at of main === null ? [] : [...separated(main)].map(spec => joined(root, path, spec))) if (at !== null) add(found(at) ?? indexed(at), 'require')
+      for (const at of main === null ? [] : [...separated(main)].map(spec => joined(root, path, spec))) if (at !== null) for (const file of reached(at, folded(at))) add(file, 'require')
     }
-    add(indexed(path, key), 'require')
   }
   requires('')
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
