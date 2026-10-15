@@ -23,7 +23,7 @@ mock.module('../ui/view/repository-code.js', { exports: {
   navigateToRepositoryCode(route) { navigations.push(route) },
   shownRevision: ({ revision, commit }) => revision?.name ? revision : { kind: 'commit', name: commit },
 } })
-const { compactTime, historyRefs, plantedCommits, revisionFromAll } = await import('../ui/view/repository-history.js')
+const { compactTime, historyRefs, plantedCommits, revisionFromAll, unmergedCommits } = await import('../ui/view/repository-history.js')
 const History = customElements.get('repository-history')
 
 const [a, b, c, d, e, x] = ['a', 'b', 'c', 'd', 'e', 'f'].map(char => char.repeat(40))
@@ -108,6 +108,42 @@ test('a squash merge is drawn as the merge it was, its pull request\'s own commi
   assert.deepEqual(layout.rows.map(row => [row.commit.sha[0], row.col]), [['2', 0], ['5', 1], ['1', 0], ['4', 1], ['3', 1], ['6', 0]], 'the pull requests\' lane beside the default branch\'s')
   assert.equal(layout.width, 2)
   assert.equal(plantedCommits(commits, []), commits, 'none squashed, as listed')
+})
+
+test('the branches not merged are those the default branch doesn\'t reach, a squash merge reaching its pull request\'s, each down to where it began', () => {
+  const [main, squash, base, feature, head, after] = ['1', '2', '3', '4', '5', '6'].map(char => char.repeat(40))
+  // main squashed #2, whose branch went on after; feature never merged.
+  const commits = [commit(main, [squash], 60), commit(after, [head], 55), commit(feature, [base], 50), commit(squash, [base], 40), commit(head, [base], 30),
+    commit(base, [], 10)]
+  const pulls = [{ merge: squash, number: 2, head, commits: [commit(head, [base], 30)] }]
+  assert.deepEqual(unmergedCommits(commits, pulls, main).map(item => item.sha[0]), ['6', '4'])
+  assert.deepEqual(unmergedCommits(commits, [], main).map(item => item.sha[0]), ['6', '4', '5'], 'a squash not known of, its branch not merged')
+  assert.deepEqual(unmergedCommits(commits, pulls, undefined).length, 6, 'no default branch read, none merged')
+})
+
+test('Unmerged shows the branches every branch\'s holds not merged, read as every branch\'s, unread again; none, says so', async () => {
+  const [main, feature] = ['1', '2'].map(char => char.repeat(40))
+  answer = () => Promise.resolve({ all: true, commits: [commit(main, [b], 30, 'Main work'), commit(feature, [b], 20, 'Feature work'), commit(b, [], 10, 'First')],
+    branches: [{ name: 'main', sha: main }, { name: 'feature', sha: feature }], tags: [], defaultBranch: 'main', more: false })
+  const view = shownAt(main)
+  view.render()
+  await setImmediate()
+  assert.match(templateText(view.render()), /aria-pressed=true [^\n]*>All branches<[^]*>This revision<[^]*>Unmerged</u)
+  view.pick('unmerged')
+  const text = templateText(view.render())
+  assert.match(text, /aria-pressed=true [^\n]*>Unmerged</u)
+  assert.match(text, /1 commit on 1 branch</u)
+  assert.match(text, /<span>feature<\/span>[^]*Feature work/u)
+  assert.doesNotMatch(text, /Main work|isn’t among these commits/u)
+  assert.equal(requests.length, 1, 'every branch\'s, read once')
+  answer = () => Promise.resolve({ all: true, commits: [commit(main, [b], 30, 'Main work'), commit(b, [], 10, 'First')], branches: [{ name: 'main', sha: main }], tags: [],
+    defaultBranch: 'main', more: false })
+  state.managedSession = { id: `s-${++session}`, role: 'admin' }
+  const merged = shownAt(main)
+  merged.render()
+  await setImmediate()
+  assert.match(templateText(merged.render()), /Every branch read is merged\./u)
+  merged.pick('all')
 })
 
 test('a pull request\'s head is named by its number, beside the branch still at it; an open one\'s too, each number once', () => {
@@ -295,6 +331,11 @@ test('older commits read as their button nears the end of the scroll, again afte
   assert.equal(clicks, 2)
   // A page that failed waits for a click.
   alert = {}
+  updated(true)
+  assert.equal(clicks, 2)
+  // Unmerged's, whose pages may add no line, waits for a click.
+  alert = null
+  view._mode = 'unmerged'
   updated(true)
   assert.equal(clicks, 2)
   // Nothing left to read, its button gone, it watches nothing.

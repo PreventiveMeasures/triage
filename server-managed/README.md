@@ -1643,9 +1643,14 @@ time, beside the graph of the lines its parents make
 a child of it; a merge's other parent takes a lane of its own, and lanes waiting
 on one parent join where it comes; each line keeps a color of its own, unlike
 its neighbors' where it can, the default branch's first lane and color its
-own; a parent not listed is a short dotted line on. At the repository's root
-it reads **All branches**, as `--all` adds them, else **This revision**'s, the
-commit shown first. Either's **Older commits** reads on from where those
+own; a parent not listed is a short dotted line on. **All branches**,
+**This revision** and **Unmerged** pick what it lists: at the repository's
+root it reads All branches, as `--all` adds them, else This revision's, the
+commit shown first. Unmerged lists, of the branches All branches read, those
+not merged: the commits the default branch doesn't reach, as `git log --all
+--not <default>` does, a squash merge reaching its pull request's (below),
+each branch down to where it began; read as All branches is, unread again,
+its Older commits waiting for a click, as a page may add none of its lines. Either's **Older commits** reads on from where those
 listed stop, their parents not listed (and, for All branches, the branches
 not read yet), the newest 25 first (a parent by its child's time), a hundred
 commits from each, each commit once; a branch not read joins those named
