@@ -143,7 +143,11 @@ const REVIEWS = {
   changes: ['Changes requested', icon(svg`<path d="M3.75 1.75h5.5l3 3v9.5h-8.5z"/><path d="M8 4.5v4M6 6.5h4M6 11h4"/>`)],
   required: ['Review required', icon(svg`<path d="M1.25 8S3.75 3.5 8 3.5 14.75 8 14.75 8 12.25 12.5 8 12.5 1.25 8 1.25 8z"/><circle cx="8" cy="8" r="2"/>`)],
 }
-const compactCount = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+const compactThousands = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 2 })
+
+// How many comments, as narrow as the rail is: whole below a thousand, else
+// two digits at most and their unit ("1.2K", "12K").
+export const commentCount = count => count < 1000 ? String(count) : compactThousands.format(count)
 
 // A tile's labels, each by a dot of its color: the first few, then how many
 // more.
@@ -270,7 +274,7 @@ class RepositoryIssues extends LitElement {
         <span class="issue-state" role="img" aria-label=${stateName}>${STATE_ICONS[this.kind][stateClass]}</span>
         ${review ? marked('review', review) : nothing}
         ${checks ? marked('checks', checks) : nothing}
-        ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} title=${comments}>${COMMENT_ICON}<span>${compactCount.format(item.comments)}</span></span>` : nothing}
+        ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} title=${comments}>${COMMENT_ICON}<span>${commentCount(item.comments)}</span></span>` : nothing}
       </span>
       <span class="issue-lines">
         <span class="issue-name">${item.title || '(no title)'}</span>

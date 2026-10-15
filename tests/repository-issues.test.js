@@ -18,7 +18,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
-const { filterIssues, issueState } = await import('../ui/view/repository-issues.js')
+const { commentCount, filterIssues, issueState } = await import('../ui/view/repository-issues.js')
 const Issues = customElements.get('repository-issues')
 
 let session = 0
@@ -82,6 +82,10 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   assert.match(text, /aria-label=Checks passed /u)
   const unnamed = shown('pulls', null)
   assert.doesNotMatch(templateText(unnamed.render()), /href=/u)
+})
+
+test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {
+  assert.deepEqual([1, 999, 1000, 1234, 12_345, 1_234_567].map(commentCount), ['1', '999', '1K', '1.2K', '12K', '1.2M'])
 })
 
 test('the filter picks among those read by every word, in a number, title, author, label or branch', async () => {
