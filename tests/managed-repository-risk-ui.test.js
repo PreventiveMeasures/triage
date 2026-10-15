@@ -400,31 +400,34 @@ test('a mirror\'s copy differing from npm\'s is flagged critical and listed firs
     { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
     { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', ...mirror },
       { name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'crossenv', version: '1.0.0', source: 'registry' }, { name: 'ms', version: '2.1.3', source: 'registry' },
-      { name: 'zod', version: '3.0.0', ...mirror, dev: true }] },
+      { name: 'zod', version: '3.0.0', ...mirror, dev: true }, { name: 'acorn', version: '8.0.0', source: 'registry' }] },
     { type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch' },
     // Only devDependencies need it: listed first all the same.
     { type: 'risk', name: 'zod', version: '3.0.0', integrity: 'sha512-mirror', error: 'integrity-mismatch' },
+    // Enough critical findings score 100 too, not ahead of malware or a copy differing from npm's.
+    { type: 'risk', name: 'acorn', version: '8.0.0', published: null, severity: 'critical', score: 100,
+      findings: ['held-exfiltration', 'held-credentials', 'held-remote', 'held-obfuscated', 'held-ip-lookup', 'held-runs-code', 'binary-code', 'new-hosts'].map(id => ({ id, severity: 'critical' })) },
     { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'critical', score: 90, findings: [{ id: 'held-exfiltration', severity: 'critical' }] },
     { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
     { type: 'risk', name: 'ms', version: '2.1.3', error: 'upstream-unavailable' },
   ]) page._apply(line)
-  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'debug', 'ms'])
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'acorn', 'debug', 'ms'])
   assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')))
   page._packageKind = 'production'
   assert.ok(page._rows().some(row => row.name === 'zod'), 'shown either way, as malware is')
   page._packageKind = 'all'
   page._filter = 'flagged'
-  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'debug'], 'flagged')
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'acorn', 'debug'], 'flagged')
   page._filter = 'failed'
   assert.deepEqual(page._rows().map(row => row.name), ['ms'], 'not among those that couldn\'t be assessed')
   page._filter = 'all'
   assert.match(templateText(page.render()), /<li class="risk-critical" data-tooltip=Its lockfile’s integrity, a mirror’s, isn’t npm’s[^>]*>Differs from npm’s<\/li>/u)
-  assert.match(templateText(page.render()), / 3 non-dev and 1 dev flagged/u)
+  assert.match(templateText(page.render()), / 4 non-dev and 1 dev flagged/u)
   // Told stale, then not assessed again: still flagged.
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch', stale: { assessedAt: 1 } })
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'npm-busy' })
   assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')), 'kept where it couldn\'t be assessed again')
-  assert.match(templateText(page.render()), / 3 non-dev and 1 dev flagged/u)
+  assert.match(templateText(page.render()), / 4 non-dev and 1 dev flagged/u)
 })
 
 test('a lockfile a package or advisory is used in links to it on GitHub, at the commit read, as a package\'s name does', () => {

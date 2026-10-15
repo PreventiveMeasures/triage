@@ -108,10 +108,12 @@ export const findingsOf = row => {
 // naming it, and its package taken down by npm, as risk finds it.
 export const malwareSaid = row => [...malwareOf(row) ?? [],
   ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
+// Whether a package row has malware: the advisories', or risk's own.
+const hasMalware = row => findingsOf(row).some(({ id }) => id === 'malware')
 // Whether a package row is told whatever needs it: malware, or a copy
 // differing from npm's, either of which runs wherever it is installed, CI and
 // a developer's machine among them.
-const regardless = row => differs(row) || findingsOf(row).some(({ id }) => id === 'malware')
+const regardless = row => differs(row) || hasMalware(row)
 // Whether a package row is listed after the rest: only devDependencies need
 // it, in every lockfile that locks it, as an install of none leaves it out;
 // but not one told regardless.
@@ -216,11 +218,13 @@ const streamRisk = (params, signal, onLine) => request(`/api/admin/repositories/
 const riskKey = ({ name, version, integrity }) => `${name}@${version}\0${integrity ?? ''}`
 const packageKey = pkg => assessable(pkg.source) ? riskKey(pkg) : `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
-// A package row's rank: by its risk, the highest first, a copy differing from
-// npm's as malware's, then those still to be told, those that couldn't be,
-// those of none, and those not assessed.
+// A package row's rank: malware first, then a copy differing from npm's, each
+// above any score (a version of enough critical findings scores 100 too), then
+// by its risk, the highest first, then those still to be told, those that
+// couldn't be, those of none, and those not assessed.
 function rank(row) {
-  if (differs(row)) return -100
+  if (hasMalware(row)) return -102
+  if (differs(row)) return -101
   const score = scoreOf(row)
   if (score > 0) return -score
   if (!assessable(row.source)) return 4
