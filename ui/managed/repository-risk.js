@@ -712,25 +712,27 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const all = [...this._packages.values()]
     const counts = Object.fromEntries(Object.keys(PACKAGE_KINDS).map(kind => [kind, all.filter(row => ofKind(row, kind)).length]))
     const links = this._lockfileLinks()
+    // Where they are from, but where all are npm's registry's, as most are.
+    const sourced = all.some(row => row.source !== 'registry')
     return html`<section class="risk-section" aria-label="Packages">
       ${this._resultsHead(html`${this._kindToggle('Which packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
         ${this._filterToggle(all.filter(row => ofKind(row, this._packageKind)))}
         ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
-        <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links))}</tbody>
+        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th>Used in</th></tr></thead>
+        <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links, sourced))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
     </section>`
   }
 
-  _packageRow(row, links) {
+  _packageRow(row, links, sourced) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
       <td>${packageCell(row, row.version, path, DEV_SAID)}</td>
       <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
-      <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
+      ${sourced ? html`<td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>` : nothing}
       <td>${usedInCell(row.usedIn, links)}</td>
     </tr>`
   }

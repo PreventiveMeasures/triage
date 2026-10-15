@@ -472,3 +472,18 @@ test('the packages\' filter is a toggle of those it has any of, but All and the 
   assert.deepEqual(filters(), ['All 2', 'Flagged 1', '*Failed 0'], 'the one chosen kept, of none')
   assert.match(templateText(page.render()), /role="tablist" aria-label="Results">[^]*?>Packages<\/button>/u)
 })
+
+test('the packages\' Source column is left out where every one is from npm\'s registry', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] },
+  ]) page._apply(line)
+  assert.doesNotMatch(templateText(page.render()), /<th>Source<\/th>|>npm<\/span><\/td>/u, 'all npm\'s')
+  page._apply({ type: 'lockfile', repo: 1, path: 'web/package-lock.json', format: 'npm', packages: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' }] })
+  const text = templateText(page.render())
+  assert.match(text, /<th>Source<\/th>/u, 'one from elsewhere')
+  assert.match(text, />npm<\/span><\/td>[^]*>Git<\/span><\/td>/u, 'each row\'s')
+})
