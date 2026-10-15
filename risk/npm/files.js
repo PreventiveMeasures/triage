@@ -12,8 +12,9 @@ const keyOf = version => version.bundle ?? version.json ?? version
 
 // A string's escapes as JavaScript reads them (`\x2e`, `\u002e`, `\u{2e}`, a
 // control's letter, and an octal's, `\056`, as code outside strict mode
-// reads it), a line continuation for nothing, any other for itself.
-const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|([0-3][0-7]{0,2}|[4-7][0-7]?)|(\r\n|[\s\S]))/giu
+// reads it), a line continuation for nothing, any other for itself: `\X2E`
+// and `\U002E` too, their letters in lowercase alone introducing a code.
+const ESCAPE = /\\(?:x([\dA-Fa-f]{2})|u([\dA-Fa-f]{4})|u\{([\dA-Fa-f]{1,6})\}|([0-3][0-7]{0,2}|[4-7][0-7]?)|(\r\n|[\s\S]))/gu
 const CONTROLS = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' }
 const unescaped = body => body.replaceAll(ESCAPE, (escape, x, u, braced, octal, other) => {
   if (octal !== undefined) return String.fromCodePoint(Number.parseInt(octal, 8))
