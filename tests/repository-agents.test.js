@@ -18,7 +18,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
-const { filterSessions, sessionLink } = await import('../ui/view/repository-agents.js')
+const { agentStats, filterSessions, sessionLink } = await import('../ui/view/repository-agents.js')
 const Agents = customElements.get('repository-agents')
 
 let session = 0
@@ -34,9 +34,10 @@ const pull = (number, head, signals, more = {}) => ({ number, title: `Pull ${num
   head, additions: 1000, deletions: 5, commits: 2, closes: [], signals, ...more })
 const shown = repo => Object.assign(new Agents(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
 const firstPage = () => ({
-  pulls: [pull(9, 'claude/one', claude('session_A'), { state: 'open' }), pull(8, 'claude/one', claude('session_A')), pull(5, 'codex/two', none), pull(4, 'deps/bump', none)],
+  pulls: [pull(9, 'claude/one', claude('session_A'), { state: 'open', closes: [3] }), pull(8, 'claude/one', claude('session_A')), pull(5, 'codex/two', none),
+    pull(4, 'deps/bump', none)],
   commits: [{ oid: 'c'.repeat(40), title: 'Pushed to main', at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude('session_A') }],
-  issues: [{ number: 3, title: 'Asked', state: 'closed', author: 'grace', createdAt: 1, updatedAt: 1, signals: claude('session_A') }],
+  issues: [{ number: 3, title: 'Asked', state: 'closed', author: 'grace', createdAt: 1, updatedAt: 1 }],
   // One left without a pull request, and one older than every pull request
   // read, which may be among those yet to read.
   branches: [{ name: 'codex/left', at: Date.now() - 60_000, author: 'ada', signals: none }, { name: 'codex/old', at: 1, author: 'ada', signals: none }],
@@ -54,10 +55,16 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, />Claude <span class="issues-count">1\+</u)
   assert.match(text, />Codex <span class="issues-count">2\+</u)
   assert.match(text, /4 pull requests read/u)
+  // Each agent's pull requests, branches and commits to main without one, by icon, more to come
+  // where its pages are left: pull requests', and the branches waiting on them, not commits'.
+  assert.match(text, /role="group" aria-label=Claude>[^]*aria-label=2\+ pull requests[^]*aria-label=1\+ branches[^]*aria-label=1 commit to the default branch without a pull request/u)
+  assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*aria-label=0 commits/u)
   // The session: its two pull requests and its commit to main, the issue it names.
   assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*3 tasks[^]*\+2,001[^]*−11/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^>]*>#9<[^]*pull\/8[^>]*>#8<[^]*commit\/c{40}[^>]*><code>ccccccc<\/code>[^]*issues\/3[^>]*><span class="sr-only">Issue <\/span>#3</u)
   assert.match(text, /<code>claude\/one<\/code>/u)
+  // Each chip with how many follow it, seen past the last that fits.
+  assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^>]*data-rest=>/u)
   // A Codex branch's pull request, one left without any; work no agent did is none.
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
@@ -97,6 +104,7 @@ test('the agent picked, and the filter, pick among the sessions read; a session 
   view._filter = 'nothing'
   assert.match(templateText(view.render()), /None of the Codex sessions read match\./u)
   view.pick('all')
+  assert.deepEqual([agentStats(sessions, 'claude'), agentStats(sessions, 'codex')], [{ pulls: 2, branches: 1, commits: 1 }, { pulls: 1, branches: 2, commits: 0 }])
   const base = { sessions: [], tasks: [], pulls: [], commits: [], branches: [] }
   assert.equal(sessionLink({ ...base, tasks: ['task_e_123456'] }, 'org/repo'), 'https://chatgpt.com/codex/tasks/task_e_123456')
   assert.equal(sessionLink({ ...base, commits: [{ oid: 'c'.repeat(40) }] }, 'org/repo'), `https://github.com/org/repo/commit/${'c'.repeat(40)}`)
