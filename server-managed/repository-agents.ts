@@ -5,9 +5,10 @@
 // request merged; on the first page, its latest issues and the newest of
 // its agents' branches (GitHub lists branches by name alone, so every one an
 // agent's prefix names is read, as many as ten pages of each, and the newest
-// kept). Each artifact's texts are read here for the marks an
-// agent leaves, and those alone are answered, never the texts. GraphQL alone
-// gives them, so it needs a token.
+// kept). Each artifact's own texts (never comments: an agent links its
+// session in a pull request's body and its commits' messages) are read here
+// for the marks an agent leaves, and those alone are answered, never the
+// texts. GraphQL alone gives them, so it needs a token.
 import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, agentSignals } from '../common/managed/agent-tasks.ts'
 import { GithubApiError } from './github-app.ts'
 import { githubGraphql } from './repository-history.ts'
@@ -18,7 +19,6 @@ export const AGENT_COMMITS_PAGE = 100
 const AGENT_ISSUES = 100
 const AGENT_BRANCHES = 100
 const MAX_BRANCH_PAGES = 10
-const COMMENTS = 5
 const CLOSES = 5
 const MAX_TITLE = 1000
 const MAX_NAME = 256
@@ -44,8 +44,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
       nodes { number title state isDraft createdAt updatedAt author { login } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
         commits(last: 1) { totalCount nodes { commit { message } } }
         mergeCommit { message }
-        closingIssuesReferences(first: ${CLOSES}) { nodes { number } }
-        comments(last: ${COMMENTS}) { nodes { body } } }
+        closingIssuesReferences(first: ${CLOSES}) { nodes { number } } }
     }
     defaultBranchRef { target { ... on Commit {
       history(first: ${AGENT_COMMITS_PAGE}, after: $commits) @include(if: $readCommits) {
@@ -54,19 +53,18 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
       }
     } } }
     issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
-      nodes { number title state createdAt updatedAt author { login } body comments(last: ${COMMENTS}) { nodes { body } } }
+      nodes { number title state createdAt updatedAt author { login } }
     }
   }
 }`
 
 type Login = { login?: unknown } | null | undefined
-type Texts = { nodes?: ({ body?: unknown } | null)[] } | null | undefined
 type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
   headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
-  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; comments?: Texts }
+  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] } }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: { email?: unknown; user?: Login } | null; associatedPullRequests?: { totalCount?: unknown } }
-type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown; comments?: Texts }
+type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login }
 type RefNode = { prefix?: unknown; name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: { user?: Login } | null } | null }
 type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 type Page = { repository?: { pullRequests?: Connection<PullNode>; defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null
@@ -81,20 +79,18 @@ const timeOf = (value: unknown) => {
 }
 const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 const loginOf = (author: Login) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
-const bodies = (texts: Texts) => (texts?.nodes ?? []).map(node => node?.body)
 const PULL_STATES: Record<string, AgentPull['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
 function pull(node: PullNode | null): AgentPull | null {
   const at = number(node?.number)
   if (!node || !at) return null
-  const own = [node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message]
   return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: PULL_STATES[String(node.state)] ?? 'closed', draft: node.isDraft === true,
     author: loginOf(node.author), createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), head: nameOf(node.headRefName),
     // A fork's, its owner; one GitHub no longer names, a fork of its own.
     fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
-    signals: agentSignals([...own, ...bodies(node.comments)], own) }
+    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message]) }
 }
 
 // A commit to the default branch no pull request merged, where an agent left
@@ -112,7 +108,7 @@ function issue(node: IssueNode | null): AgentIssue | null {
   const at = number(node?.number)
   if (!node || !at) return null
   return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: node.state === 'OPEN' ? 'open' : 'closed', author: loginOf(node.author),
-    createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), signals: agentSignals([node.body, ...bodies(node.comments)], [node.body]) }
+    createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt) }
 }
 
 // A branch of `agent`'s, named in full however GitHub splits its name from

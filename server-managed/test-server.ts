@@ -417,7 +417,7 @@ function agentsFixture(url: URL, res: ServerResponse): void {
     'Code: show switches loading; no tooltip on a repository\'s code link', 'Code: a History tab with the graph of branches',
     'Revision picker: focus ring on keyboard focus only', 'History: All branches reads older commits', 'Code viewer: Issues and Pull requests tabs']
   viewer.forEach((title, index) => pull(882 + index * 3, title, index === 5 ? 'claude/magical-mayer-83oicz-history-reuse' : 'claude/magical-mayer-83oicz', 30 - index * 4,
-    session('01MamW9SFrduHwBFipxyjRnn'), index === 6 ? { state: 'open' } : {}))
+    session('01MamW9SFrduHwBFipxyjRnn'), index === 6 ? { state: 'open' } : index === 3 ? { closes: [860] } : {}))
   for (const [index, title] of ['History: keep the graph\'s lanes in their colors', 'Issues: read past the first page'].entries()) {
     commits.push({ oid: createHash('sha1').update(title).digest('hex'), title, at: hours(5 + index * 9), author: 'ChristopherTuring', additions: 12, deletions: 4,
       signals: session('01MamW9SFrduHwBFipxyjRnn') })
@@ -440,10 +440,9 @@ function agentsFixture(url: URL, res: ServerResponse): void {
   pull(851, 'Docs: the managed mode', 'docs/managed', 44, none)
   pulls.sort((a, b) => (b as { updatedAt: number }).updatedAt - (a as { updatedAt: number }).updatedAt)
   commits.sort((a, b) => (b as { at: number }).at - (a as { at: number }).at)
-  const issues = [{ number: 842, title: 'Dark mode: tag chips are hard to read', state: 'closed', author: 'ada', createdAt: hours(90), updatedAt: hours(70), signals: none },
-    { number: 860, title: 'Code viewer: history of a directory', state: 'open', author: 'ChristopherTuring', createdAt: hours(34), updatedAt: hours(30),
-      signals: { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: false } },
-    { number: 855, title: 'Slow first paint', state: 'open', author: 'grace', createdAt: hours(80), updatedAt: hours(60), signals: none }]
+  const issues = [{ number: 842, title: 'Dark mode: tag chips are hard to read', state: 'closed', author: 'ada', createdAt: hours(90), updatedAt: hours(70) },
+    { number: 860, title: 'Code viewer: history of a directory', state: 'closed', author: 'ChristopherTuring', createdAt: hours(34), updatedAt: hours(17) },
+    { number: 855, title: 'Slow first paint', state: 'open', author: 'grace', createdAt: hours(80), updatedAt: hours(60) }]
   const branches = [{ name: 'claude/magical-mayer-83oicz', at: hours(2), author: 'ChristopherTuring', signals: session('01MamW9SFrduHwBFipxyjRnn') },
     { name: 'codex/try-lazy-trees', at: hours(8), author: 'ChristopherTuring', signals: none }]
   // Cursors with a `_`, as GitHub's base64url ones can have.

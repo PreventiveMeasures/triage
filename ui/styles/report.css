@@ -3638,37 +3638,65 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 }
 
 /* A repository's agents (repository-agents.js): a session a tile, as an
-   issue is, its title opening where it ran, beside its agents' marks,
-   Claude's a burst in its orange, Codex's a prompt; its tasks and issues
-   chips in their states' colors. */
+   issue is, its agents' marks a rail beside its lines, Claude's a burst in
+   its orange, Codex's a prompt: its title, opening where it ran, then a line
+   each, none wrapping, its author, age, tasks and size, its tasks and
+   issues as chips in their states' colors, and its branch. */
 repository-agents { --claude: #d97757; }
 .agent-pick {
   display: inline-flex; align-items: center; gap: .3rem;
-  & svg { width: 12px; height: 12px; fill: none; stroke: currentcolor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  &.is-claude svg { color: var(--claude); }
+  & svg { width: 12px; height: 12px; }
 }
-.agent-marks { display: inline-flex; flex: none; gap: .15rem; margin-top: .1rem; }
-.agent-mark {
-  display: inline-flex;
-  & svg { fill: none; stroke: currentcolor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  &.is-claude { color: var(--claude); }
-  &.is-codex { color: var(--text); }
+.agent-tile .issue-rail { padding-top: .1rem; }
+.agent-mark, .agent-logo { display: inline-flex; }
+.agent-mark svg { width: 14px; height: 14px; }
+/* Claude's burst drawn in its orange, Codex's OpenAI mark filled. */
+:is(.agent-pick, .agent-mark).is-claude svg {
+  color: var(--claude); fill: none; stroke: currentcolor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
 }
-.agent-tile .issue-name {
-  color: var(--text); text-decoration: none;
-  &:is(a):hover { text-decoration: underline; }
+:is(.agent-pick, .agent-mark).is-codex svg { fill: currentcolor; stroke: none; }
+.agent-mark.is-codex { color: var(--text); }
+/* What each agent did among the sessions read, at the bar's end: its mark,
+   then its pull requests, branches and commits to the default branch
+   without one, each its icon and count. */
+.agent-totals {
+  display: inline-flex; flex-wrap: wrap; gap: .3rem 1rem; margin-left: auto;
+  & + .history-summary { margin-left: 0; }
 }
+.agent-stats {
+  display: inline-flex; align-items: center; gap: .55rem; font-variant-numeric: tabular-nums;
+  & .agent-mark svg { width: 12px; height: 12px; }
+}
+.agent-stat {
+  display: inline-flex; align-items: center; gap: .2rem;
+  & svg { width: 12px; height: 12px; fill: none; stroke: currentcolor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+}
+.agent-tile .issue-name { color: var(--text); text-decoration: none; }
 .agent-tile .issue-meta > span:not(.issue-author) { flex: none; font-variant-numeric: tabular-nums; }
 .agent-tile .issue-branch code { max-width: none; flex: 0 1 auto; }
-.agent-chips { display: flex; flex-wrap: wrap; gap: .25rem; padding-left: var(--indent); }
+/* The chips in one line, those that fit whole, the rest wrapped out of
+   sight, and room kept at its end for how many are not seen: each chip's
+   count of those after it sits past its end, where the next chip, drawn
+   over it, hides it wherever that one fits beside it, so that only the
+   count past the last chip seen shows. */
+.agent-chips {
+  display: flex; flex-wrap: wrap; gap: .25rem; height: calc(.68rem * 1.35 + 2px); padding-right: 2.5rem; overflow: hidden;
+}
 .agent-chip {
   --chip: var(--issue-open);
-  padding: 0 .35rem; border: 1px solid color-mix(in srgb, var(--chip) 55%, transparent); border-radius: 999px;
-  color: var(--chip); font-size: .68rem; line-height: 1.35; text-decoration: none; font-variant-numeric: tabular-nums; white-space: nowrap;
+  position: relative; min-width: 2.2rem; padding: 0 .35rem; border: 1px solid color-mix(in srgb, var(--chip) 55%, transparent);
+  border-radius: 999px; background: var(--surface); color: var(--chip); font-size: .68rem; line-height: 1.35; text-align: center;
+  text-decoration: none; font-variant-numeric: tabular-nums; white-space: nowrap;
   &:is(a):hover { border-color: var(--chip); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  &[data-rest]::after {
+    content: '+' attr(data-rest) / ''; position: absolute; top: -1px; left: calc(100% + 1px + .25rem); min-width: 2.2rem; padding: 0 .35rem;
+    border: 1px solid color-mix(in srgb, var(--issue-quiet) 55%, transparent); border-radius: 999px;
+    color: var(--issue-quiet); pointer-events: none;
+  }
   &.is-merged { --chip: var(--issue-merged); }
   &.is-closed { --chip: var(--issue-closed); }
-  &:is(.is-draft, .is-more) { --chip: var(--issue-quiet); }
+  &.is-draft { --chip: var(--issue-quiet); }
   &.is-commit { --chip: var(--text); & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } }
   &.is-issue { border-style: dashed; }
 }

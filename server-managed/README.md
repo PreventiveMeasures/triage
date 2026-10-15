@@ -1615,10 +1615,9 @@ opened, and the commits it pushed straight to the default branch, which no
 pull request merged. It is told by the links and marks the agents leave:
 
 - a Claude Code session, by `https://claude.ai/code/session_…`: in a pull
-  request's body, its head or merge commit's message (the `Claude-Session:`
-  trailer), a commit's message, a branch's tip commit, or an issue;
-- a Codex task, by `https://chatgpt.com/codex/tasks/task_…` in the same, or
-  a pull request's comments;
+  request's body, its head or merge (or squash) commit's message (the
+  `Claude-Session:` trailer), a commit's message, or a branch's tip commit;
+- a Codex task, by `https://chatgpt.com/codex/tasks/task_…` in the same;
 - without a session named, by its branch, `claude/…` or `codex/…`, one
   session a branch, its pull requests together; and by Claude's marks
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
@@ -1627,17 +1626,22 @@ pull request merged. It is told by the links and marks the agents leave:
 Everything naming one session is that session, whatever branch each is on; a
 pull request joins its branch's, a fork's branch, named `owner:branch` as
 GitHub names it, apart from the repository's of that name and another
-fork's. An issue joins the session it names, and is
-shown with a session whose pull request closes it, or whose branch the
-Claude GitHub App named for it (`claude/issue-12-…`). A tile shows its
-agent, its title (its first task's) opening where it ran, a Claude Code
-session or a Codex task, else on GitHub, its author, age, how many tasks and
-lines it holds, its pull requests, commits and issues in their states'
-colors, each opening on GitHub, and its branch; one with a branch alone says
-it has no pull request, shown once no pull request left to read can be its
-(where some are, only a branch newer than the oldest read). **All**, **Claude** and **Codex** pick whose, each
-with how many; a **Filter** picks by any word of a title, author, branch,
-number or session. Pages read on as the end of the scroll nears, as History's
+fork's. Comments are never read: an agent links its session in its own
+texts, and anyone may name one in a comment. An issue is shown with a
+session whose pull request closes it, or whose branch the Claude GitHub App
+named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
+mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
+wrapping: its title (its first task's, of two lines at most) opening where
+it ran, a Claude Code session or a Codex task, else on GitHub; its author,
+age, how many tasks and lines it holds; its pull requests, commits and
+issues in their states' colors, each opening on GitHub, as many as fit and
+how many more; and its branch. One with a branch alone says it has no pull
+request, shown once no pull request left to read can be its (where some
+are, only a branch newer than the oldest read). **All**, **Claude** and
+**Codex** pick whose, each with how many; a **Filter** picks by any word of
+a title, author, branch, number or session. The bar's end shows, beside each
+agent's mark, by icon and count, the pull requests, branches and commits to
+the default branch without a pull request among its sessions read. Pages read on as the end of the scroll nears, as History's
 do, the sessions made again of all read, but only while each adds a session:
 most pull requests and commits may be no agent's, so after a page adding
 none, the next waits for **More** to be clicked rather than read the whole
@@ -1652,9 +1656,9 @@ neither, the hundred most recently updated issues and the hundred newest of
 each agent's branches: GitHub lists branches by name alone, so every branch
 an agent's prefix names is read, as many as ten pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
-their tips' times. Each pull request's body, head and merge commits'
-messages and last comments, each commit's message, each issue's body and
-comments, and each branch's tip commit are read for the sessions and tasks
+their tips' times. Each pull request's body and head and merge commits'
+messages, each commit's message, and each branch's tip commit (never a
+comment, nor an issue's body) are read for the sessions and tasks
 they link and Claude's marks (`signals`), and those alone are answered,
 never the texts; of the default branch's commits, only those no pull request
 merged and an agent marked. They are read as Issues are: with the reader's
