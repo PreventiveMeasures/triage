@@ -5,7 +5,7 @@ import { agentBranch, agentSessions, agentSignals } from '../common/managed/agen
 const none = { sessions: [], tasks: [], claude: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
 // An agent the server knows by its app, as it tells one, and its marks.
-const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }]
+const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' }]
 const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
   updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
@@ -25,6 +25,14 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   assert.deepEqual([agentSignals(['🤖 Generated with [Neo](https://neo.example)'], apps), agentSignals(['Work'], apps, 'neo/fix-links')], [neo, neo])
   assert.deepEqual(agentSignals(['Neo, the film', '🤖 Generated with [Neon](x)', 'Generated with [Neo](x)'], apps, 'feature/neo'), none)
   assert.deepEqual(agentSignals(['🤖 Generated with [Neo](x)']), none, 'none known, none told')
+  // Its fingerprint a line of its own, not one a text quotes, as one
+  // describing it does.
+  assert.deepEqual(agentSignals(['Its fingerprint: `🤖 Generated with [Neo](`, its prefix `neo/`.', '- `{ fingerprint: \'🤖 Generated with [Neo](\' }`'], apps), none)
+  assert.deepEqual(agentSignals(['Done.\r\n  🤖 Generated with [Neo](x)\r\n'], apps), neo, 'indented, or after a carriage return')
+  // An agent known by the account its work is authored by, whatever its case.
+  const copilot = { ...none, agents: ['copilot'] }
+  assert.deepEqual([agentSignals(['Move the database'], apps, 'feature/db', 'Copilot'), agentSignals(['Work'], apps, null, 'copilot-swe-agent'),
+    agentSignals(['Work'], apps, 'copilot/fix-db'), agentSignals(['Copilot said so'], apps, null, 'ada')], [copilot, copilot, copilot, none])
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
@@ -107,4 +115,13 @@ test('an agent known by its app names no session: a pull request of its is one a
   assert.deepEqual([byId.get('pull-8').sessions, byId.get('session_A').pulls.map(item => item.number)], [[], [7]])
   assert.deepEqual([byId.get('neo/alone').agents, byId.get('neo/alone').state], [['neo'], 'branch'])
   assert.deepEqual([byId.get('n'.repeat(40)).agents, byId.get('n'.repeat(40)).state], [['neo'], 'merged'])
+})
+
+test('an agent\'s pull request older than another\'s from its branch, the agent\'s or not, keeps apart from it', () => {
+  // Claude's session, a pull request of which an app agent's marks are on
+  // (as one quoting them may have), its branch the newer's.
+  const sessions = agentSessions({ pulls: [pull(25, 'claude/x', session('session_B')), pull(21, 'claude/x', { ...session('session_B'), agents: ['neo'] })] })
+  const byId = new Map(sessions.map(item => [item.id, item]))
+  assert.deepEqual([byId.get('session_B').agents, byId.get('session_B').pulls.map(item => item.number)], [['claude'], [25]])
+  assert.deepEqual([byId.get('pull-21').agents, byId.get('pull-21').branches], [['neo', 'claude'], ['claude/x']])
 })

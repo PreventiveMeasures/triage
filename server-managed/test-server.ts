@@ -556,7 +556,7 @@ function pulseStats(now: number) {
 // one holding several pull requests and commits pushed to main, one the
 // Claude GitHub App ran for an issue; Codex tasks on branches of their own, one
 // a Codex cloud task linked; Neo's pull requests, a session each, one of them
-// Claude Code's too, and a branch of its; work no agent touched; read ten pull requests
+// Claude Code's too, and a branch of its; Copilot's; work no agent touched; read ten pull requests
 // and twenty commits at a time, as the server answers, its texts read.
 const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
 
@@ -572,7 +572,7 @@ function agentsFixture(url: URL, res: ServerResponse): void {
     return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
   }
   const [readPulls, readCommits] = [read(pulls, 'pulls'), read(commits, 'commits')]
-  const agents = APP_AGENTS.map(({ id, name, app }) => ({ id, name, app }))
+  const agents = APP_AGENTS.map(({ id, name, avatar }) => ({ id, name, avatar }))
   sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches, agents } : {},
     more: readPulls.after !== null || readCommits.after !== null, after: { pulls: readPulls.after, commits: readCommits.after } })
 }
@@ -615,6 +615,8 @@ function agentsData(now: number) {
   pull(832, 'Upgrade esbuild to 0.28', 'neo/upgrade-esbuild', 22, neo)
   pull(828, 'Retry the flaky upload test once', 'neo/retry-flaky-upload', 35, neo, { state: 'closed' })
   pull(827, 'Retry the flaky upload test, with a backoff', 'neo/retry-flaky-upload', 33, neo)
+  // Copilot: a pull request its account opened, on a branch of its.
+  pull(825, 'Move the database adapters into one module', 'copilot/move-db-adapters', 15, { ...none, agents: ['copilot'] }, { author: 'Copilot' })
   // A commit Claude authored straight to main, naming no session.
   commits.push({ oid: createHash('sha1').update('direct').digest('hex'), title: 'Fix a flaky upload test', at: hours(26), author: null, additions: 3, deletions: 1,
     signals: { ...none, claude: true } })
@@ -1159,13 +1161,14 @@ function serveFixtureFeed(path: string, res: ServerResponse): boolean {
   return true
 }
 
-// A GitHub App's avatar (`/api/avatar/app-<id>`), an agent's mark: GitHub's
-// own, as the server serves it; whether `url` names one.
+// A GitHub App's or account's avatar (`/api/avatar/app-<id>`,
+// `/api/avatar/user-<id>`), an agent's mark: GitHub's own, as the server
+// serves it; whether `url` names one.
 function appAvatarFixture(url: URL, method: string, res: ServerResponse): boolean {
-  const app = method === 'GET' ? /^\/api\/avatar\/app-(\d{1,12})$/u.exec(url.pathname)?.[1] : null
-  if (!app) return false
+  const [, kind, id] = (method === 'GET' ? /^\/api\/avatar\/(app|user)-(\d{1,12})$/u.exec(url.pathname) : null) ?? []
+  if (!id) return false
   void (async () => {
-    const avatar = await fetch(`https://avatars.githubusercontent.com/in/${app}`).catch(() => null)
+    const avatar = await fetch(`https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`).catch(() => null)
     if (!avatar?.ok) { sendJson(res, 404, { error: 'no-avatar' }); return }
     res.writeHead(200, { 'content-type': avatar.headers.get('content-type') ?? 'image/png', 'cache-control': 'no-store' })
     res.end(Buffer.from(await avatar.arrayBuffer()))

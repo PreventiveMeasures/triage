@@ -65,10 +65,14 @@ svg .dotted { stroke-dasharray: 1 2.2; }
     background: var(--label, var(--muted)); vertical-align: middle;
   }
 }
-.repo-item-agents { display: inline-flex; gap: .25rem; align-self: center; }
+/* A session's agents' marks, 16px, centered on its title's first line. */
+.repo-item-agents { display: inline-flex; align-items: center; align-self: start; gap: .25rem; height: 1lh; }
 .agent-mark { display: inline-flex; }
-.agent-mark.is-claude svg { color: var(--claude); stroke-width: 1.6; }
-.agent-mark.is-codex svg { fill: currentcolor; stroke: none; }
+.agent-mark :is(svg, img) { width: 16px; height: 16px; }
+/* Claude's and OpenAI's marks filled, as the tab's are, not stroked as the
+   other icons here; Claude's in its orange. */
+.agent-mark:is(.is-claude, .is-codex) svg { fill: currentcolor; stroke: none; }
+.agent-mark.is-claude svg { color: var(--claude); }
 .agent-logo { display: inline-flex; }
 .agent-avatar { border-radius: 3px; }
 .repo-item-section {

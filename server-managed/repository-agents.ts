@@ -28,13 +28,18 @@ const SHA = /^[a-f\d]{40}$/u
 // The address Claude's own commits are authored with.
 const CLAUDE_EMAIL = 'noreply@anthropic.com'
 
-// The agents known by their GitHub Apps, beside Claude and Codex: each its
-// id and name, its app (whose avatar is its mark, served by /api/avatar/app-<id>,
-// for these apps alone), the fingerprint it leaves in its pull requests'
-// bodies and its commits' messages, and its branches' prefix. Their work may
-// carry Claude's or Codex's marks too, those its tools.
+// The agents known by their GitHub Apps or accounts, beside Claude and
+// Codex: each its id and name, its avatar (its mark, served by
+// /api/avatar/<avatar>, for these alone: a GitHub App's, `app-<id>`, or
+// account's, `user-<id>`), the fingerprint it leaves as a line of its pull
+// requests' bodies and its commits' messages, the logins its work is
+// authored by, and its branches' prefix. Their work may carry Claude's or
+// Codex's marks too, those its tools. Copilot's coding agent opens its pull
+// requests and authors its commits as its account, Copilot (198982749), on
+// `copilot/` branches.
 export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
-  { id: 'neo', name: 'Neo', app: 3115942, fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
+  { id: 'neo', name: 'Neo', avatar: 'app-3115942', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
+  { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' },
 ]
 // Whose branches are read, by their prefixes.
 const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
@@ -102,14 +107,15 @@ function pull(node: PullNode | null): AgentPull | null {
     fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
-    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName)) }
+    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
+      loginOf(node.author)) }
 }
 
 // A commit to the default branch no pull request merged, where an agent left
 // its marks on it, or Claude authored it.
 function directCommit(node: CommitNode | null): AgentCommit | null {
   if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
-  const signals = agentSignals([node.message], APP_AGENTS)
+  const signals = agentSignals([node.message], APP_AGENTS, null, loginOf(node.author?.user))
   if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
   if (!signals.claude && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate), author: loginOf(node.author?.user),
@@ -129,7 +135,7 @@ const branch = (prefix: string) => (node: RefNode | null): AgentBranch | null =>
   const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
   const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
   return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
-    signals: agentSignals([node?.target?.message], APP_AGENTS, name) } : null
+    signals: agentSignals([node?.target?.message], APP_AGENTS, name, loginOf(node?.target?.author?.user)) } : null
 }
 
 // The newest of an agent's branches, those under `prefix`: every one, as many
@@ -177,7 +183,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     ...first ? {
       issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
       branches: branches.flat(),
-      agents: APP_AGENTS.map(({ id, name: agent, app }): AppAgent => ({ id, name: agent, app })),
+      agents: APP_AGENTS.map(({ id, name: agent, avatar }): AppAgent => ({ id, name: agent, avatar })),
     } : {},
     more: after.pulls !== null || after.commits !== null, after,
   }

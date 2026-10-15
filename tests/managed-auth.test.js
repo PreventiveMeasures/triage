@@ -389,6 +389,11 @@ test('GET /api/avatar/app-<id>: a listed GitHub App\'s avatar, fetched from GitH
   assert.deepEqual(fetched, [['https://avatars.githubusercontent.com/in/3115942', 'manual']], 'fetched once, redirects not followed')
   assert.equal((await get('/api/avatar/app-1', ck)).statusCode, 404, 'an app not listed is not fetched')
   assert.equal(fetched.length, 1)
+  // An agent known by its GitHub account, Copilot, by that account's avatar.
+  assert.equal((await get('/api/avatar/user-198982749', ck)).statusCode, 200)
+  assert.deepEqual(fetched.at(-1), ['https://avatars.githubusercontent.com/u/198982749', 'manual'])
+  assert.equal((await get('/api/avatar/user-1', ck)).statusCode, 404, 'an account not listed is not fetched')
+  assert.equal(fetched.length, 2)
   await db.close()
 })
 

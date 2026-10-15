@@ -1750,12 +1750,16 @@ pull request merged. It is told by the links and marks the agents leave:
   session a branch, its pull requests together; and by Claude's marks
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
   authored), a pull request or commit its own session;
-- an agent known by its GitHub App (`APP_AGENTS` in `repository-agents.ts`,
-  each its id, name, app, fingerprint and branches' prefix: now Neo, by
-  `🤖 Generated with [Neo](` and `neo/…`), by its fingerprint in the same
-  texts or its branch's prefix. It names no session, so a pull request of its
-  is a session alone, with its branch (the newest of the pull requests from
-  it), joining none by what it links. Claude's or Codex's marks on its work
+- an agent known by its GitHub App or account (`APP_AGENTS` in
+  `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
+  its fingerprint or the logins its work is authored by: now Neo, by
+  `🤖 Generated with [Neo](` and `neo/…`, and Copilot, by its accounts,
+  `Copilot` and `copilot-swe-agent`, and `copilot/…`), by its fingerprint
+  beginning a line of the same texts (one quoting it, as a review does, isn't
+  its), its login authoring the pull request, commit or branch's tip, or its
+  branch's prefix. It names no session, so a pull request of its is a session
+  alone, joining none by what it links, and its branch only if it is the
+  newest of the pull requests from it, any agent's or none. Claude's or Codex's marks on its work
   show their marks after its own, as its tools.
 
 Everything naming one session is that session, whatever branch each is on; a
@@ -1769,8 +1773,9 @@ mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
 wrapping: its title (its first task's, of two lines at most); its author,
 age, how many tasks and lines it holds; its pull requests, commits and
 issues in their states' colors, as many as fit and how many more; and its
-branch. An app agent's mark is its app's avatar, which the server fetches
-from GitHub once and keeps (`/api/avatar/app-<id>`, for those apps alone). A tile clicked opens its session's popup, as an issue's does: who,
+branch. An app agent's mark is its GitHub App's or account's avatar, which the
+server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
+`/api/avatar/user-<id>`, for those agents alone). A tile clicked opens its session's popup, as an issue's does: who,
 when, its state, tasks and size, its pull requests and issues, each opening
 in its place, its commits and branches, on GitHub, and links to where it ran
 (a Claude Code session or a Codex task) and to GitHub. A pull request's or
@@ -1778,7 +1783,8 @@ issue's chip opens its own popup, a commit's opens on GitHub; held with a
 key, the title opens where the session ran and a chip on GitHub. One with a branch alone says it has no pull
 request, shown once no pull request left to read can be its (where some
 are, only a branch newer than the oldest read). **All**, **Claude**,
-**Codex** and each app agent pick whose, each with how many; a **Filter**
+**Codex** and each app agent with sessions among those read pick whose, each
+with how many; a **Filter**
 picks by any word of a title, author, branch, number or session. The bar's
 end shows, beside the mark of each agent with sessions among those read
 (app agents first, Claude's and Codex's last, so theirs keep their places),
@@ -1795,7 +1801,7 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues, the app agents (each its
-id, name and app, never how it is told), and the five hundred newest of each
+id, name and avatar, never how it is told), and the five hundred newest of each
 agent's branches: GitHub lists branches by name alone, so every branch
 an agent's prefix names is read, as many as fifty pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
@@ -1803,7 +1809,8 @@ their tips' times. Each pull request's body and head and merge commits'
 messages, each commit's message, and each branch's tip commit (never a
 comment, nor an issue's body) are read for the sessions and tasks
 they link, Claude's marks and the app agents' fingerprints, a pull
-request's and branch's name for their prefixes too (`signals`), and those
+request's and branch's name for their prefixes and their and commits'
+authors' logins too (`signals`), and those
 alone are answered,
 never the texts; of the default branch's commits, only those no pull request
 merged and an agent marked. They are read as Issues are: with the reader's
