@@ -55,6 +55,8 @@ function previewResponse(url, options) {
     '/api/admin/history': { history: [], total: 0, page: 1, limit: 100, filters: { repos: [], users: [] } },
     '/api/admin/scan/models': { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL },
     '/api/admin/scan-results': { bundles: [], results: [] },
+    '/api/auth/profile': { profile: { login: preview.user.login, name: preview.user.name, githubName: preview.user.name,
+      nameAccount: null, avatarAccount: null, accounts: [] } },
   }
   return Object.hasOwn(data, path) ? Response.json(data[path]) : Response.json({ error: 'not-found' }, { status: 404 })
 }

@@ -61,6 +61,11 @@ function avatarStore(objects: ObjectStorage, sidecar: boolean): AvatarStore {
       if (split < 0 || split > 100) throw new Error('Invalid cached avatar')
       return { contentType: bytes.subarray(0, split).toString(), bytes: bytes.subarray(split + 1) }
     },
+    async delete(value) {
+      const path = `avatars/${id(value)}`
+      await objects.delete(path)
+      if (sidecar) await objects.delete(`${path}.type`)
+    },
   }
 }
 

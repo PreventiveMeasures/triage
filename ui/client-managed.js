@@ -24,6 +24,7 @@ export async function openFindingHistoryDialog(props) {
   return (await import('./view/dialogs/finding-history-dialog.js')).openFindingHistoryDialog(props)
 }
 export * from '../client/managed/session.js'
+export * from '../client/managed/profile.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'
 export { fetchManagedLinkWorkspace } from './managed/deduplication-data.js'

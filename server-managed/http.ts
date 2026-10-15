@@ -8,6 +8,11 @@
 //   GET  /api/oauth/github/login → 302 to GitHub (+ state cookie)
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
+//   GET  /api/auth/profile       → { profile: { login, name, githubName, nameAccount, avatarAccount, accounts } }, the
+//        GitHub accounts linked to the user's and which of them the displayed name and avatar come from | 401/403
+//   POST /api/auth/profile       → CSRF, chooses those ({ name?, avatar? }: a linked account's id, null the sign-in one) | 400/401/403/404
+//   DELETE /api/auth/profile/accounts/<id> → CSRF, unlinks a linked GitHub account | 401/403/404
+//   GET  /api/oauth/github/link  → 302 to GitHub to link another account (+ state cookie); the callback lands on /my/profile
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
 //   GET  /api/teams/<id>/fixes → PR/issue metadata from visible findings' stored Fix links
 //   GET  /api/teams/<id>/reports → all reports and links filtered through this team | 401/404
@@ -17,7 +22,8 @@
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
-//   GET  /api/avatar/<id>        → cached avatar bytes by user id | 401/404
+//   GET  /api/avatar/<id>[?own]  → cached avatar bytes by user id, of the account chosen on their profile (`own`: the
+//        sign-in account's), or by linked account id | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -150,6 +156,9 @@ import { lookupIssueLinks } from './github-issue-links.ts'
 import { visibleManagedIssues } from './managed-issues.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
+import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallback } from './github-link-oauth.ts'
+import type { ProfileChoice } from './github-links.ts'
+import { isBlobId } from './object-storage.ts'
 import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
@@ -178,6 +187,7 @@ import { comparisonBody, emptySide, npmComparedSide } from './comparison.ts'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
+const PROFILE_PATH = '/api/auth/profile'
 const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
@@ -380,8 +390,9 @@ function firstHeader(v: string | string[] | undefined): string | null {
   return null
 }
 
-async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, userId: string): Promise<void> {
-  const avatar = await avatarStore.get(userId)
+// `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
+async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id): Promise<void> {
+  const avatar = await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id))
   if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
   res.writeHead(200, {
     'content-type': avatar.contentType,
@@ -494,9 +505,10 @@ function sendViewOnly(res: ServerResponse): void {
 // Reads stay available while an admin views as another user. Everything else
 // is refused before dispatch, except ending the view or signing out, and the
 // batch report preview, a POST without effects. Issue authorization would
-// grant GitHub access on the viewed user's behalf.
+// grant GitHub access on the viewed user's behalf, and linking an account
+// would link it to the viewed user.
 function viewAllows(method: string, path: string): boolean {
-  if (method === 'GET' || method === 'HEAD') return path !== ISSUE_LOGIN_PATH
+  if (method === 'GET' || method === 'HEAD') return path !== ISSUE_LOGIN_PATH && path !== LINK_LOGIN_PATH
   return (method === 'DELETE' && path === VIEW_AS_PATH) || (method === 'POST' && (path === LOGOUT_PATH || path === REPORT_QUERY_PATH))
 }
 
@@ -539,6 +551,65 @@ async function handleViewAs(req: IncomingMessage, res: ServerResponse, deps: Man
   await activity(deps, s.user, 'access', `viewed as ${target.login}`)
   res.writeHead(204, { 'set-cookie': setCookie, 'cache-control': 'no-store' })
   res.end()
+}
+
+// GET /api/auth/profile — the user's profile (github-links.ts). POST chooses
+// the accounts their displayed name and avatar come from. Workspace access is
+// required: the accounts a user links are reserved for them.
+async function handleProfile(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (method === 'GET') {
+    const s = await readWorkspaceSession(res, deps, cookie)
+    if (s) await sendProfile(res, deps, s.user.id)
+    return
+  }
+  if (method !== 'POST') { send405(res, 'GET, POST'); return }
+  const s = await profileMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const choice = parseProfileChoice(body)
+  if (choice == null) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await deps.db.setProfileChoice(s.session.id, choice, Date.now())
+  await sendProfile(res, deps, s.user.id)
+}
+
+// DELETE /api/auth/profile/accounts/<id> — unlink one of the user's linked
+// GitHub accounts, which may then sign in or register again.
+async function handleUnlinkAccount(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  if ((req.method ?? 'GET') !== 'DELETE') { send405(res, 'DELETE'); return }
+  const s = await profileMutation(req, res, deps, cookie)
+  if (s == null) return
+  const link = await deps.db.unlinkGithubAccount(s.session.id, id, Date.now())
+  if (link == null) { sendJson(res, 404, { error: 'no-account' }); return }
+  await deps.avatarStore.delete(link.id).catch((err) => { console.warn('managed: linked avatar removal failed:', err) })
+  await activity(deps, s.user, 'access', `unlinked GitHub account @${link.login}`)
+  await sendProfile(res, deps, s.user.id)
+}
+
+async function profileMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s != null && !roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return null }
+  return s
+}
+
+async function sendProfile(res: ServerResponse, deps: ManagedHttpDeps, userId: string): Promise<void> {
+  const profile = await deps.db.getProfile(userId)
+  if (profile == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  sendJson(res, 200, { profile })
+}
+
+// { name?, avatar? }, each a linked account's id or null; at least one.
+function parseProfileChoice(body: unknown): ProfileChoice | null {
+  if (body == null || typeof body !== 'object' || Array.isArray(body)) return null
+  const choice: ProfileChoice = {}
+  for (const key of ['name', 'avatar'] as const) {
+    if (!Object.hasOwn(body, key)) continue
+    const value = (body as Record<string, unknown>)[key]
+    if (value !== null && (typeof value !== 'string' || !isBlobId(value))) return null
+    choice[key] = value
+  }
+  return Object.keys(choice).length > 0 ? choice : null
 }
 
 // POST /api/admin/set-role — an admin sets ANOTHER user's role. Admin-only, and
@@ -3392,6 +3463,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === CALLBACK_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       try {
+        if (isLinkOAuthCallback(config, url.searchParams, cookie)) {
+          if (viewing) { sendViewOnly(res); return }
+          const s = await readWorkspaceSession(res, deps, cookie)
+          if (!s) return
+          const result = await linkOAuthCallback(config, db, s.session, url.searchParams, cookie, { avatarStore })
+          if (result.linked != null) await activity(deps, s.user, 'access', `linked GitHub account @${result.linked}`)
+          res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
+          res.end(); return
+        }
         if (isIssueOAuthCallback(config, url.searchParams, cookie)) {
           if (viewing) { sendViewOnly(res); return }
           const s = await readWorkspaceSession(res, deps, cookie)
@@ -3419,6 +3499,17 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
       res.end(); return
     }
+    if (path === LINK_LOGIN_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const result = linkLoginRedirect(config, s.session)
+      res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
+      res.end(); return
+    }
+    if (path === PROFILE_PATH) { await handleProfile(req, res, deps, cookie); return }
+    const unlink = /^\/api\/auth\/profile\/accounts\/([a-f\d-]{36})$/iu.exec(path)
+    if (unlink) { await handleUnlinkAccount(req, res, deps, cookie, unlink[1]!); return }
     if (path === SESSION_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const { body, headers } = await currentSession(config, db, cookie)
@@ -3459,12 +3550,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
     // Cached avatar by user id, served same-origin (the page CSP forbids the
     // github CDN). The id in the path keys the browser cache per user, so a user
-    // switch never serves a stale avatar. Workspace access is required.
+    // switch never serves a stale avatar. Workspace access is required. A user's
+    // is that of the account chosen on their profile; `own` asks for the
+    // sign-in account's. A linked account's is served by its own id.
     if (path.startsWith(AVATAR_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-      await serveAvatar(res, avatarStore, path.slice(AVATAR_PREFIX.length))
+      const id = path.slice(AVATAR_PREFIX.length)
+      await serveAvatar(res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
       return
     }
     // Admin: list users (admin-only).

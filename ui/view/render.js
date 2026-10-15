@@ -1887,6 +1887,13 @@ function renderImpl() {
     document.title = 'DeepView — my reviews'
     return
   }
+  if (state.currentView === 'profile') {
+    const slot = ensureReportSlot('managed-profile-slot')
+    if (slot) litRender(html`<managed-profile .session=${state.managedSession} .linkError=${state.profileLinkError}></managed-profile>`, slot)
+    showReport()
+    document.title = 'DeepView — profile'
+    return
+  }
   // The npm viewer's lookup page; a package it opens shows as a bundle, its
   // header already while it opens, in the slot it then shows in.
   if (state.currentView === 'npm') {

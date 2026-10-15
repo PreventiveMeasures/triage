@@ -1225,6 +1225,11 @@ async function onSidebarClick(e) {
     void managedHistory.navigate({ view: 'reviews' })
     return
   }
+  if (e.target.closest('[data-action="my-profile"]')) {
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void managedHistory.navigate({ view: 'profile' })
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1373,7 +1378,8 @@ function renderAuthStatus() {
         </span>
       </div>
       ${session.viewer ? html`<button type="button" class="user-menu-row" data-action="view-as-stop">Return to @${session.viewer.login}</button>` : nothing}
-      ${session.role === 'none' ? nothing : html`<button type="button" class="user-menu-row" data-action="my-reviews">My reviews</button>`}
+      ${session.role === 'none' ? nothing : html`<button type="button" class="user-menu-row" data-action="my-profile">Profile</button>
+        <button type="button" class="user-menu-row" data-action="my-reviews">My reviews</button>`}
       <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
@@ -1397,12 +1403,24 @@ document.addEventListener('managed-view-only', () => {
   if (session?.viewer) showToast(`Viewing as @${session.login} is read only: changes are not saved.`, { kind: 'error' })
 })
 
+// A name or avatar chosen on the profile shows in the account control at once.
+// The avatar's URL stays the user's, so a revision asks for the new image.
+let avatarRevision = 0
+document.addEventListener('managed-profile-change', (event) => {
+  const session = state.managedSession
+  if (!session || session.id !== event.detail.userId) return
+  if (event.detail.avatarChanged) avatarRevision++
+  state.managedSession = { ...session, name: event.detail.name }
+  setManagedAppSession(state.managedSession)
+  renderAuthStatus()
+})
+
 // Avatar disc: the cached avatar (served same-origin from /api/avatar/<id>) over
 // a fallback initial that shows when there's no avatar (the img 404s). The id in
 // the path keys the browser cache per user — a fixed URL would serve the
 // previous user's cached avatar (cache-control: private, max-age) after a switch.
 function avatarTemplate(initial, userId, large = false) {
-  const src = `/api/avatar/${encodeURIComponent(userId)}`
+  const src = `/api/avatar/${encodeURIComponent(userId)}${avatarRevision ? `?v=${avatarRevision}` : ''}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
     ${getPreviewRole() || state.managedSession?.role === 'none' ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
@@ -2315,10 +2333,11 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
   // The code viewer reads repositories as Create a bundle browses them.
   if (route.view === 'repository-code') return ['admin', 'manage'].includes(state.managedSession.role) && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
-  if (route.view === 'reviews') {
+  if (route.view === 'reviews' || route.view === 'profile') {
     if (state.managedSession.publicShare) return false
     cleanupGraph2()
-    state.currentView = 'reviews'
+    state.currentView = route.view
+    state.profileLinkError = route.linkError ?? null
     state.currentManagedTeam = null
     state.currentManagedReport = null
     document.body.classList.remove('report-fullscreen')

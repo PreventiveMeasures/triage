@@ -37,7 +37,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews' | 'profile'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -148,6 +148,9 @@ export interface State {
   // A repository's directory opening in the code viewer, or why it didn't
   // (ui/view/repository-code.js).
   repositoryCodeOpening: { repoId: number; commit: string | null; path: string; tab: string; repo: string | null; error: string | null } | null
+  // Why linking a GitHub account was refused, as the profile's route named
+  // it on landing there (ui/view/managed-profile.js).
+  profileLinkError: string | null
   // Another directory, or revision, opening in place of the one shown, by its
   // integrity, while the navigation that asked for it is current.
   repositoryCodePending: { integrity: string; generation: number; repository: object } | null
@@ -679,6 +682,7 @@ export const state: State = store<State>({
   npmOpening: null,
   repositoryCodeOpening: null,
   repositoryCodePending: null,
+  profileLinkError: null,
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',

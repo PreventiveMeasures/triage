@@ -68,7 +68,7 @@ an admin session, same-origin access and CSRF, and refuses the admin's own ID.
 The view is a separate session row for the viewed user, tied to the admin's
 session and stored in its own `dvview` cookie (`__Host-dvview` when Secure)
 beside the session cookie. `SESSION_COOKIE_NAME` cannot use this or the OAuth
-state cookie names (`dvstate`, `dvissuestate`); startup fails if it does. `GET /api/auth/session` then returns the viewed
+state cookie names (`dvstate`, `dvissuestate`, `dvlinkstate`); startup fails if it does. `GET /api/auth/session` then returns the viewed
 user, the view's own CSRF token, and the admin as `viewer`. A view token is
 never accepted as a session cookie, and a view only resolves together with
 the admin session that opened it. `DELETE /api/auth/view-as`, with the view's
@@ -80,6 +80,40 @@ to the admin's own, writable session.
 
 Opening a view adds `viewed as <login>` to the admin's access history.
 Viewing does not update the viewed user's Last seen or Last activity.
+
+## Profile and linked GitHub accounts
+
+**Profile** in the account menu (`/my/profile`) shows a user's avatar and name
+and the GitHub accounts linked to theirs. **Link GitHub account** runs the
+App's user authorization again, asking GitHub for its account picker
+(`prompt=select_account`), and links whichever account completes it. Linking
+needs workspace access (any role but No access) and is refused while an admin
+views as the user. Its state is bound to the session that started it, in a
+`dvlinkstate` cookie, and expires after ten minutes. The linked account's
+token is used only to read its identity and avatar; it is never stored.
+
+A linked account is reserved for its user: it can neither sign in
+(`403 { "error": "github-account-linked" }` from the OAuth callback) nor
+register. Linking is refused for the sign-in account itself, an account another
+user linked, and any account that has signed in here before, which already is
+a user of its own. Refusals land back on the profile, which explains them.
+Unlinking frees the account to sign in or register again. Linking and
+unlinking are recorded in the access history.
+
+A user's login and GitHub ID always stay the sign-in account's. Their displayed
+name and avatar may each come from any of their accounts: the name is then
+shown wherever they are, and `/api/avatar/<user id>` serves the chosen avatar
+(`?own` serves the sign-in account's). Linked accounts' names are kept as they
+were when linked; linking an account again refreshes them. Signing in refreshes
+the sign-in account's own name, which is displayed unless another was chosen.
+Unlinking an account returns the name or avatar it gave to the sign-in
+account's.
+
+`GET /api/auth/profile` answers the profile; `POST /api/auth/profile` with
+`{ "name"?: <id> | null, "avatar"?: <id> | null }` chooses accounts (a linked
+account's ID, or null for the sign-in account); `DELETE
+/api/auth/profile/accounts/<id>` unlinks one. Changes need same-origin access
+and CSRF. Database upgrades keep existing names as the sign-in accounts' own.
 
 # Managed browser navigation
 
@@ -179,6 +213,8 @@ window also navigate to their managed page URL.
 | `/manage/users` | Users (admin) |
 | `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
+| `/my/profile` | Profile and linked GitHub accounts |
+| `/my/reviews` | My reviews |
 | `/npm` | npm package lookup |
 | `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
 | `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |

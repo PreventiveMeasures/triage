@@ -2,6 +2,7 @@ import { type LinkReportStore, linkReportMethods, linkRevision } from './link-re
 import { type RepositoryAliasStore, repositoryAliasMethods } from './repository-aliases.ts'
 import { type DependencyReviewStore, dependencyReviewMethods } from './dependency-reviews.ts'
 import { type TeamNpmScopeStore, teamNpmScopeMethods } from './team-npm-scopes.ts'
+import { type GithubLinkStore, githubLinkMethods } from './github-links.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { type Role, roleAtLeast } from '../common/managed/roles.ts'
@@ -363,16 +364,18 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends DependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore {
+export interface ManagedDb extends DependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
   // Reuse connections within a finite request or one feed polling iteration.
   withRequest?<T>(work: () => Promise<T>): Promise<T>
-  // Upsert the identity; returns the user's opaque id (stable across logins).
+  // Upsert the identity; returns the user's opaque id (stable across logins),
+  // or null for an account linked to a user (github-links.ts), which neither
+  // signs in nor registers. A name chosen from a linked account is kept.
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
-  upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string>
+  upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string | null>
   createSession(session: ManagedSession, now: number): Promise<void>
   // A sign-in session; never a view session, so a view token in the session
   // cookie authenticates nothing.
@@ -563,12 +566,14 @@ function prepareStatements(db: ManagedSql) {
     // Identity refreshes preserve roles. Login can separately bootstrap the
     // configured sole No access user within this same writer transaction.
     upsertUserStmt: db.prepare(
-      `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'none', ?, ?)
+      `INSERT INTO managed_user (id, github_user_id, login, name, github_name, avatar_url, role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'none', ?, ?)
        ON CONFLICT(github_user_id) DO UPDATE SET
-         login = excluded.login, name = excluded.name,
+         login = excluded.login, github_name = excluded.github_name,
+         name = CASE WHEN managed_user.name_link IS NULL THEN excluded.name ELSE managed_user.name END,
          avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
     ),
+    selectLinkedStmt: db.prepare(`SELECT 1 AS linked FROM managed_github_link WHERE github_user_id = ?`),
     selectUserIdStmt: db.prepare(`SELECT id, role FROM managed_user WHERE github_user_id = ?`),
     promoteInitialAdminStmt: db.prepare(
       `UPDATE managed_user SET role = 'admin' WHERE id = ? AND role = 'none'
@@ -1597,7 +1602,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const reports = reportMethods(stmts, db, key)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
-    upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectOwnSessionStmt, selectUsersStmt,
+    upsertUserStmt, selectLinkedStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectOwnSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
     selectViewSessionStmt, deleteOtherViewsStmt, insertViewSessionStmt, deleteDemotedViewsStmt,
   } = stmts
@@ -1607,6 +1612,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...linkReportMethods(db, key),
     ...repositoryAliasMethods(db),
     ...teamNpmScopeMethods(db),
+    ...githubLinkMethods(db),
     ...dependencyReviewMethods(db),
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
@@ -1619,9 +1625,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?').run(until, owner)
     },
     async upsertUser(user, now, initialAdminGithubId = null) {
+      if (await selectLinkedStmt.get(user.githubUserId)) return null
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
-      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.avatarUrl, now, now)
+      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.name, user.avatarUrl, now, now)
       const row = (await selectUserIdStmt.get(user.githubUserId)) as { id: string; role: Role }
       // Avoid the population check unless this login matches the configured
       // identity and still needs approval. NOT EXISTS stops at any other user.
