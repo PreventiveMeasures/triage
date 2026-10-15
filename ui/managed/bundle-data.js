@@ -70,6 +70,9 @@ export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = 
 }
 
 const NPM_ERRORS = {
+  'bad-tarball': "This package's tarball couldn't be read.",
+  'upstream-invalid': "The npm registry's answer for this package couldn't be read.",
+  'upstream-too-large': "The npm registry's answer for this package is too large to read here.",
   400: 'Not an npm package name and version.',
   404: 'No such package version, or it is not available to you.',
   413: 'This package is too large to open here.',

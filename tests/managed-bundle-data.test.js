@@ -141,6 +141,23 @@ test('bundle catalogue errors distinguish denied access from temporary failures'
   }
 })
 
+// A 502 is npm unreachable only where the server says so: an answer it
+// couldn't read, or too large to, is told as that.
+test('npm reads name a registry answer that could not be read apart from an unreachable registry', async t => {
+  const { fetchNpmPackage, fetchNpmRisk } = await import('../ui/managed/bundle-data.js')
+  for (const [status, error, message] of [
+    [502, 'upstream-invalid', "The npm registry's answer for this package couldn't be read."],
+    [502, 'upstream-too-large', "The npm registry's answer for this package is too large to read here."],
+    [502, 'upstream-unavailable', "The npm registry couldn't be reached."],
+    [422, 'bad-tarball', "This package's tarball couldn't be read."],
+  ]) {
+    t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ error }, { status })))
+    for (const read of [() => fetchNpmRisk('temp', '0.4.0'), () => fetchNpmPackage('temp', '0.4.0')]) {
+      await assert.rejects(read(), { status, code: error, message })
+    }
+  }
+})
+
 test('navigation and session changes abort catalogue reads and discard late bodies', async t => {
   for (const cancel of [() => beginViewNavigation(), () => managedAppState.reset()]) {
     const body = Promise.withResolvers(), reading = Promise.withResolvers()
