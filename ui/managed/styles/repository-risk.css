@@ -33,13 +33,22 @@
 .risk-state[data-state=done]::before { background: var(--green); }
 @keyframes risk-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .risk-state[data-state=running]::before { animation: none; } }
-.risk-metric { display: grid; gap: .1rem; min-width: 6rem; }
+/* A metric's label and count on one line, its bar and detail beneath. */
+.risk-metric {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: baseline;
+  gap: .2rem .45rem;
+  min-width: 6rem;
+}
+.risk-bar, .risk-metric-detail { grid-column: 1 / -1; }
 .risk-metric-label { font-size: .7rem; letter-spacing: .02em; text-transform: uppercase; }
 .risk-metric-value { color: var(--text); font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .risk-metric-of { color: var(--muted); font-weight: 400; }
 .risk-metric.risk-high .risk-metric-value { color: var(--high); }
 .risk-metric.risk-critical .risk-metric-detail { color: var(--critical); }
-.risk-metric-detail { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.risk-metric-detail { font-size: .68rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .risk-bar { display: block; height: 3px; overflow: hidden; border-radius: 2px; background: var(--border); }
 .risk-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s; }
 .risk-section { margin-top: 1rem; }
@@ -200,10 +209,11 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
 /* A toggle's or a tab's count: the bubble the severity and triage filters
    count their chips in (toolbar.css .sev-chip .n), in flow, lifted to the
-   button's top edge, of the button's color where pressed. */
+   button's top edge and pulled tight to its label, of the button's color
+   where pressed. */
 .risk-scope .n, .risk-tabs .n {
   align-self: flex-start;
-  margin: -1px -5px 0 0;
+  margin: -1px -5px 0;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-size: 8.5px;
