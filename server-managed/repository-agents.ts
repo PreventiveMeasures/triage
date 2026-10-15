@@ -192,6 +192,11 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
   return found.toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES)
 }
 
+// What its answers are kept by, with their cursors (http.ts
+// handleRepositoryAgents): bumped as what a page reads, or how it tells an
+// agent, changes, so that no answer an older server kept is sent for a day.
+export const AGENTS_READ_VERSION = 2
+
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.
 export const COMMITS_CURSOR = /^(?:[!-~]{1,256}|[\da-f]{40} \d{1,9})$/u

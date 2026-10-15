@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -36,11 +37,11 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async (query, { method = 'GET' } = {}) => {
+  return Object.assign(async (query, { method = 'GET' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/agents?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
-  }
+  }, { db })
 }
 
 const cursor = 'Y3Vyc29yOnYyOpK0MjAyNi0xMC0xNVQwODozNToxN1rOrK_u7Q=='
@@ -164,6 +165,18 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   const reads = asked.length
   assert.deepEqual((await request({ repoId: '1' })).body, body)
   assert.equal(asked.length, reads)
+})
+
+test('an answer an older server kept, as it read and told agents then, is not sent: read again', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  // Kept a minute ago by a server before the reads were versioned.
+  await repositoryReadStore(request.db).write('1\0agents\0\0', { pulls: [], commits: [], issues: [], branches: [], agents: [], more: false,
+    after: { pulls: null, commits: null } }, Date.now() - 60_000)
+  const { status, body } = await request({ repoId: '1' })
+  assert.equal(status, 200)
+  assert.ok(asked.length > 0, 'read of GitHub')
+  assert.ok(body.commits.some(commit => commit.oid === 'f'.repeat(40)))
 })
 
 test('a later page reads on from the cursors it names alone, without issues and branches again', async t => {
