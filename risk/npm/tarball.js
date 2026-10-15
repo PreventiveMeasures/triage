@@ -3,6 +3,8 @@
 // installs it at, its first component dropped, none escaping the package; a
 // text where it is UTF-8 with no NUL, else null. Held to the npm viewer's
 // bounds (server-managed/npm-packages.ts readNpmTar).
+import { CompressionError, decompress } from '@preventive/archive/compression.js'
+
 const MAX_PACKAGE_FILES = 20_000
 export const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 // What its tar stream may unpack to, its headers and padding beside its
@@ -81,18 +83,16 @@ export function npmFileText(bytes) {
   try { return utf8.decode(bytes) } catch { return null }
 }
 
-// A gzipped tarball's tar stream, given up on as `package-too-large` once it
-// unpacks past MAX_TAR_BYTES, before any more of it is held.
+// A gzipped tarball's tar stream, through @preventive/archive's gzip, given up
+// on as `package-too-large` once it unpacks past MAX_TAR_BYTES, before any
+// more of it is held.
 async function gunzip(gzipped) {
-  const reader = new Blob([gzipped]).stream().pipeThrough(new DecompressionStream('gzip')).getReader()
-  const chunks = []
-  let size = 0
-  for (let read = await reader.read(); !read.done; read = await reader.read()) {
-    size += read.value.byteLength
-    if (size > MAX_TAR_BYTES) { await reader.cancel(); throw new Error('package-too-large') }
-    chunks.push(read.value)
+  try {
+    return await decompress(gzipped, 'gzip', { limit: MAX_TAR_BYTES })
+  } catch (error) {
+    if (error instanceof CompressionError && error.limited) throw new Error('package-too-large', { cause: error })
+    throw error
   }
-  return new Uint8Array(await new Blob(chunks).arrayBuffer())
 }
 
 // A file's bytes' digest, as the managed server gives one of a file that

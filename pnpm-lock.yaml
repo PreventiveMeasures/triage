@@ -14,6 +14,9 @@ importers:
       '@exodus/stasis-core':
         specifier: 1.0.0-beta.9
         version: 1.0.0-beta.9
+      '@preventive/archive':
+        specifier: 1.0.0-beta.4
+        version: 1.0.0-beta.4
       '@preventive/compare':
         specifier: ^1.2.10
         version: 1.2.10(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
