@@ -119,6 +119,11 @@ test('the branches not merged are those the default branch doesn\'t reach, a squ
   assert.deepEqual(unmergedCommits(commits, pulls, main).map(item => item.sha[0]), ['6', '4'])
   assert.deepEqual(unmergedCommits(commits, [], main).map(item => item.sha[0]), ['6', '4', '5'], 'a squash not known of, its branch not merged')
   assert.deepEqual(unmergedCommits(commits, pulls, undefined).length, 6, 'no default branch read, none merged')
+  // The default branch read only so far: a branch older than the oldest of
+  // its line read may be merged further down, not told yet; one newer is told.
+  const [tip, older, stale, fresh] = ['7', '8', '9', 'a'].map(char => char.repeat(40))
+  const partial = [commit(tip, [older], 100), commit(fresh, [x], 95), commit(older, [x], 90), commit(stale, [x], 50)]
+  assert.deepEqual(unmergedCommits(partial, [], tip).map(item => item.sha[0]), ['a'])
 })
 
 test('Unmerged shows the branches every branch\'s holds not merged, read as every branch\'s, unread again; none, says so', async () => {

@@ -1649,7 +1649,10 @@ root it reads All branches, as `--all` adds them, else This revision's, the
 commit shown first. Unmerged lists, of the branches All branches read, those
 not merged: the commits the default branch doesn't reach, as `git log --all
 --not <default>` does, a squash merge reaching its pull request's (below),
-each branch down to where it began; read as All branches is, unread again,
+each branch down to where it began, those newer than the oldest of the
+default branch's own line read alone (what merged one would be newer still,
+so read: one older may be merged where the default branch isn't read yet,
+and is told as more of it is); read as All branches is, unread again,
 its Older commits waiting for a click, as a page may add none of its lines. Either's **Older commits** reads on from where those
 listed stop, their parents not listed (and, for All branches, the branches
 not read yet), the newest 25 first (a parent by its child's time), a hundred

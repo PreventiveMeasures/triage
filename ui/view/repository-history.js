@@ -177,18 +177,26 @@ function checked(answer) {
 // The branches not merged of those read: their commits the default
 // branch's `tip` doesn't reach, a squash merge reaching its pull request's
 // (plantedCommits), as `git log --all --not <tip>` lists them, each down to
-// where it began.
+// where it began. Only those newer than the oldest of the default branch's
+// own line read: what merged one would be newer still, so read, and would
+// reach it; one older may be merged where the default branch isn't read yet,
+// told as more of it is.
 export function unmergedCommits(commits, pulls, tip) {
   const planted = plantedCommits(commits, pulls)
   const bySha = new Map(planted.map(commit => [commit.sha, commit]))
+  if (!bySha.has(tip)) return planted
   const merged = new Set()
-  for (const queue = tip ? [tip] : []; queue.length > 0;) {
+  for (const queue = [tip]; queue.length > 0;) {
     const sha = queue.pop()
     if (merged.has(sha) || !bySha.has(sha)) continue
     merged.add(sha)
     queue.push(...bySha.get(sha).parents)
   }
-  return planted.filter(commit => !merged.has(commit.sha))
+  // The oldest of its own line read, unless it goes on to its root.
+  let line = bySha.get(tip)
+  for (const seen = new Set(); bySha.has(line.parents[0]) && !seen.has(line.sha); line = bySha.get(line.parents[0])) seen.add(line.sha)
+  const since = line.parents.length > 0 ? line.committedAt ?? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+  return planted.filter(commit => !merged.has(commit.sha) && (commit.committedAt ?? Number.NEGATIVE_INFINITY) > since)
 }
 
 export function plantedCommits(commits, pulls) {
