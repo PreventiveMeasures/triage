@@ -38,9 +38,10 @@ function npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) {
 // isn't, and its size in `bytes`): how it reads (npmFileReadability), what
 // its code does beyond itself (npmRunsCode), the services it names under the
 // hosts' tags (npmExfiltration) and the hosts its code names (npmHosts), and its
-// `stamps` (npmStampsOf).
-export function npmFileRisk(path, text, bytes) {
-  const readability = npmFileReadability(path, text)
-  const exfiltration = npmExfiltration(path, text), runsCode = npmRunsCode(path, text)
-  return { readability, runsCode, exfiltration, hosts: npmHosts(path, text), stamps: npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) }
+// `stamps` (npmStampsOf); read as a script where node runs it as one whatever
+// its name (`script`, npm/files.js npmLoadedScripts).
+export function npmFileRisk(path, text, bytes, script = false) {
+  const readability = npmFileReadability(path, text, script)
+  const exfiltration = npmExfiltration(path, text, script), runsCode = npmRunsCode(path, text, script)
+  return { readability, runsCode, exfiltration, hosts: npmHosts(path, text, script), stamps: npmStampsOf({ path, bytes, readability, runsCode, exfiltration }) }
 }

@@ -179,4 +179,4 @@ export function npmReadyDownload(name: string, options: { cache: CacheStore; sig
 // malware.
 export function npmMalwareAdvisory(advisory: { id?: string | undefined; aliases?: readonly string[] | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
-export function npmFileRisk(path: string, text: string | null, bytes?: number): unknown
+export function npmFileRisk(path: string, text: string | null, bytes?: number, script?: boolean): unknown

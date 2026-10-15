@@ -82,9 +82,9 @@ function githubNamed(url) {
 
 // The hosts a script's strings name, each with the line it is first named on,
 // in the order named, NPM_MAX_HOSTS at most; null for none, or for a file
-// that is no script.
-export function npmHosts(path, text) {
-  if (!npmIsScript(path, text) || !(text.includes('://') || text.includes(':\\/\\/'))) return null
+// that is no script, by its name or as node runs it (`script`, npmIsScript).
+export function npmHosts(path, text, script = false) {
+  if (!npmIsScript(path, text, script) || !(text.includes('://') || text.includes(':\\/\\/'))) return null
   const hosts = new Map(), line = lineOf(text)
   for (const { 1: token, index } of text.matchAll(JS_STRING_OR_COMMENT)) {
     if (hosts.size >= NPM_MAX_HOSTS) break
@@ -172,9 +172,9 @@ const SAYS_ANY = new RegExp([...EXFILTRATION.values()].map(({ pattern }) => patt
 
 // The services a file names, each with the lines it is named on, the first
 // NPM_MAX_FOUND, in EXFILTRATION's order; null for none, or for prose or a
-// source map.
-export function npmExfiltration(path, text) {
-  if (typeof text !== 'string' || NPM_PROSE.test(path) || SOURCE_MAP.test(path) || !SAYS_ANY.test(text)) return null
+// source map by its name that node doesn't run as a script (`script`).
+export function npmExfiltration(path, text, script = false) {
+  if (typeof text !== 'string' || (!script && (NPM_PROSE.test(path) || SOURCE_MAP.test(path))) || !SAYS_ANY.test(text)) return null
   const found = new Map(), line = lineOf(text)
   for (const [service, { pattern }] of EXFILTRATION) {
     const lines = new Set()

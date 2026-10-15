@@ -61,14 +61,15 @@ export const npmBinaryCode = (path, readability) => readability?.category === 'b
 // A file with a line over UNREADABLE_LINE characters, by how it reads
 // (`now`, npmFileReadability's), `path` its path: an inline source map's line
 // counts for none, and prose and source maps, whose long lines the Long lines
-// tag passes over, never are, nor is a file that isn't text. Then one that
-// had no line over SHORT_LINES characters (`was`) and now has one over
-// UNREADABLE_LINE, by how it reads on each side.
+// tag passes over, never are, but where node runs it as a script (`script`),
+// nor is a file that isn't text. Then one that had no line over SHORT_LINES
+// characters (`was`) and now has one over UNREADABLE_LINE, by how it reads on
+// each side.
 const SHORT_LINES = 200
 const UNREADABLE_LINE = 2000
-export const npmUnreadable = (path, now) => Boolean(now) && now.category !== 'binary' && !NPM_PROSE.test(path) && !SOURCE_MAP.test(path)
+export const npmUnreadable = (path, now, script = false) => Boolean(now) && now.category !== 'binary' && (script || (!NPM_PROSE.test(path) && !SOURCE_MAP.test(path)))
   && now.longest > UNREADABLE_LINE
-export const npmBecameUnreadable = (path, was, now) => Boolean(was) && was.category !== 'binary' && was.longest <= SHORT_LINES && npmUnreadable(path, now)
+export const npmBecameUnreadable = (path, was, now, script = false) => Boolean(was) && was.category !== 'binary' && was.longest <= SHORT_LINES && npmUnreadable(path, now, script)
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
 // binary (no text), map (a source map), long (code with some lines
@@ -85,8 +86,9 @@ export const npmBecameUnreadable = (path, was, now) => Boolean(was) && was.categ
 // short ones (strings and comments aside, see MINIFIED_AVERAGE; 0 otherwise),
 // how long its inline map is (`inlineMap`, 0 for none), and its obfuscator
 // fingerprint (`obfuscation`, npmObfuscation's; null for none, and for prose
-// or a source map).
-export function npmFileReadability(path, text) {
+// or a source map). One node runs as a script whatever its name (`script`,
+// script.js npmIsScript) is read as code: no prose nor source map.
+export function npmFileReadability(path, text, script = false) {
   const encoding = npmTextEncoding(text)
   if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0, obfuscation: null }
   let inlineMap = 0, longChars = 0, longLines = 0, longest = 0
@@ -106,14 +108,15 @@ export function npmFileReadability(path, text) {
   }
   // A source map holds the names and sources of the code it maps, and prose
   // its examples: neither runs.
-  const obfuscation = NPM_PROSE.test(path) || SOURCE_MAP.test(path) ? null : npmObfuscation(text)
+  const map = !script && SOURCE_MAP.test(path), prose = !script && NPM_PROSE.test(path)
+  const obfuscation = prose || map ? null : npmObfuscation(text)
   const read = { ...encoding, longest, longLines, average: 0, inlineMap, obfuscation }
-  if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
-  if (NPM_PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (map) return { ...read, category: 'map' }
+  if (prose) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
     // average more: told without reading its code.
-    const language = minifiable(path)
+    const language = minifiable(path, script)
     const average = language !== null && longest > MINIFIED_AVERAGE ? minifiedAverage(text, language) : 0
     return { ...read, average, category: inlineMap > 0 ? 'inline-map' : average > 0 ? 'minified' : encoding.kind }
   }

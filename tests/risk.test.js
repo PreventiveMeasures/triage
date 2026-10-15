@@ -106,6 +106,44 @@ test('a version alone: what it holds, its files stamped, too new under the minim
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW + 14 * DAY, downloads: false })).includes('too-new'), 'none once old enough')
 })
 
+// Node runs a file as JavaScript whatever its name where `require` loads it,
+// and where `import` does one with no extension; a package's `main` and
+// `exports` alike. npm installs a .gitignore as .npmignore.
+test('a file node runs as JavaScript though its name says otherwise, read as a script: one code loads, a main, what exports name', async t => {
+  const runs = "require('child_process').exec(cmd)\n"
+  const minifiedCss = `${'.a{color:red;margin:0;padding:0}'.repeat(5)}\n`.repeat(20)
+  const files = {
+    'package.json': JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf' } }),
+    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire.resolve('./resolved.txt')\nrequire('./theme.min.css')\n",
+    'esm.mjs': "export { x } from './sub/next'\n",
+    'main.dat': runs, 'cfg.conf': runs, 'data.txt': `${runs}require('./more.cfg')\n`, 'more.cfg': runs, '.gitignore': runs, 'payload': runs, 'sub/next': runs,
+    'lib/package.json': '{"main":"entry.bin"}', 'lib/entry.bin': runs,
+    'styles.css': runs, 'conf.json': '{}', 'resolved.txt': runs, 'unloaded.txt': runs, 'README.md': runs,
+    'theme.min.css': minifiedCss, 'copy.min.css': minifiedCss,
+  }
+  npm(t, [{ name: 'loads', versions: [version('loads', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))] }])
+  const assessment = await assessNpm('loads', '1.0.0', { now: NOW, downloads: false })
+  assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code').files.map(({ path }) => path),
+    ['.gitignore', 'cfg.conf', 'data.txt', 'lib/entry.bin', 'main.dat', 'more.cfg', 'payload', 'sub/next'],
+    'not one `import` takes by an extension it doesn\'t know, JSON, a path only resolved, nor one nothing loads')
+  assert.deepEqual(assessment.files['.gitignore'].stamps, [{ name: 'child_process', severity: 'high' }])
+  assert.deepEqual(assessment.files['unloaded.txt'].stamps, [])
+  assert.deepEqual(assessment.files['theme.min.css'].stamps, [{ name: 'Minified', severity: 'notice' }], 'a stylesheet code loads read as one all the same')
+  assert.deepEqual(assessment.files['theme.min.css'].stamps, assessment.files['copy.min.css'].stamps)
+})
+
+test('a file new to a version that its code loads, though its name says otherwise, told as any script it adds: a .gitignore npm installs as the .npmignore it requires', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const before = version('hides', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('hides', '1.0.1', { 'package.json': '{}', 'index.js': "require('./.npmignore')\n", '.gitignore': "require('child_process').exec(process.env.NPM_TOKEN)\n" }, meta, ago(40))
+  npm(t, [{ name: 'hides', versions: [before, after] }])
+  const { findings } = await assessNpm('hides', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings, [
+    { id: 'held-runs-code', severity: 'critical', files: [{ path: '.gitignore', found: { 'child-process': [1] }, added: { 'child-process': [1] } }] },
+    { id: 'held-credentials', severity: 'critical', files: [{ path: '.gitignore', found: { tokens: [1] }, added: { tokens: [1] } }] },
+  ], 'red, as new to it')
+})
+
 test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const before = version('auth', '1.0.0', { 'package.json': '{}', 'lib/run.js': "require('child_process').exec(cmd)\n", 'lib/rc.js': "readFileSync(join(homedir(), '.npmrc'))\n" }, meta, ago(60))

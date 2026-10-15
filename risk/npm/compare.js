@@ -8,7 +8,7 @@
 // files the open version adds, and `changed`, those it changes, each `{ path,
 // renamedFrom?, modified? }`, by its path in the open version.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { npmVersionFileRisk, npmVersionHosts } from './files.js'
+import { npmLoadedScripts, npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
@@ -62,7 +62,7 @@ function npmFileFindings(base, other, files, major) {
       return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
     }),
     { id: 'large-code', severity: 'critical', files: files.onlyOther.filter(row => npmLargeCode(row.path, sizes.get(row.path))).map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
-    { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability))
+    { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability, npmLoadedScripts(other).has(row.path)))
       .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest,
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
@@ -179,7 +179,7 @@ export function npmBaseFilesTell(other, manifest) {
   const sizes = bundleFileSizes(other)
   return [...bundleFilesAsMap(other).keys()].some(path => {
     const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
-    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability) || npmLargeCode(path, sizes.get(path))
+    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability, npmLoadedScripts(other).has(path)) || npmLargeCode(path, sizes.get(path))
       || npmBinaryCode(path, readability)
       || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
   })
