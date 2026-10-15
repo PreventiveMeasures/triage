@@ -23,6 +23,31 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .risk-name, .risk-name:visited { color: var(--text); }
 .risk-name:hover { color: var(--accent); text-decoration: none; }
+/* An icon before a cell's text: npm's mark, a package's, or GitHub's, muted
+   as the tags beside it are. */
+.risk-icon { display: inline-flex; flex: none; color: var(--muted); }
+.risk-icon svg { display: block; width: 14px; height: 14px; }
+/* A package: its icon, its name, and its version, muted, on one line, the dev
+   tag after them; and a lockfile it is used in, a link to it on GitHub cut
+   short after GitHub's mark, of the link's color on hover. */
+.risk-package, .risk-used { display: inline-flex; align-items: center; gap: .4rem; max-width: 100%; }
+.risk-version { color: var(--muted); font-variant-numeric: tabular-nums; }
+.risk-package .risk-dev { margin-left: 0; }
+.risk-used .risk-clip { min-width: 0; }
+.risk-name:hover .risk-icon { color: inherit; }
+/* Several lockfiles: how many, opening into a link to each, a line each.
+   Rows are drawn by their package, so one opened stays with it as a scan
+   sorts them. */
+.risk-used-all summary { list-style: none; }
+.risk-used-all summary::-webkit-details-marker { display: none; }
+.risk-used-all summary:hover, .risk-used-all[open] summary { color: var(--accent); }
+.risk-used-all ul {
+  display: grid;
+  gap: .15rem;
+  margin: .25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
 /* Lockfiles, a line a repository: its name, then its lockfiles, wrapping. */
 .risk-repos { margin: 0; padding: 0; list-style: none; font-size: .8rem; }
 .risk-repos > li {
@@ -51,7 +76,7 @@ a:hover { text-decoration: underline; }
    row doesn't fit, taking what width the other columns leave, and where a
    package is used is cut short, its tooltip telling it whole. */
 th:last-child, td:last-child { text-align: left; }
-td { vertical-align: top; }
+td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-findings-column { width: 100%; }
 .risk-clip { display: block; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .risk-used-in { max-width: 14rem; }
@@ -131,6 +156,16 @@ td { vertical-align: top; }
 .risk-scope button[aria-pressed=true],
 .risk-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
 .risk-scope button:focus-visible, .risk-tabs button:focus-visible { outline-offset: -1px; }
+/* A toggle's or a tab's count, in a balloon (common.css .count), sized to
+   the button, and of its accent where pressed. */
+.risk-scope button .count, .risk-tabs button .count {
+  min-width: 1.25rem;
+  margin-left: .4rem;
+  padding: 0 .3rem;
+  font-size: .68rem;
+}
+.risk-scope button[aria-pressed=true] .count,
+.risk-tabs button[aria-selected=true] .count { color: inherit; border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 /* A few teams, chosen as the scope is: wrapping where they don't fit. */
 .risk-scope { flex-wrap: wrap; max-width: 100%; box-sizing: border-box; }
 .risk-scope-bar select { min-width: 14rem; }

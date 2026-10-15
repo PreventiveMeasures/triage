@@ -968,9 +968,18 @@ and pnpm's lockfiles say (`@preventive/lockfile`'s `dev`; Yarn 1's say nothing
 of it, which only the package.json files do), is `dev: true` in its
 lockfile's line; one every lockfile of the scan locks so is assessed only once
 all the rest are, the stale ones among them, as an install of no
-devDependencies leaves it out, and the page tags it `dev` and lists it after
-the rest, but for malware, which runs wherever it is installed, CI and a
-developer's machine among them. Its Advisories tab shows those of the
+devDependencies leaves it out, and the page tags it `dev`, listing packages
+by their risk alone, whatever needs them, so that a riskier one only
+devDependencies need is above a less risky one production takes; toggled
+beside the filter, it shows all packages, or those an install for
+production takes, or those only devDependencies need, malware either way,
+as it runs wherever it is installed, CI and a developer's machine among
+them. A mirror's copy that risk finds
+differs from npm's (`integrity-mismatch`) is flagged critical and listed
+first but for malware, not among those that couldn't be assessed, and, as
+malware, shown and listed so whatever needs it. Each
+lockfile a package or an advisory is used in links to it on GitHub, at the
+commit read. Its Advisories tab shows those of the
 versions an install for production takes (some lockfile needs them as more
 than devDependencies do, or doesn't say, as Yarn 1's doesn't), or, toggled
 beside the search, those of the versions only devDependencies need, each

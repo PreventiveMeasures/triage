@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, findingsOf, malwareOf, malwareSaid, putOff, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, differs, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -90,12 +90,16 @@ test('a risk line told as kept is stale where it says so, an error of one stale 
   const stale = { assessedAt: 1 }
   assert.equal(riskOf({ severity: null, score: 0, findings: [], published: null }, null).stale, null)
   assert.deepEqual(riskOf({ error: 'integrity-mismatch', stale }, null), { error: 'integrity-mismatch', detail: null, stale })
-  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
+  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'integrity-mismatch', detail: null, stale }), { error: 'integrity-mismatch', detail: null, stale, refreshFailed: 'Server busy' },
+    'a stale copy differing from npm\'s kept, as findings are, where it can\'t be assessed again')
+  assert.deepEqual(riskOf({ error: 'integrity-mismatch' }, { severity: null, score: 0, findings: [], published: null, stale }), { error: 'integrity-mismatch', detail: null, stale: null },
+    'one assessed again and found to differ replaces it')
+  assert.deepEqual(riskOf({ error: 'npm-busy' }, { error: 'upstream-unavailable', detail: null, stale }), { error: 'npm-busy', detail: null, stale: null }, 'a stale failure is replaced')
   const now = Date.parse('2026-10-14T12:00:00Z')
   assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
 })
 
-test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed after the rest, but malware; their advisories toggled apart, malware\'s shown either way', () => {
+test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed by their risk among the rest; their advisories toggled apart, malware\'s shown either way', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'done'
   const advisory = (id, name, severity, versions, malware = false) => ({ id, name, title: id, severity, url: null, range: null, versions, malware })
@@ -116,20 +120,20 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   ]) page._apply(line)
   assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['left-pad', false], ['mocha', false], ['eslint', true], ['crossenv', true]],
     'dev only where every lockfile locks it so')
-  assert.deepEqual(page._rows().map(row => [row.name, putOff(row)]), [['crossenv', false], ['left-pad', false], ['mocha', false], ['eslint', true]],
-    'the riskiest first of those needed, malware among them, those of devDependencies alone after')
+  assert.deepEqual(page._rows().map(row => [row.name, row.dev]), [['crossenv', true], ['eslint', true], ['left-pad', false], ['mocha', false]],
+    'by their risk alone: a riskier one only devDependencies need above a less risky one production takes')
   const text = templateText(page.render())
-  assert.match(text, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need it[^>]*>dev<\/span>/u)
-  assert.doesNotMatch(text, />mocha<\/a><span class="risk-dev"/u)
+  assert.match(text, />eslint<span class="risk-version">@9\.0\.0<\/span><\/a><span class="risk-dev" data-tooltip=Only devDependencies need it[^>]*>dev<\/span>/u)
+  assert.doesNotMatch(text, />mocha<span class="risk-version">@10\.0\.0<\/span><\/a><span class="risk-dev"/u)
   assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-left-pad', false]],
     'production\'s, malware first though only devDependencies need it')
   page._tab = 'advisories'
-  assert.doesNotMatch(templateText(page.render()), />eslint<\/a>/u)
+  assert.doesNotMatch(templateText(page.render()), />eslint<\/a>/u, 'development\'s alone')
   page._kind = 'development'
   assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-eslint', true]], 'development\'s, malware among them')
   const advisories = templateText(page.render())
-  assert.match(advisories, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need these versions[^>]*>dev</u)
-  assert.match(advisories, /aria-label="Which advisories">[^]*?aria-pressed=false[^]*?>Production \(2\)<\/button>[^]*?aria-pressed=true[^]*?>Development \(2\)<\/button><\/div><input type="search"/u,
+  assert.match(advisories, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need these versions[^>]*>dev</u, 'the version apart, as its column has it')
+  assert.match(advisories, /aria-label=Which advisories>[^]*?aria-pressed=false[^]*?>Production<span class="count">2<\/span><\/button>[^]*?aria-pressed=true[^]*?>Development<span class="count">2<\/span><\/button><\/div><input type="search"/u,
     'beside the search, each saying how many')
 })
 
@@ -363,4 +367,108 @@ test('a team is chosen among buttons, as the scope is, where there are five or f
   assert.deepEqual([page._state, page._repos.size], ['done', 1])
   page._choose('team', 't3')
   assert.deepEqual([page._state, page._repos.size], ['idle', 0])
+})
+
+test('packages are shown all in one list, or those production takes, or those only devDependencies need, as toggled beside the filter, malware either way', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' },
+      { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }, { name: 'crossenv', version: '1.0.0', source: 'registry', dev: true }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] },
+    { type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }] },
+    { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+  ]) page._apply(line)
+  const names = () => page._rows().map(row => row.name)
+  assert.deepEqual(names(), ['crossenv', 'eslint', 'left-pad'], 'all, by their risk alone')
+  assert.match(templateText(page.render()), /aria-label=Which packages>[^]*?aria-pressed=true[^]*?>All<span class="count">3<\/span>[^]*?>Production<span class="count">2<\/span>[^]*?>Development<span class="count">2<\/span><\/button><\/div>\s*<div class="risk-scope" role="group" aria-label=Show packages>/u,
+    'beside the filter, each saying how many in a balloon')
+  page._packageKind = 'production'
+  assert.deepEqual(names(), ['crossenv', 'left-pad'])
+  page._packageKind = 'development'
+  assert.deepEqual(names(), ['crossenv', 'eslint'])
+})
+
+test('a mirror\'s copy differing from npm\'s is flagged critical and listed first but for malware, not as one that couldn\'t be assessed', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const mirror = { source: 'mirror', from: 'https://npm.example.com/x.tgz', integrity: 'sha512-mirror' }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', ...mirror },
+      { name: 'debug', version: '4.4.0', source: 'registry' }, { name: 'crossenv', version: '1.0.0', source: 'registry' }, { name: 'ms', version: '2.1.3', source: 'registry' },
+      { name: 'zod', version: '3.0.0', ...mirror, dev: true }, { name: 'acorn', version: '8.0.0', source: 'registry' }] },
+    { type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch' },
+    // Only devDependencies need it: listed first all the same.
+    { type: 'risk', name: 'zod', version: '3.0.0', integrity: 'sha512-mirror', error: 'integrity-mismatch' },
+    // Enough critical findings score 100 too, not ahead of malware or a copy differing from npm's.
+    { type: 'risk', name: 'acorn', version: '8.0.0', published: null, severity: 'critical', score: 100,
+      findings: ['held-exfiltration', 'held-credentials', 'held-remote', 'held-obfuscated', 'held-ip-lookup', 'held-runs-code', 'binary-code', 'new-hosts'].map(id => ({ id, severity: 'critical' })) },
+    { type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'critical', score: 90, findings: [{ id: 'held-exfiltration', severity: 'critical' }] },
+    { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
+    { type: 'risk', name: 'ms', version: '2.1.3', error: 'upstream-unavailable' },
+  ]) page._apply(line)
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'acorn', 'debug', 'ms'])
+  assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')))
+  page._packageKind = 'production'
+  assert.ok(page._rows().some(row => row.name === 'zod'), 'shown either way, as malware is')
+  page._packageKind = 'all'
+  page._filter = 'flagged'
+  assert.deepEqual(page._rows().map(row => row.name), ['crossenv', 'left-pad', 'zod', 'acorn', 'debug'], 'flagged')
+  page._filter = 'failed'
+  assert.deepEqual(page._rows().map(row => row.name), ['ms'], 'not among those that couldn\'t be assessed')
+  page._filter = 'all'
+  assert.match(templateText(page.render()), /<li class="risk-critical" data-tooltip=Its lockfile’s integrity, a mirror’s, isn’t npm’s[^>]*>Differs from npm’s<\/li>/u)
+  assert.match(templateText(page.render()), / 4 non-dev and 1 dev flagged/u)
+  // Told stale, then not assessed again: still flagged.
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch', stale: { assessedAt: 1 } })
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'npm-busy' })
+  assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')), 'kept where it couldn\'t be assessed again')
+  assert.match(templateText(page.render()), / 4 non-dev and 1 dev flagged/u)
+})
+
+test('a lockfile a package or advisory is used in links to it on GitHub, at the commit read, as a package\'s name does', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'c'.repeat(40), lockfiles: [{ path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm' }] },
+    { type: 'lockfile', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] },
+    { type: 'advisories', repo: 1, path: 'apps/web #1/pnpm-lock.yaml', advisories: [{ id: 'GHSA-left-pad', name: 'left-pad', title: 'x', severity: 'low', url: null, range: null, versions: ['1.3.0'], malware: false }] },
+  ]) page._apply(line)
+  const link = `<a class="risk-name risk-used" href=https://github.com/org/one/blob/${'c'.repeat(40)}/apps/web%20%231/pnpm-lock.yaml target="_blank" rel="noopener noreferrer"><span class="risk-icon" aria-hidden="true">`
+  assert.ok(templateText(page.render()).includes(link), 'packages')
+  page._tab = 'advisories'
+  assert.ok(templateText(page.render()).includes(link), 'advisories')
+  // Locked by two: how many, opening into a link to each.
+  page._tab = 'packages'
+  page._apply({ type: 'repo', id: 1, commit: 'c'.repeat(40), lockfiles: [{ path: 'apps/web #1/pnpm-lock.yaml', format: 'pnpm' }, { path: 'package-lock.json', format: 'npm' }] })
+  page._apply({ type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }] })
+  const text = templateText(page.render())
+  assert.match(text, /<details class="risk-used-all"><summary>2 lockfiles<\/summary>/u, 'how many, GitHub\'s mark on each link alone')
+  assert.ok(text.includes(link) && text.includes(`href=https://github.com/org/one/blob/${'c'.repeat(40)}/package-lock.json`), 'each linked')
+})
+
+test('the packages\' filter is a toggle of those it has any of, but All and the one chosen, each saying how many; none where All alone is left', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'running'
+  const filters = () => [...templateText(page.render()).matchAll(/aria-label=Show packages>([^]*?)<\/div>/gu)].map(([, toggle]) =>
+    [...toggle.matchAll(/aria-pressed=(\w+)[^]*?choose\(kind\)>([^<]+)<span class="count">(\d+)<\/span>/gu)].map(([, pressed, label, count]) => `${pressed === 'true' ? '*' : ''}${label} ${count}`))[0] ?? null
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
+    { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
+    { type: 'lockfile', repo: 1, path: 'package-lock.json', format: 'npm', packages: [{ name: 'left-pad', version: '1.3.0', source: 'registry' },
+      { name: 'debug', version: '4.4.0', source: 'registry' }] },
+  ]) page._apply(line)
+  assert.equal(filters(), null, 'none: All alone is left')
+  page._apply({ type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }] })
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', error: 'npm-busy' })
+  assert.deepEqual(filters(), ['*All 2', 'Flagged 1', 'Failed 1'], 'not from npm, of none, left out')
+  page._filter = 'failed'
+  page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] })
+  assert.deepEqual(filters(), ['All 2', 'Flagged 1', '*Failed 0'], 'the one chosen kept, of none')
+  assert.match(templateText(page.render()), /role="tablist" aria-label="Results">[^]*?>Packages<\/button>/u)
 })
