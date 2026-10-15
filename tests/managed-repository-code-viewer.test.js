@@ -342,7 +342,7 @@ test('each side of Compare picks a revision as the header does, a typed one on E
   assert.deepEqual(picked, ['heads/develop', 'tags/v1', 'abcdef1', 'f'.repeat(40)])
 })
 
-test('Compare\'s route opens the directory compared with the commit it names; another tab keeps it; one picked by a name names none until read', async () => {
+test('Compare\'s route opens the directory compared with the commit it names, a bare one with none; another tab keeps it; one picked by a name names none until read', async () => {
   const develop = 'd'.repeat(40), integrity = `repository:7:${commit}:packages/app`
   const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'compare', compareCommit: develop, compareMode: 'code' },
     () => true, () => {})
@@ -351,6 +351,10 @@ test('Compare\'s route opens the directory compared with the commit it names; an
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code' }, () => true, () => {})
   assert.deepEqual(state.bundleCompare, { bundle: integrity, target: develop, mode: 'code' }, 'kept for Compare to open with again')
   assert.deepEqual(managedTabLocation(state, 'compare'), { compareCommit: develop, compareMode: 'code' })
+  // A bare Compare route, as Back gives to one cleared, compares with none.
+  const bare = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'compare' }, () => true, () => {})
+  assert.equal(state.bundleCompare, null)
+  assert.equal(managedRoutePath(bare), `/manage/code/7/${commit}/compare?path=packages/app`)
   state.bundleCompare = { bundle: integrity, target: 'heads/develop', mode: 'overview' }
   assert.equal(managedTabLocation(state, 'compare'), null)
   // A swap's target picked by a name, held as the route opens.

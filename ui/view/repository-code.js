@@ -294,14 +294,14 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   }
   cleanupGraph2()
   // What Compare compared the directory with stays while another of its tabs
-  // is open, as Back gives, for Compare to open with again, as a link names
-  // another.
+  // is open, as Back gives, for Compare to open with again; Compare compares
+  // with what its route names, none on a bare one, as one cleared was left.
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   const target = route.compareCommit ?? route.compareTarget ?? null
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)
   if (tab === 'compare' && target) state.bundleCompare = { bundle: entry.integrity, target, mode: compareModeOf(route.compareMode) }
-  else if (compared) state.bundleCompare = compared
+  else if (compared && tab !== 'compare') state.bundleCompare = compared
   if (tab === 'code' && route.file != null) {
     state.bundleCodeFileRequest = { bundle: entry.integrity, file: route.file,
       ...(route.line == null ? {} : { line: route.line }), ...(route.endLine == null ? {} : { endLine: route.endLine }) }
