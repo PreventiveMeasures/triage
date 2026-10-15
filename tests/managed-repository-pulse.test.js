@@ -166,12 +166,15 @@ test('a year\'s contributors are its authors\' accounts, whatever they were rena
   const first = Date.UTC(2025, 9, 19)
   const commit = (sha, authorLogin, authorId) => ({ sha, parents: ['p'], subject: '', authorName: null, authorLogin, authorId, committedAt: first + DAY, additions: 1, deletions: 0,
     authoredAt: null, authorZone: null })
-  // Ada committed as ada-old before renaming, a commit of each read before ids were.
-  const read = commitStats([commit('a', 'octo', 2), commit('b', 'octo', 9), commit('c', 'octo', 9), commit('d', 'octo', undefined),
-    commit('e', 'ada', null), commit('f', 'ada', 7), commit('g', 'ada-old', 7), commit('h', 'ada-old', null)], first)
-  assert.deepEqual(read.contributors.map(person => [person.login, person.id, person.weeks[0][1]]), [['ada', 7, 4], ['octo', 9, 2], ['octo', 2, 1], ['octo', null, 1]],
+  // Ada committed as ada-old before renaming, a commit of each read before
+  // ids were; Linus as LINUS before a rename of its case alone; octo as
+  // OCTO, one commit read before ids were.
+  const read = commitStats([commit('a', 'octo', 2), commit('b', 'octo', 9), commit('c', 'octo', 9), commit('d', 'octo', undefined), commit('i', 'OCTO', undefined),
+    commit('e', 'ada', null), commit('f', 'ada', 7), commit('g', 'ada-old', 7), commit('h', 'Ada-Old', null), commit('j', 'linus', 5), commit('k', 'LINUS', null)], first)
+  assert.deepEqual(read.contributors.map(person => [person.login, person.id, person.weeks[0][1]]),
+    [['ada', 7, 4], ['octo', 9, 2], ['octo', null, 2], ['linus', 5, 2], ['octo', 2, 1]],
     'one contributor by the login it committed as first listed; whose the commit with no id of a login named by two is, no telling')
-  assert.deepEqual([...namedAccounts(read)], [['ada', 7], ['octo', 'ambiguous']], 'such a login no one\'s')
+  assert.deepEqual([...namedAccounts(read)], [['ada', 7], ['octo', 'ambiguous'], ['linus', 5]], 'such a login no one\'s')
 })
 
 test('a year past YEAR_COMMITS is GitHub\'s statistics, each asked once, together: any still computed, pending; lines apart, none past 10,000 commits', async t => {

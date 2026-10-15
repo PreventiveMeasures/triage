@@ -192,8 +192,9 @@ export async function yearCommits(fullName: string, token: string, head: string,
 // (UTC) and in all and the lines they added and removed; its contributors,
 // by account (its id, by the login it committed as first listed, the newest,
 // whatever it was renamed from; a login's commits read before ids were, the
-// one account's that committed as it, where only one did), else login, else
-// name (as many as MAX_CONTRIBUTORS, the most commits first),
+// one account's that committed as it, where only one did), else login, each
+// matched as GitHub matches logins, regardless of case, else name (as many
+// as MAX_CONTRIBUTORS, the most commits first),
 // and their weeks; and its commits by day of the week and hour, in each
 // author's own time zone (else UTC, where GitHub told none).
 export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
@@ -212,12 +213,12 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
     week.deletions += deletions
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     punch[local.getUTCDay()]![local.getUTCHours()]!++
-    const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin}`
+    const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin.toLowerCase()}`
       : commit.authorName ? `=${commit.authorName}` : null
     if (!key) continue
     const person = people.get(key) ?? { login: commit.authorLogin, logins: new Set<string>(), id: commit.authorId ?? null, name: commit.authorName,
       weeks: new Map<number, [number, number, number]>(), commits: 0 }
-    if (commit.authorLogin) person.logins.add(commit.authorLogin)
+    if (commit.authorLogin) person.logins.add(commit.authorLogin.toLowerCase())
     const theirs = person.weeks.get(week.week) ?? [0, 0, 0]
     person.weeks.set(week.week, [theirs[0] + 1, theirs[1] + additions, theirs[2] + deletions])
     person.commits++
@@ -228,7 +229,7 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
   const accounts = Map.groupBy([...people.values()].filter(person => person.id !== null).flatMap(person => [...person.logins].map(login => ({ login, person }))),
     ({ login }) => login)
   for (const [key, person] of people) {
-    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login) ?? [] : []
+    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login.toLowerCase()) ?? [] : []
     if (!owner || others.length > 0) continue
     const account = owner.person
     for (const [week, [made, added, removed]] of person.weeks) {
