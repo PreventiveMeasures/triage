@@ -118,7 +118,10 @@ const MARKS = {
   markdown: markdownMark,
   license: licenseMark,
   css: cssMark,
-  json: svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`,
+  // JSON's: its braces, a shape apart from JavaScript's square, in amber: a
+  // bright one on dark themes, a deeper one on light themes that holds 3:1 on
+  // their pale surfaces, a hovered row's too.
+  json: svg`<path d="M6 2.5C4.6 2.5 4.4 3.3 4.4 4.6v1.6C4.4 7.4 3.8 8 2.6 8c1.2 0 1.8.6 1.8 1.8v1.6c0 1.3.2 2.1 1.6 2.1M10 2.5c1.4 0 1.6.8 1.6 2.1v1.6c0 1.2.6 1.8 1.8 1.8-1.2 0-1.8.6-1.8 1.8v1.6c0 1.3-.2 2.1-1.6 2.1" fill="none" stroke="light-dark(#a26e12, #f2b440)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>`,
   yaml: badge('#cb171e', 'YML'),
   // A shell's: a terminal's prompt.
   shell: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="m4.2 6 2 2-2 2m3.3 0h4.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`,
