@@ -167,6 +167,12 @@ test('a package naming more `exports` patterns than any does has every file read
   assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'package.json': JSON.stringify({ exports: { './p1/*': './p1/*.x' } }) }))], ['p1/d.x'], 'as its patterns say, with fewer')
 })
 
+test('a `main` read with `\\` a separator too, as on Windows; an `exports` pattern\'s every `*` the same text, as node fills them', () => {
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ main: 'lib\\payload.txt' }), 'lib/payload.txt': 'x' }))], ['lib/payload.txt'])
+  const files = { 'package.json': JSON.stringify({ exports: { './*': './lib/*/*.txt' } }), 'lib/x/x.txt': 'x', 'lib/x/y.txt': 'x', 'lib/ab/ab.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/ab/ab.txt', 'lib/x/x.txt'], 'not `lib/x/y.txt`, which no request reaches')
+})
+
 test('a file new to a version that its code loads, though its name says otherwise, told as any script it adds: a .gitignore npm installs as the .npmignore it requires', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const before = version('hides', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
@@ -177,6 +183,20 @@ test('a file new to a version that its code loads, though its name says otherwis
     { id: 'held-runs-code', severity: 'critical', files: [{ path: '.gitignore', found: { 'child-process': [1] }, added: { 'child-process': [1] } }] },
     { id: 'held-credentials', severity: 'critical', files: [{ path: '.gitignore', found: { tokens: [1] }, added: { tokens: [1] } }] },
   ], 'red, as new to it')
+})
+
+test('a file new to a version that its code loads and that isn\'t text, told as code that isn\'t text: node runs it all the same', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  // Code, then a byte no UTF-8 has in a comment, which node decodes past.
+  const opaque = Buffer.concat([Buffer.from("require('child_process').exec(process.env.NPM_TOKEN) // "), Buffer.from([0xFF]), Buffer.from('\n')])
+  const before = version('opaque', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  // An image, whose first bytes no UTF-8 has, which node can't parse.
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x2F, 0x27])
+  const after = version('opaque', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./icon.png')\n", 'payload.txt': opaque, 'image.dat': opaque, 'icon.png': png }, meta, ago(40))
+  npm(t, [{ name: 'opaque', versions: [before, after] }])
+  const { findings } = await assessNpm('opaque', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.find(({ id }) => id === 'binary-code'), { id: 'binary-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: opaque.length }] },
+    'not a file nothing loads, nor an image code loads that node can\'t parse')
 })
 
 test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
@@ -870,7 +890,8 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
   const read = await npmTarballVersion(tgz)
   assert.deepEqual(read.json, { version: 3, sources: ['a/c.js', 'b.js', 'bin/tool', 'package.json'], sourcesContent: ['c', 'b', null, '{}'] }, 'sorted; one with a NUL no text')
   assert.equal(read.fileSizes.get('bin/tool'), 2)
-  assert.deepEqual(read.npmBinaries, new Map([['bin/tool', { size: 2, digest: `sha256-${createHash('sha256').update('\0\u0001').digest('base64')}` }]]), 'one not text told by its digest, as the server gives it')
+  assert.deepEqual(read.npmBinaries, new Map([['bin/tool', { size: 2, digest: `sha256-${createHash('sha256').update('\0\u0001').digest('base64')}`, runnable: false }]]),
+    'one not text told by its digest, as the server gives it, and whether node could run it, no NUL before it after a quote, a slash or a hashbang')
   const side = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const text = 'module.exports = function long() { return 42 }\n'.repeat(20)
   assert.deepEqual(npmFilesDiff(side({ 'old.js': text, 'same.js': 'x', 'edit.js': '1' }), side({ 'new.js': text, 'same.js': 'x', 'edit.js': '2', 'add.js': 'y' })),

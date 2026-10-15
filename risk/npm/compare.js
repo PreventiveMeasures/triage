@@ -67,7 +67,8 @@ function npmFileFindings(base, other, files, major) {
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
       .map(row => ({ path: row.path, obfuscation: after(row).readability.obfuscation })) },
-    { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability) && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability))
+    { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability, npmLoadedScripts(other).has(row.path))
+      && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability, npmLoadedScripts(base).has(row.renamedFrom ?? row.path)))
       .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
     { id: 'kept-runs-code', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeWithout) },
     { id: 'kept-credentials', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeTagged) },
@@ -180,7 +181,7 @@ export function npmBaseFilesTell(other, manifest) {
   return [...bundleFilesAsMap(other).keys()].some(path => {
     const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
     return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability, npmLoadedScripts(other).has(path)) || npmLargeCode(path, sizes.get(path))
-      || npmBinaryCode(path, readability)
+      || npmBinaryCode(path, readability, npmLoadedScripts(other).has(path))
       || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
   })
 }

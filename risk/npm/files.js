@@ -83,12 +83,12 @@ const within = (root, parts) => parts !== null && root.every((part, index) => pa
 // package, one leading out of it and back in by its name too
 // (`../<name>/x`); null for one leading elsewhere.
 const joined = (root, dir, spec) => within(root, resolved([...root, ...dir === '' ? [] : dir.split('/')], spec))
-// A path as `require` takes it: its `\` a separator too, as on Windows; null
-// for one not relative (RELATIVE).
-function requiredPath(root, dir, spec) {
-  const path = spec.replaceAll('\\', '/')
-  return RELATIVE.test(path) ? joined(root, dir, path) : null
-}
+// A path as `require` takes it: its `\` a separator on Windows, a name's
+// character elsewhere, so read both ways.
+const separated = spec => new Set([spec, spec.replaceAll('\\', '/')])
+// Each relative one of those (RELATIVE), from `dir`, as a path in the package
+// (joined).
+const requiredPaths = (root, dir, spec) => [...separated(spec)].filter(path => RELATIVE.test(path)).map(path => joined(root, dir, path))
 // What a URL reads otherwise than a path: an escape, a query, a fragment, a
 // `\`, a tab or a line break, or a blank or a control at its end, which it
 // drops.
@@ -146,26 +146,21 @@ function entriesOf(text) {
 
 // The paths an `exports` or `imports` target names, from the directory of the
 // package.json naming it, read as a URL (urlJoined): its own, or each file a
-// pattern's `*` matches, as a filesystem tells them (folded), where the
-// pattern names what follows it
-// (`./lib/*.txt`), as a consumer asking for a module (`pkg/x`) runs that;
-// where it names nothing (`./*`), only one with no extension that isn't prose
-// by its name (not `LICENSE`), the rest a consumer reaches only asking for
-// them by their names.
+// pattern matches, as a filesystem tells them (folded), each of its `*` the
+// same text, as node puts what a consumer asks for (`pkg/x`) in every one,
+// where the pattern names what follows the last (`./lib/*.txt`); where it
+// names nothing (`./*`), only one with no extension that isn't prose by its
+// name (not `LICENSE`), the rest a consumer reaches only asking for them by
+// their names.
 function exported(files, root, dir, target) {
   const path = urlJoined(root, dir, target)
   if (path === null || !path.includes('*')) return [path]
-  const [first, ...rest] = folded(path).split('*'), last = rest.pop()
+  const parts = folded(path).split('*')
+  const fixed = parts.join('').length, stars = parts.length - 1
   return [...files.keys()].filter(name => {
-    const file = folded(name)
-    if (!file.startsWith(first) || !file.endsWith(last) || file.length < first.length + last.length || (last === '' && (EXTENSION.test(file) || NPM_PROSE.test(file)))) return false
-    let index = first.length
-    for (const part of rest) {
-      index = file.indexOf(part, index)
-      if (index === -1) return false
-      index += part.length
-    }
-    return index <= file.length - last.length
+    const file = folded(name), length = (file.length - fixed) / stars
+    if (!Number.isInteger(length) || length <= 0 || (parts.at(-1) === '' && (EXTENSION.test(name) || NPM_PROSE.test(name)))) return false
+    return parts.join(file.slice(parts[0].length, parts[0].length + length)) === file
   })
 }
 
@@ -192,7 +187,10 @@ const MAX_PATTERNS = 64
 // put in it), nor one written in a string run as code, which runs-code.js
 // tells. Each path names the files a filesystem telling neither case nor
 // Unicode's normalization apart finds by it (folded), as Windows' and
-// macOS's do, a loader running one where its name or theirs says it does.
+// macOS's do, a loader running one where its name or theirs says it does;
+// one that isn't text among them too, which node runs decoded as UTF-8 and
+// readability.js npmBinaryCode tells, though nothing it loads is read, but
+// where it can't parse (tarball.js npmRunnable's `runnable`: an image).
 const loadedByVersion = new WeakMap()
 export function npmLoadedScripts(version) {
   let loaded = loadedByVersion.get(keyOf(version))
@@ -213,9 +211,9 @@ export function npmLoadedScripts(version) {
     tried.add(key)
     for (const file of installed(path)) {
       const text = files.get(file)
-      if (typeof text !== 'string' || loaded.has(file) || npmIsScript(file, text) || (!runs(path, by) && !runs(file, by))) continue
+      if (loaded.has(file) || npmIsScript(file, text) || text?.runnable === false || (!runs(path, by) && !runs(file, by))) continue
       loaded.add(file)
-      queue.push(file)
+      if (typeof text === 'string') queue.push(file)
     }
   }
   // A path `require` takes: its file, else a directory's package.json `main`.
@@ -223,7 +221,7 @@ export function npmLoadedScripts(version) {
     if (path === null || installed(path).length > 0) return add(path, 'require')
     for (const manifest of installed(path === '' ? 'package.json' : `${path}/package.json`)) {
       const { main } = entriesOf(files.get(manifest))
-      if (main !== null) add(joined(root, path, main), 'require')
+      if (main !== null) for (const spec of separated(main)) add(joined(root, path, spec), 'require')
     }
   }
   requires('')
@@ -244,9 +242,8 @@ export function npmLoadedScripts(version) {
       const by = imported(text, quote, start, start + body.length + 2) ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
       if (seen.has(key)) continue
       seen.add(key)
-      const named = requiredPath(root, from, spec)
-      if (by === 'require') requires(named)
-      add(URL_READ.test(spec) ? urlJoined(root, from, spec) : named, 'import')
+      if (by === 'require') for (const named of requiredPaths(root, from, spec)) requires(named)
+      add(urlJoined(root, from, spec), 'import')
     }
   }
   loadedByVersion.set(keyOf(version), loaded)
