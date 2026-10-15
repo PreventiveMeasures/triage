@@ -63,9 +63,11 @@ const firstPage = () => ({ data: { repository: {
     pullNode(845, { headRefName: 'codex/review-defaults', isCrossRepository: true, headRepositoryOwner: { login: 'ada' },
       body: 'Defaults.\n\n[Settings](https://chatgpt.com/codex/cloud/settings/general)\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68ecb1f0a2c88191' }),
     // Copilot's, opened as its account; and one describing Neo's fingerprint, quoting it.
-    pullNode(50, { author: { login: 'Copilot' }, headRefName: 'copilot/move-db', body: 'Moves the database.' }),
+    pullNode(50, { author: { login: 'Copilot', databaseId: 198982749 }, headRefName: 'copilot/move-db', body: 'Moves the database.' }),
     // Dependabot's, opened as its app.
-    pullNode(187, { author: { login: 'dependabot' }, headRefName: 'dependabot/npm_and_yarn/ws-8.21.0', body: 'Bumps ws.' }),
+    pullNode(187, { author: { login: 'dependabot', databaseId: 49699333 }, headRefName: 'dependabot/npm_and_yarn/ws-8.21.0', body: 'Bumps ws.' }),
+    // One by an account named as it, but another.
+    pullNode(188, { author: { login: 'dependabot', databaseId: 1 }, headRefName: 'deps/ws', body: 'Bumps ws.' }),
     pullNode(921, { headRefName: 'claude/apps', body: `Apps.\n\n- Its fingerprint, \`🤖 Generated with [Neo](\`.\n\n${session}` }),
     null, { number: 'x' },
   ] },
@@ -75,9 +77,15 @@ const firstPage = () => ({ data: { repository: {
     commitNode(b, 'Fix a flaky test', { author: { email: 'noreply@anthropic.com', user: null } }),
     commitNode(c, `History (#901)\n\nClaude-Session: ${session}`, { associatedPullRequests: { totalCount: 1 } }),
     commitNode('d'.repeat(40), 'By hand'),
-    // One Neo pushed, by its line; one Copilot authored.
+    // One Neo pushed, by its line; one Copilot authored, its pull request
+    // another repository's (as one moved has), told by its no-reply address
+    // alone, as GitHub names no user for a bot.
     commitNode('e'.repeat(40), 'Bump esbuild\n\n🤖 Generated with [Neo](https://neo.example)'),
-    commitNode('f'.repeat(40), 'Move the database', { author: { email: '198982749+Copilot@users.noreply.github.com', user: { login: 'Copilot' } } }),
+    commitNode('f'.repeat(40), 'Move the database (#50)', { author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
+    // Ones by addresses naming no agent: another's, Copilot's login with another's id, and its id with another's login.
+    commitNode('0'.repeat(40), 'Not Copilot', { author: { email: 'copilot@example.com', user: null } }),
+    commitNode('1'.repeat(40), 'Not Copilot', { author: { email: '1+Copilot@users.noreply.github.com', user: null } }),
+    commitNode('2'.repeat(40), 'Not Copilot', { author: { email: '198982749+ada@users.noreply.github.com', user: null } }),
   ] } } },
   issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada' } },
     { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
@@ -92,7 +100,8 @@ const refPages = {
   'refs/heads/codex/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/codex/', 'try-lazy-trees', '2026-10-15T03:00:00Z'), null] } },
   'refs/heads/neo/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/neo/', 'try-pnpm', '2026-10-15T05:00:00Z')] } },
   'refs/heads/copilot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
-  'refs/heads/dependabot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+  'refs/heads/dependabot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ prefix: 'refs/heads/dependabot/', name: 'npm_and_yarn/ws-8.21.0',
+    target: { committedDate: '2026-10-15T06:00:00Z', message: 'Bump ws', author: { email: '49699333+dependabot[bot]@users.noreply.github.com', user: null } } }] } },
 }
 const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
@@ -111,19 +120,23 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false, agents: [] }],
     [50, 'merged', 'copilot/move-db', null, [], { sessions: [], tasks: [], claude: false, agents: ['copilot'] }],
     [187, 'merged', 'dependabot/npm_and_yarn/ws-8.21.0', null, [], { sessions: [], tasks: [], claude: false, agents: ['dependabot'] }],
+    [188, 'merged', 'deps/ws', null, [], { sessions: [], tasks: [], claude: false, agents: [] }],
     [921, 'merged', 'claude/apps', null, [], { ...sessionSignals, claude: false }],
   ], 'a fingerprint quoted is none')
   assert.deepEqual(body.pulls[0], { ...body.pulls[0], title: 'Pull 904', draft: false, author: 'ChristopherTuring', additions: 7, deletions: 2, commits: 3,
     createdAt: Date.parse('2026-10-14T00:00:00Z'), updatedAt: Date.parse('2026-10-15T00:00:00Z') })
   assert.deepEqual(body.commits.map(commit => [commit.oid, commit.title, commit.signals]), [[a, 'Fix it', sessionSignals],
     [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, agents: [] }], ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, agents: ['neo'] }],
-    ['f'.repeat(40), 'Move the database', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }]],
+    ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }]],
   'those no agent marked, or a pull request merged, are not')
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', createdAt: null, updatedAt: null },
     { number: 13, title: 'History', state: 'closed', author: null, createdAt: null, updatedAt: null }])
   // Every page of each agent's branches read, the newest first, named in full.
   assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],
-    ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']]])
+    ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']],
+    ['dependabot/npm_and_yarn/ws-8.21.0', [], ['dependabot']]])
+  // A bot's commit, named by its no-reply address, GitHub naming no user for it.
+  assert.deepEqual([body.commits.find(commit => commit.oid === 'f'.repeat(40)).author, body.branches.at(-1).author], ['Copilot', 'dependabot[bot]'])
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
   assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' },
     { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])

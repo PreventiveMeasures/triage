@@ -9,7 +9,7 @@
 // session in a pull request's body and its commits' messages) are read here
 // for the marks an agent leaves, and those alone are answered, never the
 // texts. GraphQL alone gives them, so it needs a token.
-import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, type AppAgentMarks, agentSignals }
+import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, type AppAgentMarks, agentSignals }
   from '../common/managed/agent-tasks.ts'
 import { GithubApiError } from './github-app.ts'
 import { githubGraphql } from './repository-history.ts'
@@ -32,17 +32,19 @@ const CLAUDE_EMAIL = 'noreply@anthropic.com'
 // Codex: each its id and name, its avatar (its mark, served by
 // /api/avatar/<avatar>, for these alone: a GitHub App's, `app-<id>`, or
 // account's, `user-<id>`), the fingerprint it leaves as a line of its pull
-// requests' bodies and its commits' messages, the logins its work is
-// authored by, and its branches' prefix. Their work may carry Claude's or
+// requests' bodies and its commits' messages, the account its work is
+// authored by (its id and the logins GitHub names it by, told by both), and
+// its branches' prefix. Their work may carry Claude's or
 // Codex's marks too, those its tools. Copilot's coding agent opens its pull
 // requests and authors its commits as its account, Copilot (198982749), on
 // `copilot/` branches; Dependabot, its GitHub App (29110), opens its pull
-// requests as `dependabot` (`dependabot[bot]` to GitHub's REST API) on
-// `dependabot/<ecosystem>/…` branches.
+// requests as its account, `dependabot` (49699333, `dependabot[bot]` to
+// GitHub's REST API and in its address), on `dependabot/<ecosystem>/…`
+// branches.
 export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'neo', name: 'Neo', avatar: 'app-3115942', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
-  { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' },
-  { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', logins: ['dependabot', 'dependabot[bot]'], prefix: 'dependabot/' },
+  { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
+  { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' },
 ]
 // Whose branches are read, by their prefixes.
 const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
@@ -53,7 +55,7 @@ const BRANCHES_QUERY = `query($owner: String!, $name: String!, $prefix: String!,
   repository(owner: $owner, name: $name) {
     refs(refPrefix: $prefix, first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes { prefix name target { ... on Commit { committedDate message author { user { login } } } } }
+      nodes { prefix name target { ... on Commit { committedDate message author { email user { login databaseId } } } } }
     }
   }
 }`
@@ -61,7 +63,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
   repository(owner: $owner, name: $name) {
     pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $readPulls) {
       pageInfo { hasNextPage endCursor }
-      nodes { number title state isDraft createdAt updatedAt author { login } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
+      nodes { number title state isDraft createdAt updatedAt author { login ... on Bot { databaseId } ... on User { databaseId } } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
         commits(last: 1) { totalCount nodes { commit { message } } }
         mergeCommit { message }
         closingIssuesReferences(first: ${CLOSES}) { nodes { number } } }
@@ -69,7 +71,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
     defaultBranchRef { target { ... on Commit {
       history(first: ${AGENT_COMMITS_PAGE}, after: $commits) @include(if: $readCommits) {
         pageInfo { hasNextPage endCursor }
-        nodes { oid messageHeadline message committedDate additions deletions author { email user { login } } associatedPullRequests(first: 1) { totalCount } }
+        nodes { oid messageHeadline message committedDate additions deletions author { email user { login databaseId } } associatedPullRequests(first: 1) { totalCount } }
       }
     } } }
     issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
@@ -78,14 +80,15 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
   }
 }`
 
-type Login = { login?: unknown } | null | undefined
+type Login = { login?: unknown; databaseId?: unknown } | null | undefined
 type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
   headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
   mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] } }
+type GitActor = { email?: unknown; user?: Login }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
-  author?: { email?: unknown; user?: Login } | null; associatedPullRequests?: { totalCount?: unknown } }
+  author?: GitActor | null; associatedPullRequests?: { totalCount?: unknown } }
 type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login }
-type RefNode = { prefix?: unknown; name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: { user?: Login } | null } | null }
+type RefNode = { prefix?: unknown; name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: GitActor | null } | null }
 type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 type Page = { repository?: { pullRequests?: Connection<PullNode>; defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null
   issues?: Connection<IssueNode> } | null }
@@ -111,17 +114,35 @@ function pull(node: PullNode | null): AgentPull | null {
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
     signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
-      loginOf(node.author)) }
+      accountOf(node.author)) }
+}
+
+// An account as GitHub names it, by its login and id, both.
+function accountOf(actor: Login): AgentAuthor | null {
+  const [login, id] = [loginOf(actor), number(actor?.databaseId)]
+  return login !== null && id !== null ? { login, id } : null
+}
+// GitHub's no-reply address for an account, `<id>+<login>@users.noreply.github.com`.
+const NOREPLY = /^([1-9]\d{0,11})\+([A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?)@users\.noreply\.github\.com$/iu
+// A commit's author: the account GitHub knows by its address, else the one
+// its no-reply address names by id and login, as a bot's, Copilot's or
+// Dependabot's, is told by that alone (GraphQL's `user` is a User's, never a
+// bot's).
+function authorOf(actor: GitActor | null | undefined): AgentAuthor | null {
+  const noreply = typeof actor?.email === 'string' ? NOREPLY.exec(actor.email) : null
+  return accountOf(actor?.user) ?? (noreply ? { login: noreply[2]!, id: Number(noreply[1]) } : null)
 }
 
 // A commit to the default branch no pull request merged, where an agent left
 // its marks on it, or Claude authored it.
 function directCommit(node: CommitNode | null): AgentCommit | null {
   if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
-  const signals = agentSignals([node.message], APP_AGENTS, null, loginOf(node.author?.user))
+  const author = authorOf(node.author)
+  const signals = agentSignals([node.message], APP_AGENTS, null, author)
   if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
   if (!signals.claude && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
-  return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate), author: loginOf(node.author?.user),
+  return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate),
+    author: author?.login ?? loginOf(node.author?.user),
     additions: count(node.additions), deletions: count(node.deletions), signals }
 }
 
@@ -137,8 +158,9 @@ function issue(node: IssueNode | null): AgentIssue | null {
 const branch = (prefix: string) => (node: RefNode | null): AgentBranch | null => {
   const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
   const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
-  return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
-    signals: agentSignals([node?.target?.message], APP_AGENTS, name, loginOf(node?.target?.author?.user)) } : null
+  const author = authorOf(node?.target?.author)
+  return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: author?.login ?? loginOf(node?.target?.author?.user),
+    signals: agentSignals([node?.target?.message], APP_AGENTS, name, author) } : null
 }
 
 // The newest of an agent's branches, those under `prefix`: every one, as many

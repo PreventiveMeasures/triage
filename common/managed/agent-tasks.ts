@@ -28,9 +28,11 @@ export type Agent = string
 // `app-<id>` a GitHub App's, `user-<id>` a GitHub account's).
 export interface AppAgent { id: string; name: string; avatar: string }
 // How the server tells one: its fingerprint, a line of an artifact's texts
-// starting with it; the logins of the accounts its work is authored by; its
-// branches' prefix.
-export interface AppAgentMarks { id: string; fingerprint?: string; logins?: readonly string[]; prefix: string }
+// starting with it; the GitHub account its work is authored by, its id and
+// the logins GitHub names it by; its branches' prefix.
+export interface AppAgentMarks { id: string; fingerprint?: string; account?: { id: number; logins: readonly string[] }; prefix: string }
+// An artifact's author, as GitHub names its account: its login and id.
+export interface AgentAuthor { login: string; id: number }
 
 // What an artifact's texts say of the agents that made it: the Claude Code
 // sessions and Codex tasks they link, whether they carry Claude's marks,
@@ -81,16 +83,19 @@ const MAX_LINKS = 8
 
 // The sessions and tasks `texts` link, whether they carry Claude's marks, and
 // the agents of `apps` whose fingerprints start a line of them (not one a
-// text quotes, as one describing it may), whose account `author` is, or
-// whose prefix the branch `branch` is under.
-export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null, author: string | null = null): AgentSignals {
+// text quotes, as one describing it may), whose account `author` is, by its
+// id and login both, or whose prefix the branch `branch` is under.
+export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
+  author: AgentAuthor | null = null): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
   const found = (pattern: RegExp) => [...new Set(strings.flatMap(text => [...text.matchAll(pattern)].map(match => match[1]!)))].slice(0, MAX_LINKS)
   const lines = strings.flatMap(text => text.split('\n').map(line => line.trimStart()))
-  const login = author?.toLowerCase()
+  const login = author?.login.toLowerCase()
+  const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
+    && account.logins.some(name => name.toLowerCase() === login)
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
     agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
-      || (login && app.logins?.some(name => name.toLowerCase() === login)) || branch?.startsWith(app.prefix)).map(app => app.id) }
+      || authored(app) || branch?.startsWith(app.prefix)).map(app => app.id) }
 }
 
 // The agent a branch's name says made it, and the issue or pull request the

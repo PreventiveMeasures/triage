@@ -5,8 +5,8 @@ import { agentBranch, agentSessions, agentSignals } from '../common/managed/agen
 const none = { sessions: [], tasks: [], claude: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
 // An agent the server knows by its app, as it tells one, and its marks.
-const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', logins: ['Copilot', 'copilot-swe-agent'], prefix: 'copilot/' },
-  { id: 'dependabot', logins: ['dependabot', 'dependabot[bot]'], prefix: 'dependabot/' }]
+const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
+  { id: 'dependabot', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' }]
 const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
   updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
@@ -32,11 +32,16 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   assert.deepEqual(agentSignals(['Done.\r\n  🤖 Generated with [Neo](x)\r\n'], apps), neo, 'indented, or after a carriage return')
   // An agent known by the account its work is authored by, whatever its case.
   const copilot = { ...none, agents: ['copilot'] }
-  assert.deepEqual([agentSignals(['Move the database'], apps, 'feature/db', 'Copilot'), agentSignals(['Work'], apps, null, 'copilot-swe-agent'),
-    agentSignals(['Work'], apps, 'copilot/fix-db'), agentSignals(['Copilot said so'], apps, null, 'ada')], [copilot, copilot, copilot, none])
+  assert.deepEqual([agentSignals(['Move the database'], apps, 'feature/db', { login: 'Copilot', id: 198982749 }),
+    agentSignals(['Work'], apps, null, { login: 'copilot-swe-agent', id: 198982749 }), agentSignals(['Work'], apps, 'copilot/fix-db'),
+    agentSignals(['Copilot said so'], apps, null, { login: 'ada', id: 1 })], [copilot, copilot, copilot, none])
+  // Its account by its id and login both: neither alone.
+  assert.deepEqual([agentSignals(['Work'], apps, null, { login: 'Copilot', id: 1 }), agentSignals(['Work'], apps, null, { login: 'ada', id: 198982749 }),
+    agentSignals(['Work'], apps, null, { login: 'dependabot', id: 198982749 })], [none, none, none])
   const dependabot = { ...none, agents: ['dependabot'] }
-  assert.deepEqual([agentSignals(['Bump ws'], apps, 'dependabot/npm_and_yarn/ws-8.21.0', 'dependabot'), agentSignals(['Bump ws'], apps, null, 'dependabot[bot]'),
-    agentSignals(['@dependabot rebase'], apps, 'feature/ws', 'ada')], [dependabot, dependabot, none])
+  assert.deepEqual([agentSignals(['Bump ws'], apps, 'dependabot/npm_and_yarn/ws-8.21.0', { login: 'dependabot', id: 49699333 }),
+    agentSignals(['Bump ws'], apps, null, { login: 'dependabot[bot]', id: 49699333 }), agentSignals(['@dependabot rebase'], apps, 'feature/ws', { login: 'ada', id: 1 })],
+  [dependabot, dependabot, none])
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
