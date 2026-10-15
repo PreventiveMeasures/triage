@@ -2610,11 +2610,15 @@ body.report-fullscreen {
   background: transparent;
   & code { font: inherit; background: transparent; padding: 0; }
 }
+/* The underline paints in the button's own colour, so that is the code's
+   text colour wherever the button sits: a C `#include` string is nested in
+   the macro's token, whose red it would otherwise inherit. The linked text
+   keeps its token colour. */
 .bundle-source-link {
   display: inline;
   padding: 0; border: 0; border-radius: var(--ui-radius, 2px);
   background: transparent;
-  color: inherit;
+  color: var(--text);
   font: inherit;
   line-height: inherit;
   white-space: inherit;

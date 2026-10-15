@@ -74,6 +74,25 @@ function nodeApiMarks(tokens, language, resolve) {
   return [...lines].filter(([, name]) => name).map(([at, name]) => ({ at, html: nodeApiLink(name) }))
 }
 
+// A quoted `#include` (Objective-C's `#import` too) looks beside the including
+// file first, so a bare `"bit_reader.h"` there names a sibling. The macro's
+// strings resolve as `./` paths; other strings, `<...>` and `#include_next`
+// keep the shared rule.
+const INCLUDE_LANGUAGES = new Set(['c', 'cpp', 'objectivec'])
+
+function tokenText(token) {
+  if (typeof token === 'string') return token
+  if (Array.isArray(token)) return token.map(tokenText).join('')
+  return tokenText(token.content)
+}
+
+function includeResolver(token, language, resolve) {
+  if (!resolve || token.type !== 'macro' || !INCLUDE_LANGUAGES.has(language) || !Array.isArray(token.content)) return resolve
+  const string = token.content.findIndex(part => typeof part !== 'string' && part.type === 'string')
+  if (string === -1 || !/^#\s*(?:include|import)\s*$/u.test(tokenText(token.content.slice(0, string)))) return resolve
+  return value => resolve(/^\.{0,2}\//u.test(value) ? value : `./${value}`)
+}
+
 function append(parts, part) {
   if (parts.at(-1)?.link === part.link) parts.at(-1).html += part.html
   else parts.push(part)
@@ -115,7 +134,7 @@ export function stringifySourceLinks(tokens, language, resolve) {
     }
     const value = literalValue(token)
     const target = value === null ? null : resolveLiteral?.(value)
-    const parts = stringify(token.content, target ? null : resolveLiteral)
+    const parts = stringify(token.content, target ? null : includeResolver(token, language, resolveLiteral))
     // Split syntax spans at link boundaries so a link across sibling tokens
     // remains one button with valid, properly nested highlighted markup.
     return parts.map(({ link, html }) => {
