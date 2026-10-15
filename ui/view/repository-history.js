@@ -15,6 +15,7 @@ import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
 import { firstParentLine, historyLayout, historyOrder } from './history-graph.js'
 import { TAG_ICON_SVG } from './icons.js'
+import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
@@ -238,6 +239,7 @@ class RepositoryHistory extends LitElement {
     this.repository = null
     this.refs = null
     this._drawn = null
+    this._moreButton = null
   }
 
   connectedCallback() {
@@ -248,6 +250,24 @@ class RepositoryHistory extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback()
     shownElements.delete(this)
+    if (this._moreButton) unwatchNearViewport(this._moreButton)
+    this._moreButton = null
+  }
+
+  // Older commits read as their button nears the end of the scroll, a
+  // screen before it shows, as though clicked, and again after each page
+  // while it stays near; not after one failed, which waits for a click.
+  // Watched again after every update, so that whether it is near is where
+  // it is now, below the lines that update added, never where it was.
+  updated() {
+    const button = this.querySelector('.history-more > button')
+    if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
+    this._moreButton = button
+    if (button) watchNearViewport(button, near => { if (near) this.readNear(button) })
+  }
+
+  readNear(button) {
+    if (button === this._moreButton && button.isConnected && !button.disabled && !button.parentElement.querySelector('[role=alert]')) button.click()
   }
 
   // What it lists: a directory's commits ('path'), every branch's ('all'),

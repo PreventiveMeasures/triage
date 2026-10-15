@@ -1528,8 +1528,10 @@ commit shown first, a hundred at a time, **Older commits** reading the next.
 All branches' **Older commits** reads on from where those listed stop, their
 parents not listed and the branches not read yet, the newest 25 first (a
 parent by its child's time), a hundred commits from each, each commit once; a
-branch not read joins those named once a commit listed is its tip. The
-commit shown is marked, and, where every branch's latest commits don't reach
+branch not read joins those named once a commit listed is its tip. Older
+commits read as their button nears the end of the scroll, a screen before it
+shows, as though clicked, and again while it stays near; after a page that
+failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
 it, a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
 commit's code, named by the branch, else the tag, naming it. History reads
