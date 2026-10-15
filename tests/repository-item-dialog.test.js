@@ -41,6 +41,15 @@ test('an issue or pull request shows what its tile knew at once, then the rest a
   text = templateText(dialog.render())
   assert.match(text, /aria-label=Merged/u)
   assert.match(text, /merged by <strong>ada<\/strong> Oct 2, 2026/u)
+  // Merged by one GitHub no longer names, merged all the same, never closed.
+  read = null
+  const ghost = shown()
+  answer = () => Promise.resolve({ ...tile, state: 'merged', mergedAt: Date.UTC(2026, 9, 2), closedAt: Date.UTC(2026, 9, 2), mergedBy: null, body: '', closes: [], commits: 1, files: 1 })
+  ghost.open({ number: 6, preview: { ...tile, number: 6, state: 'merged', mergedAt: Date.UTC(2026, 9, 2), closedAt: Date.UTC(2026, 9, 2) } })
+  assert.match(templateText(ghost.render()), /<span>merged Oct 2, 2026<\/span>/u, 'as its tile knew, before it is read')
+  await setImmediate()
+  assert.match(templateText(ghost.render()), /<span>merged Oct 2, 2026<\/span>/u)
+  assert.doesNotMatch(templateText(ghost.render()), /closed Oct/u)
   assert.match(text, /4 commits<\/span><span>2 files changed/u)
   assert.doesNotMatch(text, /Approved/u, 'a review only while open')
   assert.match(text, /<h4>Closes<\/h4>[^]*aria-label=Closed[^]*#3<\/span><span class="repo-item-title">Chips unreadable/u)

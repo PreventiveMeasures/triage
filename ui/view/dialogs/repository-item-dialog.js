@@ -97,7 +97,7 @@ class RepositoryItemDialog extends AppDialog {
       <p class="repo-item-meta">
         ${item ? html`<span class=${`repo-item-badge is-${stateClass}`}>${stateName}</span>` : nothing}
         ${item?.author ? html`<span><strong>${item.author}</strong> opened ${date(item.createdAt)}</span>` : item?.createdAt ? html`<span>Opened ${date(item.createdAt)}</span>` : nothing}
-        ${full?.mergedBy ? html`<span>merged by <strong>${full.mergedBy}</strong> ${date(full.mergedAt)}</span>`
+        ${item?.state === 'merged' ? html`<span>merged${full?.mergedBy ? html` by <strong>${full.mergedBy}</strong>` : nothing} ${date(item.mergedAt ?? item.closedAt)}</span>`
           : item?.closedAt && item.state !== 'open' ? html`<span>closed ${date(item.closedAt)}</span>` : nothing}
         ${item?.comments > 0 ? html`<span class="repo-item-mark">${COMMENT_ICON}${plural(item.comments, 'comment')}</span>` : nothing}
       </p>
