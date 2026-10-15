@@ -133,7 +133,7 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   assert.deepEqual(page._advisoryRows().map(row => [row.id, row.dev]), [['GHSA-crossenv', true], ['GHSA-eslint', true]], 'development\'s, malware among them')
   const advisories = templateText(page.render())
   assert.match(advisories, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need these versions[^>]*>dev</u, 'the version apart, as its column has it')
-  assert.match(advisories, /aria-label=Which advisories>[^]*?aria-pressed=false[^]*?>Production<span class="count">2<\/span><\/button>[^]*?aria-pressed=true[^]*?>Development<span class="count">2<\/span><\/button><\/div><input type="search"/u,
+  assert.match(advisories, /aria-label=Which advisories>[^]*?aria-pressed=false[^]*?>Production<span class="n">2<\/span><\/button>[^]*?aria-pressed=true[^]*?>Development<span class="n">2<\/span><\/button><\/div><input type="search"/u,
     'beside the search, each saying how many')
 })
 
@@ -383,7 +383,7 @@ test('packages are shown all in one list, or those production takes, or those on
   ]) page._apply(line)
   const names = () => page._rows().map(row => row.name)
   assert.deepEqual(names(), ['crossenv', 'eslint', 'left-pad'], 'all, by their risk alone')
-  assert.match(templateText(page.render()), /aria-label=Which packages>[^]*?aria-pressed=true[^]*?>All<span class="count">3<\/span>[^]*?>Production<span class="count">2<\/span>[^]*?>Development<span class="count">2<\/span><\/button><\/div>\s*<div class="risk-scope" role="group" aria-label=Show packages>/u,
+  assert.match(templateText(page.render()), /aria-label=Which packages>[^]*?aria-pressed=true[^]*?>All<span class="n">3<\/span>[^]*?>Production<span class="n">2<\/span>[^]*?>Development<span class="n">2<\/span><\/button><\/div>\s*<div class="risk-scope" role="group" aria-label=Show packages>/u,
     'beside the filter, each saying how many in a balloon')
   page._packageKind = 'production'
   assert.deepEqual(names(), ['crossenv', 'left-pad'])
@@ -456,7 +456,7 @@ test('the packages\' filter is a toggle of those it has any of, but All and the 
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'running'
   const filters = () => [...templateText(page.render()).matchAll(/aria-label=Show packages>([^]*?)<\/div>/gu)].map(([, toggle]) =>
-    [...toggle.matchAll(/aria-pressed=(\w+)[^]*?choose\(kind\)>([^<]+)<span class="count">(\d+)<\/span>/gu)].map(([, pressed, label, count]) => `${pressed === 'true' ? '*' : ''}${label} ${count}`))[0] ?? null
+    [...toggle.matchAll(/aria-pressed=(\w+)[^]*?choose\(kind\)>([^<]+)<span class="n">(\d+)<\/span>/gu)].map(([, pressed, label, count]) => `${pressed === 'true' ? '*' : ''}${label} ${count}`))[0] ?? null
   for (const line of [
     { type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] },
     { type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }] },
