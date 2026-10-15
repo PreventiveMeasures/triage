@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
+import { withAppUsers } from '../server-managed/github-users.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { namedAccounts } from '../common/managed/github-logins.ts'
@@ -41,6 +42,20 @@ test('an agent\'s account is told by its login, its id confirming it where both 
   ['dependabot', 'dependabot', null, 'copilot', null, 'claude', null, 'claude', 'codex'], 'an account whose id GitHub gives no agent, by its login alone')
   assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
     .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
+})
+
+test('a login an answer names beside more than one account, one GitHub named by it once and one it names by it now, is no one\'s', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const octo = await db.upsertUser({ githubUserId: 2, login: 'octo', name: 'Octo', avatarUrl: null }, 1)
+  await db.setUserRole(octo, 'view')
+  const answer = { commits: [{ authorLogin: 'octo', authorId: 2 }, { authorLogin: 'Octo', authorId: 3 }, { authorLogin: 'octo', authorId: null }],
+    items: [{ author: 'dependabot', authorId: 49699333 }, { author: 'Dependabot', authorId: 5 }, { author: 'ada', authorId: 7 }, { author: 'ada', authorId: 7 }] }
+  assert.deepEqual([...namedAccounts(answer)], [['octo', 'ambiguous'], ['Octo', 'ambiguous'], ['dependabot', 'ambiguous'], ['Dependabot', 'ambiguous'], ['ada', 7]],
+    'matched as GitHub matches logins; one named by the same account twice is not')
+  assert.deepEqual((await withAppUsers(db, answer)).users, {}, 'neither a user nor an agent')
+  answer.commits.splice(1, 1)
+  assert.deepEqual((await withAppUsers(db, answer)).users, { octo: { id: octo, login: 'octo', name: 'Octo' } }, 'one named once with its id and once without is that account')
 })
 
 // The Issues tab's endpoint, read by an admin with a token, GitHub answering

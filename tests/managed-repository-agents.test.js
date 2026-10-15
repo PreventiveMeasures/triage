@@ -145,7 +145,8 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.deepEqual([moved.author, moved.authorId], ['Copilot', 198982749], 'each by its author\'s login and account id')
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: null },
     { number: 13, title: 'History', state: 'closed', author: null, authorId: null, createdAt: null, updatedAt: null }])
-  assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, dependabot: { agent: 'dependabot' }, 'dependabot[bot]': { agent: 'dependabot' } }, 'its agents\' accounts as the app draws them')
+  assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, 'dependabot[bot]': { agent: 'dependabot' } },
+    'its agents\' accounts as the app draws them; `dependabot`, named by Dependabot\'s account and another, no one\'s')
   // Every page of each agent's branches read, the newest first, named in full.
   assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],
     ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']],

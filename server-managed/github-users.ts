@@ -17,10 +17,11 @@ export interface AppAgentUser { agent: GithubAgentId }
 
 // `answer` with the app's users and agents its accounts are (`users`, by
 // login), as a new object: what was kept of it, every reader's, is left as
-// it was.
+// it was. A login it names by more than one account is no one's.
 export async function withAppUsers<T extends object>(db: ManagedDb, answer: T): Promise<T & { users: Record<string, AppUser | AppAgentUser> }> {
   const agents: Record<string, AppAgentUser> = {}
   const accounts = [...namedAccounts(answer)].flatMap(([login, githubId]) => {
+    if (githubId === 'ambiguous') return []
     const agent = githubAgent(login, githubId)
     if (agent) agents[login] = { agent }
     return agent ? [] : [{ login, githubId }]
