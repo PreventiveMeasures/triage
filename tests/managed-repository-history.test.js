@@ -13,7 +13,7 @@ const [a, b, c, d] = ['a', 'b', 'c', 'd'].map(char => char.repeat(40))
 
 // A REST list-commits item, as GitHub answers one.
 const restCommit = (sha, parents, message, login = 'octo') => ({
-  sha, parents: parents.map(parent => ({ sha: parent })), author: login ? { login } : null,
+  sha, parents: parents.map(parent => ({ sha: parent })), author: login ? { login, id: 2 } : null,
   commit: { message, author: { name: `${login ?? 'someone'} name`, date: '2026-10-01T00:00:00Z' }, committer: { date: '2026-10-02T10:00:00Z' } },
 })
 
@@ -68,8 +68,8 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.deepEqual(body, {
     commit: a, path: '', page: 1, more: true,
     commits: [
-      { sha: a, parents: [b, c], subject: 'Merge feature', authorName: 'octo name', authorLogin: 'octo', committedAt: Date.parse('2026-10-02T10:00:00Z') },
-      { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, committedAt: Date.parse('2026-10-02T10:00:00Z') },
+      { sha: a, parents: [b, c], subject: 'Merge feature', authorName: 'octo name', authorLogin: 'octo', authorId: 2, committedAt: Date.parse('2026-10-02T10:00:00Z') },
+      { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, authorId: null, committedAt: Date.parse('2026-10-02T10:00:00Z') },
     ],
     branches: [{ name: 'main', sha: a }, { name: 'feature', sha: c }], tags: [{ name: 'v1', sha: d }],
     users: {},
@@ -86,15 +86,20 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.deepEqual(asked.filter(entry => entry.path === '/repos/org/repo/commits').slice(-2).map(entry => entry.query.sha).toSorted(), [c, d])
 })
 
-test('a commit by a user of the app names them as the app does', async t => {
+test('a commit by a user of the app names them as the app does, by their account\'s id', async t => {
   const request = await fixture(t)
   github(t)
   const { body } = await request({ repoId: '1', ref: 'heads/main' })
   assert.deepEqual(body.users, {}, 'octo is no user of the app')
   const db = request.db
-  const octo = await createSession(config, db, { githubUserId: 2, login: 'Octo', name: 'Octo Cat', avatarUrl: null }, Date.now())
+  // One signed in as octo since renamed: another account's now.
+  const former = await createSession(config, db, { githubUserId: 3, login: 'octo', name: 'Former Octo', avatarUrl: null }, Date.now())
+  await db.setUserRole(former.userId, 'view')
+  assert.deepEqual((await request({ repoId: '1', ref: 'heads/main' })).body.users, {}, 'not by the login GitHub names another account by')
+  const octo = await createSession(config, db, { githubUserId: 2, login: 'Octo-Cat', name: 'Octo Cat', avatarUrl: null }, Date.now())
   await db.setUserRole(octo.userId, 'view')
-  assert.deepEqual((await request({ repoId: '1', ref: 'heads/main' })).body.users, { octo: { id: octo.userId, login: 'Octo', name: 'Octo Cat' } })
+  assert.deepEqual((await request({ repoId: '1', ref: 'heads/main' })).body.users, { octo: { id: octo.userId, login: 'Octo-Cat', name: 'Octo Cat' } },
+    'by the account, whatever login they last signed in with')
 })
 
 test('with a token, a revision\'s commits are named by every branch All branches reads and the latest tags, not GitHub\'s first page of each by name', async t => {
@@ -145,8 +150,11 @@ test('all branches reads the 25 most recently committed to, the default branch f
   }
   const histories = {
     b0: { history: { pageInfo: { hasNextPage: false }, nodes: [
-      { oid: a, messageHeadline: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo' } }, parents: { nodes: [{ oid: b }, { oid: c }] } },
-      { oid: b, messageHeadline: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'Octo', user: null }, parents: { nodes: [{ oid: d }] } },
+      { oid: a, messageHeadline: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo', databaseId: 2 } },
+        parents: { nodes: [{ oid: b }, { oid: c }] } },
+      // A GitHub App's bot's, named no user, by its noreply address.
+      { oid: b, messageHeadline: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'dependabot[bot]', email: '49699333+dependabot[bot]@users.noreply.github.com',
+        user: null }, parents: { nodes: [{ oid: d }] } },
     ] } },
     b1: { history: { pageInfo: { hasNextPage: true }, nodes: [
       { oid: c, messageHeadline: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
@@ -161,6 +169,8 @@ test('all branches reads the 25 most recently committed to, the default branch f
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
   assert.deepEqual(body.commits.map(commit => commit.sha), [a, b, c, d])
+  assert.deepEqual(body.commits.map(commit => [commit.authorLogin, commit.authorId]), [['octo', 2], ['dependabot[bot]', 49699333], [null, null], [null, null]])
+  assert.deepEqual(body.users, { 'dependabot[bot]': { agent: 'dependabot' } }, 'an agent as the app draws it')
   assert.deepEqual(body.branches.map(branch => branch.name), [...stale.map(ref => ref.name), 'feature', 'main'], 'every branch naming a commit listed')
   assert.deepEqual(body.tags, [{ name: 'v1', sha: d }, { name: 'v2', sha: c }, { name: 'light', sha: c }])
   assert.equal(body.defaultBranch, 'main')
@@ -174,6 +184,7 @@ test('all branches reads the 25 most recently committed to, the default branch f
     { owner: 'org', name: 'repo', o0: a, o1: c, o2: d },
   ])
   assert.match(queries[2].body.query, /b2: object\(oid: \$o2\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
+  assert.match(queries[2].body.query, /author \{ name email date user \{ login databaseId \} \}/u)
   // A tag's target, and those of as many as four annotated tags after it.
   assert.equal(queries[0].body.query.match(/target \{ __typename oid/gu).length, 5)
   // Asked again: its branches kept a while, each tip's page kept for good, nothing read of GitHub.
@@ -203,7 +214,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   const later = await request({ repoId: '1', all: 'true', page: '2', from: `${c},${d},${c}` })
   assert.equal(later.status, 200)
   assert.deepEqual(later.body, { all: true, page: 2, commits: [node(c, [d]), node(d, [])].map(item => ({ sha: item.oid, parents: item.parents.nodes.map(parent => parent.oid),
-    subject: item.messageHeadline, authorName: null, authorLogin: null, committedAt: Date.parse(item.committedDate) })), more: true, users: {} })
+    subject: item.messageHeadline, authorName: null, authorLogin: null, authorId: null, committedAt: Date.parse(item.committedDate) })), more: true, users: {} })
   const query = asked.findLast(entry => entry.path === '/graphql')
   assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', o0: c, o1: d })
   assert.match(query.body.query, /b1: object\(oid: \$o1\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)

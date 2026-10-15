@@ -11,8 +11,9 @@
 // texts. GraphQL alone gives them, so it needs a token.
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, type AppAgentMarks, agentSignals }
   from '../common/managed/agent-tasks.ts'
+import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { GithubApiError } from './github-app.ts'
-import { githubGraphql } from './repository-history.ts'
+import { ACTOR, type NamedAccount, actorOf, commitAccount, githubGraphql } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
 
 export const AGENT_PULLS_PAGE = 50
@@ -40,11 +41,13 @@ const CLAUDE_EMAIL = 'noreply@anthropic.com'
 // `copilot/` branches; Dependabot, its GitHub App (29110), opens its pull
 // requests as its account, `dependabot` (49699333, `dependabot[bot]` to
 // GitHub's REST API and in its address), on `dependabot/<ecosystem>/…`
-// branches.
+// branches. Their accounts and avatars are those the app draws their work by
+// wherever it shows it (common/managed/github-agents.ts).
+const { copilot, dependabot } = GITHUB_AGENTS
 export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'neo', name: 'Neo', avatar: 'app-3115942', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
-  { id: 'copilot', name: 'Copilot', avatar: 'user-198982749', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
-  { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' },
+  { id: 'copilot', name: copilot.name, avatar: copilot.avatar, account: copilot.accounts[0], prefix: 'copilot/' },
+  { id: 'dependabot', name: dependabot.name, avatar: dependabot.avatar, account: dependabot.accounts[0], prefix: 'dependabot/' },
 ]
 // The app agents' accounts' no-reply addresses, by each login of theirs.
 const AGENT_EMAILS = APP_AGENTS.flatMap(({ account }) => account?.logins.map(login => `${account.id}+${login}@users.noreply.github.com`) ?? [])
@@ -76,7 +79,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
   repository(owner: $owner, name: $name) {
     pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $readPulls) {
       pageInfo { hasNextPage endCursor }
-      nodes { number title state isDraft createdAt updatedAt author { login ... on Bot { databaseId } ... on User { databaseId } } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
+      nodes { number title state isDraft createdAt updatedAt author { ${ACTOR} } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
         commits(last: 1) { totalCount nodes { commit { message } } }
         mergeCommit { message }
         closingIssuesReferences(first: ${CLOSES}) { nodes { number } } }
@@ -88,7 +91,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
       }
     } } }
     issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
-      nodes { number title state createdAt updatedAt author { login } }
+      nodes { number title state createdAt updatedAt author { ${ACTOR} } }
     }
   }
 }`
@@ -120,31 +123,24 @@ const PULL_STATES: Record<string, AgentPull['state']> = { OPEN: 'open', MERGED: 
 function pull(node: PullNode | null): AgentPull | null {
   const at = number(node?.number)
   if (!node || !at) return null
+  const author = accountOf(node.author)
   return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: PULL_STATES[String(node.state)] ?? 'closed', draft: node.isDraft === true,
-    author: loginOf(node.author), createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), head: nameOf(node.headRefName),
+    author: loginOf(node.author), authorId: author?.id ?? null, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), head: nameOf(node.headRefName),
     // A fork's, its owner; one GitHub no longer names, a fork of its own.
     fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
     signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
-      accountOf(node.author)) }
+      author) }
 }
 
 // An account as GitHub names it, by its login and id, both.
-function accountOf(actor: Login): AgentAuthor | null {
-  const [login, id] = [loginOf(actor), number(actor?.databaseId)]
-  return login !== null && id !== null ? { login, id } : null
-}
-// GitHub's no-reply address for an account, `<id>+<login>@users.noreply.github.com`.
-const NOREPLY = /^([1-9]\d{0,11})\+([A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?)@users\.noreply\.github\.com$/iu
+const both = ({ login, id }: NamedAccount): AgentAuthor | null => login !== null && id !== null ? { login, id } : null
+const accountOf = (actor: Login) => both(actorOf(actor))
 // A commit's author: the account GitHub knows by its address, else the one
 // its no-reply address names by id and login, as a bot's, Copilot's or
-// Dependabot's, is told by that alone (GraphQL's `user` is a User's, never a
-// bot's).
-function authorOf(actor: GitActor | null | undefined): AgentAuthor | null {
-  const noreply = typeof actor?.email === 'string' ? NOREPLY.exec(actor.email) : null
-  return accountOf(actor?.user) ?? (noreply ? { login: noreply[2]!, id: Number(noreply[1]) } : null)
-}
+// Dependabot's, is told by that alone (repository-history.ts commitAccount).
+const authorOf = (actor: GitActor | null | undefined) => both(commitAccount(actor))
 
 // A commit to the default branch no pull request merged, where an agent left
 // its marks on it, or Claude authored it.
@@ -155,7 +151,7 @@ function directCommit(node: CommitNode | null): AgentCommit | null {
   if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
   if (!signals.claude && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate),
-    author: author?.login ?? loginOf(node.author?.user),
+    author: author?.login ?? loginOf(node.author?.user), authorId: author?.id ?? null,
     additions: count(node.additions), deletions: count(node.deletions), signals }
 }
 
@@ -163,7 +159,7 @@ function issue(node: IssueNode | null): AgentIssue | null {
   const at = number(node?.number)
   if (!node || !at) return null
   return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: node.state === 'OPEN' ? 'open' : 'closed', author: loginOf(node.author),
-    createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt) }
+    authorId: accountOf(node.author)?.id ?? null, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt) }
 }
 
 // A branch under `prefix`, an agent's, named in full however GitHub splits
@@ -173,7 +169,7 @@ const branch = (prefix: string) => (node: RefNode | null): AgentBranch | null =>
   const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
   const author = authorOf(node?.target?.author)
   return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: author?.login ?? loginOf(node?.target?.author?.user),
-    signals: agentSignals([node?.target?.message], APP_AGENTS, name, author) } : null
+    authorId: author?.id ?? null, signals: agentSignals([node?.target?.message], APP_AGENTS, name, author) } : null
 }
 
 // The newest of an agent's branches, those under `prefix`: every one, as many

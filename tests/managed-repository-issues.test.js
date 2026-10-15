@@ -57,7 +57,7 @@ test('issues read a page of those open, the most recently updated first, each as
   const request = await fixture(t)
   const asked = github(t, () => page([
     { number: 12, title: 'Treemap labels overlap', state: 'OPEN', stateReason: null, createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', closedAt: null,
-      author: { login: 'octo' }, comments: { totalCount: 4 }, labels: labels('bug', 'ui') },
+      author: { login: 'octo', databaseId: 2 }, comments: { totalCount: 4 }, labels: labels('bug', 'ui') },
     { number: 9, title: 'Wontfix', state: 'CLOSED', stateReason: 'NOT_PLANNED', createdAt: null, updatedAt: null, closedAt: '2026-10-03T00:00:00Z',
       author: null, comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [{ name: ' ', color: 'zzz' }] } },
     { number: 'x', title: 'not an issue' }, null,
@@ -67,9 +67,9 @@ test('issues read a page of those open, the most recently updated first, each as
   assert.deepEqual(body, {
     kind: 'issues', state: 'open', counts: { open: 3, closed: 40 }, more: true, after: cursor,
     items: [
-      { number: 12, title: 'Treemap labels overlap', author: 'octo', createdAt: Date.parse('2026-10-01T00:00:00Z'), updatedAt: Date.parse('2026-10-02T00:00:00Z'), closedAt: null,
+      { number: 12, title: 'Treemap labels overlap', author: 'octo', authorId: 2, createdAt: Date.parse('2026-10-01T00:00:00Z'), updatedAt: Date.parse('2026-10-02T00:00:00Z'), closedAt: null,
         comments: 4, labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'ui', color: 'd73a4a' }], moreLabels: 1, state: 'open', reason: null },
-      { number: 9, title: 'Wontfix', author: null, createdAt: null, updatedAt: null, closedAt: Date.parse('2026-10-03T00:00:00Z'), comments: 0, labels: [], moreLabels: 0,
+      { number: 9, title: 'Wontfix', author: null, authorId: null, createdAt: null, updatedAt: null, closedAt: Date.parse('2026-10-03T00:00:00Z'), comments: 0, labels: [], moreLabels: 0,
         state: 'closed', reason: 'not-planned' },
     ],
     users: {},
@@ -77,6 +77,7 @@ test('issues read a page of those open, the most recently updated first, each as
   assert.equal(asked[0].auth, 'Bearer login-token')
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null })
   assert.match(asked[0].query, /page: issues\(states: \[OPEN\], first: 50, after: \$after, orderBy: \{ field: UPDATED_AT, direction: DESC \}\)/u)
+  assert.match(asked[0].query, /author \{ login \.\.\. on User \{ databaseId \} \.\.\. on Bot \{ databaseId \} \}/u, 'a user\'s account id, or a bot\'s')
   // Closed, on from a cursor.
   await request({ repoId: '1', kind: 'issues', state: 'closed', after: cursor })
   assert.deepEqual(asked[1].variables, { owner: 'org', name: 'repo', after: cursor })
@@ -85,7 +86,7 @@ test('issues read a page of those open, the most recently updated first, each as
 
 test('pull requests name their branches, size, review and checks, a merged one apart from one closed, and those closed include those merged', async t => {
   const request = await fixture(t)
-  const pull = (number, more) => ({ number, title: `Pull ${number}`, createdAt: null, updatedAt: null, closedAt: null, mergedAt: null, author: { login: 'dependabot' },
+  const pull = (number, more) => ({ number, title: `Pull ${number}`, createdAt: null, updatedAt: null, closedAt: null, mergedAt: null, author: { login: 'dependabot', databaseId: 49699333 },
     comments: { totalCount: 1 }, labels: labels(), isDraft: false, additions: 12, deletions: 3, headRefName: 'feature/x', baseRefName: 'main', ...more })
   const asked = github(t, () => page([
     pull(5, { state: 'OPEN', isDraft: true, reviewDecision: 'CHANGES_REQUESTED', commits: { nodes: [{ commit: { statusCheckRollup: { state: 'ERROR' } } }] } }),
@@ -100,6 +101,7 @@ test('pull requests name their branches, size, review and checks, a merged one a
     [3, 'closed', false, null, null, null, 'feature/x', 'main', 12, 3],
   ])
   assert.deepEqual([body.more, body.after], [false, null], 'a cursor that isn\'t one reads nothing on')
+  assert.deepEqual(body.users, { dependabot: { agent: 'dependabot' } }, 'Dependabot\'s as the app draws it')
   assert.match(asked[0].query, /closed: pullRequests\(states: \[CLOSED, MERGED\]\) \{ totalCount \}/u)
   assert.match(asked[0].query, /page: pullRequests\(states: \[CLOSED, MERGED\], first: 50/u)
 })
@@ -177,7 +179,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   const items = {
     7: { __typename: 'PullRequest', ...common, number: 7, title: 'Fix the chips', pullState: 'MERGED', isDraft: false, mergedAt: '2026-10-02T00:00:00Z', reviewDecision: 'APPROVED',
       additions: 30, deletions: 4, headRefName: 'claude/fix-chips', baseRefName: 'main', body: '\n \n    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X  \n', changedFiles: 2,
-      commits: { totalCount: 4, nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, mergedBy: { login: 'ada' }, author: { login: 'grace' },
+      commits: { totalCount: 4, nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, mergedBy: { login: 'ada', databaseId: 5 }, author: { login: 'grace', databaseId: 6 },
       closingIssuesReferences: { nodes: [{ number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED' }, null] } },
     3: { __typename: 'Issue', ...common, number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED', body: 'x'.repeat(30_000), author: null,
       closedByPullRequestsReferences: { totalCount: 12, nodes: [{ number: 7, title: 'Fix the chips', pullState: 'MERGED', isDraft: false }, { number: 'x' }] } },
@@ -187,11 +189,11 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   const item = number => request({ repoId: '1', number }, { path: 'item' })
   const pull = await item('7')
   assert.equal(pull.status, 200)
-  assert.deepEqual(pull.body, { kind: 'pulls', number: 7, title: 'Fix the chips', author: 'grace', createdAt: Date.parse(common.createdAt), updatedAt: Date.parse(common.updatedAt),
+  assert.deepEqual(pull.body, { kind: 'pulls', number: 7, title: 'Fix the chips', author: 'grace', authorId: 6, createdAt: Date.parse(common.createdAt), updatedAt: Date.parse(common.updatedAt),
     closedAt: Date.parse(common.closedAt), comments: 2, labels: [{ name: 'bug', color: 'd73a4a' }], moreLabels: 1, state: 'merged', draft: false,
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
     body: '    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
-    commits: 4, files: 2, mergedBy: 'ada', users: {} })
+    commits: 4, files: 2, mergedBy: 'ada', mergedById: 5, users: {} })
   const issue = await item('3')
   // A description too long shortened, and the linked past those named counted, each said so.
   assert.deepEqual([issue.body.kind, issue.body.state, issue.body.reason, issue.body.body.length, issue.body.bodyShortened, issue.body.closedBy, issue.body.moreLinked],

@@ -81,30 +81,39 @@ export interface GithubLinkStore {
   setProfileChoice(sessionId: string, choice: ProfileChoice, now: number): Promise<void>
   // The avatar to serve for `id`: a user's chosen linked account's, else `id`'s own.
   getAvatarKey(id: string): Promise<string>
-  // The approved users signing in with, or having linked, each of `logins`
-  // (matched regardless of case, as GitHub matches them), by the login as
-  // asked. A login more than one user claims, one renamed on GitHub since
-  // another signed in with it or linked it, is left out, as are logins of No
-  // access users.
-  listUsersByLogin(logins: readonly string[]): Promise<Record<string, AppUser>>
+  // The approved users signing in with, or having linked, each of
+  // `accounts`, by the login as asked: by the account's numeric id where it
+  // is known, which GitHub never gives another; else by its login (matched
+  // regardless of case, as GitHub matches them), one more than one user
+  // claims, renamed on GitHub since another signed in with it or linked it,
+  // left out. No access users are left out.
+  listUsersByAccount(accounts: readonly GithubAccount[]): Promise<Record<string, AppUser>>
 }
+
+// A GitHub account a repository's activity names: by its login, and its
+// numeric id where GitHub told it.
+export interface GithubAccount { login: string; githubId: number | null }
 
 type LinkRow = { id: string; login: string; name: string | null; linkedAt: number }
 const accountOf = (row: LinkRow): LinkedGithubAccount => ({ id: row.id, login: row.login, name: row.name, linkedAt: row.linkedAt })
 
-// GithubLinkStore.listUsersByLogin.
-async function usersByLogin(db: ManagedSql, logins: readonly string[]): Promise<Record<string, AppUser>> {
-  if (logins.length === 0) return {}
-  const rows = await db.prepare(`SELECT a.login, u.id, u.login AS appLogin, u.name, u.role FROM (
-      SELECT login, id AS claimant FROM managed_user UNION ALL SELECT login, user_id AS claimant FROM managed_github_link
+// GithubLinkStore.listUsersByAccount.
+async function usersByAccount(db: ManagedSql, accounts: readonly GithubAccount[]): Promise<Record<string, AppUser>> {
+  if (accounts.length === 0) return {}
+  const ids = accounts.flatMap(account => account.githubId ?? [])
+  const logins = accounts.flatMap(account => account.githubId === null ? [account.login] : [])
+  const rows = await db.prepare(`SELECT a.login, a.githubId, u.id, u.login AS appLogin, u.name, u.role FROM (
+      SELECT login, github_user_id AS githubId, id AS claimant FROM managed_user
+      UNION ALL SELECT login, github_user_id AS githubId, user_id AS claimant FROM managed_github_link
     ) a JOIN managed_user u ON u.id = a.claimant
-    WHERE lower(a.login) IN (SELECT lower(value) FROM json_each(?))`).all(JSON.stringify(logins)) as
-    { login: string; id: string; appLogin: string; name: string | null; role: string }[]
+    WHERE a.githubId IN (SELECT CAST(value AS BIGINT) FROM json_each(?)) OR lower(a.login) IN (SELECT lower(value) FROM json_each(?))`)
+    .all(JSON.stringify(ids), JSON.stringify(logins)) as { login: string; githubId: number; id: string; appLogin: string; name: string | null; role: string }[]
+  const byId = new Map(rows.map(row => [row.githubId, row]))
   const claims = new Map<string, typeof rows>()
   for (const row of rows) claims.set(row.login.toLowerCase(), [...claims.get(row.login.toLowerCase()) ?? [], row])
   const users: Record<string, AppUser> = {}
-  for (const login of logins) {
-    const [user, ...others] = claims.get(login.toLowerCase()) ?? []
+  for (const { login, githubId } of accounts) {
+    const [user, ...others] = githubId === null ? claims.get(login.toLowerCase()) ?? [] : byId.has(githubId) ? [byId.get(githubId)!] : []
     if (!user || user.role === 'none' || others.some(other => other.id !== user.id)) continue
     users[login] = { id: user.id, login: user.appLogin, name: user.name }
   }
@@ -188,6 +197,6 @@ export function githubLinkMethods(db: ManagedSql): GithubLinkStore {
       const row = await db.prepare('SELECT avatar_link AS link FROM managed_user WHERE id = ?').get(id) as { link: string | null } | undefined
       return row?.link ?? id
     },
-    listUsersByLogin: logins => usersByLogin(db, logins),
+    listUsersByAccount: accounts => usersByAccount(db, accounts),
   }
 }

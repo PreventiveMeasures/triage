@@ -27,6 +27,8 @@ test('GitHub logins the server names as the app\'s users show by their avatar an
 })
 
 test('commits by Claude or Codex show by their marks: by the identities GitHub names, else by name alone where it names none', () => {
+  // As the server names them (server-managed/github-users.ts).
+  knowGithubUsers({ users: { claude: { agent: 'claude' }, 'Claude[bot]': { agent: 'claude' }, 'chatgpt-codex-connector[bot]': { agent: 'codex' } } })
   assert.deepEqual([['claude', 'Claude'], ['Claude[bot]', null], ['chatgpt-codex-connector[bot]', null], [null, ' Codex '], [null, 'claude'],
     ['claudette', 'Claude'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]].map(([login, name]) => commitAgent(login, name)),
   ['claude', 'claude', 'codex', 'codex', 'claude', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
@@ -44,6 +46,30 @@ test('commits by Claude or Codex show by their marks: by the identities GitHub n
   assert.match(templateText(commitAuthor('mona', 'M. L.')), /app-user-name">Mona Lisa</u, 'a user of the app as the app shows them')
   assert.deepEqual([commitAuthorName('claude[bot]'), commitAuthorName(null, 'Codex'), commitAuthorName('mona'), commitAuthorName(null, 'Ada'), commitAuthorName('ada', 'Ada L')],
     ['Claude', 'Codex', 'Mona Lisa', 'Ada', 'ada'])
+})
+
+test('Copilot and Dependabot show by their avatars, as Agents draws them: by the accounts the server names theirs, else their commits\' names', () => {
+  forgetGithubUsers()
+  // As the server names them: one GitHub names by Dependabot's login, but
+  // another account by its id, is none; an agent the app does not draw neither.
+  knowGithubUsers({ items: [{ author: 'Copilot', authorId: 198982749 }, { author: 'dependabot', authorId: 1 }],
+    users: { Copilot: { agent: 'copilot' }, ghost: { agent: 'nobody' } } })
+  assert.deepEqual([['Copilot', null], ['dependabot', null], [null, 'Copilot'], [null, 'dependabot[bot]'], ['copilot-fan', 'Copilot'], ['ghost', null]]
+    .map(([login, name]) => commitAgent(login, name)), ['copilot', null, 'copilot', 'dependabot', null, null])
+  assert.equal(appUser('Copilot'), null, 'no user of the app')
+  assert.equal(githubUser('dependabot'), 'dependabot')
+  const copilot = templateText(githubUser('copilot'))
+  assert.match(copilot, /class=app-user-mark is-copilot/u, 'bare, no avatar\'s disc')
+  assert.match(copilot, /<img src=\/api\/avatar\/user-198982749 /u, 'its avatar, as the Agents tab serves it')
+  assert.match(copilot, /app-user-name">Copilot</u)
+  assert.match(copilot, /data-tooltip=@copilot on GitHub/u)
+  const dependabot = templateText(commitAuthor(null, 'dependabot[bot]'))
+  assert.match(dependabot, /src=\/api\/avatar\/app-29110 /u, 'a commit GitHub named no account for, by its name')
+  assert.match(dependabot, /data-tooltip=dependabot\[bot\]/u)
+  knowGithubUsers({ commits: [{ authorLogin: 'dependabot[bot]', authorId: 49699333 }], users: { 'dependabot[bot]': { agent: 'dependabot' } } })
+  assert.deepEqual([githubUserName('dependabot[bot]'), commitAuthorName(null, 'Copilot'), commitAuthorName('Copilot')], ['Dependabot', 'Copilot', 'Copilot'])
+  assert.deepEqual(githubUsers(['dependabot[bot]', 'Copilot', 'DEPENDABOT[BOT]', 'copilot']), ['dependabot[bot]', 'Copilot'], 'each agent once')
+  forgetGithubUsers()
 })
 
 test('an answer naming a login the server resolves to no one forgets what was kept of it; another session forgets them all', () => {

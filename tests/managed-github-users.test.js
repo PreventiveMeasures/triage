@@ -1,41 +1,52 @@
-// The app's users a repository's activity names by GitHub login
-// (server-managed/github-users.ts): resolved on the server as each answer is
-// sent, for the logins it names alone, a linked account as its user.
+// The app's users and agents a repository's activity names by GitHub
+// account (server-managed/github-users.ts): resolved on the server as each
+// answer is sent, for the accounts it names alone, by their ids where named,
+// a linked account as its user.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { namedLogins } from '../common/managed/github-logins.ts'
+import { githubAgent } from '../common/managed/github-agents.ts'
+import { namedAccounts } from '../common/managed/github-logins.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { checkUsersByLogin } from './_managed-github-links.js'
+import { checkUsersByAccount } from './_managed-github-links.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 const identity = (id, login, name = null) => ({ githubUserId: id, login, name, avatarUrl: null })
 
-test('the app\'s users by GitHub login: SQLite semantics', async t => {
+test('the app\'s users by GitHub account: SQLite semantics', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
-  await checkUsersByLogin(db)
+  await checkUsersByAccount(db)
 })
 
-test('an answer\'s logins are those it names as an author, one who merged or a contributor, each once, never a GitHub App\'s', () => {
+test('an answer\'s accounts are those it names as an author, one who merged or a contributor, each once, with the id named beside it', () => {
   const answer = {
-    commits: [{ authorLogin: 'ada', authorName: 'Not a login' }, { authorLogin: null }, { authorLogin: 'ada' }],
-    items: [{ author: 'grace', title: 'author' }, { author: 'dependabot[bot]' }, { author: 'not a login!' }],
-    item: { mergedBy: 'linus', body: 'mergedBy: someone' },
-    stats: { contributors: [{ login: 'ken', weeks: [] }] },
+    commits: [{ authorLogin: 'ada', authorName: 'Not a login', authorId: null }, { authorLogin: null, authorId: 9 }, { authorLogin: 'ada', authorId: 1 }],
+    items: [{ author: 'grace', authorId: 2, title: 'author' }, { author: 'dependabot[bot]' }, { author: 'not a login!' }, { author: 'mallory', authorId: '3' }],
+    item: { mergedBy: 'linus', mergedById: 4, body: 'mergedBy: someone' },
+    stats: { contributors: [{ login: 'ken', id: 5, weeks: [] }] },
     head: 'author', fork: 'forker', more: true,
   }
-  assert.deepEqual([...namedLogins(answer)].toSorted(), ['ada', 'grace', 'ken', 'linus'])
-  assert.deepEqual([...namedLogins(null)], [])
+  assert.deepEqual([...namedAccounts(answer)].toSorted(), [['ada', 1], ['dependabot[bot]', null], ['grace', 2], ['ken', 5], ['linus', 4], ['mallory', null]])
+  assert.deepEqual([...namedAccounts(null)], [])
+})
+
+test('an agent\'s account is told by its login, its id confirming it where both are known; a commit GitHub names no account for, by its name', () => {
+  assert.deepEqual([['dependabot', 49699333], ['Dependabot[bot]', null], ['dependabot', 1], ['Copilot', 198982749], ['ada', 198982749], ['claude', 81847], ['claude', 5],
+    ['claude[bot]', 123], ['chatgpt-codex-connector', 199175422]].map(([login, id]) => githubAgent(login, id)),
+  ['dependabot', 'dependabot', null, 'copilot', null, 'claude', null, 'claude', 'codex'], 'an account whose id GitHub gives no agent, by its login alone')
+  assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
+    .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
 })
 
 // The Issues tab's endpoint, read by an admin with a token, GitHub answering
-// issues by `logins`; `asked` how many times GitHub was.
-async function fixture(t, logins) {
+// issues by `authors` (a login, or a login and its account's id); `asked` how
+// many times GitHub was.
+async function fixture(t, authors) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const reader = await createSession(config, db, identity(1, 'reader'), Date.now())
@@ -48,9 +59,9 @@ async function fixture(t, logins) {
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     if (url.pathname !== '/graphql') return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     github.asked++
-    return Promise.resolve(Response.json({ data: { repository: { open: { totalCount: logins.length }, closed: { totalCount: 0 },
-      page: { pageInfo: { hasNextPage: false }, nodes: logins.map((login, at) => ({ number: at + 1, title: `Issue ${at + 1}`, state: 'OPEN',
-        author: login === null ? null : { login }, comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [] } })) } } } }))
+    return Promise.resolve(Response.json({ data: { repository: { open: { totalCount: authors.length }, closed: { totalCount: 0 },
+      page: { pageInfo: { hasNextPage: false }, nodes: authors.map((author, at) => ({ number: at + 1, title: `Issue ${at + 1}`, state: 'OPEN',
+        author: typeof author === 'string' ? { login: author } : author, comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [] } })) } } } }))
   })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
   const request = async () => {
@@ -61,8 +72,9 @@ async function fixture(t, logins) {
   return { db, request, github }
 }
 
-test('activity answers name the app\'s users among their authors, a linked account as its user, resolved afresh even where the answer was kept', async t => {
-  const { db, request, github } = await fixture(t, ['alice-work', 'Alice', 'stranger', 'pending', 'dependabot[bot]', null])
+test('activity answers name the app\'s users and agents among their authors, a linked account as its user, resolved afresh even where the answer was kept', async t => {
+  const { db, request, github } = await fixture(t, ['alice-work', 'Alice', { login: 'alice-renamed', databaseId: 2 }, { login: 'stranger', databaseId: 9 }, 'pending',
+    { login: 'dependabot', databaseId: 49699333 }, 'renovate[bot]', null])
   const alice = await createSession(config, db, identity(2, 'alice', 'Alice'), Date.now())
   await db.setUserRole(alice.userId, 'view')
   await createSession(config, db, identity(3, 'pending'), Date.now())
@@ -71,16 +83,18 @@ test('activity answers name the app\'s users among their authors, a linked accou
 
   const first = await request()
   assert.equal(first.status, 200)
-  assert.deepEqual(first.body.items.map(item => item.author), ['alice-work', 'Alice', 'stranger', 'pending', 'dependabot[bot]', null])
+  assert.deepEqual(first.body.items.map(item => item.author), ['alice-work', 'Alice', 'alice-renamed', 'stranger', 'pending', 'dependabot', 'renovate[bot]', null])
   assert.deepEqual(first.body.users, {
     'alice-work': { id: alice.userId, login: 'alice', name: 'Alice' },
     Alice: { id: alice.userId, login: 'alice', name: 'Alice' },
-  }, 'the logins it names alone: none unknown, of No access, nor a GitHub App\'s')
+    'alice-renamed': { id: alice.userId, login: 'alice', name: 'Alice' },
+    dependabot: { agent: 'dependabot' },
+  }, 'the accounts it names alone, by id where named: none unknown, of No access, nor another GitHub App\'s; an agent as the app draws it')
 
   await db.setProfileChoice(sessionId, { name: work.id }, Date.now())
   const kept = await request()
   assert.equal(github.asked, 1, 'the answer was kept')
   assert.deepEqual(kept.body.users['alice-work'], { id: alice.userId, login: 'alice', name: 'Alice at Work' }, 'its users were not')
   await db.unlinkGithubAccount(sessionId, work.id, Date.now())
-  assert.deepEqual(Object.keys((await request()).body.users), ['Alice'])
+  assert.deepEqual(Object.keys((await request()).body.users).toSorted(), ['Alice', 'alice-renamed', 'dependabot'])
 })

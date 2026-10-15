@@ -77,8 +77,9 @@ export async function checkGithubLinks(db) {
 }
 
 // Shared SQLite/Postgres semantics of the app's users a repository's
-// activity names by GitHub login (server-managed/github-users.ts).
-export async function checkUsersByLogin(db) {
+// activity names by GitHub account, by its id where known, else its login
+// (server-managed/github-users.ts).
+export async function checkUsersByAccount(db) {
   const alice = await db.upsertUser(identity(1, 'alice', 'Alice'), 1)
   const bob = await db.upsertUser(identity(2, 'Bob'), 1)
   const pending = await db.upsertUser(identity(3, 'pending', 'Pending'), 1)
@@ -92,17 +93,28 @@ export async function checkUsersByLogin(db) {
   // Carol linked an account by the login Dave signs in with: one of them
   // renamed on GitHub since, but which is unknown.
   await db.linkGithubAccount('carol-session', identity(11, 'renamed'), 2)
-  assert.deepEqual(await db.listUsersByLogin([]), {})
-  assert.deepEqual(await db.listUsersByLogin(['alice', 'ALICE-WORK', 'bob', 'pending', 'renamed', 'nobody', 'carol']), {
+  const byLogin = (...logins) => logins.map(login => ({ login, githubId: null }))
+  assert.deepEqual(await db.listUsersByAccount([]), {})
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice', 'ALICE-WORK', 'bob', 'pending', 'renamed', 'nobody', 'carol')), {
     alice: { id: alice, login: 'alice', name: 'Alice' },
     'ALICE-WORK': { id: alice, login: 'alice', name: 'Alice' },
     bob: { id: bob, login: 'Bob', name: null },
     carol: { id: carol, login: 'carol', name: null },
   }, 'by the login as asked, matched as GitHub matches logins; a linked account as its user; none of No access, unknown or claimed twice')
+  // By the account's id, which GitHub never gives another, whatever login it
+  // is named by now.
+  assert.deepEqual(await db.listUsersByAccount([{ login: 'renamed', githubId: 7005 }, { login: 'Renamed', githubId: 7011 }, { login: 'alice-new', githubId: 7010 },
+    { login: 'alice', githubId: 7999 }, { login: 'pending', githubId: 7003 }, { login: 'bob', githubId: null }]), {
+    renamed: { id: dave, login: 'renamed', name: null },
+    Renamed: { id: carol, login: 'carol', name: null },
+    'alice-new': { id: alice, login: 'alice', name: 'Alice' },
+    bob: { id: bob, login: 'Bob', name: null },
+  }, 'a login two users claim, by its account; a linked account renamed since, as its user; a login another account holds now, no one\'s; none of No access')
   await db.setProfileChoice('alice-session', { name: work.id }, 3)
-  assert.deepEqual(await db.listUsersByLogin(['alice-work']), { 'alice-work': { id: alice, login: 'alice', name: 'Alice at Work' } }, 'the name they chose')
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice-work')), { 'alice-work': { id: alice, login: 'alice', name: 'Alice at Work' } }, 'the name they chose')
   await db.setUserRole(pending, 'view')
-  assert.deepEqual(Object.keys(await db.listUsersByLogin(['pending'])), ['pending'], 'once approved')
+  assert.deepEqual(Object.keys(await db.listUsersByAccount(byLogin('pending'))), ['pending'], 'once approved')
   await db.unlinkGithubAccount('alice-session', work.id, 4)
-  assert.deepEqual(await db.listUsersByLogin(['alice-work']), {}, 'an unlinked account is no one\'s')
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice-work')), {}, 'an unlinked account is no one\'s')
+  assert.deepEqual(await db.listUsersByAccount([{ login: 'alice-work', githubId: 7010 }]), {}, 'by its id neither')
 }

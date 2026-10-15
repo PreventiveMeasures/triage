@@ -23,7 +23,7 @@ const stats = {
   commit_activity: [{ week: w1, days: [0, 1, 2, 0, 0, 0, 0], total: 3 }, { week: w0, days: [1, 0, 0, 0, 0, 0, 0, 9], total: 1 }, { week: 'x' }],
   code_frequency: [[w0, 10, -4], [w1, 5, -1], [older, 100, -100]],
   contributors: [
-    { author: { login: 'ada' }, weeks: [{ w: older, a: 9, d: 9, c: 9 }, { w: w1, a: 3, d: 1, c: 2 }, { w: w0, a: 0, d: 0, c: 0 }] },
+    { author: { login: 'ada', id: 7 }, weeks: [{ w: older, a: 9, d: 9, c: 9 }, { w: w1, a: 3, d: 1, c: 2 }, { w: w0, a: 0, d: 0, c: 0 }] },
     { author: { login: 'grace' }, weeks: [{ w: w0, a: 1, d: 0, c: 5 }] },
     { author: null, weeks: [{ w: w0, a: 1, d: 0, c: 50 }] },
     { author: { login: 'not a login!' }, weeks: [{ w: w0, a: 1, d: 0, c: 50 }] },
@@ -38,7 +38,7 @@ const stats = {
 const shaOf = at => at.toString(16).padStart(40, '0')
 const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({ oid: shaOf(at), messageHeadline: `Commit ${at}`,
   committedDate: new Date(now - at * step).toISOString(), additions: at % 5, deletions: 1,
-  author: { name: 'Ada', date: new Date(now - at * step + 2 * HOUR).toISOString().replace('Z', '+02:00'), user: { login: 'ada' } },
+  author: { name: 'Ada', date: new Date(now - at * step + 2 * HOUR).toISOString().replace('Z', '+02:00'), user: { login: 'ada', databaseId: 7 } },
   parents: { nodes: at + 1 < length ? [{ oid: shaOf(at + 1) }] : [] } }))
 
 // GitHub, as the pulse reads it: each statistic answered by `answer`, the
@@ -139,13 +139,13 @@ test('a commit dated before the year whose parent is dated in it, its clock behi
 
 test('a year counted from its commits: a week a row from its first Sunday, merges left out; its lines; contributors by login, else name; hours in each author\'s own time zone', () => {
   const first = Date.UTC(2025, 9, 19)
-  const commit = (sha, more) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', committedAt: first + DAY + 10 * HOUR, additions: 3, deletions: 1,
+  const commit = (sha, more) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: first + DAY + 10 * HOUR, additions: 3, deletions: 1,
     authoredAt: first + DAY + 10 * HOUR, authorZone: 120, ...more })
   const read = commitStats([
     commit('a'),
     commit('merge', { parents: ['p', 'q'] }),
     commit('before', { committedAt: first - DAY }),
-    commit('unnamed', { authorLogin: null, authorName: 'Alan Kay', committedAt: first + WEEK + 2 * DAY + 23 * HOUR, additions: 10, deletions: 0, authorZone: null }),
+    commit('unnamed', { authorLogin: null, authorId: null, authorName: 'Alan Kay', committedAt: first + WEEK + 2 * DAY + 23 * HOUR, additions: 10, deletions: 0, authorZone: null }),
     commit('e', { committedAt: first + WEEK, additions: 1, deletions: 1 }),
     commit('undated', { committedAt: null }),
   ], first)
@@ -153,8 +153,8 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1 })
   assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1 })
   assert.deepEqual(read.contributors, [
-    { login: 'ada', name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
-    { login: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]] },
+    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
+    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]] },
   ])
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
@@ -168,7 +168,8 @@ test('a year past YEAR_COMMITS is GitHub\'s statistics, each asked once, togethe
     { week: w0 * 1000, days: [1, 0, 0, 0, 0, 0, 0], commits: 1, additions: null, deletions: null },
     { week: w1 * 1000, days: [0, 1, 2, 0, 0, 0, 0], commits: 3, additions: null, deletions: null },
   ])
-  assert.deepEqual(read.contributors, [{ login: 'grace', name: null, weeks: [[w0 * 1000, 5, 0, 0]] }, { login: 'ada', name: null, weeks: [[w1 * 1000, 2, 0, 0]] }])
+  assert.deepEqual(read.contributors, [{ login: 'grace', id: null, name: null, weeks: [[w0 * 1000, 5, 0, 0]] },
+    { login: 'ada', id: 7, name: null, weeks: [[w1 * 1000, 2, 0, 0]] }])
   assert.deepEqual([read.punch[0][9], read.punch[6][23], read.punch[2][3], read.lines], [4, 2, 0, null])
   const lines = await repositoryLines('org/repo', 'token', w0 * 1000)
   assert.deepEqual(lines, { weeks: [[w0 * 1000, 10, 4], [w1 * 1000, 5, 1]], contributors: [{ login: 'ada', weeks: [[w1 * 1000, 3, 1]] }, { login: 'grace', weeks: [[w0 * 1000, 1, 0]] }],
@@ -199,7 +200,7 @@ test('a period starts on the Sunday (UTC) that many weeks back, this week the la
 })
 
 test('the pull requests and issues of a period are searched by the day, and over the same days a period earlier; the latest listed first', async t => {
-  const node = (number, more) => ({ number, title: ` Pull ${number} `, createdAt: '2026-10-01T00:00:00Z', author: { login: 'ada' }, ...more })
+  const node = (number, more) => ({ number, title: ` Pull ${number} `, createdAt: '2026-10-01T00:00:00Z', author: { login: 'ada', databaseId: 7 }, ...more })
   const asked = github(t, { graphql: () => ({ data: {
     merged: { issueCount: 12, nodes: [node(4, { pullState: 'MERGED', isDraft: false, mergedAt: '2026-10-02T00:00:00Z' }),
       node(5, { pullState: 'MERGED', isDraft: false, mergedAt: '2026-10-09T00:00:00Z' }), null, node(-1, { pullState: 'MERGED' })] },
@@ -222,9 +223,9 @@ test('the pull requests and issues of a period are searched by the day, and over
   assert.deepEqual([read.since, read.previousSince], [Date.UTC(2026, 8, 20), Date.UTC(2026, 7, 23)])
   assert.deepEqual([read.merged.count, read.merged.previous, read.created.count, read.created.previous], [12, 8, 0, 0])
   assert.deepEqual(read.merged.items.map(item => item.number), [5, 4], 'the latest merged first, those not one left out')
-  assert.deepEqual(read.merged.items[0], { number: 5, title: 'Pull 5', author: 'ada', at: Date.UTC(2026, 9, 9), createdAt: Date.UTC(2026, 9, 1), kind: 'pulls', state: 'merged', draft: false })
-  assert.deepEqual(read.opened.items[0], { number: 6, title: 'Pull 6', author: null, at: Date.UTC(2026, 9, 1), createdAt: Date.UTC(2026, 9, 1), kind: 'pulls', state: 'open', draft: true })
-  assert.deepEqual(read.closed.items[0], { number: 3, title: 'Pull 3', author: 'ada', at: Date.UTC(2026, 9, 3), createdAt: Date.UTC(2026, 9, 1), kind: 'issues', state: 'closed',
+  assert.deepEqual(read.merged.items[0], { number: 5, title: 'Pull 5', author: 'ada', authorId: 7, at: Date.UTC(2026, 9, 9), createdAt: Date.UTC(2026, 9, 1), kind: 'pulls', state: 'merged', draft: false })
+  assert.deepEqual(read.opened.items[0], { number: 6, title: 'Pull 6', author: null, authorId: null, at: Date.UTC(2026, 9, 1), createdAt: Date.UTC(2026, 9, 1), kind: 'pulls', state: 'open', draft: true })
+  assert.deepEqual(read.closed.items[0], { number: 3, title: 'Pull 3', author: 'ada', authorId: 7, at: Date.UTC(2026, 9, 3), createdAt: Date.UTC(2026, 9, 1), kind: 'issues', state: 'closed',
     reason: 'not-planned' })
 })
 
@@ -259,7 +260,7 @@ test('the pulse counts the year from the default branch\'s commits as Commits ke
   assert.equal(second.body.stats.weeks.length, 52)
   assert.equal(second.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0), 700)
   assert.equal(second.body.stats.weeks.reduce((sum, week) => sum + week.additions, 0), 1400, 'its lines, as each commit tells them')
-  assert.deepEqual(second.body.stats.contributors.map(person => [person.login, person.name]), [['ada', 'Ada']])
+  assert.deepEqual(second.body.stats.contributors.map(person => [person.login, person.id, person.name]), [['ada', 7, 'Ada']])
   assert.equal(second.body.stats.lines, true)
   assert.equal(graphQueries(asked), 7, 'the rest read, those kept not again')
   const reads = asked.length
