@@ -96,7 +96,12 @@ function readMore(key, entry, ask) {
     entry.more = answer.more
     entry.after = answer.after
     entry.until = Date.now() + KEEP_MS
+    // A page adding no session leaves the next to a click: most pull
+    // requests and commits may be no agent's, and its button, still near,
+    // would read the whole history on its own.
+    const shown = entry.sessions.length
     reconstructed(entry)
+    entry.stalled = entry.sessions.length <= shown
     return null
   }, err => {
     if (err?.name !== 'AbortError') entry.moreError = err?.message || 'More could not be read.'
@@ -170,7 +175,8 @@ class RepositoryAgents extends LitElement {
 
   // More read as their button nears the end of the scroll, as the Issues
   // tab's are (repository-issues.js): not after one failed, nor while a
-  // filter picks among those read. Watched again after every update.
+  // filter picks among those read, nor after a page that added no session,
+  // till a click reads on. Watched again after every update.
   updated() {
     const button = this.querySelector('.issues-more > button')
     if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
@@ -179,7 +185,8 @@ class RepositoryAgents extends LitElement {
   }
 
   readNear(button) {
-    if (button === this._moreButton && button.isConnected && !button.disabled && !this._filter.trim() && !button.parentElement.querySelector('[role=alert]')) button.click()
+    if (button === this._moreButton && button.isConnected && !button.disabled && !this._filter.trim() && !button.parentElement.querySelector('[role=alert]')
+      && !this.list().entry.stalled) button.click()
   }
 
   list() {
@@ -225,7 +232,7 @@ class RepositoryAgents extends LitElement {
         : html`<p class="history-note">${entry.sessions.length > 0 && this._filter.trim() ? `None of the ${what} read match.` : `No ${what} among those read.`}</p>`}
       ${entry.more || entry.moreError ? html`<div class="history-more issues-more">
         ${entry.moreError ? html`<span role="alert">${entry.moreError}</span>` : nothing}
-        <button type="button" ?disabled=${entry.loadingMore} @click=${more}>${entry.loadingMore ? 'Reading…' : 'More'}</button>
+        <button type="button" ?disabled=${entry.loadingMore} @click=${() => { entry.stalled = false; more() }}>${entry.loadingMore ? 'Reading…' : 'More'}</button>
       </div>` : nothing}
     </div>`
   }

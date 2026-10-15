@@ -103,6 +103,33 @@ test('the agent picked, and the filter, pick among the sessions read; a session 
   assert.equal(sessionLink({ ...base, branches: ['codex/a b'] }, null), null, 'a repository unnamed yet links none on GitHub')
 })
 
+test('more read on their own only while each page adds a session; after one adding none, a click reads on', async () => {
+  // Pages of pull requests no agent made: none adds a session.
+  answer = (repoId, { pulls }) => Promise.resolve(pulls ? { pulls: [pull(Number(pulls.slice(2)), 'deps/bump', none)], commits: [], more: true, after: { pulls: `p_${Number(pulls.slice(2)) + 1}`, commits: null } }
+    : firstPage())
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  let clicks = 0
+  const button = { isConnected: true, disabled: false, parentElement: { querySelector: () => null }, click() { clicks++; view.list().more() } }
+  view.querySelector = () => button
+  const updated = near => { watching.delete(button); view.updated(); watching.get(button)(near) }
+  updated(true)
+  await setImmediate()
+  assert.equal(clicks, 1, 'the first page\'s sessions leave room: it reads on')
+  updated(true)
+  await setImmediate()
+  assert.equal(clicks, 1, 'that page added none: it waits')
+  assert.equal(requests.length, 2)
+  // A click reads on, and auto-reading with it, till a page adds none again.
+  const [clicked] = templateText(view.render()).match(/@click=\(\) => \{ entry\.stalled = false; more\(\) \}/u) ?? []
+  assert.ok(clicked, 'its button clears the wait as it reads')
+  view.list().entry.stalled = false
+  updated(true)
+  await setImmediate()
+  assert.equal(requests.length, 3)
+})
+
 test('more read as their button nears the end, but not while a filter picks; a list that fails says why', async () => {
   answer = () => Promise.resolve(firstPage())
   const view = shown('org/repo')

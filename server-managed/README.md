@@ -1637,7 +1637,10 @@ it has no pull request, shown once no pull request left to read can be its
 (where some are, only a branch newer than the oldest read). **All**, **Claude** and **Codex** pick whose, each
 with how many; a **Filter** picks by any word of a title, author, branch,
 number or session. Pages read on as the end of the scroll nears, as History's
-do, the sessions made again of all read.
+do, the sessions made again of all read, but only while each adds a session:
+most pull requests and commits may be no agent's, so after a page adding
+none, the next waits for **More** to be clicked rather than read the whole
+history on its own.
 
 `GET /api/admin/repositories/agents?repoId=…[&pulls=…][&commits=…]` answers
 `{ pulls, commits, issues, branches, more, after: { pulls, commits } }` from
