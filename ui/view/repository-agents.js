@@ -328,8 +328,8 @@ class RepositoryAgents extends LitElement {
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
   // title, of two at most, opening its popup (where it ran, as a link); its
-  // author, age, how many tasks (where more than one, and not as many as its
-  // pull requests' or commits' alone, which their chips count) and lines;
+  // author, age, how many tasks (where its pull requests' and commits'
+  // chips don't count them all) and lines;
   // its pull requests, commits and
   // issues, those that fit, each with how many follow it, seen only past the
   // last of them shown (report.css); and its branch.
@@ -338,9 +338,9 @@ class RepositoryAgents extends LitElement {
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const tasks = session.pulls.length + session.commits.length
-    // How many tasks, said where its chips don't: more than one, and not as
-    // many as its pull requests' or its commits' alone.
-    const counted = tasks !== 1 && tasks !== session.pulls.length && tasks !== session.commits.length
+    // How many tasks, said only where its chips, its pull requests' and its
+    // commits', don't count them all.
+    const counted = tasks !== session.pulls.length + session.commits.length
     const chips = [
       ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`,
         { kind: 'pulls', ...pull }]),

@@ -1862,9 +1862,8 @@ session whose pull request closes it, or whose branch the Claude GitHub App
 named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
 mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
 wrapping: its title (its first task's, of two lines at most); its author,
-age, how many tasks it holds (only where more than one, and not as many as
-its pull requests' or its commits' alone, which their chips count; its popup
-always says) and its lines; its pull requests, commits and
+age, how many tasks it holds (only where its pull requests' and commits'
+chips don't count them all; its popup always says) and its lines; its pull requests, commits and
 issues in their states' colors, as many as fit and how many more; and its
 branch. An app agent's mark is its GitHub App's or account's avatar, which the
 server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
