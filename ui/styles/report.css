@@ -2290,6 +2290,19 @@ body.report-fullscreen {
   & #report header.page-head { display: none; }
   & .bundles-slide-bar { display: none; }
   & #report { max-width: none; padding: .5rem; }
+
+  /* The Code tab's, from the lockfile viewer's button: the file's panel
+     alone, without the file tree, the terminal pane (kept running) or the
+     header's back and forward, until fullscreen is left. The file's header,
+     now the top row, keeps clear of the corner's floating controls. */
+  & .bundle-code-view {
+    & > .bundle-code-rail,
+    & > bundle-code-splitter,
+    & bundle-code-terminal-splitter,
+    & .bundle-code-terminal,
+    & .bundle-code-main-bar > .bundle-code-file-nav { display: none; }
+    & .bundle-code-main-bar { padding-right: var(--graph-fullscreen-inset); }
+  }
 }
 
 /* Bundle source viewer — modal overlay shown on top of the
