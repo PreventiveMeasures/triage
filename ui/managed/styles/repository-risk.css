@@ -47,6 +47,9 @@
 }
 .risk-metric-label { font-size: .7rem; letter-spacing: .02em; text-transform: uppercase; }
 .risk-metric-value { color: var(--text); font-size: .95rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A count of no total as wide as three digits at least, so that its metric
+   stays as wide from 1 to 999. */
+.risk-metric-value:not(:has(.risk-metric-of)) { min-width: 3ch; }
 .risk-metric-of { color: var(--muted); font-weight: 400; }
 .risk-metric-slash { margin: 0 .1em; }
 .risk-metric.risk-high .risk-metric-value { color: var(--high); }
