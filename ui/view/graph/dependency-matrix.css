@@ -101,7 +101,7 @@ h4 {
 .matrix-actions { display: flex; gap: 5px; margin: 12px 0; font-size: 11px; }
 .matrix-actions button { white-space: nowrap; }
 .matrix-import-group { padding: 6px 0; border-bottom: 1px solid var(--border); }
-.matrix-import-group button {
+.matrix-import-group :is(button, .matrix-import-copy) {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -117,6 +117,6 @@ h4 {
 }
 .matrix-import-group .matrix-import-target { font-weight: 600; }
 .matrix-import-sources { margin: 0 0 0 10px; padding: 0; list-style: none; }
-.matrix-import-sources button { color: var(--muted); }
+.matrix-import-sources :is(button, .matrix-import-copy) { color: var(--muted); }
 .matrix-import-sources span:last-child { min-width: 0; }
 .matrix-import-excluded { display: block; margin-left: 12px; color: var(--muted); font-size: 10px; }

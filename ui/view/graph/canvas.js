@@ -2,7 +2,7 @@ import { html, render } from 'lit'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
-import { buildPackageGraph, pkgLabelOf, pkgRelative, withoutPackages } from './data.js'
+import { buildPackageGraph, graphTerms, packageVersions, pkgLabelOf, pkgRelative, withoutPackages } from './data.js'
 import { pkgColor } from './utils.js'
 import { GRAPH_BACKGROUNDS } from './colors.js'
 import { forceLayout } from './force-layout.js'
@@ -210,11 +210,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // persisted from another bundle can't engage on a graph whose
   // topbar doesn't even offer the switch — and outside a package-
   // focus drill-in, which is a file-level mode and takes priority
-  // (back out of focus and the packages view resumes).
+  // (back out of focus and the packages view resumes). A graph of
+  // packages alone (`packagesOnly`) is always at package altitude.
   const layersOn = () => graph.supportsLayers && graph2.bundleLayout === 'layers' && !graph2.focusedPkg
   const dependenciesOn = () => graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg
   const dependencyPackagesOn = () => dependenciesOn() && !dependencyFilesOn(graph, graph2.dependencyPackagesView)
-  const pkgViewOn = () => layersOn() || (graph2.bundleLayout === 'graph' && graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg)
+  const pkgViewOn = () => layersOn() || (graph2.bundleLayout === 'graph'
+    && (graph.packagesOnly || graph2.packagesView && (graph.canPackagesView ?? false)) && !graph2.focusedPkg)
   let layers = null
   let dependencyLayout = null
   // The Graph view's file graph and the package graph both leave out
@@ -1407,20 +1409,26 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   // Packages-view tooltip — same chrome, package-level facts:
-  // name, file count + summed source bytes, severity chips.
+  // name, file count + summed source bytes, severity chips. A graph
+  // of packages alone counts dependents in every layout, and its
+  // members are installed copies, so it tells their versions.
   function showPkgTooltip(p, cx, cy) {
     if (!tooltip) return
     const col = pkgColor(p.pkg)
     const sizeText = formatBytes(p.size)
+    const versions = graph.packagesOnly ? packageVersions(graph, p.pkg) : []
+    const members = graph.packagesOnly
+      ? versions.length > 1 ? `${versions.length} versions` : versions[0] ?? ''
+      : `${p.fileCount} ${p.fileCount === 1 ? 'file' : 'files'}${sizeText ? ` · ${sizeText}` : ''}`
     render(html`
       <div class="g2-tt-path">${layersOn() ? layerLabel(p.pkg) : p.label}</div>
-      ${dependenciesOn() ? html`<div class="g2-tt-pkg">${getDependencyGraph().importedBy.get(p.pkg).length} importers · ${getDependencyGraph().importsOf.get(p.pkg)?.length ?? 0} dependencies</div>` : null}
+      ${dependenciesOn() || graph.packagesOnly ? html`<div class="g2-tt-pkg">${getDependencyGraph().importedBy.get(p.pkg)?.length ?? 0} ${graphTerms(graph).importers} · ${getDependencyGraph().importsOf.get(p.pkg)?.length ?? 0} dependencies</div>` : null}
       ${layersOn() ? html`<div class="g2-tt-pkg">${layers.depth.has(p.pkg)
         ? `Level ${layers.depth.get(p.pkg)} · shortest import distance from App`
         : 'No known import path from App'}</div>` : null}
       <div class="g2-tt-head">
         <span class="g2-tt-dot" style=${`background:${col}`}></span>
-        <span class="g2-tt-pkg">${p.fileCount} ${p.fileCount === 1 ? 'file' : 'files'}${sizeText ? ` · ${sizeText}` : ''}</span>
+        <span class="g2-tt-pkg">${members}</span>
       </div>
       ${p.totalIssues > 0 ? renderSevChips(p.own) : null}
     `, tooltip)
