@@ -58,7 +58,10 @@ import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurren
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
-import { openDeleteBundleDialog, openDeleteReportDialog, openDetachBundleDialog, openDetachReportDialog, openLeaveWorkspaceDialog, openNewWorkspaceDialog, openPersistenceDegradedDialog, openProxyAuthDialog, openWorkspaceShareLinkDialog } from './lazy-dialogs.js'
+import { openDeleteBundleDialog, openDeleteReportDialog, openDetachBundleDialog, openDetachReportDialog, openLeaveWorkspaceDialog, openNewWorkspaceDialog, openPersistenceDegradedDialog, openWorkspaceShareLinkDialog } from './lazy-dialogs.js'
+// Up front, not in the dialogs' bundle: it opens when this origin's requests
+// are being redirected to a login proxy, which the bundle's would be too.
+import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
 import { FILE_ICONS, displayName, groupOf, isLinksFile, reportGroup } from './file-display.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { openBundle, selectBundle } from './bundle-load.js'
@@ -1585,19 +1588,21 @@ triageSync.onStatusChange(renderSyncStatus)
 // `degradedShownThisEpisode` makes it one-shot (not re-shown on unrelated
 // re-renders) and resets when the latch clears, so a fresh degradation
 // re-notifies. If the dialog can't open because another modal is up
-// (modal-conflict → resolves `{ shown: false }`), retry on a short
-// delay while still degraded — otherwise the notice would be skipped
-// for the whole episode (the amber badge still shows meanwhile).
+// (modal-conflict → resolves `{ shown: false }`) or the dialogs' bundle
+// didn't load (rejects), retry on a short delay while still degraded —
+// otherwise the notice would be skipped for the whole episode (the
+// amber badge still shows meanwhile).
 let degradedDialogInFlight = false
 let degradedShownThisEpisode = false
 async function showDegradedDialogOnce() {
   if (!triageSync.persistenceDegraded || degradedShownThisEpisode || degradedDialogInFlight) return
   degradedDialogInFlight = true
-  const { shown } = await openPersistenceDegradedDialog()
+  const { shown, unloaded } = await openPersistenceDegradedDialog().catch(() => ({ shown: false, unloaded: true }))
   degradedDialogInFlight = false
   if (shown) { degradedShownThisEpisode = true; return }
-  // Couldn't show (another modal was open). Retry while still degraded.
-  if (triageSync.persistenceDegraded) setTimeout(showDegradedDialogOnce, 1500)
+  // Couldn't show (another modal was open, or no bundle). Retry while still
+  // degraded, a bundle that didn't load less often.
+  if (triageSync.persistenceDegraded) setTimeout(showDegradedDialogOnce, unloaded ? 30_000 : 1500)
 }
 triageSync.onPersistenceDegraded((degraded) => {
   renderSyncStatus()

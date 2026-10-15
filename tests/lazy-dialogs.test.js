@@ -3,24 +3,27 @@ import { readFile, readdir } from 'node:fs/promises'
 import { test } from 'node:test'
 
 // ui/dialogs.js, its own bundle, exports every dialog's opener; view/lazy-dialogs.js
-// stands one in for each, under its name, loading the bundle on first use.
-// Read as written: the dialogs themselves want a browser.
+// stands one in for each, under its name, loading the bundle on first use. The
+// proxy-auth dialog alone is held up front, imported by sidebar.js itself: it
+// opens when this origin's requests are redirected to a login proxy. Read as
+// written: the dialogs want a browser.
 const root = new URL('../', import.meta.url)
 const read = path => readFile(new URL(path, root), 'utf8')
 const OPENER = /^export (?:(?:async )?function |const )((?:open|resolve)\w+)\b/gmu
+const UP_FRONT = { 'ui/view/sidebar.js': ['./dialogs/proxy-auth-dialog.js'] }
 
-test('ui/dialogs.js exports every dialog’s opener, and lazy-dialogs.js stands in for each by name', async () => {
+test('every dialog’s opener but the one up front is in ui/dialogs.js, with a stand-in in lazy-dialogs.js', async () => {
   const files = (await readdir(new URL('ui/view/dialogs/', root))).filter(file => file.endsWith('-dialog.js') && file !== 'app-dialog.js')
   const openers = []
   for (const file of files) for (const [, name] of (await read(`ui/view/dialogs/${file}`)).matchAll(OPENER)) openers.push(`${name} ${file}`)
   const exported = [...(await read('ui/dialogs.js')).matchAll(/^export \{ (\w+) \} from '\.\/view\/dialogs\/([\w-]+\.js)'$/gmu)]
-  assert.deepEqual(exported.map(([, name, file]) => `${name} ${file}`).toSorted(), openers.toSorted())
+  assert.deepEqual([...exported.map(([, name, file]) => `${name} ${file}`), 'openProxyAuthDialog proxy-auth-dialog.js'].toSorted(), openers.toSorted())
   const standIns = [...(await read('ui/view/lazy-dialogs.js')).matchAll(/^export const (\w+) = opener\('(\w+)'\)$/gmu)]
   for (const [, name, opened] of standIns) assert.equal(opened, name)
   assert.deepEqual(standIns.map(([, name]) => name).toSorted(), exported.map(([, name]) => name).toSorted())
 })
 
-test('outside view/dialogs/, dialogs are imported only through lazy-dialogs.js', async () => {
+test('outside view/dialogs/, dialogs are imported only through lazy-dialogs.js, but the one up front', async () => {
   const sources = []
   for (const dir of ['ui', 'client']) {
     for (const file of await readdir(new URL(`${dir}/`, root), { recursive: true })) {
@@ -30,8 +33,9 @@ test('outside view/dialogs/, dialogs are imported only through lazy-dialogs.js',
   }
   const direct = []
   for (const path of sources) {
-    const text = await read(path)
-    if (/(?:\bfrom\s*|\bimport\s*\(?\s*)['"][^'"]*\/dialogs\/[^'"]+['"]/u.test(text)) direct.push(path)
+    for (const [, specifier] of (await read(path)).matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]*\/dialogs\/[^'"]+)['"]/gu)) {
+      if (!UP_FRONT[path]?.includes(specifier)) direct.push(`${path} ${specifier}`)
+    }
   }
   assert.deepEqual(direct, [])
 })

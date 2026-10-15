@@ -7,11 +7,13 @@ import { templateText } from './_lit.js'
 
 // The browser loads ui/compare.js beside view.js, which compare-load.js
 // imports lazily (lazy-entry.js). Route that import to a stand-in, failing
-// while `offline` is set.
+// while `offline` is set, and record what each attempt asks for.
 let offline = true
+const asked = []
 const entryUrl = new URL('../ui/view/lazy-entry.js', import.meta.url).href
 registerHooks({ resolve(specifier, context, nextResolve) {
-  if (specifier !== './compare.js' || context.parentURL !== entryUrl) return nextResolve(specifier, context)
+  if (specifier.split('?')[0] !== './compare.js' || context.parentURL !== entryUrl) return nextResolve(specifier, context)
+  asked.push(specifier)
   if (offline) throw new TypeError('Failed to fetch dynamically imported module')
   return { shortCircuit: true, url: 'data:text/javascript,export {}' }
 } })
@@ -34,4 +36,5 @@ test('Compare tabs wait for their bundle, say when it fails, and retry', async (
   await setImmediate()
   assert.equal(renders, 3, 'the bundle landing renders again')
   assert.match(templateText(withCompare(compare)), /<bundle-compare>/u)
+  assert.deepEqual(asked, ['./compare.js', './compare.js?retry=1'], 'a browser keeps a failed fetch failed: the retry asks anew')
 })

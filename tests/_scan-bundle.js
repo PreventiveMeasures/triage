@@ -9,7 +9,7 @@ import { registerHooks } from 'node:module'
 const loader = new URL('../ui/view/lazy-entry.js', import.meta.url).href
 const page = new URL('../ui/scan/page.js', import.meta.url).href
 registerHooks({ resolve(specifier, context, nextResolve) {
-  if (specifier !== './scan.js' || context.parentURL !== loader) return nextResolve(specifier, context)
+  if (specifier.split('?')[0] !== './scan.js' || context.parentURL !== loader) return nextResolve(specifier, context)
   return { shortCircuit: true, url: page }
 } })
 await import(page)

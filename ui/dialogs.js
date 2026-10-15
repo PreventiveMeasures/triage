@@ -2,7 +2,8 @@
 // own. `view/lazy-dialogs.js` imports it by a runtime string the first time a
 // dialog opens, so neither view.js nor client-managed.js carries them. Built
 // with them, it takes lit and the client state from the same chunks, and so
-// the same instances. Its exports are lazy-dialogs.js's, name for name.
+// the same instances. Its exports are lazy-dialogs.js's stand-ins, name for
+// name, but for the proxy-auth dialog, which sidebar.js holds up front.
 export { openAdvisoryDetailsDialog } from './view/dialogs/advisory-details-dialog.js'
 export { openCommentDialog } from './view/dialogs/comment-dialog.js'
 export { openDeleteBundleDialog } from './view/dialogs/delete-bundle-dialog.js'
@@ -29,7 +30,6 @@ export { openObjstoreRecoveryDialog } from './view/dialogs/objstore-recovery-dia
 export { openPasskeySetupDialog } from './view/dialogs/passkey-setup-dialog.js'
 export { openPasskeyUnlockDialog } from './view/dialogs/passkey-unlock-dialog.js'
 export { openPersistenceDegradedDialog } from './view/dialogs/persistence-degraded-dialog.js'
-export { openProxyAuthDialog } from './view/dialogs/proxy-auth-dialog.js'
 export { openReportCompareDialog } from './view/dialogs/report-compare-dialog.js'
 export { openRevalidationConflictsDialog } from './view/dialogs/revalidation-conflicts-dialog.js'
 export { openStoragePersistDialog } from './view/dialogs/storage-persist-dialog.js'

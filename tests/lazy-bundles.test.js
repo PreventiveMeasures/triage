@@ -21,12 +21,15 @@ function loads(entry) {
 const managed = loads('out/client-managed.js'), view = loads('out/view.js')
 const compare = loads('out/compare.js'), dialogs = loads('out/dialogs.js'), scan = loads('out/scan.js')
 const isDialog = path => path.startsWith('ui/view/dialogs/')
+// The proxy-auth dialog is held up front (sidebar.js), with what it imports.
+const upFront = new Set(['ui/view/dialogs/proxy-auth-dialog.js'])
+for (const path of upFront) for (const { path: next, kind } of metafile.inputs[path].imports) if (kind === 'import-statement' && isDialog(next)) upFront.add(next)
 
-test('view.js loads no Scans, Compare or dialog', () => {
+test('view.js loads no Scans, Compare or dialog but the one held up front', () => {
   for (const path of ['ui/scan/page.js', 'ui/view/local-scan-page.js', 'ui/view/bundle-compare.js', 'ui/view/npm-review.js', 'ui/view/dependency-review-list.js']) {
     assert.ok(!view.has(path), path)
   }
-  assert.deepEqual([...view].filter(isDialog), [])
+  assert.deepEqual([...view].filter(isDialog).toSorted(), [...upFront].toSorted())
   assert.ok(view.has('ui/view/lazy-dialogs.js') && view.has('ui/view/scan-load.js') && view.has('ui/view/compare-load.js'))
 })
 
