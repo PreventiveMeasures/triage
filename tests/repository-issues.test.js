@@ -50,10 +50,12 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   assert.match(text, /4<span class="sr-only"> comments<\/span>/u)
   assert.match(text, /\(no title\)/u)
   assert.equal(text.split('<li ').length - 1, 2, 'one GitHub names no number for left out')
-  // Closed reads its own list.
+  // Closed reads its own list, the counts read kept while it does.
   view.pick('closed')
-  view.render()
+  const reading = templateText(view.render())
   assert.deepEqual(requests.at(-1), [7, 'issues', { state: 'closed', after: null }])
+  assert.match(reading, /Reading the issues…/u)
+  assert.match(reading, /Open <span class="issues-count">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed <span class="issues-count">40<\/span>/u)
   view.pick('open')
 })
 
