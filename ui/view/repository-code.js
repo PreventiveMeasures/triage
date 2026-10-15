@@ -166,19 +166,16 @@ export function repositoryCodePending(entry) {
 const LISTED_FAILURES = new Set(['directory-too-large', 'no-directory'])
 
 // A directory that failed to open lists its directories to open instead,
-// where it has any, at the commit its listing read; that commit, where it
-// was opened by a name, its route then naming it, as History reads it.
+// where it has any, at the commit its listing read.
 async function listDirectories(opening, err) {
   if (!LISTED_FAILURES.has(err?.code)) return
   try {
     const data = await fetchRepositoryContents(opening.repoId, routeRef(opening), opening.path, { signal: currentViewSignal() })
     const directories = (data.entries ?? []).filter(entry => entry.type === 'dir').toSorted((a, b) => a.name.localeCompare(b.name))
-    const shown = state.repositoryCodeOpening
-    if (!shown?.error || state.currentView !== 'repository-code' || !sameDirectory(shown, opening) || !COMMIT.test(data.commit ?? '')) return
-    const commit = data.commit.toLowerCase()
-    state.repositoryCodeOpening = { ...shown, commit: shown.commit ?? commit, ...directories.length > 0 ? { listing: { commit, directories } } : {} }
-    if (!shown.commit) managedHistory.replaceRoute({ view: 'repository-code', repoId: shown.repoId, commit, path: shown.path, bundleTab: shown.tab })
-    render()
+    if (state.repositoryCodeOpening?.error && sameDirectory(state.repositoryCodeOpening, opening) && directories.length > 0 && COMMIT.test(data.commit)) {
+      state.repositoryCodeOpening = { ...state.repositoryCodeOpening, listing: { commit: data.commit.toLowerCase(), directories } }
+      render()
+    }
   } catch {}
 }
 
@@ -230,9 +227,13 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       if (data?.repoId !== repoId || (commit && data.commit !== commit) || data.path !== path || !COMMIT.test(data.commit ?? '')) throw new Error('The server answered with another directory.')
     } catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false
-      showOpening({ ...opening, error: err.message, code: err?.code ?? null })
-      void listDirectories(opening, err)
-      return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+      // One too large names the commit it was read at, its route then naming
+      // it, as History reads it.
+      const failedAt = !commit && err?.code === 'directory-too-large' && COMMIT.test(err.commit ?? '') ? err.commit.toLowerCase() : commit
+      const failure = { ...opening, commit: failedAt, error: err.message, code: err?.code ?? null }
+      showOpening(failure)
+      void listDirectories(failure, err)
+      return { view: 'repository-code', repoId, commit: failedAt, path, bundleTab: tab }
     } finally {
       // Given up, superseded or failed, the one shown is itself again.
       if (pending && state.repositoryCodePending === pending) {

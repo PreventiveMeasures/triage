@@ -1404,7 +1404,8 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
       throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
     }))
-    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) { sendJson(res, 413, { error: 'directory-too-large' }); return }
+    // Too large names the commit it was read at, for History to read.
+    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) { sendJson(res, 413, { error: 'directory-too-large', commit }); return }
     if (res.destroyed) return
     const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
     res.once('close', load.release)

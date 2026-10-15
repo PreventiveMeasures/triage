@@ -1525,9 +1525,9 @@ commit shown is marked, and, where every branch's latest commits don't reach it,
 a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
 commit's code, named by the branch, else the tag, naming it. A directory too
-large to open shows its History all the same, at the commit its listing of
-directories read (its route then naming that commit), its other tabs saying
-why they can't open. What it read is kept for the session five minutes.
+large to open shows its History all the same, at the commit it was read at,
+which the `413 directory-too-large` names and its route then names, its other
+tabs saying why they can't open. What it read is kept for the session five minutes.
 
 `GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
 page of a revision's history, `{ commit, path, page, commits, more }`, each

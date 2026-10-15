@@ -7,7 +7,7 @@ import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const state = {}
-const contentsRequests = [], navigations = [], replaced = [], requests = []
+const contentsRequests = [], navigations = [], requests = []
 let answer = null, contents = null
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
@@ -15,7 +15,7 @@ mock.module('../client/index.js', { exports: {
 } })
 mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
-mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: { active: true, navigate: route => { navigations.push(route) }, replaceRoute: route => { replaced.push(route) } } } })
+mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: { active: true, navigate: route => { navigations.push(route) } } } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
   fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
@@ -38,7 +38,6 @@ beforeEach(() => {
   requests.length = 0
   contentsRequests.length = 0
   navigations.length = 0
-  replaced.length = 0
   answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
   contents = () => Promise.resolve({ commit, entries: [] })
   // A session of its own each, so nothing kept from another test answers.
@@ -174,20 +173,20 @@ test('another revision loading names itself in place of the directory shown, whi
 })
 
 test('a directory that fails to open says why at its route, and lists its directories to open instead where it is too large or has none to read', async () => {
-  answer = () => Promise.reject(Object.assign(new Error('This directory is too large to open here.'), { status: 413, code: 'directory-too-large' }))
+  // Too large, it names the commit the branch was read at, its route naming
+  // it, as History reads it, and its directories are listed there.
+  answer = () => Promise.reject(Object.assign(new Error('This directory is too large to open here.'), { status: 413, code: 'directory-too-large', commit: commit.toUpperCase() }))
   contents = () => Promise.resolve({ commit, entries: [{ name: 'src', path: 'src', type: 'dir' }, { name: 'README.md', path: 'README.md', type: 'file' }, { name: 'docs', path: 'docs', type: 'dir' }] })
   const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, path: '', bundleTab: 'treemap' }, () => true, () => {})
-  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit: null, path: '', bundleTab: 'treemap' })
-  assert.equal(managedRoutePath(route), '/manage/code/7')
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'treemap' })
+  assert.equal(managedRoutePath(route), `/manage/code/7/${commit}/treemap`)
   assert.equal(state.currentView, 'repository-code')
   assert.equal(state.repositoryCodeOpening.error, 'This directory is too large to open here.')
-  await setImmediate()
-  assert.deepEqual(contentsRequests, [[7, '', '']])
-  assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
-  // Its commit, read with them, its route then naming it, as History reads it.
   assert.equal(state.repositoryCodeOpening.commit, commit)
   assert.equal(state.repositoryCodeOpening.code, 'directory-too-large')
-  assert.deepEqual(replaced, [{ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'treemap' }])
+  await setImmediate()
+  assert.deepEqual(contentsRequests, [[7, commit, '']])
+  assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
   // Another of its tabs fails as it did, its History showing, nothing read again.
   assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' }, () => true, () => {}),
     { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' })

@@ -169,7 +169,7 @@ test('an admin reads the whole repository; a manager only the directories their 
 test('a directory too large to hold, or listed short, is refused before its tarball is asked for', async t => {
   const request = await fixture(t, { role: 'admin' })
   const asked = github(t, { truncate: true })
-  assert.deepEqual((await request({ repoId: '1', ref: commit })).body, { error: 'directory-too-large' })
+  assert.deepEqual((await request({ repoId: '1', ref: commit })).body, { error: 'directory-too-large', commit })
   assert.ok(!asked.some(path => path.includes('/tarball/')))
   assert.equal(repositoryCodeFits({ files: 20_000, bytes: 64 * 1024 * 1024 }), true)
   assert.equal(repositoryCodeFits({ files: 20_001, bytes: 1 }), false)

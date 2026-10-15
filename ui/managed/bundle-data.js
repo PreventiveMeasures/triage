@@ -85,8 +85,11 @@ export async function request(url, errors, read, signal) {
   const response = await managedFetch(url, { credentials: 'same-origin', signal })
   signal.throwIfAborted()
   if (!response.ok) {
-    const code = (await response.json().catch(() => null))?.error ?? null
-    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code })
+    const body = await response.json().catch(() => null)
+    const code = body?.error ?? null
+    // A failure naming the commit it was read at (a directory too large) keeps it.
+    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code,
+      ...typeof body?.commit === 'string' ? { commit: body.commit } : {} })
   }
   const data = await read(response)
   signal.throwIfAborted()

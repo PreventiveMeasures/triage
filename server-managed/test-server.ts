@@ -397,7 +397,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   // /api/npm/package` answers a version's, a line of text each.
   if (url.pathname.endsWith('/code')) {
     // `vendor` stands for a directory too large to open.
-    if (path === 'vendor') { sendJson(res, 413, { error: 'directory-too-large' }); return }
+    if (path === 'vendor') { sendJson(res, 413, { error: 'directory-too-large', commit }); return }
     const inside = files.filter(file => file.startsWith(prefix)).toSorted()
     if (inside.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return }
     const rows = inside.map(file => {
