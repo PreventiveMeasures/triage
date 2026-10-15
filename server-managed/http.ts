@@ -183,7 +183,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
-import { APP_AGENTS, repositoryAgents } from './repository-agents.ts'
+import { APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
   yearCommits } from './repository-pulse.ts'
@@ -1759,7 +1759,8 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
 async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || Object.values(cursors).some(cursor => cursor !== null && !ISSUES_CURSOR.test(cursor))) {
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
+    || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors), `agents\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)

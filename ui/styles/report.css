@@ -3466,6 +3466,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
 .history-modes {
   display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
   & > button {
+    display: inline-flex; align-items: center; gap: .3rem;
     padding: .2rem .65rem; border: 0; background: none; color: var(--muted); font: inherit; cursor: default;
     &:hover:not(:disabled) { color: var(--text); }
     &[aria-pressed=true] { background: var(--surface-active); color: var(--text); }
@@ -3473,6 +3474,15 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   }
   & > button + button { border-left: 1px solid var(--border); }
+  /* A mode's count: the bubble the severity and triage filters count their
+     chips in (toolbar.css .sev-chip .n), lifted to the button's top edge and
+     pulled tight to its label, in the text's color where pressed. */
+  & .n {
+    align-self: flex-start; margin: calc(1px - .2rem) -5px 0;
+    color: var(--muted); font-variant-numeric: tabular-nums; font-size: 8.5px; font-weight: 600;
+    background: var(--bg); border-radius: 999px; padding: 0 3px; min-width: 11px; text-align: center; line-height: 11px;
+  }
+  & > button[aria-pressed=true] .n { color: var(--text); }
 }
 .history-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
 /* Activity's views (repository-activity.js), first in each view's bar, an

@@ -195,7 +195,7 @@ class RepositoryIssues extends LitElement {
     // other did, the same repository's: switching keeps them while it reads.
     const other = sessionLists().get(`${this.repository.repoId}\0${this.kind}\0${listState === 'open' ? 'closed' : 'open'}`)
     const counts = ready ? entry.counts : other?.status === 'ready' ? other.counts : null
-    const counted = which => counts ? html` <span class="issues-count">${counts[which].toLocaleString('en-US')}</span>` : nothing
+    const counted = which => counts ? html`<span class="n">${counts[which].toLocaleString('en-US')}</span>` : nothing
     const shown = ready ? filterIssues(entry.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
         ${activityPicker(this.kind)}

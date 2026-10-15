@@ -230,7 +230,7 @@ class RepositoryAgents extends LitElement {
     const { key, entry, more } = this.list()
     const ready = entry.status === 'ready'
     const sessions = ready ? entry.sessions : []
-    const counted = agent => ready ? html` <span class="issues-count">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
+    const counted = agent => ready ? html`<span class="n">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
     // One picked whose sessions are none of those read now, all.
     const picked = agentsOf(entry).includes(shownAgent) ? shownAgent : 'all'
     const shown = filterSessions(sessions, picked, this._filter)

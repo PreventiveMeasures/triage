@@ -1848,8 +1848,11 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues, the app agents (each its
-id, name and avatar, never how it is told), and the five hundred newest of each
-agent's branches: GitHub lists branches by name alone, so every branch
+id, name and avatar, never how it is told), the hundred newest of the
+default branch's commits the app agents' accounts authored, by their
+no-reply addresses, however far back (a bot's commits, pushed with no pull
+request here, as before a repository moved, may lie deeper than the pages
+read on to), and the five hundred newest of each agent's branches: GitHub lists branches by name alone, so every branch
 an agent's prefix names is read, as many as fifty pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
 their tips' times. Each pull request's body and head and merge commits'
