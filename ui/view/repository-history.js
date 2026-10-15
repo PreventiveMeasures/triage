@@ -36,9 +36,11 @@ const ALL_STARTS = 25
 const histories = new Map()
 const shownElements = new Set()
 let keptFor = null
-// `--all` unless the reader asked for the revision's own history, and for
-// the repositories reading every branch was refused for want of a sign-in.
-let preferAll = true
+// What the reader asked for, `--all` at first: every branch ('all'), the
+// revision's own history ('revision'), or the branches not merged
+// ('unmerged'); and the repositories reading every branch was refused for
+// want of a sign-in, which show the revision's.
+let preferred = 'all'
 const allRefused = new Set()
 
 function sessionHistories() {
@@ -172,6 +174,31 @@ function checked(answer) {
 // as the merge it was, its pull request's head its other parent, and that
 // one's own commits, each once (a branch reused for another pull request
 // shares those both had), marked by the pull request (`pull`).
+// The branches not merged of those read: their commits the default
+// branch's `tip` doesn't reach, a squash merge reaching its pull request's
+// (plantedCommits), as `git log --all --not <tip>` lists them, each down to
+// where it began. Only those newer than the oldest of the default branch's
+// own line read: what merged one would be newer still, so read, and would
+// reach it; one older may be merged where the default branch isn't read yet,
+// told as more of it is.
+export function unmergedCommits(commits, pulls, tip) {
+  const planted = plantedCommits(commits, pulls)
+  const bySha = new Map(planted.map(commit => [commit.sha, commit]))
+  if (!bySha.has(tip)) return planted
+  const merged = new Set()
+  for (const queue = [tip]; queue.length > 0;) {
+    const sha = queue.pop()
+    if (merged.has(sha) || !bySha.has(sha)) continue
+    merged.add(sha)
+    queue.push(...bySha.get(sha).parents)
+  }
+  // The oldest of its own line read, unless it goes on to its root.
+  let line = bySha.get(tip)
+  for (const seen = new Set(); bySha.has(line.parents[0]) && !seen.has(line.sha); line = bySha.get(line.parents[0])) seen.add(line.sha)
+  const since = line.parents.length > 0 ? line.committedAt ?? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+  return planted.filter(commit => !merged.has(commit.sha) && (commit.committedAt ?? Number.NEGATIVE_INFINITY) > since)
+}
+
 export function plantedCommits(commits, pulls) {
   if (pulls.length === 0) return commits
   const squashed = new Map(pulls.map(pull => [pull.merge, pull]))
@@ -280,6 +307,7 @@ class RepositoryHistory extends LitElement {
     this.refs = null
     this._drawn = null
     this._moreButton = null
+    this._mode = null
   }
 
   connectedCallback() {
@@ -296,9 +324,11 @@ class RepositoryHistory extends LitElement {
 
   // Older commits read as their button nears the end of the scroll, a
   // screen before it shows, as though clicked, and again after each page
-  // while it stays near; not after one failed, which waits for a click.
-  // Watched again after every update, so that whether it is near is where
-  // it is now, below the lines that update added, never where it was.
+  // while it stays near; not after one failed, which waits for a click, nor
+  // for Unmerged, whose lines a page may add none of, which would read the
+  // whole history on its own. Watched again after every update, so that
+  // whether it is near is where it is now, below the lines that update
+  // added, never where it was.
   updated() {
     const button = this.querySelector('.history-more > button')
     if (this._moreButton && this._moreButton !== button) unwatchNearViewport(this._moreButton)
@@ -307,24 +337,27 @@ class RepositoryHistory extends LitElement {
   }
 
   readNear(button) {
-    if (button === this._moreButton && button.isConnected && !button.disabled && !button.parentElement.querySelector('[role=alert]')) button.click()
+    if (button === this._moreButton && button.isConnected && !button.disabled && !button.parentElement.querySelector('[role=alert]')
+      && this._mode !== 'unmerged') button.click()
   }
 
   // What it lists: a directory's commits ('path'), every branch's ('all'),
-  // or the revision's ('revision').
+  // the revision's ('revision'), or every branch's not merged ('unmerged').
   mode() {
     const { repoId, path } = this.repository
     if (path) return 'path'
     sessionHistories()
-    return preferAll && !allRefused.has(repoId) ? 'all' : 'revision'
+    return preferred !== 'revision' && !allRefused.has(repoId) ? preferred : 'revision'
   }
 
+  // The branches not merged are every branch's, read as those are.
   history(mode) {
     const { repoId, commit, path } = this.repository
-    const key = mode === 'all' ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
-    const ask = (page, held) => fetchRepositoryHistory(repoId, mode === 'all' ? '' : commit, path,
-      { page, all: mode === 'all', ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
-      if (mode !== 'all' && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
+    const every = mode === 'all' || mode === 'unmerged'
+    const key = every ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
+    const ask = (page, held) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
+      { page, all: every, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
+      if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
       return checked(answer)
     })
     // This revision's history, where All branches' holds its commit, comes
@@ -336,7 +369,7 @@ class RepositoryHistory extends LitElement {
     if (derived) held.set(key, derived)
     const settle = mode === 'path' ? null : settleFrontier
     const entry = historyRead(key, ask, settle)
-    if (mode === 'all' && entry.status === 'error' && entry.code === 'github-token-required') {
+    if (every && entry.status === 'error' && entry.code === 'github-token-required') {
       allRefused.add(repoId)
       return { mode: 'revision', ...this.history('revision') }
     }
@@ -344,20 +377,23 @@ class RepositoryHistory extends LitElement {
   }
 
   // The graph of what it holds, the pull requests squashed into it planted
-  // as the branches they were, laid out again only as that changes.
+  // as the branches they were, or of its branches not merged, laid out again
+  // only as that changes.
   layout(mode, entry, defaultBranch) {
     const drawn = this._drawn
     if (drawn?.commits === entry.commits && drawn.pulls === entry.pulls && drawn.mode === mode && drawn.defaultBranch === defaultBranch) return drawn.layout
     const linear = mode === 'path'
-    const ordered = linear ? entry.commits : historyOrder(plantedCommits(entry.commits, entry.pulls ?? []))
-    const tip = mode === 'all' ? entry.branches.find(branch => branch.name === defaultBranch)?.sha : ordered[0]?.sha
+    const defaultTip = entry.branches.find(branch => branch.name === defaultBranch)?.sha
+    const ordered = linear ? entry.commits : historyOrder(mode === 'unmerged' ? unmergedCommits(entry.commits, entry.pulls ?? [], defaultTip)
+      : plantedCommits(entry.commits, entry.pulls ?? []))
+    const tip = mode === 'all' ? defaultTip : mode === 'revision' ? ordered[0]?.sha : null
     const layout = historyLayout(ordered, { linear, trunk: tip && !linear ? firstParentLine(ordered, tip) : null, colors: LANE_COLORS })
     this._drawn = { commits: entry.commits, pulls: entry.pulls, mode, defaultBranch, layout }
     return layout
   }
 
   pick(mode) {
-    preferAll = mode === 'all'
+    preferred = mode
     repaint()
   }
 
@@ -383,31 +419,39 @@ class RepositoryHistory extends LitElement {
   render() {
     if (!this.repository) return nothing
     const { mode, key, entry, more } = this.history(this.mode())
+    this._mode = mode
     const ready = entry.status === 'ready'
-    const branches = ready && mode === 'all' ? entry.branches.length : 0
-    const count = ready ? `${entry.commits.length}${entry.more || entry.cut ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
+    const defaultBranch = mode === 'all' || mode === 'unmerged' ? entry.defaultBranch : this.refs?.status === 'ready' ? this.refs.value.defaultBranch ?? null : null
+    const layout = ready ? this.layout(mode, entry, defaultBranch) : null
+    // The commits listed (those not merged, the branches not merged's), and the branches naming them.
+    const listed = mode === 'unmerged' ? layout?.rows.length ?? 0 : entry.commits?.length ?? 0
+    const unmerged = mode === 'unmerged' && layout ? new Set(layout.rows.map(row => row.commit.sha)) : null
+    const branches = ready && mode === 'all' ? entry.branches.length : unmerged ? entry.branches.filter(branch => unmerged.has(branch.sha)).length : 0
+    const count = ready ? `${listed}${entry.more || entry.cut ? '+' : ''} commit${listed === 1 ? '' : 's'}` : ''
+    const refused = allRefused.has(this.repository.repoId)
     return html`<div class="history-bar">
         ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : html`<div class="history-modes" role="group" aria-label="Branches">
+            <button type="button" aria-pressed=${String(mode === 'all')} ?disabled=${refused} @click=${() => this.pick('all')}>All branches</button>
             <button type="button" aria-pressed=${String(mode === 'revision')} @click=${() => this.pick('revision')}>This revision</button>
-            <button type="button" aria-pressed=${String(mode === 'all')} ?disabled=${allRefused.has(this.repository.repoId)} @click=${() => this.pick('all')}>All branches</button>
+            <button type="button" aria-pressed=${String(mode === 'unmerged')} ?disabled=${refused} @click=${() => this.pick('unmerged')}>Unmerged</button>
           </div>
           ${allRefused.has(this.repository.repoId) ? html`<span class="history-scope">Every branch needs your GitHub sign-in.</span>` : nothing}`}
         ${ready ? html`<span class="history-summary">${count}${branches > 0 ? ` on ${branches} branch${branches === 1 ? '' : 'es'}` : ''}</span>` : nothing}
       </div>
-      ${ready ? this.renderCommits(mode, entry, more)
+      ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionHistories().delete(key); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading the history…</div>`}`
   }
 
-  renderCommits(mode, entry, more) {
-    if (entry.commits.length === 0) return html`<div class="bundles-slide-placeholder">No commits.</div>`
+  renderCommits(mode, entry, more, layout, defaultBranch) {
+    if (layout.rows.length === 0 && !(mode === 'unmerged' && (entry.more || entry.moreError))) {
+      return html`<div class="bundles-slide-placeholder">${mode === 'unmerged' ? 'Every branch read is merged.' : 'No commits.'}</div>`
+    }
     const shown = this.repository.commit
     const revision = shownRevision(this.repository, this.refs)
-    const defaultBranch = mode === 'all' ? entry.defaultBranch : this.refs?.status === 'ready' ? this.refs.value.defaultBranch ?? null : null
-    const layout = this.layout(mode, entry, defaultBranch)
     const named = historyRefs(entry, defaultBranch)
     const focused = Math.max(0, layout.rows.findIndex(row => row.commit.sha === shown))
     const graphWidth = EDGE * 2 + (layout.width - 1) * LANE
