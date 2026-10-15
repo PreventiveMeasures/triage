@@ -77,6 +77,8 @@ function readMore(key, entry, ask) {
   if (entry.loadingMore || !entry.more) return
   entry.loadingMore = true
   entry.moreError = null
+  // Kept while the next page reads, however long it was held already.
+  entry.until = Date.now() + KEEP_MS
   repaint()
   ask(entry.page + 1).then(answer => {
     if (sessionHistories().get(key) !== entry) return null

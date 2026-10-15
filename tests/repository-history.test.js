@@ -138,10 +138,14 @@ test('this revision\'s history reads a page at a time, from the commit shown; ev
   assert.match(text, /aria-pressed=true [^\n]*>This revision</u)
   assert.match(text, /Every branch needs your GitHub sign-in/u)
   assert.match(text, /1\+ commit</u)
-  view.history('revision').more()
+  // Held long, it reads its next page all the same, not its first again.
+  const held = view.history('revision')
+  held.entry.until = 0
+  held.more()
+  view.render()
   await setImmediate()
   text = templateText(view.render())
-  assert.deepEqual(requests.at(-1), [7, a, '', { page: 2, all: false }])
+  assert.deepEqual(requests.slice(2), [[7, a, '', { page: 2, all: false }]])
   assert.match(text, /2 commits</u)
   assert.doesNotMatch(text, /Older commits/u, 'the last page read')
 })
