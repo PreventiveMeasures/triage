@@ -118,16 +118,27 @@ const ABSENT_ENDS = String.raw`\s{0,4}(?:(?:\)\s{0,4}){1,4}(?![\s)]{0,8}(?:[.[(]
 const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!\b(?:const|let|var)\s{1,4})`
   + String.raw`(?:(?<!(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}\??\.\s{0,4}){0,4})|(?!${TOKEN_VAR}${ABSENT_ENDS}))`
   + String.raw`${TOKEN_VAR}(?![\p{ID_Continue}$])(?!${TYPED})(?:(?!${SET})|(?<=[{,]\s{0,64}${TOKEN_VAR}))`
+// eval as a key, not read: a property's name or a member typed, coming
+// first or after another (`{ eval: x }`, WebAuthn's `extensions: { prf: {
+// eval: { first } } }`, `const { eval: run } = vm`, `{ a: 1, eval: 2 }`, `a;
+// eval: T`); not where anything else comes before it, as a ternary's choice
+// does, whole or last of its branch (`c ? eval : f`, `c ? x && eval : f`),
+// nor a worker told to run its string as code (`new Worker(code, { eval:
+// true })`, minified `{eval:!0}`), nor eval destructured from the global
+// object (`const { eval: run } = globalThis`, `({ a, eval: run } = window)`).
+const KEYED = String.raw`(?<=[{,;]${GAP}eval)\s*:(?!${GAP}(?:true|!0)(?![\p{ID_Continue}$]))`
+  + String.raw`(?![^{};]{0,200}\}${GAP}=${GAP}(?:${GLOBAL})(?![\p{ID_Continue}$]))`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
-// none of its own), and Function called, but to find the global object;
+// none of its own) nor a key (KEYED), and Function called, but to find the
+// global object;
 // Module's _compile, called
 // (`module._compile(source, filename)`) or hooked (`Module.prototype._compile
 // = …`), not named in a type (`typeof Module.prototype._compile`); a token's
 // name, its value read; the environment read out whole; and a PUT request's
 // call (`axios.put(…)`).
-const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:))|(?<function>${named('Function')}${FUNCTION_CALLED}${GLOBAL_FOUND})`
+const READS = new RegExp(String.raw`${JS_STRING_OR_COMMENT.source}|(?<eval>${named('eval')}(?![\p{ID_Continue}$])(?!\s*\?:)(?!${KEYED}))|(?<function>${named('Function')}${FUNCTION_CALLED}${GLOBAL_FOUND})`
   + String.raw`|(?<compile>\.${GAP}_compile(?:${FUNCTION_CALLED}|${GAP}=(?![=>])))|(?<tokens>${TOKEN_NAME})|(?<env>${ENV_WHOLE})|(?<put>\.${GAP}put${GAP}\()`, 'gmu')
 // What a string holds that a kind is: a credential file's path, npm's, SSH's
 // or AWS's (`~/.npmrc`, `.ssh/id_rsa`, `.aws/credentials`, not `x.npmrc` or
