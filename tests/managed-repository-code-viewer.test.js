@@ -237,7 +237,7 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
     path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
   assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'history' })
   assert.deepEqual(requests, [], 'no files read')
-  assert.deepEqual(contentsRequests, [[7, 'heads/develop', 'packages/app']])
+  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
   // One its listing can't read says why.

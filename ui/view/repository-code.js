@@ -207,7 +207,8 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   }
   // History reads none of its files: a directory at a commit shows it alone,
   // its other tabs opening them; at a revision named, at the commit listing
-  // the directory reads it at.
+  // the repository's root reads it at, the directory there or not, as its
+  // history lists the commits that touched it all the same.
   if (!entry && tab === 'history') {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
@@ -219,7 +220,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       showOpening(opening)
       renderSidebar()
       try {
-        const listed = await fetchRepositoryContents(repoId, routeRef(route), path, { signal: currentViewSignal() })
+        const listed = await fetchRepositoryContents(repoId, routeRef(route), '', { signal: currentViewSignal() })
         at = COMMIT.test(listed?.commit ?? '') ? listed.commit.toLowerCase() : null
       } catch (err) {
         if (err?.name === 'AbortError' || !isCurrent()) return false
