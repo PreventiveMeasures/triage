@@ -209,6 +209,8 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   // its other tabs opening them.
   if (!entry && commit && tab === 'history') {
     const revision = route.revision === undefined ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.revision
+    // Its branches and tags as they are now, for its header and History.
+    headerData.delete(`refs\0${repoId}`)
     const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
     showOpening({ repoId, commit, ref: null, path, tab, repo: route.repo ?? known ?? null, revision, error: null, historyOnly: true })
     renderSidebar()

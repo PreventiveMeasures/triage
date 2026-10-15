@@ -8,7 +8,7 @@ import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const state = {}
 const contentsRequests = [], navigations = [], requests = []
-let answer = null, contents = null
+let answer = null, contents = null, refsReads = 0
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -20,10 +20,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
   fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
   fetchBrowsableRepositories: () => Promise.resolve([{ repoId: 7, fullName: 'org/repo' }, { repoId: 8, fullName: 'org/other' }]),
-  fetchRepositoryRefs: () => Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }),
+  fetchRepositoryRefs: () => { refsReads++; return Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }) },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
+const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 
 const commit = 'c'.repeat(40)
@@ -211,12 +211,17 @@ test('a directory that fails to open says why at its route, and lists its direct
 })
 
 test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async () => {
+  repositoryRefs(7)
+  await setImmediate()
+  const read = refsReads
   const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
   assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' })
   assert.deepEqual(requests, [], 'no files read')
   assert.equal(state.currentView, 'repository-code')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.equal(state.repositoryCodeOpening.commit, commit)
+  repositoryRefs(7)
+  assert.equal(refsReads, read + 1, 'its branches and tags read again as it opens')
   openRepositoryCodeTab(state.repositoryCodeOpening, 'code')
   assert.deepEqual(navigations, [{ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code' }])
   // Code, at its route, reads them.
