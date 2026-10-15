@@ -104,8 +104,9 @@ and restart restores the complete ordered prompt list.
 
 ## Local/E2E scan service
 
-The shared Scans page is always included in the main UI bundle. The local/E2E
-landing shows a Scan button when a runtime service is available:
+The shared Scans page is a bundle of its own, `ui/scan.js`, loaded the first
+time Scans opens on either host. The local/E2E landing shows a Scan button when
+a runtime service is available:
 
 - **E2E:** only discovery's `deepviewScanServer` field from `/api/config`
 - **Local:** the development server's configuration, injected into its served

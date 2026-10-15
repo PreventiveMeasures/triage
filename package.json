@@ -321,6 +321,7 @@
     "out/index.html",
     "out/manifest.webmanifest",
     "out/prism.js",
+    "out/scan.js",
     "out/stasis.svg",
     "out/terminal.js",
     "out/view.css",

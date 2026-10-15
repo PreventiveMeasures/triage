@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import './_polyfills.js'
 import '../ui/client-managed.js'
+import './_scan-bundle.js'
 import { ManagedAppState } from '../ui/managed/state.js'
 import { managedScanSource } from '../ui/managed/scan-source.js'
 

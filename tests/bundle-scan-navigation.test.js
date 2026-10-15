@@ -4,11 +4,8 @@ import './_polyfills.js'
 import { beginViewNavigation, currentViewGeneration } from '../ui/view/view-navigation.js'
 
 const state = { bundles: [] }
-let managed = false, modeGate = null, navigated = null, rendered = false
-mock.module('../client/index.js', { namedExports: {
-  state, isManagedUiMode: () => managed,
-  forgetScanAccess() {}, hasSavedScanAccess() {}, onSavedScanAccessChange() {}, readSavedScanAccess() {}, saveScanAccess() {},
-} })
+let managed = false, modeGate = null, navigated = null, rendered = false, scanPage = null, toasts = []
+mock.module('../client/index.js', { namedExports: { state, isManagedUiMode: () => managed } })
 mock.module('../ui/view/sidebar.js', { namedExports: {
   ensureClientMode: () => modeGate,
   navigateToAdminPage: (view, options) => { navigated = { view, options } },
@@ -24,15 +21,16 @@ mock.module('../ui/view/ingest.js', { namedExports: {
   },
 } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { rendered = true } } })
-mock.module('../ui/view/scan-local-source.js', { namedExports: { loadLocalReportSources() {}, loadLocalScanBundle() {}, loadLocalScanSource() {} } })
-mock.module('../ui/scan/page.js', { namedExports: {} })
-mock.module('../ui/view/toast.js', { namedExports: { showToast() {} } })
+// Scans' own bundle (ui/scan.js), which the browser loads beside view.js.
+mock.module('../ui/view/scan-load.js', { namedExports: { loadScanPage: () => scanPage } })
+mock.module('../ui/view/toast.js', { namedExports: { showToast: message => { toasts.push(message) } } })
 const { canScanBundle, openScan } = await import('../ui/view/scan-navigation.js')
 globalThis.window = { location: { hostname: 'triage.test' } }
 globalThis.document = { querySelector: () => null }
 
 beforeEach(() => {
   managed = false; modeGate = null; navigated = null; rendered = false
+  scanPage = Promise.resolve({}); toasts = []
   state.serverMode = 'e2e'; state.localMode = false
   state.deepviewScanServer = 'https://scan.example/'
   state.managedSession = null
@@ -82,4 +80,13 @@ test('a newer navigation cancels a pending bundle Scan click', async () => {
   await open
   assert.equal(rendered, false)
   assert.equal(state.scanSelection, null)
+})
+
+test('Scans stays closed, with a toast, when its bundle cannot load', async () => {
+  scanPage = Promise.reject(new TypeError('Failed to fetch dynamically imported module'))
+  await openScan({ integrity: 'shared' })
+  assert.equal(rendered, false)
+  assert.equal(state.currentView, 'bundles')
+  assert.equal(state.scanSelection, null)
+  assert.deepEqual(toasts, ['Couldn’t load Scans. Try again.'])
 })

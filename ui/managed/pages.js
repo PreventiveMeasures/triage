@@ -29,7 +29,7 @@ import reportsStyles from './styles/reports.css'
 import bundlesStyles from './styles/bundles.css'
 import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
-import '../scan/page.js'
+import { loadScanPage } from '../view/scan-load.js'
 import './create-bundle.js'
 import '../view/mode-switch.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
@@ -1378,6 +1378,9 @@ class ManagedAdminScans extends ManagedPage {
 
   async _load() {
     this._error = null
+    // `<deepview-scan-page>` comes with Scans' own bundle and upgrades once
+    // it arrives, keeping the properties already set on it.
+    loadScanPage().catch(err => { this._error = String(err?.message ?? err) })
     await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
       this._source = managedScanSource(data)
     })

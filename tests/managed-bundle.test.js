@@ -13,11 +13,11 @@ test('Manage pages belong only to the lazy client-managed bundle, without duplic
   const managed = metafile.outputs['out/client-managed.js'].inputs
   assert.equal(Object.hasOwn(main, 'ui/managed/pages.js'), false)
   assert.equal(Object.hasOwn(main, 'ui/managed/state.js'), false)
-  assert.ok(main['ui/view/scan-model-picker.js'], 'the shared Scans page is always available')
+  assert.equal(Object.hasOwn(main, 'ui/view/scan-model-picker.js'), false, 'the shared Scans page is a bundle of its own')
   assert.equal(Object.hasOwn(main, 'client/managed/request.js'), false)
   assert.ok(managed['ui/managed/pages.js'])
   assert.ok(managed['ui/managed/state.js'])
-  assert.ok(managed['ui/view/scan-model-picker.js'])
+  assert.equal(Object.hasOwn(managed, 'ui/view/scan-model-picker.js'), false)
   assert.ok(main['ui/view/repository-selector.js'])
   assert.ok(managed['ui/view/repository-selector.js'])
   assert.ok(managed['ui/view/user-selector.js'])
