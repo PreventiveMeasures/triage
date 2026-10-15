@@ -154,7 +154,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // A bot's commit, named by its no-reply address, GitHub naming no user for it.
   assert.deepEqual([body.commits.find(commit => commit.oid === 'f'.repeat(40)).author, body.branches.at(-1).author], ['Copilot', 'dependabot[bot]'])
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
-  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' },
+  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot' },
     { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])
   assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: `${'c'.repeat(40)} 99` }], 'read on from GitHub\'s cursors, a commit\'s with its space')
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')

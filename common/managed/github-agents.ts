@@ -1,8 +1,8 @@
 // Agents by their own GitHub accounts, where a repository's activity names
-// them: each its name, and how the app draws it, by its provider's mark
-// (ui/view/provider-icons.js) or by its avatar, which /api/avatar/<avatar>
-// serves (server-managed/repository-agents.ts APP_AGENTS, the Agents tab's
-// marks); its accounts, each by the logins GitHub's REST and GraphQL APIs
+// them: each its name, and how the app draws it, by its mark, as the Agents
+// tab does (ui/view/provider-icons.js), or by its avatar, which
+// /api/avatar/<avatar> serves (server-managed/repository-agents.ts
+// APP_AGENTS, the Agents tab's marks); its accounts, each by the logins GitHub's REST and GraphQL APIs
 // name it by and its numeric id where known, which GitHub never gives
 // another; and the names its commits carry where GitHub names no account for
 // them. Claude Code's commits are authored as Claude <noreply@anthropic.com>,
@@ -13,12 +13,12 @@
 // `dependabot` to GitHub's GraphQL API, `dependabot[bot]` to its REST API and
 // in its address.
 export interface GithubAgentAccount { id?: number; logins: readonly string[] }
-export interface GithubAgent { name: string; mark?: 'anthropic' | 'openai'; avatar?: string; accounts: readonly GithubAgentAccount[]; names: readonly string[] }
+export interface GithubAgent { name: string; mark?: 'anthropic' | 'openai' | 'github-copilot'; avatar?: string; accounts: readonly GithubAgentAccount[]; names: readonly string[] }
 
 export const GITHUB_AGENTS = {
   claude: { name: 'Claude', mark: 'anthropic', accounts: [{ id: 81847, logins: ['claude'] }, { logins: ['claude[bot]'] }], names: ['Claude'] },
   codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'] },
-  copilot: { name: 'Copilot', avatar: 'user-198982749', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }], names: ['Copilot'] },
+  copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }], names: ['Copilot'] },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'] },
 } as const satisfies Record<string, GithubAgent>
 export type GithubAgentId = keyof typeof GITHUB_AGENTS

@@ -425,7 +425,7 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 // each its mark on the Agents tab. Each is fetched from GitHub once and
 // kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
 // an account's, `…-0001-<id>`.
-const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.map(agent => agent.avatar))
+const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.flatMap(agent => agent.avatar ?? []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {

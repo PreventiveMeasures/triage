@@ -52,11 +52,12 @@ export function issueState(kind, item) {
     : ['completed', 'Closed']
 }
 
-// Claude's mark in its orange, Codex OpenAI's, as the app draws them
-// elsewhere (provider-icons.js).
+// Claude's mark in its orange, Codex OpenAI's, Copilot GitHub Copilot's, as
+// the app draws them elsewhere (provider-icons.js).
 const AGENT_ICONS = {
   claude: html`<span class="agent-logo" aria-hidden="true">${providerIcon('anthropic')}</span>`,
   codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
+  copilot: html`<span class="agent-logo" aria-hidden="true">${providerIcon('github-copilot')}</span>`,
 }
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
 // The agents known by their GitHub Apps or accounts, as the server named
@@ -66,8 +67,8 @@ const appAgents = new Map()
 export function knowAgents(agents) {
   for (const agent of agents) appAgents.set(agent.id, agent)
 }
-// An agent's name and mark: Claude's or Codex's, else an app agent's, its
-// GitHub App's or account's avatar, served by the server
+// An agent's name and mark: Claude's, Codex's or Copilot's, else an app
+// agent's, its GitHub App's or account's avatar, served by the server
 // (/api/avatar/<avatar>).
 export const agentName = agent => AGENT_NAMES[agent] ?? appAgents.get(agent)?.name ?? agent
 export function agentIcon(agent) {

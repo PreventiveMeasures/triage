@@ -25,8 +25,9 @@ export type Agent = string
 
 // An agent known by its GitHub App or account, as the server names it to the
 // client: its id, its name, and its avatar, its mark (/api/avatar/<avatar>:
-// `app-<id>` a GitHub App's, `user-<id>` a GitHub account's).
-export interface AppAgent { id: string; name: string; avatar: string }
+// `app-<id>` a GitHub App's, `user-<id>` a GitHub account's), where the app
+// draws no mark of its own for it (Copilot's, ui/view/repository-tiles.js).
+export interface AppAgent { id: string; name: string; avatar?: string }
 // How the server tells one: its fingerprint, a line of an artifact's texts
 // starting with it; the GitHub account its work is authored by, its id and
 // the logins GitHub names it by; its branches' prefix.

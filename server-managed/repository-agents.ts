@@ -41,12 +41,13 @@ const CLAUDE_EMAIL = 'noreply@anthropic.com'
 // `copilot/` branches; Dependabot, its GitHub App (29110), opens its pull
 // requests as its account, `dependabot` (49699333, `dependabot[bot]` to
 // GitHub's REST API and in its address), on `dependabot/<ecosystem>/…`
-// branches. Their accounts and avatars are those the app draws their work by
-// wherever it shows it (common/managed/github-agents.ts).
+// branches. Their accounts and marks are those the app draws their work by
+// wherever it shows it (common/managed/github-agents.ts): Copilot's its own,
+// the app's to draw, no avatar.
 const { copilot, dependabot } = GITHUB_AGENTS
 export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'neo', name: 'Neo', avatar: 'app-3115942', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
-  { id: 'copilot', name: copilot.name, avatar: copilot.avatar, account: copilot.accounts[0], prefix: 'copilot/' },
+  { id: 'copilot', name: copilot.name, account: copilot.accounts[0], prefix: 'copilot/' },
   { id: 'dependabot', name: dependabot.name, avatar: dependabot.avatar, account: dependabot.accounts[0], prefix: 'dependabot/' },
 ]
 // The app agents' accounts' no-reply addresses, by each login of theirs.
@@ -191,7 +192,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // What its answers are kept by, with their cursors (http.ts
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes, so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 2
+export const AGENTS_READ_VERSION = 3
 
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.
@@ -229,7 +230,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     ...first ? {
       issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
       branches: branches.flat(),
-      agents: APP_AGENTS.map(({ id, name: agent, avatar }): AppAgent => ({ id, name: agent, avatar })),
+      agents: APP_AGENTS.map(({ id, name: agent, avatar }): AppAgent => ({ id, name: agent, ...avatar ? { avatar } : {} })),
     } : {},
     more: after.pulls !== null || after.commits !== null, after,
   }

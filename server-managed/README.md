@@ -132,8 +132,8 @@ noreply address (`<id>+<login>@users.noreply.github.com`) names, as GitHub's
 REST API matches them. Commits read before IDs were kept show by login.
 
 Agents show as the Agents tab draws them, the server naming them in `users`
-as `{ "agent": <id> }`: Claude and Codex by their marks, Copilot and Dependabot
-by their avatars. Each is matched by its accounts' logins, the account's ID
+as `{ "agent": <id> }`: Claude, Codex and Copilot by their marks, which the
+app draws itself, Dependabot by its avatar. Each is matched by its accounts' logins, the account's ID
 confirming it wherever both are known, as the Agents tab tells them: Claude's
 `claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
 and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding

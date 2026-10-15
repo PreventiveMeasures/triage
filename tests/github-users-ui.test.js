@@ -48,7 +48,7 @@ test('commits by Claude or Codex show by their marks: by the identities GitHub n
     ['Claude', 'Codex', 'Mona Lisa', 'Ada', 'ada'])
 })
 
-test('Copilot and Dependabot show by their avatars, as Agents draws them: by the accounts the server names theirs, else their commits\' names', () => {
+test('Copilot shows by its mark and Dependabot by its avatar, as Agents draws them: by the accounts the server names theirs, else their commits\' names', () => {
   forgetGithubUsers()
   // As the server names them: one GitHub names by Dependabot's login, but
   // another account by its id, is none; an agent the app does not draw neither.
@@ -60,7 +60,8 @@ test('Copilot and Dependabot show by their avatars, as Agents draws them: by the
   assert.equal(githubUser('dependabot'), 'dependabot')
   const copilot = templateText(githubUser('copilot'))
   assert.match(copilot, /class=app-user-mark is-copilot/u, 'bare, no avatar\'s disc')
-  assert.match(copilot, /<img src=\/api\/avatar\/user-198982749 /u, 'its avatar, as the Agents tab serves it')
+  assert.match(copilot, /<svg [^>]*viewBox="0 0 24 24"/u, 'its mark, as the Agents tab draws it, not its avatar fetched')
+  assert.doesNotMatch(copilot, /<img/u)
   assert.match(copilot, /app-user-name">Copilot</u)
   assert.match(copilot, /data-tooltip=@copilot on GitHub/u)
   const dependabot = templateText(commitAuthor(null, 'dependabot[bot]'))
