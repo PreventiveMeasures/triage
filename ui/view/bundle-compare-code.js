@@ -21,7 +21,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
 import { comparisonEntries, fileContents } from './bundle-compare-files.js'
 export { fileEntries, fileContents } from './bundle-compare-files.js'
@@ -1585,7 +1585,7 @@ export class BundleCompareCode extends LitElement {
     return html`<button type="button" class="bundle-compare-code-repointed-line bundle-compare-diff-table" ?disabled=${!linked}
       aria-label=${`Go to line ${line + 1}`} @click=${() => this._goToLine(line + 1)}>
       <span class="diff-num">${line + 1}</span>
-      <code>${source.length <= 240 && typeof markup === 'string' ? unsafeHTML(controlMarkup(markup, true)) : sourceText(`${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`, true)}</code>
+      <code>${source.length <= 240 && typeof markup === 'string' ? appMarkup(controlMarkup(markup, true)) : sourceText(`${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`, true)}</code>
     </button>`
   }
 
@@ -1725,7 +1725,7 @@ export class BundleCompareCode extends LitElement {
   // before it is the CRLF's own, shown only where it is what changed.
   _code(text, markup, ranges, lineEnd) {
     const end = lineEnd && !(text.endsWith('\r') && ranges?.at(-1)?.[1] === text.length)
-    if (typeof markup === 'string') return unsafeHTML(controlMarkup(markHighlighted(markup, ranges), end))
+    if (typeof markup === 'string') return appMarkup(controlMarkup(markHighlighted(markup, ranges), end))
     if (ranges) {
       const parts = markSegments(text, ranges)
       return parts.map((part, i) => {

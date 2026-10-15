@@ -1,5 +1,5 @@
 import { LitElement, html, nothing, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { AGENTIC_ICON_SVG, CODE_ICON_SVG, DEPENDENCIES_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.js'
 import styles from './mode-selector.css'
 
@@ -47,7 +47,7 @@ class ScanModeSelector extends LitElement {
         ${MODES.map(option => html`<label class="mode">
           <input type="radio" name="scan-mode" .checked=${this.mode === option.id} aria-label=${option.label}
             @change=${() => this._choose('scan-mode-change', { mode: option.id })}>
-          <span class="mode-icon" aria-hidden="true">${unsafeHTML(option.icon)}</span>
+          <span class="mode-icon" aria-hidden="true">${appMarkup(option.icon)}</span>
           <span class="mode-copy"><strong>${option.label}</strong><span>${option.detail}</span></span>
           <span class="indicator" aria-hidden="true"></span>
         </label>`)}

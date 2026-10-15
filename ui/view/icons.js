@@ -2,9 +2,11 @@
 // than one surface. Stored as raw SVG strings so callers can pick
 // the binding that fits:
 //   - Sidebar rows (shadow DOM, Lit templates) wrap with
-//     `unsafeHTML(...)` to land the markup inside the row template.
+//     `appMarkup(...)` (view/markup.js) to land the markup inside the
+//     row template.
 //   - Drop-zone supported-formats list (light DOM, static HTML)
-//     has the boot path inject these strings via `.innerHTML` into
+//     has the boot path inject these strings via `.innerHTML`
+//     (through `trustedHTML`) into
 //     `<span data-icon="…">` placeholders so the same source
 //     paints both surfaces without duplicating the path data.
 //

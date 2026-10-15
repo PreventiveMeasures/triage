@@ -4,7 +4,7 @@
 // (dialogs/export-confirm-dialog.js), where Markdown and Print are the
 // two ways out of the same selection. Lit templates rather than the
 // raw-SVG strings in view/icons.js — both consumers are Lit, and one
-// of them renders into a shadow root where `unsafeHTML` would buy
+// of them renders into a shadow root where `appMarkup` would buy
 // nothing.
 //
 // The button in the toolbar keeps the download arrow: what it offers

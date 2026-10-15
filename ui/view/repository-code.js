@@ -7,7 +7,7 @@
 // (GET /api/admin/repositories/code). What it answered is kept in memory only
 // while it is shown.
 import { LitElement, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
 import { fetchBrowsableRepositories, fetchRepositoryCode, fetchRepositoryContents, fetchRepositoryRefs } from './client-managed.js'
@@ -376,7 +376,7 @@ class RepositoryCodeSource extends LitElement {
       <revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null} .kind=${revision.kind} .name=${revision.name}
         .installTooltips=${root => installShadowTooltipListener(root)} @revision-change=${this.revisionChanged}></revision-select>
       ${tree ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
-        aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
+        aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${appMarkup(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
   }
 }
 if (!customElements.get('repository-code-source')) customElements.define('repository-code-source', RepositoryCodeSource)

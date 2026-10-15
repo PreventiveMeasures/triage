@@ -53,8 +53,8 @@ function notifySettled() {
 // Highlighted HTML for one block, or null to render it as plain text
 // — which is the answer for an unlisted language (see langForTag's
 // allowlist), an empty block, and every call before the highlight
-// settles. Prism escapes the source itself, so a returned string is
-// safe to inject with `unsafeHTML`.
+// settles. Prism escapes the source itself, so a returned string goes
+// in with `appMarkup`, whose check it passes.
 export function highlightedCode(code, tag) {
   const lang = langForTag(tag)
   if (!lang || !code) return null

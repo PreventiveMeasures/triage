@@ -10,7 +10,7 @@
 import { LitElement, html, nothing, svg } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
 import { firstParentLine, historyLayout, historyOrder } from './history-graph.js'
@@ -223,7 +223,7 @@ function historyGraph(layout, shown) {
 function refChips(refs, color, revision) {
   if (!refs?.length) return nothing
   const chip = ref => html`<span class=${classMap({ 'history-ref': true, [`is-${ref.kind}`]: true, 'is-default': ref.main === true,
-    'is-shown': ref.kind === revision.kind && ref.name === revision.name })}>${ref.kind === 'tag' ? unsafeHTML(TAG_ICON_SVG) : nothing}<span>${ref.name}</span></span>`
+    'is-shown': ref.kind === revision.kind && ref.name === revision.name })}>${ref.kind === 'tag' ? appMarkup(TAG_ICON_SVG) : nothing}<span>${ref.name}</span></span>`
   const rest = refs.slice(MAX_REFS)
   return html`<span class="history-refs" style=${styleMap({ '--ref': `var(--lane-${color})` })}>${refs.slice(0, MAX_REFS).map(chip)}${rest.length > 0
     ? html`<span class="history-ref is-more" data-tooltip=${rest.map(ref => ref.name).join(', ')}>+${rest.length}</span>` : nothing}</span>`

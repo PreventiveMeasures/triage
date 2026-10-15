@@ -1,5 +1,5 @@
 import { html, nothing, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../markup.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { severityBadge } from './shared.js'
 import { REPORT_LOGOS, displayName, groupOf } from '../file-display.js'
@@ -45,7 +45,7 @@ class RevalidationConflictsDialog extends AppDialog {
             <div class="reports">${reports.map((name) => name ? html`<button type="button" class="report-button"
               aria-label=${`Open ${displayName(name)} at this finding`}
               @click=${() => this._finish({ id: finding.id, reportName: name })}
-            >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span>${displayName(name)}</span></button>` : html`<span>Loaded report</span>`)}</div>
+            >${appMarkup(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span>${displayName(name)}</span></button>` : html`<span>Loaded report</span>`)}</div>
           </dd>`)}
         `)}</dl>
       </li>`)}</ul>

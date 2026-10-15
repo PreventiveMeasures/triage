@@ -3,7 +3,7 @@
 // Keep results in memory, scoped to the current managed identity and teams.
 
 import { html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { store } from '@rray/frontend/state-management'
 import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
@@ -326,7 +326,7 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan =
       }}></bundle-scope-selector>` : nothing}
     ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
     ${actions && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
-      ${unsafeHTML(SCAN_ICON_SVG)}<span>Validate</span>
+      ${appMarkup(SCAN_ICON_SVG)}<span>Validate</span>
     </button>` : nothing}
     </div>` : nothing}
     </div>` : nothing}

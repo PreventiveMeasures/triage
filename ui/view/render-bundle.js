@@ -24,7 +24,7 @@ import { live } from 'lit/directives/live.js'
 import { ref } from 'lit/directives/ref.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { fileIconFormat, sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
 import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
@@ -577,7 +577,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       const count = reportCounts.get(name) ?? 0
       return html`<li>
         <button type="button" class="report-chip bundles-report-chip" data-bundle-issue-report=${name}>
-          ${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span>
+          ${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span>
           <span class="bundles-report-count">${count} ${count === 1 ? 'issue' : 'issues'}</span>
         </button>
       </li>`
@@ -682,7 +682,7 @@ function renderLockfileToggle(read) {
   const status = read?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-lockfile-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
     data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
-    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>`
+    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${appMarkup(DEPENDENCIES_ICON_SVG)}</button>`
 }
 
 // Auto-pick bookkeeping for the Code slide. When the pick ran
@@ -766,7 +766,7 @@ function plainSource(content) {
 // full source. Two columns rather than per-line interleaving so
 // prism's highlighted output (where tokens may span newlines)
 // stays valid HTML — the pre takes the highlighted string as-is
-// via unsafeHTML, the gutter walks lines by index. line-height
+// via appMarkup, the gutter walks lines by index. line-height
 // matches across both columns so the rows align with their lines.
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
@@ -785,19 +785,19 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
   // resolves we set it (string for success, null for "no highlight
-  // available") and re-render so the unsafeHTML branch picks it up.
+  // available") and re-render so the appMarkup branch picks it up.
   if (lang && !_bundleHighlightCache.has(cacheKey) && !_bundleHighlightPending.has(cacheKey)) {
     _bundleHighlightPending.add(cacheKey)
     // Fire-and-forget: the highlight runs in the background and
     // the next render() call (kicked from inside) injects the
-    // result via unsafeHTML. Async IIFE rather than `.then` so
+    // result via appMarkup. Async IIFE rather than `.then` so
     // the empty `.then` body doesn't trip promise/always-return.
     ;(async () => {
       const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
       _bundleHighlightCache.set(cacheKey, typeof highlightedHtml === 'string' ? controlMarkup(highlightedHtml) : null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
-      // is just the highlighted string injected via unsafeHTML.
+      // is just the highlighted string injected via appMarkup.
       if (state.bundleSourceFile === path) render()
     })()
   }
@@ -825,7 +825,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
       })}
     </aside>
     <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
-      ? unsafeHTML(highlighted)
+      ? appMarkup(highlighted)
       : plainSource(content)}</code></pre>
   </div>`
 }
@@ -878,7 +878,7 @@ function renderBundleSourceFindingPanel(findings) {
             type="button"
             class="report-chip bundle-source-panel-report"
             data-bundle-issue-report=${name}
-          >${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
+          >${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
         })}
       </div>` : nothing}
     </div>
@@ -2035,14 +2035,14 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
         <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repos' }, bubbles: true, composed: true }))}>Repositories</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
           <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
           : repository ? html`<repository-code-source .repository=${repository} .tab=${tab} .repos=${browsableRepositories()} .refs=${repositoryRefs(repository.repoId)}></repository-code-source>`
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
-      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
+      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${appMarkup(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending), onTab))}</div>
       ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
     </header></bundle-slide-header>
@@ -2235,7 +2235,7 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   return html`<div class="bundle-issue-reports">
     ${visible.map((name) => {
       const iconHtml = REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default
-      return html`<button type="button" class="report-chip" data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
+      return html`<button type="button" class="report-chip" data-bundle-issue-report=${name}>${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
     })}
     ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}
   </div>`
@@ -2646,9 +2646,9 @@ function renderBundleDetails(entry, details) {
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
     ${bundleOriginLinks(origin, prefix, entry.commitInfo).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
-      <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
-      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-icon="commit" data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
-      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
+      <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? appMarkup(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
+      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-icon="commit" data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${appMarkup(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${appMarkup(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

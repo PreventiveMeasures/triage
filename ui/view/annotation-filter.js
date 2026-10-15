@@ -24,7 +24,7 @@
 // `annotation-filter` selector in toolbar.css.
 import { nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { ensureHostAria } from './host-aria.js'
@@ -44,7 +44,7 @@ const FLAG_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hid
 </svg>`
 // Reuse the links-file identity from the sidebar so this filter reads as
 // "linked issues" rather than the finding action that copies a link.
-const DUPLICATES_GLYPH = unsafeHTML(LINKS_ICON_SVG.replace('width="14" height="14"', 'width="12" height="12"'))
+const DUPLICATES_GLYPH = appMarkup(LINKS_ICON_SVG.replace('width="14" height="14"', 'width="12" height="12"'))
 const CROSS_CONTEXT_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <g fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
     <path d="M5 1.2 1.3 3.1v5.7L5 10.7l3.7-1.9V3.1Z M1.3 3.1 5 5l3.7-1.9 M5 5v5.7"/>

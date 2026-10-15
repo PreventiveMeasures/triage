@@ -1,5 +1,5 @@
 import { css, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { HoverPreviewElement } from './hover-preview.js'
 import { isHttpUrl } from '@preventive/report'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
@@ -112,7 +112,7 @@ class ManagedFixLink extends HoverPreviewElement {
       @focusin=${this._keepPreview} @focusout=${this._leavePreview}
       @click=${event => { event.stopPropagation(); this._hidePreview() }}>
       <div class="preview-header">
-        <span class="preview-ref">${unsafeHTML(GITHUB_ICON_SVG)}<span>${name}</span></span>
+        <span class="preview-ref">${appMarkup(GITHUB_ICON_SVG)}<span>${name}</span></span>
         <span class=${`status ${status}`}>${icon}${data ? labels[status] : pr ? 'Pull request' : 'Issue'}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}

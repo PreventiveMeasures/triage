@@ -1,5 +1,5 @@
 import { LitElement, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { discardDependencyReview, myDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
@@ -96,7 +96,7 @@ export class DependencyReviewList extends LitElement {
       <div class="dependency-review-row-actions">
         <review-audit-copy .review=${review}></review-audit-copy>
         ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${this._loading || Boolean(this._discarding)}
-          @click=${() => this._discard(review)}>${unsafeHTML(DELETE_ICON_SVG)}</button>` : nothing}
+          @click=${() => this._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
         <a class="dependency-review-open" href=${managedRoutePath(route)} @click=${open} aria-label=${`${published ? 'Open' : 'Continue'} review for ${reviewTitle(review)}`}><span aria-hidden="true">→</span></a></div></div>
       ${expanded ? this._details(review) : nothing}
     </li>`

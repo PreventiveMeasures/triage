@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { REPORT_FILE_ICONS } from '../view/report-logos.js'
 import { modelName } from '../view/scan-models.js'
 import { ADD_ROW_ICON, REMOVE_ROW_ICON, ROW_ACTION_STYLES } from './row-actions.js'
@@ -201,7 +201,7 @@ export class ReportInputs extends LitElement {
       input.repo ? `${input.repo}${input.directory ? `/${input.directory}` : ''}` : null].filter(Boolean)
     const name = input.title ?? input.filename
     const detail = details.join(' · ')
-    return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong data-tooltip-truncated data-tooltip=${name}>${name}</strong><span data-tooltip-truncated data-tooltip=${detail}>${detail}</span></span></label>`
+    return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${appMarkup(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong data-tooltip-truncated data-tooltip=${name}>${name}</strong><span data-tooltip-truncated data-tooltip=${detail}>${detail}</span></span></label>`
   }
   static styles = [css`
     :host { display: block; min-width: 0; }

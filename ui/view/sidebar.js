@@ -2,7 +2,7 @@ import { getPublicShare } from '../../client/managed/public-share.js'
 import { openManagedShareDialog } from './client-managed.js'
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog, stopViewing } from './client-managed.js'
@@ -220,13 +220,13 @@ function fileItemTemplate(n, opts = {}) {
   // falls through to the unfiled-section drop target. The brand
   // "sticker" icons in `FILE_ICONS` are SVG fragments authored in
   // file-display.js — controlled-domain content, no user input — so
-  // they're piped through `unsafeHTML` to skip Lit's text escape.
+  // they're piped through `appMarkup` to skip Lit's text escape.
   return html`<li
     class=${cls}
     data-file=${n}
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
-  ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
+  ><button type="button" class="file-name" data-tooltip=${label}>${appMarkup(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
 
 function reportRowIsCurrent(n, workspaceId) {
@@ -330,7 +330,7 @@ function teamReportTemplate(team, r) {
   const current = teamReportIsCurrent(team, r)
   return html`<li class=${`file-item indented team-report-item${r.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
     <button type="button" class="file-name" aria-label=${r.visible === false ? `${name} (hidden from teams)` : nothing} data-tooltip=${name} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
-      ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${name}</span>
+      ${appMarkup(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${name}</span>
     </button>
   </li>`
 }
@@ -376,9 +376,9 @@ function bundlesHeaderTemplate() {
 
 // Generic bundle glyph. Source markup lives in `view/icons.js` so
 // the same SVG paints both sidebar rows and the drop-zone's
-// supported-formats list; wrap once with `unsafeHTML` so consumers
+// supported-formats list; wrap once with `appMarkup` so consumers
 // can drop `${BUNDLE_ICON}` into their templates as before.
-const BUNDLE_ICON = html`${unsafeHTML(BUNDLE_ICON_SVG)}`
+const BUNDLE_ICON = html`${appMarkup(BUNDLE_ICON_SVG)}`
 
 function bundleRowIsCurrent(integrity, workspaceId) {
   return state.selectedBundle === integrity && state.currentView === 'bundles'
@@ -460,8 +460,8 @@ function missingReportItemTemplate(name, workspaceId) {
 }
 
 // Workspace glyph — see `BUNDLE_ICON` above for the SVG-source
-// rationale; wrapped once at module load with `unsafeHTML`.
-const WORKSPACE_ICON = html`${unsafeHTML(WORKSPACE_ICON_SVG)}`
+// rationale; wrapped once at module load with `appMarkup`.
+const WORKSPACE_ICON = html`${appMarkup(WORKSPACE_ICON_SVG)}`
 // People glyph for the per-user Teams section (above Workspaces, managed mode).
 const TEAM_ICON = html`<svg class="team-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M5.5 8a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm0 1C3.2 9 1.75 10.2 1.75 11.6V13h7.5v-1.4C9.25 10.2 7.8 9 5.5 9Zm5.25-1a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm.25 1c-.43 0-.83.05-1.2.15.86.62 1.45 1.5 1.45 2.45V13h3.25v-1.3C14.5 10.1 13.15 9 11 9Z"/></svg>`
 // Download glyph used by the per-workspace export button — a
@@ -2639,7 +2639,7 @@ class AppSidebar extends LitElement {
         </button>
         <button id="auth-status" type="button" hidden></button>
         <span id="public-status" hidden>Public access link · Read only</span>
-        <button id="manage-status" type="button" hidden data-action="manage" aria-label="Manage">${unsafeHTML(MANAGE_ICON_SVG)}</button>
+        <button id="manage-status" type="button" hidden data-action="manage" aria-label="Manage">${appMarkup(MANAGE_ICON_SVG)}</button>
       </div>
       <div id="user-menu" popover class="user-menu"></div>
     `

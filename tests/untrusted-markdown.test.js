@@ -114,9 +114,11 @@ test('markup in a description is drawn as text, wherever in the markdown it sits
   assertText(renderHighlighted(HOSTILE, { paragraphs: false }), 'as one compact flow')
 })
 
-test('a link in a description goes to http(s) only, whatever scheme the markdown wrote', () => {
-  const rendered = renderHighlighted(flowText(`${LINKS} and [fine](https://ok.example/a)`))
-  assert.deepEqual(hrefs(rendered), ['https://ok.example/a'])
+test('a link in a description goes to http(s) only, whatever scheme the markdown wrote — a link to GitHub stays a link', () => {
+  const github = 'https://github.com/org/repo/blob/0123abc/src/a.js#L3-L9'
+  const rendered = renderHighlighted(flowText(`${LINKS} and [fine](https://ok.example/a), see [src/a.js](${github})`))
+  assert.deepEqual(hrefs(rendered), ['https://ok.example/a', github])
+  assert.match(templateText(rendered), /href=https:\/\/github\.com\/org\/repo\/blob\/0123abc\/src\/a\.js#L3-L9 target="_blank"[^>]*>src\/a\.js</u)
   assert.match(templateText(rendered), /\[click\]\(javascript:alert\(1\)\)/u, 'a rejected link stays the text it was')
 })
 
