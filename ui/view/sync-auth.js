@@ -11,6 +11,7 @@
 // (the user can re-edit, or pick "retry" once they remember the
 // password).
 import { setAuthenticationResolver } from './client-sync.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openSyncAuthDialog } from './dialogs/sync-auth-dialog.js'
 
 export function installSyncAuthResolver() {

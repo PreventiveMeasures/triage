@@ -1,5 +1,6 @@
 import { buildFindingLookupForLoadedReports } from '#client/index.js'
 import { setHydrationConflictResolver } from './client-sync.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 
 // Wires the per-finding conflict dialog into both the report-attach

@@ -26,23 +26,8 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { AppDialog } from './app-dialog.js'
 import { requestPersistentStorage } from '#client/index.js'
+import { persistGrantFlavor } from '../storage-status.js'
 import storagePersistCSS from './dialog-storage-persist.css'
-
-// Which grant model this browser follows. iOS/iPadOS browsers are
-// all WebKit (CriOS / FxiOS / EdgiOS included) and desktop Safari
-// carries no Blink token, so "AppleWebKit and not a Blink UA" is the
-// ITP-governed population; the Blink tokens are slash-anchored where
-// a WebKit sibling shares the prefix (EdgiOS vs Edg/, OPT vs OPR/).
-// Desktop Firefox is the only Firefox with the prompt model (FxiOS
-// is WebKit and lacks the `Firefox/` token). Everything else is
-// treated as Chromium-style silent heuristics. UA sniffing is fine
-// at instruction-copy stakes.
-export function persistGrantFlavor() {
-  const ua = navigator.userAgent
-  if (/AppleWebKit/u.test(ua) && !/Chrome\/|Chromium|Edg\/|OPR\/|Android/u.test(ua)) return 'webkit'
-  if (/Firefox\//u.test(ua)) return 'firefox'
-  return 'chromium'
-}
 
 class StoragePersistDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(storagePersistCSS)]

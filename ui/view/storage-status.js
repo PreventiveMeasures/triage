@@ -32,7 +32,7 @@
 
 import { getStorageInfo, hasAnyBundles, isManagedUiMode, listFiles, onFileMutated, requestPersistentStorage } from '#client/index.js'
 import { ensureClientMode } from './sidebar.js'
-import { openStoragePersistDialog, persistGrantFlavor } from './dialogs/storage-persist-dialog.js'
+import { openStoragePersistDialog } from './lazy-dialogs.js'
 
 // Set by `initStorageStatus(el)` once the sidebar has rendered the
 // `#storage-status` button into its shadow DOM. Before that the
@@ -55,8 +55,24 @@ let autoRequested = false
 // number honest without the spam.
 let refreshTimer = 0
 
-// Browser-flavor detection lives with the instructions dialog
-// (persistGrantFlavor) so tooltip copy, console breadcrumbs, and
+// Which grant model this browser follows. iOS/iPadOS browsers are
+// all WebKit (CriOS / FxiOS / EdgiOS included) and desktop Safari
+// carries no Blink token, so "AppleWebKit and not a Blink UA" is the
+// ITP-governed population; the Blink tokens are slash-anchored where
+// a WebKit sibling shares the prefix (EdgiOS vs Edg/, OPT vs OPR/).
+// Desktop Firefox is the only Firefox with the prompt model (FxiOS
+// is WebKit and lacks the `Firefox/` token). Everything else is
+// treated as Chromium-style silent heuristics. UA sniffing is fine
+// at instruction-copy stakes.
+export function persistGrantFlavor() {
+  const ua = navigator.userAgent
+  if (/AppleWebKit/u.test(ua) && !/Chrome\/|Chromium|Edg\/|OPR\/|Android/u.test(ua)) return 'webkit'
+  if (/Firefox\//u.test(ua)) return 'firefox'
+  return 'chromium'
+}
+
+// The instructions dialog reads the browser's flavor here too
+// (persistGrantFlavor), so tooltip copy, console breadcrumbs, and
 // the dialog's per-engine bodies can't drift apart. 'webkit' is the
 // ITP-governed population (Safari + every iOS browser).
 function isItpGoverned() {

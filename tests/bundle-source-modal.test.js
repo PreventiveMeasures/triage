@@ -15,13 +15,14 @@ import { templates } from './_lit.js'
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
+// Compare's own bundle is loaded in the browser; render its tabs' elements here.
+mock.module('../ui/view/compare-load.js', { exports: { withCompare: template => template() } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
 // Dialogs have separate rendering tests; capture why requests without browser-only dependencies.
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })
 const openedWhy = []
-mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog: props => openedWhy.push(props) } })
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
+  openAdvisoryDetailsDialog() {}, openNpmCompareAdvisoriesDialog() {}, openWhyDialog: props => openedWhy.push(props) } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, template) => {

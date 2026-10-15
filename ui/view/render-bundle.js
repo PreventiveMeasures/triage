@@ -52,6 +52,7 @@ import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
+import { withCompare } from './compare-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFileHash(hash)
@@ -69,7 +70,7 @@ import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { railHitText, renderSearchMarks, sliceSearchLine } from './search-marks.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
-import { openWhyDialog } from './dialogs/why-dialog.js'
+import { openWhyDialog } from './lazy-dialogs.js'
 import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -2180,10 +2181,10 @@ function renderBundleSlide(entry) {
           ['history', () => repositoryFilelessTab(entry.repository, 'history')],
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
-          ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
-            .source=${npmComparisonSource(entry)}></npm-review>`],
-          ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`],
+          ['review', () => withCompare(() => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
+            .source=${npmComparisonSource(entry)}></npm-review>`)],
+          ['compare', () => withCompare(() => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`)],
           ['issues', () => repository ? repositoryFilelessTab(entry.repository, 'issues') : renderBundleIssuesList(details)],
           ['advisories', () => renderBundleAdvisoriesTab(details, render,
             canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

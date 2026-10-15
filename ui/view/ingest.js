@@ -8,7 +8,9 @@ import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
-import { openImportConflictDialog } from './dialogs/import-conflict-dialog.js'
+import { openImportConflictDialog, openSyncDownloadDialog } from './lazy-dialogs.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
+import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { dropZone, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
@@ -18,14 +20,13 @@ import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
 import { configureReportRevalidation, render, renderEmptyWorkspace } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
+import { createManagedAnnotationRead, hydrateManagedReportTriage } from './managed-triage.js'
 import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
-import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
-import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
 import { clearReportSources, fetchTeamReports, loadManagedBundle, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
@@ -867,8 +868,6 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // above, so overlapping findings are sent to a report that actually owns
   // them instead of silently posting them to the first report only.
   if (findings.length > 0) {
-    const { createManagedAnnotationRead, hydrateManagedReportTriage } = await import('./managed-triage.js')
-    if (isStaleLoad(gen)) return false
     const hydrate = async signal => {
       const readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)
       const results = await Promise.all(findings.flatMap(entry => [

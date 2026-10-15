@@ -5,11 +5,9 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, displayName as reportDisplayName } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, migrateLoadedIgnores, saveTriage, state } from '#client/index.js'
-import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
+import { openLocalContentImportDialog, openLocalTriageImportDialog, openObjstoreRecoveryDialog, openSyncSuggestDialog, openSyncUploadDialog, openTriageComparisonDialog, openWorkspaceUnlockBundleDialog } from './lazy-dialogs.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
-import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
-import { openLocalContentImportDialog } from './dialogs/local-content-import-dialog.js'
-import { openTriageComparisonDialog } from './dialogs/triage-comparison-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -48,9 +46,6 @@ import {
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
 import { sourceText } from './source-text.js'
-import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
-import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
-import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
@@ -59,6 +54,7 @@ import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
+import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
 // Bring the report pane up over the landing page.
@@ -1882,7 +1878,7 @@ function renderImpl() {
   }
   if (state.currentView === 'reviews') {
     const slot = ensureReportSlot('dependency-reviews-slot')
-    if (slot) litRender(html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`, slot)
+    if (slot) litRender(withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), slot)
     showReport()
     document.title = 'DeepView — my reviews'
     return

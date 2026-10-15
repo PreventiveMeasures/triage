@@ -29,7 +29,8 @@ beforeEach(t => {
   paints.length = 0; invalidations.length = 0
   t.after(() => Object.assign(state, previous))
 })
-const open = () => openManagedIssueDialog({ teamId: 'team', session, context: { findingId: 'finding' } })
+const { render } = await import('../ui/view/render.js')
+const open = () => openManagedIssueDialog({ teamId: 'team', session, context: { findingId: 'finding' }, render })
 
 test('creating an issue repaints the saved issue immediately without waiting for the feed', async () => {
   assert.ok(templates(findingCardInnerTemplate([finding])).some(item => item.strings[0].includes('class="mark-issue"')))

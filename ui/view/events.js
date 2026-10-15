@@ -23,13 +23,7 @@ import { keepSourceLine } from './source-wrap.js'
 import { togglePrettySource } from './pretty-source.js'
 import { toggleLockfileView } from './lockfile-view.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
-import { openCommentDialog } from './dialogs/comment-dialog.js'
-import { openFindingSourceDialog } from './dialogs/finding-source-dialog.js'
-import { openDownloadBundleDialog } from './dialogs/download-bundle-dialog.js'
-import { openExportConfirmDialog } from './dialogs/export-confirm-dialog.js'
-import { openExportViewDialog } from './dialogs/export-view-dialog.js'
-import { openFixLinkDialog } from './dialogs/fix-link-dialog.js'
-import { openRevalidationConflictsDialog } from './dialogs/revalidation-conflicts-dialog.js'
+import { openCommentDialog, openDownloadBundleDialog, openExportConfirmDialog, openExportViewDialog, openFindingSourceDialog, openFixLinkDialog, openManagedCommentsDialog, openRevalidationConflictsDialog } from './lazy-dialogs.js'
 import { findingLinkFor } from './finding-link.js'
 import { revealFindingInReport } from './finding-link-nav.js'
 import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-preview.js'
@@ -1315,8 +1309,7 @@ report.addEventListener('click', (e) => {
     const activeTab = activeTabFor(group)
     if (!canTriageFinding(activeTab)) return
     if (isManagedUiMode()) {
-      import('./dialogs/managed-comments-dialog.js')
-        .then(({ openManagedCommentsDialog }) => openManagedCommentsDialog(activeTab, renderPreservingTableScroll))
+      openManagedCommentsDialog(activeTab, renderPreservingTableScroll)
         .catch(() => showToast('Could not open comments. Please retry.'))
       return
     }
@@ -1393,7 +1386,7 @@ report.addEventListener('click', (e) => {
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
         finding, draftOptions: { sourceUrl: findingUrl(finding, findingRepoTarget(finding)),
           evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown() },
-        renderBody: renderHighlighted,
+        renderBody: renderHighlighted, render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return
     }

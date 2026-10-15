@@ -1,6 +1,7 @@
 import { isManagedUiMode, state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import { migrateIgnoredReports, readIgnoredReportContexts } from './ignored-triage.js'
+import { readFileFresh, withStoredItem } from './storage.js'
 import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
 import {
   VAULT_LOCK,
@@ -396,7 +397,6 @@ function applyTriageEntries(entries, { replace = false } = {}) {
 export async function migrateLocalStoredIgnores() {
   if (isManagedUiMode()) return false
   if (![...state.triage.values()].some(entry => entry.ignoredReports?.length)) return
-  const { readFileFresh, withStoredItem } = await import('./storage.js')
   const reports = await readIgnoredReportContexts(Object.fromEntries(state.triage),
     name => withStoredItem('report', name, () => readFileFresh(name)))
   if (isManagedUiMode()) return

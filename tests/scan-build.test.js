@@ -38,24 +38,33 @@ test('runtime CSP grants only the configured origin and dev advertises its reque
   }
 })
 
-test('Scans is always in the main bundle, without managed fixtures or transport', async () => {
+test('Scans is a bundle of its own, without managed fixtures or transport', async () => {
   const { metafile } = await build({
-    entryPoints: ['ui/view.js', 'ui/client-managed.js'], bundle: true, format: 'esm',
+    entryPoints: ['ui/view.js', 'ui/client-managed.js', 'ui/scan.js'], bundle: true, format: 'esm',
     outdir: 'out', write: false, loader: { '.css': 'text' }, plugins: [litSvgAsHtml], metafile: true,
   })
   const main = metafile.outputs['out/view.js'].inputs
   const managed = metafile.outputs['out/client-managed.js'].inputs
-  assert.ok(main['ui/scan/page.js'])
+  const scan = metafile.outputs['out/scan.js'].inputs
   assert.ok(main['ui/view/scan-navigation.js'])
-  assert.ok(main['ui/scan/default-models.js'])
-  assert.equal(Object.hasOwn(main, 'ui/managed/pages.js'), false)
-  assert.equal(Object.hasOwn(main, 'client/managed/request.js'), false)
-  assert.equal(Object.hasOwn(main, 'ui/scan/fixtures.js'), false)
-  assert.equal(Object.hasOwn(managed, 'ui/scan/fixtures.js'), false)
+  assert.ok(main['ui/view/scan-load.js'])
+  assert.ok(managed['ui/view/scan-load.js'])
+  for (const outputs of [main, managed]) {
+    assert.equal(Object.hasOwn(outputs, 'ui/scan/page.js'), false)
+    assert.equal(Object.hasOwn(outputs, 'ui/view/local-scan-page.js'), false)
+    assert.equal(Object.hasOwn(outputs, 'ui/scan/default-models.js'), false)
+    assert.equal(Object.hasOwn(outputs, 'ui/scan/fixtures.js'), false)
+  }
+  assert.ok(scan['ui/scan/page.js'])
+  assert.ok(scan['ui/view/local-scan-page.js'])
+  assert.ok(scan['ui/scan/default-models.js'])
+  assert.equal(Object.hasOwn(scan, 'ui/scan/fixtures.js'), false)
+  for (const outputs of [main, scan]) {
+    assert.equal(Object.hasOwn(outputs, 'ui/managed/pages.js'), false)
+    assert.equal(Object.hasOwn(outputs, 'client/managed/request.js'), false)
+  }
   assert.equal(Object.hasOwn(managed, 'ui/view/scan-local-source.js'), false)
-  assert.ok(managed['ui/scan/page.js'])
   assert.equal(Object.hasOwn(managed, 'ui/view/scan-navigation.js'), false)
-  assert.equal(Object.hasOwn(managed, 'ui/scan/default-models.js'), false)
 })
 
 test('model requests use only the configured scan service and explicit API key', async () => {

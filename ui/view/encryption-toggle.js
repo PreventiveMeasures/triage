@@ -17,7 +17,8 @@
 
 import { html, render as litRender } from 'lit'
 import { disableEncryption, isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
-import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
+import { openPasskeySetupDialog } from './lazy-dialogs.js'
+// Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { ensureClientMode } from './sidebar.js'
 

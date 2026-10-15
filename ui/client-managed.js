@@ -14,15 +14,7 @@ export async function loadWorkspaceImportPage() {
   const mod = await import(path)
   mod.registerWorkspaceImport(ManagedPage, managedFetch)
 }
-export async function openManagedShareDialog(...args) {
-  return (await import('./view/dialogs/managed-share-dialog.js')).openManagedShareDialog(...args)
-}
-export async function openManagedIssueDialog(props) {
-  return (await import('./view/dialogs/managed-issue-dialog.js')).openManagedIssueDialog(props)
-}
-export async function openFindingHistoryDialog(props) {
-  return (await import('./view/dialogs/finding-history-dialog.js')).openFindingHistoryDialog(props)
-}
+export { openFindingHistoryDialog, openManagedIssueDialog, openManagedShareDialog } from './view/lazy-dialogs.js'
 export * from '../client/managed/session.js'
 export * from '../client/managed/profile.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
