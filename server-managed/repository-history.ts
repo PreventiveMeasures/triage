@@ -87,17 +87,23 @@ async function githubGraphql(query: string, variables: Record<string, unknown>, 
   return body?.data
 }
 
+// A tag's target, an annotated tag's own target in turn, as deep as
+// MAX_TAG_DEPTH tags go, each object's type naming what it is.
+const MAX_TAG_DEPTH = 4
+const tagTarget = (depth: number): string => `target { __typename oid${depth > 1 ? ` ... on Tag { ${tagTarget(depth - 1)} }` : ''} }`
+
 // The branches' tips, a page at a time, each with its commit's date (GitHub
-// orders heads by name alone), and, on the first page, the latest tags.
+// orders heads by name alone), and, on the first page, the default branch's
+// tip, wherever its name sorts, and the latest tags.
 const HEADS_QUERY = `query($owner: String!, $name: String!, $after: String, $tags: Int!, $first: Boolean!) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
+    defaultBranchRef { name target { oid ... on Commit { committedDate } } }
     branches: refs(refPrefix: "refs/heads/", first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
       nodes { name target { oid ... on Commit { committedDate } } }
     }
     tags: refs(refPrefix: "refs/tags/", first: $tags, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) @include(if: $first) {
-      nodes { name target { oid ... on Tag { target { oid } } } }
+      nodes { name ${tagTarget(MAX_TAG_DEPTH)} }
     }
   }
 }`
@@ -112,8 +118,9 @@ fragment historyCommit on Commit { oid messageHeadline committedDate author { na
 
 type GraphCommit = { oid?: unknown; messageHeadline?: unknown; committedDate?: unknown; author?: { name?: unknown; user?: { login?: unknown } | null } | null
   parents?: { nodes?: { oid?: unknown }[] } }
-type GraphRef = { name?: unknown; target?: { oid?: unknown; committedDate?: unknown; target?: { oid?: unknown } } | null }
-type HeadsPage = { repository?: { defaultBranchRef?: { name?: unknown } | null
+type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
+type GraphRef = { name?: unknown; target?: GraphTarget | null }
+type HeadsPage = { repository?: { defaultBranchRef?: GraphRef | null
   branches?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphRef[] }; tags?: { nodes?: GraphRef[] } } | null }
 type Histories = { repository?: Record<string, { history?: { pageInfo?: { hasNextPage?: unknown }; nodes?: GraphCommit[] } } | null> | null }
 
@@ -147,6 +154,11 @@ export async function repositoryAllHistory(fullName: string, token: string, fetc
   const [owner, name] = fullName.split('/') as [string, string]
   const { heads, repository, cut } = await repositoryHeads(owner, name, token, fetchImpl)
   const defaultBranch = textOf(repository?.defaultBranchRef?.name, MAX_NAME)
+  // The default branch, where its name sorts past the heads read.
+  const defaultTip = repository?.defaultBranchRef?.target?.oid
+  if (defaultBranch && typeof defaultTip === 'string' && SHA.test(defaultTip) && !heads.some(head => head.name === defaultBranch)) {
+    heads.push({ name: defaultBranch, sha: defaultTip, at: timeOf(repository?.defaultBranchRef?.target?.committedDate) })
+  }
   const shown = heads.toSorted((a, b) => Number(b.name === defaultBranch) - Number(a.name === defaultBranch) || (b.at ?? 0) - (a.at ?? 0))
     .slice(0, ALL_BRANCHES)
   const tips = [...new Set(shown.map(head => head.sha))]
@@ -164,8 +176,12 @@ export async function repositoryAllHistory(fullName: string, token: string, fetc
       }
     }
   }
+  // A tag by the commit it tags, through the annotated tags between; one
+  // ending at no commit names none.
   const tags = (repository?.tags?.nodes ?? []).flatMap(ref => {
-    const sha = ref?.target?.target?.oid ?? ref?.target?.oid
+    let target = ref?.target
+    while (target?.__typename === 'Tag') target = target.target
+    const sha = target?.__typename === 'Commit' ? target.oid : null
     return typeof ref?.name === 'string' && typeof sha === 'string' && SHA.test(sha) ? [{ name: ref.name.slice(0, MAX_NAME), sha }] : []
   })
   // Every branch naming a commit listed, those not read among them.

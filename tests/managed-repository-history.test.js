@@ -94,13 +94,21 @@ test('a directory\'s history lists the commits touching it, read only where the 
   for (const path of ['', 'src', 'src/other']) assert.deepEqual((await manager({ repoId: '1', ref: a, path })).body, { error: 'no-directory' }, path)
 })
 
-test('all branches reads the 25 most recently committed to, the default branch first, each commit once, an annotated tag by the commit it tags, and with a token alone', async t => {
-  // GitHub lists heads by name: 28 stale ones before main, the newest last.
+test('all branches reads the 25 most recently committed to, the default branch first, each commit once, a tag by the commit it tags, and with a token alone', async t => {
+  // GitHub lists heads by name: 28 stale ones, the newest last; main, the
+  // default branch, sorts past all those read.
   const head = (name, oid, committedDate) => ({ name, target: { oid, committedDate } })
   const stale = Array.from({ length: 28 }, (_, index) => head(`aa-old-${index}`, d, '2020-01-01T00:00:00Z'))
+  const tag = (oid, target = null) => ({ __typename: target ? 'Tag' : 'Commit', oid, target })
   const heads = {
-    null: { branches: { pageInfo: { hasNextPage: true, endCursor: 'p2' }, nodes: [...stale, head('main', a, '2026-10-02T10:00:00Z')] },
-      tags: { nodes: [{ name: 'v1', target: { oid: 'e'.repeat(40), target: { oid: d } } }, { name: 'light', target: { oid: c } }] } },
+    null: { branches: { pageInfo: { hasNextPage: true, endCursor: 'p2' }, nodes: stale },
+      tags: { nodes: [
+        { name: 'v1', target: tag('e'.repeat(40), tag(d)) },
+        // An annotated tag of an annotated tag; one of a tree, no commit.
+        { name: 'v2', target: tag('1'.repeat(40), tag('2'.repeat(40), tag(c))) },
+        { name: 'tree', target: tag('3'.repeat(40), { __typename: 'Tree', oid: '4'.repeat(40) }) },
+        { name: 'light', target: tag(c) },
+      ] } },
     p2: { branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [head('feature', c, '2026-10-01T12:00:00Z')] } },
   }
   const histories = {
@@ -115,14 +123,14 @@ test('all branches reads the 25 most recently committed to, the default branch f
     b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, messageHeadline: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
   }
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
-    ? { defaultBranchRef: { name: 'main' }, ...heads[variables.after] } : histories } })
+    ? { defaultBranchRef: head('main', a, '2026-10-02T10:00:00Z'), ...heads[variables.after] } : histories } })
   const request = await fixture(t, { tokens: userTokens })
   const asked = github(t, { graphql })
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
   assert.deepEqual(body.commits.map(commit => commit.sha), [a, b, c, d])
-  assert.deepEqual(body.branches.map(branch => branch.name), [...stale.map(ref => ref.name), 'main', 'feature'], 'every branch naming a commit listed')
-  assert.deepEqual(body.tags, [{ name: 'v1', sha: d }, { name: 'light', sha: c }])
+  assert.deepEqual(body.branches.map(branch => branch.name), [...stale.map(ref => ref.name), 'feature', 'main'], 'every branch naming a commit listed')
+  assert.deepEqual(body.tags, [{ name: 'v1', sha: d }, { name: 'v2', sha: c }, { name: 'light', sha: c }])
   assert.equal(body.defaultBranch, 'main')
   assert.equal(body.more, true, 'branches and older commits left out')
   const queries = asked.filter(entry => entry.path === '/graphql')
