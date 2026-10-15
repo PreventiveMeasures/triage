@@ -26,6 +26,8 @@
 // `unregisterSW()` runs on every init to clean up any leftover
 // `/brotli-sw.js` from a prior SW-based fallback revision.
 
+import { trustedScriptURL } from './trusted-types.js'
+
 let initPromise = null
 let fallbackPromise = null
 
@@ -125,8 +127,9 @@ function spawnWorker() {
     // point (see build.js). A browser that ignores the option loads
     // the chunk as a classic script, fails on its `export`, and
     // fires `error` below — which retires the worker and sends the
-    // decode back to the main thread.
-    worker = new Worker(new URL(FALLBACK_PATH, import.meta.url), { type: 'module' })
+    // decode back to the main thread. The URL goes through the app's
+    // Trusted Types policy: index.html's CSP refuses a plain one.
+    worker = new Worker(trustedScriptURL(new URL(FALLBACK_PATH, import.meta.url)), { type: 'module' })
   } catch {
     workerUnusable = true
     return null

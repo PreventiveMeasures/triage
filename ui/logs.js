@@ -1,3 +1,5 @@
+import { trustedHTML } from './view/trusted-types.js'
+
 const dropZone = document.getElementById('drop-zone')
 const dropError = document.getElementById('drop-error')
 const viewer = document.getElementById('viewer')
@@ -270,7 +272,7 @@ function render() {
   html += '</div>'
   html += `<button class="reset-btn" id="reset-btn">Load another file</button>`
 
-  viewer.innerHTML = html
+  viewer.innerHTML = trustedHTML(html)
   viewer.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `deepfix logs - ${currentFileName}`
@@ -292,7 +294,7 @@ function resetView() {
   currentFileName = ''
   currentTab = null
   viewer.classList.remove('active')
-  viewer.innerHTML = ''
+  viewer.replaceChildren()
   dropZone.classList.remove('hidden')
   dropError.textContent = ''
   document.title = 'deepview logs'

@@ -56,6 +56,7 @@ import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspac
 import { createViewRenderer } from './render-transition.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
+import { trustedHTML } from './trusted-types.js'
 
 // Bring the report pane up over the landing page.
 function showReport() {
@@ -1634,7 +1635,7 @@ export function render() {
 function ensureReportSlot(id) {
   let slot = document.querySelector(`#${id}`)
   if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-    report.innerHTML = `<div id="${id}"></div>`
+    report.innerHTML = trustedHTML(`<div id="${id}"></div>`)
     slot = document.querySelector(`#${id}`)
   }
   return slot
@@ -2428,7 +2429,7 @@ function renderImpl() {
     let fHeader = document.querySelector('#header-slot')
     let treeSlot = document.querySelector('#tree-view-slot')
     if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
-      report.innerHTML = '<div id="header-slot"></div><div id="tree-view-slot"></div>'
+      report.innerHTML = trustedHTML('<div id="header-slot"></div><div id="tree-view-slot"></div>')
       fHeader = document.querySelector('#header-slot')
       treeSlot = document.querySelector('#tree-view-slot')
     }
@@ -2582,7 +2583,7 @@ function renderImpl() {
     const inner = renderGraphInBody
       ? '<div id="findings-graph-slot"></div>'
       : '<div id="toolbar-slot"></div><div id="empty-state-slot"></div><div id="findings-body-slot"></div>'
-    report.innerHTML = `<div id="header-slot"></div><div class="${wrapperClass}">${inner}</div>`
+    report.innerHTML = trustedHTML(`<div id="header-slot"></div><div class="${wrapperClass}">${inner}</div>`)
     headerSlot = document.querySelector('#header-slot')
     wrapper = report.querySelector(':scope > .findings-content')
   } else if (wrapper.className !== wrapperClass) {

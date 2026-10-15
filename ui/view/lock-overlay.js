@@ -8,6 +8,7 @@
 
 import { isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, onVaultStateChange, unlockEncryption, wipeAllVaultData } from '#client/index.js'
 import { ensureClientMode } from './sidebar.js'
+import { trustedHTML } from './trusted-types.js'
 
 let overlayEl = null
 let busy = false
@@ -54,7 +55,7 @@ function ensureOverlay() {
   overlayEl.setAttribute('role', 'dialog')
   overlayEl.setAttribute('aria-modal', 'true')
   overlayEl.setAttribute('aria-label', 'Unlock DeepView')
-  overlayEl.innerHTML = `
+  overlayEl.innerHTML = trustedHTML(`
     <div class="lock-overlay-card">
       <div class="lock-overlay-icon" aria-hidden="true">
         <svg viewBox="0 0 32 32" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="15" width="18" height="12" rx="1.5"/><path d="M11 15v-4a5 5 0 0 1 10 0v4"/></svg>
@@ -71,7 +72,7 @@ function ensureOverlay() {
         <a href="#" class="lock-overlay-wipe">Wipe local data and start over</a>
       </p>
     </div>
-  `
+  `)
   const btn = overlayEl.querySelector('button')
   const errEl = overlayEl.querySelector('.lock-overlay-error')
   btn.addEventListener('click', async () => {
