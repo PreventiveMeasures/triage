@@ -3781,7 +3781,8 @@ repository-agents { --claude: #d97757; }
   &.is-merged { --chip: var(--issue-merged); }
   &.is-closed { --chip: var(--issue-closed); }
   &.is-draft { --chip: var(--issue-quiet); }
-  &.is-commit { --chip: var(--text); & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } }
+  /* Its id the chip's cursor, as the others' are, not code's text one. */
+  &.is-commit { --chip: var(--text); & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: inherit; } }
   &.is-issue { border-style: dashed; }
 }
 

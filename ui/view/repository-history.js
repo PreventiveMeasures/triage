@@ -14,7 +14,7 @@ import { appMarkup } from './markup.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryHistory } from './client-managed.js'
 import { firstParentLine, historyLayout, historyOrder } from './history-graph.js'
-import { TAG_ICON_SVG } from './icons.js'
+import { PULL_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 import { activityPicker } from './repository-activity.js'
@@ -67,7 +67,7 @@ function historyRead(key, ask, settle) {
     if (data.get(key) === loading) {
       const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
         branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
-        loadingMore: false, moreError: null }
+        pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null }
       settle?.(entry)
       data.set(key, entry)
     }
@@ -97,7 +97,8 @@ export function revisionFromAll(all, commit) {
   }
   const commits = all.commits.filter(item => reached.has(item.sha))
   return settleFrontier({ status: 'ready', until: all.until, page: 1, commits, more: commits.some(item => item.parents.some(parent => !bySha.has(parent))),
-    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, unread: [], loadingMore: false, moreError: null })
+    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, unread: [], pulls: (all.pulls ?? []).filter(pull => reached.has(pull.merge)),
+    openPulls: all.openPulls ?? [], loadingMore: false, moreError: null })
 }
 
 // A whole repository's history read on (`settle`, as a page is read), every
@@ -134,6 +135,8 @@ function readMore(key, entry, ask, settle) {
     if (sessionHistories().get(key) !== entry) return null
     const held = new Set(entry.commits.map(commit => commit.sha))
     entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
+    const merges = new Set(entry.pulls.map(pull => pull.merge))
+    entry.pulls = [...entry.pulls, ...answer.pulls.filter(pull => !merges.has(pull.merge))]
     entry.page += 1
     entry.more = answer.more === true
     settle?.(entry)
@@ -151,11 +154,34 @@ function readMore(key, entry, ask, settle) {
 // A server's answer, its commits and the branches it didn't read those it
 // names by id.
 const SHA = /^[a-f\d]{40}$/u
+const isCommit = commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents)
 function checked(answer) {
   if (!Array.isArray(answer?.commits)) throw new Error('The server answered with no history.')
-  const commits = answer.commits.filter(commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents))
+  const commits = answer.commits.filter(isCommit)
   const unread = Array.isArray(answer.unread) ? answer.unread.filter(head => typeof head?.name === 'string' && typeof head.sha === 'string' && SHA.test(head.sha)) : []
-  return { ...answer, commits, unread }
+  // The pull requests squashed into its commits, each with its own commits,
+  // and the open ones' heads.
+  const pulls = Array.isArray(answer.pulls) ? answer.pulls.filter(pull => typeof pull?.merge === 'string' && SHA.test(pull.merge) && Number.isSafeInteger(pull.number)
+    && typeof pull.head === 'string' && SHA.test(pull.head) && Array.isArray(pull.commits)).map(pull => ({ ...pull, commits: pull.commits.filter(isCommit) })) : []
+  const openPulls = Array.isArray(answer.openPulls)
+    ? answer.openPulls.filter(pull => Number.isSafeInteger(pull?.number) && typeof pull.sha === 'string' && SHA.test(pull.sha)) : []
+  return { ...answer, commits, unread, pulls, openPulls }
+}
+
+// The commits drawn of those listed: each a pull request was squashed into
+// as the merge it was, its pull request's head its other parent, and that
+// one's own commits, each once (a branch reused for another pull request
+// shares those both had), marked by the pull request (`pull`).
+export function plantedCommits(commits, pulls) {
+  if (pulls.length === 0) return commits
+  const squashed = new Map(pulls.map(pull => [pull.merge, pull]))
+  const listed = new Set(commits.map(commit => commit.sha))
+  const own = new Map()
+  for (const pull of pulls) for (const commit of pull.commits) if (!listed.has(commit.sha) && !own.has(commit.sha)) own.set(commit.sha, { ...commit, pull: pull.number })
+  return [...commits.map(commit => {
+    const pull = squashed.get(commit.sha)
+    return pull && commit.parents.length === 1 && pull.head !== commit.parents[0] ? { ...commit, parents: [commit.parents[0], pull.head] } : commit
+  }), ...own.values()]
 }
 
 const MINUTE = 60_000
@@ -174,13 +200,21 @@ export function compactTime(at, now = Date.now()) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...date.getFullYear() === new Date(now).getFullYear() ? {} : { year: 'numeric' } })
 }
 
-// The branches and tags naming each commit, by its id: the default branch's
-// first, then branches, then tags, as `--decorate` lists them.
-export function historyRefs({ branches = [], tags = [] }, defaultBranch) {
+// The branches, pull requests and tags naming each commit, by its id: the
+// default branch's first, then branches, then the pull requests whose heads
+// they are (those squashed in when merged, the open ones now), by number,
+// then tags, as `--decorate` lists them.
+export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = [] }, defaultBranch) {
   const named = new Map()
   const add = (sha, ref) => named.set(sha, [...named.get(sha) ?? [], ref])
   for (const branch of branches.toSorted((a, b) => Number(b.name === defaultBranch) - Number(a.name === defaultBranch))) {
     add(branch.sha, { kind: 'branch', name: branch.name, main: branch.name === defaultBranch })
+  }
+  const numbered = new Set()
+  for (const { number, sha } of [...pulls.map(pull => ({ number: pull.number, sha: pull.head })), ...openPulls]) {
+    if (numbered.has(number)) continue
+    numbered.add(number)
+    add(sha, { kind: 'pull', name: `#${number}` })
   }
   for (const tag of tags) add(tag.sha, { kind: 'tag', name: tag.name })
   return named
@@ -225,7 +259,8 @@ function historyGraph(layout, shown) {
 function refChips(refs, color, revision) {
   if (!refs?.length) return nothing
   const chip = ref => html`<span class=${classMap({ 'history-ref': true, [`is-${ref.kind}`]: true, 'is-default': ref.main === true,
-    'is-shown': ref.kind === revision.kind && ref.name === revision.name })}>${ref.kind === 'tag' ? appMarkup(TAG_ICON_SVG) : nothing}<span>${ref.name}</span></span>`
+    'is-shown': ref.kind === revision.kind && ref.name === revision.name })}>${ref.kind === 'tag' ? appMarkup(TAG_ICON_SVG)
+    : ref.kind === 'pull' ? appMarkup(PULL_ICON_SVG) : nothing}<span>${ref.name}</span></span>`
   const rest = refs.slice(MAX_REFS)
   return html`<span class="history-refs" style=${styleMap({ '--ref': `var(--lane-${color})` })}>${refs.slice(0, MAX_REFS).map(chip)}${rest.length > 0
     ? html`<span class="history-ref is-more" data-tooltip=${rest.map(ref => ref.name).join(', ')}>+${rest.length}</span>` : nothing}</span>`
@@ -308,15 +343,16 @@ class RepositoryHistory extends LitElement {
     return { mode, key, entry, more: () => readMore(key, entry, ask, settle) }
   }
 
-  // The graph of what it holds, laid out again only as that changes.
+  // The graph of what it holds, the pull requests squashed into it planted
+  // as the branches they were, laid out again only as that changes.
   layout(mode, entry, defaultBranch) {
     const drawn = this._drawn
-    if (drawn?.commits === entry.commits && drawn.mode === mode && drawn.defaultBranch === defaultBranch) return drawn.layout
+    if (drawn?.commits === entry.commits && drawn.pulls === entry.pulls && drawn.mode === mode && drawn.defaultBranch === defaultBranch) return drawn.layout
     const linear = mode === 'path'
-    const ordered = linear ? entry.commits : historyOrder(entry.commits)
+    const ordered = linear ? entry.commits : historyOrder(plantedCommits(entry.commits, entry.pulls ?? []))
     const tip = mode === 'all' ? entry.branches.find(branch => branch.name === defaultBranch)?.sha : ordered[0]?.sha
     const layout = historyLayout(ordered, { linear, trunk: tip && !linear ? firstParentLine(ordered, tip) : null, colors: LANE_COLORS })
-    this._drawn = { commits: entry.commits, mode, defaultBranch, layout }
+    this._drawn = { commits: entry.commits, pulls: entry.pulls, mode, defaultBranch, layout }
     return layout
   }
 
