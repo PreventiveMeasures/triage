@@ -202,9 +202,10 @@ const DRAW_MS = 250
 
 const formatCount = new Intl.NumberFormat()
 
-// Package rows' counts: how many, how many told, flagged and stale.
+// Package rows' counts: how many, how many told, flagged, stale, and told
+// stale this scan, since assessed again or not.
 const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
-  stale: rows.filter(row => row.risk?.stale).length })
+  stale: rows.filter(row => row.risk?.stale).length, wasStale: rows.filter(row => row.wasStale).length })
 
 // An icon before a cell's text, muted (risk-icon).
 const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
@@ -305,8 +306,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
     // neededIn: Set of those of usedIn that lock it as more than
-    // devDependencies need, dev: whether none does, risk, malware: Set of
-    // advisory ids where npm's advisories name it }.
+    // devDependencies need, dev: whether none does, risk, wasStale: whether
+    // told stale this scan, malware: Set of advisory ids where npm's
+    // advisories name it }.
     this._packages = new Map()
     // By id and package: an advisory, its versions locked and where (Sets).
     this._advisories = new Map()
@@ -442,7 +444,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       }
     } else if (line.type === 'risk') {
       const row = this._packages.get(riskKey(line))
-      if (row) row.risk = riskOf(line, row.risk)
+      // One told stale is so marked for the scan (wasStale), as one assessed
+      // again since (_metrics).
+      if (row) { row.risk = riskOf(line, row.risk); row.wasStale ||= Boolean(row.risk.stale) }
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
     }
@@ -670,45 +674,56 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   // The scan's progress, a metric each: its `label`, how many (`value`), of
   // how many where it reads them (`of`), its bar's segments, each of a kind
-  // and how many (`bar`: read; those an install for production takes and
-  // those only devDependencies need; malware), the rest of `of` unfilled, said
-  // in its `tooltip`, and a `tone` where it calls for one.
+  // and how many of `of`, else of `scale`, else of `value` (`bar`: read;
+  // those an install for production takes and those only devDependencies
+  // need; malware), the rest unfilled; its parts told apart, each its kind,
+  // how many and of how many where told (`split`), and lines of `note`, both
+  // in its tooltip; and a `tone` where it calls for one.
   _metrics() {
     const counts = this._counts()
     const { needed, dev, advisories } = counts
     const count = value => formatCount.format(value)
-    // Its parts' counts said, those of none left out.
-    const said = parts => parts.filter(([, value, total = value]) => total > 0)
-      .map(([kind, value, total]) => `${count(value)}${total === undefined ? '' : `/${count(total)}`} ${kind}`).join(' · ') || null
-    const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale
+    // A metric's parts, each its kind, how many and of how many: its bar's
+    // segments, and its split, those of none left out.
+    const apart = parts => ({ bar: parts.map(([kind, value]) => [kind, value]), split: parts.filter(([, value, total = value]) => total > 0) })
+    const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale, wasStale = needed.wasStale + dev.wasStale
     return [
       { label: 'Repositories', value: counts.reposRead, of: counts.repos, bar: [['read', counts.reposRead]] },
       { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles, bar: [['read', counts.lockfilesRead]] },
-      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, bar: [['prod', needed.told], ['dev', dev.told]],
-        tooltip: said([['prod', needed.told, needed.total], ['dev', dev.told, dev.total]]) },
-      { label: 'Flagged', value: flagged, bar: [['prod', needed.flagged], ['dev', dev.flagged]],
-        tooltip: said([['prod', needed.flagged], ['dev', dev.flagged]]), tone: flagged > 0 ? 'high' : null },
-      ...stale > 0 ? [{ label: 'Stale', value: stale, bar: [['prod', needed.stale], ['dev', dev.stale]],
-        tooltip: `${said([['prod', needed.stale], ['dev', dev.stale]])}: assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
+      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total,
+        ...apart([['prod', needed.told, needed.total], ['dev', dev.told, dev.total]]) },
+      { label: 'Flagged', value: flagged, ...apart([['prod', needed.flagged], ['dev', dev.flagged]]), tone: flagged > 0 ? 'high' : null },
+      // Those still stale, its bar those assessed again of all told stale.
+      ...wasStale > 0 ? [{ label: 'Stale', value: stale, scale: wasStale,
+        bar: [['prod', needed.wasStale - needed.stale], ['dev', dev.wasStale - dev.stale]], split: apart([['prod', needed.stale], ['dev', dev.stale]]).split,
+        note: [...stale > 0 ? [`Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.`] : [],
+          `${count(wasStale - stale)} of ${count(wasStale)} assessed again.`] }] : [],
       ...advisories.total > 0 ? [{ label: 'Advisories', value: advisories.total,
-        bar: [['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]],
-        tooltip: said([['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]]) }] : [],
+        ...apart([['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]]) }] : [],
     ]
   }
 
-  // The scan's state, and its metrics (_metrics), each read with a bar, its
-  // tooltip said to a screen reader too, as the bar is hidden from one and the
-  // tooltip shows on hover alone.
+  // The scan's metrics (_metrics), each read with a bar and its tooltip a
+  // line each part, its count aligned, said to a screen reader too, as the
+  // bar is hidden from one and the tooltip shows on hover alone; then its
+  // state, at the end, so that the metrics stay put as it changes.
   _progress() {
     if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
     const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    return html`<div class="risk-progress" role="status"><span class="risk-state" data-state=${this._state}>${state}</span>
-      ${this._metrics().map(({ label, value, of, bar, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
+    const count = value => formatCount.format(value)
+    const said = ({ split = [], note = [] }) => [split.length > 0 ? `${split.map(([kind, value, total]) => `${count(value)}${total === undefined ? '' : `/${count(total)}`} ${kind}`).join(', ')}.` : '', ...note].filter(Boolean).join(' ')
+    const tip = ({ split = [], note = [] }) => html`${split.length > 0 ? html`<div class="tooltip-counts">${split.map(([kind, value, total]) => html`<span class="tooltip-count">${count(value)}${
+      total === undefined ? nothing : html`<span class="tooltip-count-of"><span class="tooltip-slash">/</span>${count(total)}</span>`}</span><span>${kind}</span>`)}</div>` : nothing}${
+      note.map(line => html`<div class="tooltip-counts-note">${line}</div>`)}`
+    return html`<div class="risk-progress" role="status">${this._metrics().map(metric => {
+      const { label, value, of, scale = of ?? value, bar, tone } = metric, text = said(metric)
+      return html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${text || nothing} .tooltipContent=${text ? tip(metric) : null}>
         <span class="risk-metric-label">${label}</span>
-        <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}${tooltip ? html`<span class="sr-only">, ${tooltip}</span>` : nothing}</span>
+        <span class="risk-metric-value">${count(value)}${of === undefined ? nothing : html`<span class="risk-metric-of"><span class="risk-metric-slash">/</span>${count(of)}</span>`}${text ? html`<span class="sr-only"> ${text}</span>` : nothing}</span>
         <span class="risk-bar" aria-hidden="true">${bar.filter(([, some]) => some > 0).map(([kind, some]) => html`<span class=${`risk-bar-${kind}`}
-          style=${styleMap({ width: `${some / (of ?? value) * 100}%` })}></span>`)}</span>
-      </span>`)}</div>`
+          style=${styleMap({ width: `${some / scale * 100}%` })}></span>`)}</span>
+      </span>`
+    })}<span class="risk-state" data-state=${this._state}>${state}</span></div>`
   }
 
   _pending(running, otherwise) {
@@ -759,7 +774,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         ${this._filterToggle(all.filter(row => ofKind(row, this._packageKind)))}
         ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th>Used in</th></tr></thead>
+        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th>Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th class="risk-used-column">Used in</th></tr></thead>
         <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links, sourced))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
