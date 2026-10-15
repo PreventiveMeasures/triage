@@ -9,10 +9,10 @@ mock.module('../client/index.js', { exports: {
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
 } })
 mock.module('../ui/view/render.js', { exports: { render() {} } })
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
 // What Compare's advisories dialog is opened with, each time.
 const comparedAdvisories = []
-mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog: props => { comparedAdvisories.push(props) } } })
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
+  openAdvisoryDetailsDialog() {}, openNpmCompareAdvisoriesDialog: props => { comparedAdvisories.push(props) } } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 // What the server answers, by package (and version, for Socket); each
 // Socket question asked, by `name@version`.

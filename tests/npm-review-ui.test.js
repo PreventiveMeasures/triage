@@ -18,7 +18,7 @@ mock.module('../ui/view/toast.js', { namedExports: { showToast: (message, option
   const toast = { message, options, dismissed: false }; loadingToasts.push(toast)
   return () => { toast.dismissed = true }
 } } })
-mock.module('../ui/view/dialogs/discard-review-dialog.js', { namedExports: {
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
   openDiscardReviewDialog: props => { confirmations.push(props); return Promise.resolve(discardConfirmation) },
 } })
 mock.module('../client/index.js', { namedExports: { state } })

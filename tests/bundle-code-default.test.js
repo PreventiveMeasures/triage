@@ -17,9 +17,8 @@ mock.module('../ui/view/scan-navigation.js', { exports: { canScanBundle: () => f
 mock.module('../ui/view/ingest.js', { exports: { bundleKind: () => null } })
 mock.module('../ui/view/tooltip.js', { exports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
 // Dialogs have separate tests; keep their browser-only dependencies out of source selection.
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })
-mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} } })
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
+  openAdvisoryDetailsDialog() {}, openNpmCompareAdvisoriesDialog() {}, openWhyDialog() {} } })
 mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
 const { state } = await import('../client/state.ts')
 const { renderBundlesList } = await import('../ui/view/render-bundle.js')

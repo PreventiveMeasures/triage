@@ -314,6 +314,7 @@
     "out/client-managed-import.js",
     "out/client-sync.js",
     "out/compare.js",
+    "out/dialogs.js",
     "out/graph.js",
     "out/github-issue-authorized.html",
     "out/github-issue-authorized.js",

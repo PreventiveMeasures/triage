@@ -13,8 +13,7 @@ import { bundleReasons } from '../../common/bundle-reasons.js'
 import { SCAN_ICON_SVG } from './icons.js'
 import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
-import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
-import { openWhyDialog } from './dialogs/why-dialog.js'
+import { openAdvisoryDetailsDialog, openWhyDialog } from './lazy-dialogs.js'
 
 const localCache = new Map()
 let managedCache = new Map(), managedScope = []

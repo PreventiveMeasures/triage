@@ -1,7 +1,7 @@
 import { LitElement, nothing } from 'lit'
 import { state } from '#client/index.js'
 import { dependencyReviews, discardDependencyReview, latestDependencyReview } from './client-managed.js'
-import { openDiscardReviewDialog } from './dialogs/discard-review-dialog.js'
+import { openDiscardReviewDialog } from './lazy-dialogs.js'
 import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'

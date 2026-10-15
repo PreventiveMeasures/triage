@@ -17,8 +17,7 @@
 
 import { html, render as litRender } from 'lit'
 import { disableEncryption, isEncryptionEnabled, isManagedUiMode, isPasskeyEnvironmentSupported, isUnlocked, migrateOpfsBundlesDecrypt, migrateOpfsFilesDecrypt, migrateSecureStorageToPlaintext, migrateTriageToPlaintext, onVaultStateChange } from '#client/index.js'
-import { openPasskeySetupDialog } from './dialogs/passkey-setup-dialog.js'
-import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
+import { openPasskeySetupDialog, openPasskeyUnlockDialog } from './lazy-dialogs.js'
 import { ensureClientMode } from './sidebar.js'
 
 // Two lock glyphs, 16×16 viewbox at 13×13 render, stroke-width 1.4

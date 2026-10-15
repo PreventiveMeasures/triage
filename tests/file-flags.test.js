@@ -9,9 +9,8 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: () => null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, installShadowTooltipListener() {}, showTooltip() {} } })
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { openNpmCompareAdvisoriesDialog() {} } })
-mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} } })
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
+  openAdvisoryDetailsDialog() {}, openNpmCompareAdvisoriesDialog() {}, openWhyDialog() {} } })
 // Socket's alerts on the version's files, by `name@version`.
 const socket = {}
 const managed = ['getPreviewRole', 'clearPreviewRole', 'resetManagedAppState', 'setManagedAppSession', 'setManagedReportCatalog', 'readReportSources', 'clearReportSources',

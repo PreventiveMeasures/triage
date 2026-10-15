@@ -7,8 +7,8 @@ import { templateText as renderText, templates } from './_lit.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
 let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { namedExports: { openAdvisoryDetailsDialog: props => { openedDetails.push(props) } } })
-mock.module('../ui/view/dialogs/why-dialog.js', { namedExports: { openWhyDialog: props => { openedWhy.push(props) } } })
+mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
+  openAdvisoryDetailsDialog: props => { openedDetails.push(props) }, openWhyDialog: props => { openedWhy.push(props) } } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details) => {

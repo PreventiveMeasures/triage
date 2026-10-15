@@ -2,6 +2,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { managedFetch } from '../../client/managed/request.js'
 import { ManagedPage, loadingRows } from './page.js'
 import { adminNavigation } from './navigation.js'
+import { openManagedShareDialog } from '../view/lazy-dialogs.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
 
@@ -23,7 +24,6 @@ class ManagedAdminLinks extends ManagedPage {
     await this._loadCollection('links', 'public links', fetchLinks, data => { this._data = data })
   }
   async _edit(link) {
-    const { openManagedShareDialog } = await import('../view/dialogs/managed-share-dialog.js')
     await openManagedShareDialog({ id: link.teamId, name: link.teamName }, link.id, this.session)
     if (this.isConnected) await this._load()
   }
