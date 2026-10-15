@@ -92,3 +92,21 @@ test('an answer read across another session\'s start keeps none of its users; on
   await assert.rejects(knowingGithubUsers(() => Promise.reject(new Error('offline'))), /offline/u)
   forgetGithubUsers()
 })
+
+test('an answer read across the signed-in user\'s profile change keeps others\' users, and the change over what it says of them', async () => {
+  forgetGithubUsers()
+  knowGithubUsers({ commits: [{ authorLogin: 'wil' }, { authorLogin: 'wil-work' }], users: {
+    wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' } } })
+  const late = Promise.withResolvers()
+  const reading = knowingGithubUsers(() => late.promise)
+  knowProfile('wil-id', { login: 'wil', name: 'Wil W', accounts: [] })
+  // Read before the change was saved, as it was then.
+  late.resolve({ commits: [{ authorLogin: 'wil' }, { authorLogin: 'wil-work' }, { authorLogin: 'vic' }], users: {
+    wil: { id: 'wil-id', login: 'wil', name: 'Wil' }, 'wil-work': { id: 'wil-id', login: 'wil', name: 'Wil' }, vic: { id: 'vic-id', login: 'vic', name: 'Vic' } } })
+  await reading
+  assert.deepEqual(['wil', 'wil-work', 'vic'].map(githubUserName), ['Wil W', 'wil-work', 'Vic'], 'the name saved, the account unlinked, another user kept')
+  // One read since the change says what the server now does.
+  await knowingGithubUsers(() => Promise.resolve({ commits: [{ authorLogin: 'wil' }], users: { wil: { id: 'wil-id', login: 'wil', name: 'Wil Again' } } }))
+  assert.equal(githubUserName('wil'), 'Wil Again')
+  forgetGithubUsers()
+})

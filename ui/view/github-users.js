@@ -34,22 +34,36 @@ export function forgetGithubUsers() {
 }
 
 // What `read` answers, its users kept as knowGithubUsers keeps them, unless
-// they were forgotten while it was read: it was another session's.
+// they were forgotten while it was read: it was another session's. A profile
+// change saved while it was read is newer than what it says of that user.
 export async function knowingGithubUsers(read) {
-  const at = generation
+  const at = generation, changes = profileChanges
   const answer = await read()
-  return at === generation ? knowGithubUsers(answer) : answer
+  if (at !== generation) return answer
+  knowGithubUsers(answer)
+  if (changes !== profileChanges) applyProfile(latestProfile.userId, latestProfile.profile)
+  return answer
 }
 
 // How many times each user changed their avatar in this page: their avatar's
 // address changes with it, as the page would show its image as first loaded.
 const avatarRevisions = new Map()
 
+// The signed-in user's latest profile change in this page, and how many.
+let latestProfile = null
+let profileChanges = 0
+
 // The signed-in user (`userId`) changed their profile in this session, as
 // `profile` now is: what was kept of them takes it, before an answer kept a
 // while is asked again. An account they unlinked is no longer theirs.
 export function knowProfile(userId, profile, avatarChanged = false) {
   if (avatarChanged) avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
+  latestProfile = { userId, profile }
+  profileChanges++
+  applyProfile(userId, profile)
+}
+
+function applyProfile(userId, profile) {
   const theirs = new Set([profile.login, ...profile.accounts.map(account => account.login)].map(login => login.toLowerCase()))
   for (const [login, user] of known) {
     if (user.id !== userId) continue
