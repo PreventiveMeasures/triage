@@ -8,16 +8,32 @@
 // files the open version adds, and `changed`, those it changes, each `{ path,
 // renamedFrom?, modified? }`, by its path in the open version.
 import { bundleFileSizes, bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { npmVersionFileRisk, npmVersionHosts } from './files.js'
+import { npmLoadedScripts, npmVersionFileRisk, npmVersionHosts } from './files.js'
 import { npmHostFinding } from './held.js'
 import { HOST_TAGS, npmHostSeverity, npmHostsTagged } from '../files/hosts.js'
 import { npmBecameUnreadable, npmBinaryCode, npmLargeCode, npmUnreadable } from '../files/readability.js'
+import { npmIsScript } from '../files/script.js'
 import { SEVERITIES } from '../files/stamps.js'
 import { CREDENTIAL_TAGS, npmFoundAdded, npmRunsCodeFlags, npmRunsCodeTagged, npmRunsCodeWithout } from '../files/runs-code.js'
 import { npmDependencySpecs } from './dependencies.js'
 import { npmFilesDiff } from './diff.js'
 import { npmInstallScripts } from './install-scripts.js'
 import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
+
+// The files the open version (`other`) runs as scripts that the one compared
+// with (`base`) held, changed or not, but didn't run, by their names
+// (script.js npmIsScript, a `.js` renamed `.txt`) or as code loaded them
+// (npm/files.js npmLoadedScripts), as its code now loads them, each a row as npmFilesDiff's
+// `changed` holds one, its own where it has one: what node runs of them is
+// new, as a changed file's is.
+function npmWokenFiles(base, other, files) {
+  const added = new Set(files.onlyOther.map(row => row.path)), rows = new Map(files.changed.map(row => [row.path, row]))
+  const before = bundleFilesAsMap(base), loadedBefore = npmLoadedScripts(base)
+  // A file that isn't text by its name alone (`payload.js`).
+  const ran = path => loadedBefore.has(path) || (before.has(path) && npmIsScript(path, typeof before.get(path) === 'string' ? before.get(path) : ''))
+  return [...npmLoadedScripts(other)].filter(path => !added.has(path)).map(path => rows.get(path) ?? { path })
+    .filter(row => !ran(row.renamedFrom ?? row.path))
+}
 
 // What the open version does to its files that calls for a look, as red
 // findings: code that runs beyond itself (runs-code.js), new to a file it
@@ -26,7 +42,8 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // one of the hosts' tags new to a file it adds or changes (hosts.js
 // npmExfiltration), a finding a tag a level higher than its own
 // (npmHostSeverity: `exfiltration` and `remote` red, `ip-lookup` orange); a
-// code file of 256 KiB or more it adds (npmLargeCode, `large-code`); a file
+// code file of 256 KiB or more it adds, one node runs as a script whatever
+// its name too (npmLargeCode, `large-code`); a file
 // it changes that had no line over 200 characters and now has one over 2,000
 // (npmBecameUnreadable, `now-unreadable`); a file it adds or changes with
 // an obfuscator's fingerprint where the one compared with had none
@@ -39,13 +56,17 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // where its source map was rebuilt with it (`rebuilt`, rebuiltWithMap), as a
 // build minifies a file and writes its map together, and in a `major`
 // release (npmMajorRelease): `now-unreadable` orange where every such file is
-// either, else red.
+// either, else red. A file it held, changed or not, that node now runs as a
+// script (npmWokenFiles) counts as one it changes, large code where it is
+// one, and unreadable now where it wasn't as no script, whatever its lines
+// were.
 function npmFileFindings(base, other, files, major) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
   const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.renamedFrom ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
-  const touched = [...files.onlyOther, ...changed]
+  const woken = npmWokenFiles(base, other, files)
+  const touched = [...new Set([...files.onlyOther, ...changed, ...woken])]
   const sizes = bundleFileSizes(other)
   // The files that hold what they didn't before, each with that.
   const gained = key => touched.map(row => ({ path: row.path, added: npmFoundAdded(after(row)[key], before(row)?.[key] ?? null) })).filter(row => row.added)
@@ -61,13 +82,16 @@ function npmFileFindings(base, other, files, major) {
       const rows = exfiltration.map(row => ({ path: row.path, added: npmHostsTagged(row.added, tag) })).filter(row => row.added)
       return { id: npmHostFinding(tag), severity: rows.length > 0 ? npmHostSeverity(tag, rows[0].added, null) : HOST_TAGS.get(tag), files: rows }
     }),
-    { id: 'large-code', severity: 'critical', files: files.onlyOther.filter(row => npmLargeCode(row.path, sizes.get(row.path))).map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
-    { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability))
+    { id: 'large-code', severity: 'critical', files: [...files.onlyOther, ...woken].filter(row => npmLargeCode(row.path, sizes.get(row.path), npmLoadedScripts(other).has(row.path)))
+      .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
+    { id: 'now-unreadable', ...unreadableFinding(major, [...new Set([...changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability, npmLoadedScripts(other).has(row.path))),
+      ...woken.filter(row => npmUnreadable(row.path, after(row).readability, true) && !npmUnreadable(row.renamedFrom ?? row.path, before(row).readability))])]
       .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest,
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
       .map(row => ({ path: row.path, obfuscation: after(row).readability.obfuscation })) },
-    { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability) && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability))
+    { id: 'binary-code', severity: 'critical', files: touched.filter(row => npmBinaryCode(row.path, after(row).readability, npmLoadedScripts(other).has(row.path))
+      && !npmBinaryCode(row.renamedFrom ?? row.path, before(row)?.readability, npmLoadedScripts(base).has(row.renamedFrom ?? row.path)))
       .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
     { id: 'kept-runs-code', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeWithout) },
     { id: 'kept-credentials', severity: 'high', files: ofKinds(kept, 'found', npmRunsCodeTagged) },
@@ -149,7 +173,7 @@ const unreadableFinding = (major, files) => ({ severity: major || files.every(ro
 // adds or changes hold all it names anew.
 function npmNewHosts(base, other, files) {
   const found = new Map(), known = npmVersionHosts(base)
-  for (const { path } of [...files.onlyOther, ...files.changed]) {
+  for (const path of new Set([...files.onlyOther, ...files.changed, ...npmWokenFiles(base, other, files)].map(row => row.path))) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {
       if (known.has(host) || ALLOWED_HOSTS.has(host)) continue
       const place = { path, line }
@@ -179,8 +203,8 @@ export function npmBaseFilesTell(other, manifest) {
   const sizes = bundleFileSizes(other)
   return [...bundleFilesAsMap(other).keys()].some(path => {
     const { runsCode, exfiltration, readability, hosts } = npmVersionFileRisk(other, path)
-    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability) || npmLargeCode(path, sizes.get(path))
-      || npmBinaryCode(path, readability)
+    return Boolean(runsCode || exfiltration || readability.obfuscation) || npmUnreadable(path, readability, npmLoadedScripts(other).has(path)) || npmLargeCode(path, sizes.get(path), npmLoadedScripts(other).has(path))
+      || npmBinaryCode(path, readability, npmLoadedScripts(other).has(path))
       || [...hosts?.keys() ?? []].some(host => !ALLOWED_HOSTS.has(host))
   })
 }

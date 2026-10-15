@@ -50,7 +50,9 @@ const CSS = {
 // JavaScript's strings and regular expressions (the first group) and its
 // comments, for a reader that sets them aside (runs-code.js, hosts.js).
 export const JS_STRING_OR_COMMENT = JS.stringOrComment
-export const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
+// A stylesheet's by its name, else JavaScript's for a script by its name, or
+// for any other where node runs it as one (`script`).
+export const minifiable = (path, script = false) => /\.css$/iu.test(path) ? CSS : script || /\.[cm]?js$/iu.test(path) ? JS : null
 // How much of a text is read for how its lines are minified: their average
 // is told by as much of them, and a text of millions of lines is read no
 // further.
@@ -81,8 +83,10 @@ export function minifiedAverage(whole, { stringOrComment, droppable, needed }) {
 // as an ES module (in a `"type": "module"` package).
 const SCRIPT = /\.[cm]?[jt]sx?$/iu
 const NODE_HASHBANG = /^\uFEFF?#!.*\bnode\b/u
-// Whether a file (its path and text) is a script, as SCRIPT and NODE_HASHBANG tell.
-export const npmIsScript = (path, text) => typeof text === 'string' && (SCRIPT.test(path) || NODE_HASHBANG.test(text))
+// Whether a file (its path and text) is a script, as SCRIPT and NODE_HASHBANG
+// tell, or as node runs it whatever its name (`script`, npm/files.js
+// npmLoadedScripts).
+export const npmIsScript = (path, text, script = false) => typeof text === 'string' && (script || SCRIPT.test(path) || NODE_HASHBANG.test(text))
 // How many places a file is told doing a thing, the first ones, at most
 // (runs-code.js, hosts.js): a file doing it on millions of lines is told by
 // its first, and what it holds of them kept to a bound however many there

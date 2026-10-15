@@ -411,12 +411,13 @@ export const RUNS_CODE = new Map([
 
 // The kinds a file's code holds, each with the lines it is on, of the first
 // NPM_MAX_FOUND places it does each, in RUNS_CODE's order; null for none, or
-// for a file that is no script. A shell script's, read whole, are its shell
+// for a file that is no script, by its name or as node runs it (`nodeRuns`,
+// npmIsScript's `script`). A shell script's, read whole, are its shell
 // commands and the places it names; one with a shell's hashbang is one
 // whatever its extension, and read as JavaScript too where it is that, as
 // a launcher (`#!/bin/sh` then `exec node "$0"`) is both.
-export function npmRunsCode(path, text) {
-  const script = npmIsScript(path, text)
+export function npmRunsCode(path, text, nodeRuns = false) {
+  const script = npmIsScript(path, text, nodeRuns)
   const shell = typeof text === 'string' && (SHELL_SCRIPT.test(path) || SHELL_HASHBANG.test(text))
   if (!script && !shell) return null
   const found = new Map()

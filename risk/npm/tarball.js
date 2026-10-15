@@ -96,6 +96,21 @@ async function gunzip(gzipped) {
   }
 }
 
+// Whether a file that isn't text may run as JavaScript all the same, as node
+// decodes it as UTF-8 (npm/files.js npmLoadedScripts): only where its first
+// character no UTF-8 encodes, or its first NUL, which JavaScript holds only
+// in a string, a template, a regular expression or a comment, may sit in
+// one, after a quote, a backtick, a slash, a `<` or `-` (an HTML-like
+// comment, `<!--`, `-->`) or on a hashbang's line. An image's, a font's or
+// WebAssembly's is in its first bytes, before any.
+const OPENS = [0x27, 0x22, 0x60, 0x2F, 0x3C, 0x2D]
+function npmRunnable(bytes) {
+  const start = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF ? 3 : 0
+  if (bytes[start] === 0x23 && bytes[start + 1] === 0x21) return true
+  const opens = Math.min(...OPENS.map(byte => bytes.indexOf(byte, start)).filter(at => at !== -1))
+  return Number.isFinite(opens) && npmFileText(bytes.subarray(0, opens)) !== null
+}
+
 // A file's bytes' digest, as the managed server gives one of a file that
 // isn't text (server-managed/npm-packages.ts).
 const sha256 = async bytes => `sha256-${btoa(String.fromCodePoint(...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))))}`
@@ -104,11 +119,12 @@ const sha256 = async bytes => `sha256-${btoa(String.fromCodePoint(...new Uint8Ar
 // viewer holds a version (ui/view/npm-package.js npmPackageDetails), a source
 // map listing them (`kind: 'sourcemap'`): `json.sources` their paths, sorted,
 // `json.sourcesContent` their texts, `fileSizes` by path, and `npmBinaries`,
-// those that aren't text, `{ size, digest }` by path, which compare.js and
+// those that aren't text, `{ size, digest, runnable }` by path (npmRunnable),
+// which compare.js and
 // diff.js tell them by.
 export async function npmTarballVersion(gzipped) {
   const files = [...npmTarFiles(await gunzip(gzipped))].toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
   const texts = files.map(([, bytes]) => npmFileText(bytes))
-  const binaries = await Promise.all(files.filter((_, at) => texts[at] === null).map(async ([path, bytes]) => [path, { size: bytes.length, digest: await sha256(bytes) }]))
+  const binaries = await Promise.all(files.filter((_, at) => texts[at] === null).map(async ([path, bytes]) => [path, { size: bytes.length, digest: await sha256(bytes), runnable: npmRunnable(bytes) }]))
   return { kind: 'sourcemap', json: { version: 3, sources: files.map(([path]) => path), sourcesContent: texts }, fileSizes: new Map(files.map(([path, bytes]) => [path, bytes.length])), npmBinaries: new Map(binaries) }
 }
