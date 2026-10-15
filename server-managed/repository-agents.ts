@@ -3,7 +3,9 @@
 // a page of the repository's pull requests, the most recently updated first,
 // and of its default branch's commits, the newest first, those no pull
 // request merged; on the first page, its latest issues and the newest of
-// its agents' branches. Each artifact's texts are read here for the marks an
+// its agents' branches (GitHub lists branches by name alone, so every one an
+// agent's prefix names is read, as many as ten pages of each, and the newest
+// kept). Each artifact's texts are read here for the marks an
 // agent leaves, and those alone are answered, never the texts. GraphQL alone
 // gives them, so it needs a token.
 import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, agentSignals } from '../common/managed/agent-tasks.ts'
@@ -15,6 +17,7 @@ export const AGENT_PULLS_PAGE = 50
 export const AGENT_COMMITS_PAGE = 100
 const AGENT_ISSUES = 100
 const AGENT_BRANCHES = 100
+const MAX_BRANCH_PAGES = 10
 const COMMENTS = 5
 const CLOSES = 5
 const MAX_TITLE = 1000
@@ -24,8 +27,16 @@ const SHA = /^[a-f\d]{40}$/u
 // The address Claude's own commits are authored with.
 const CLAUDE_EMAIL = 'noreply@anthropic.com'
 
-const branches = (agent: string) => `${agent}: refs(refPrefix: "refs/heads/${agent}/", first: ${AGENT_BRANCHES}, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })
-      @include(if: $first) { nodes { name target { ... on Commit { committedDate message author { user { login } } } } } }`
+// An agent's branches, a page at a time, as GitHub lists them, by name;
+// each its tip commit's time, message and author.
+const BRANCHES_QUERY = `query($owner: String!, $name: String!, $prefix: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: $prefix, first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { prefix name target { ... on Commit { committedDate message author { user { login } } } } }
+    }
+  }
+}`
 const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $commits: String, $first: Boolean!, $readPulls: Boolean!, $readCommits: Boolean!) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $readPulls) {
@@ -45,8 +56,6 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
     issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
       nodes { number title state createdAt updatedAt author { login } body comments(last: ${COMMENTS}) { nodes { body } } }
     }
-    ${branches('claude')}
-    ${branches('codex')}
   }
 }`
 
@@ -58,10 +67,11 @@ type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: 
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: { email?: unknown; user?: Login } | null; associatedPullRequests?: { totalCount?: unknown } }
 type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown; comments?: Texts }
-type RefNode = { name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: { user?: Login } | null } | null }
+type RefNode = { prefix?: unknown; name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: { user?: Login } | null } | null }
 type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 type Page = { repository?: { pullRequests?: Connection<PullNode>; defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null
-  issues?: Connection<IssueNode>; claude?: Connection<RefNode>; codex?: Connection<RefNode> } | null }
+  issues?: Connection<IssueNode> } | null }
+type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const number = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null
@@ -103,10 +113,29 @@ function issue(node: IssueNode | null): AgentIssue | null {
     createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), signals: agentSignals([node.body, ...bodies(node.comments)], [node.body]) }
 }
 
+// A branch of `agent`'s, named in full however GitHub splits its name from
+// the prefix it was listed under.
 const branch = (agent: string) => (node: RefNode | null): AgentBranch | null => {
-  const name = nameOf(node?.name)
-  return name ? { name: `${agent}/${name}`, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
+  const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
+  const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
+  return name?.startsWith(`${agent}/`) ? { name, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
     signals: agentSignals([node?.target?.message]) } : null
+}
+
+// The newest of `agent`'s branches: every one its prefix names, as many as
+// MAX_BRANCH_PAGES of them list, kept by their tips' times.
+async function agentBranches(owner: string, name: string, agent: string, token: string, fetchImpl: typeof fetch) {
+  const found: AgentBranch[] = []
+  let after: string | null = null
+  for (let page = 0; page < MAX_BRANCH_PAGES; page++) {
+    const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${agent}/`, after }, token, fetchImpl) as RefsPage)
+      ?.repository?.refs
+    found.push(...(refs?.nodes ?? []).flatMap(node => branch(agent)(node) ?? []))
+    const next: Connection<RefNode>['pageInfo'] = refs?.pageInfo
+    if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') break
+    after = next.endCursor
+  }
+  return found.toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES)
 }
 
 const nextCursor = (connection: Connection<unknown> | undefined) => {
@@ -123,8 +152,11 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const first = cursors.pulls === null && cursors.commits === null
-  const data = await githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
-    readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Page
+  const [data, claude, codex] = await Promise.all([
+    githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
+      readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Promise<Page>,
+    first ? agentBranches(owner, name, 'claude', token, fetchImpl) : [], first ? agentBranches(owner, name, 'codex', token, fetchImpl) : [],
+  ])
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const history = repository.defaultBranchRef?.target?.history
@@ -134,8 +166,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     commits: (history?.nodes ?? []).flatMap(node => directCommit(node) ?? []),
     ...first ? {
       issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
-      branches: [...(repository.claude?.nodes ?? []).flatMap(node => branch('claude')(node) ?? []),
-        ...(repository.codex?.nodes ?? []).flatMap(node => branch('codex')(node) ?? [])],
+      branches: [...claude, ...codex],
     } : {},
     more: after.pulls !== null || after.commits !== null, after,
   }

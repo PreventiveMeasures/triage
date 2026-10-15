@@ -1631,7 +1631,8 @@ agent, its title (its first task's) opening where it ran, a Claude Code
 session or a Codex task, else on GitHub, its author, age, how many tasks and
 lines it holds, its pull requests, commits and issues in their states'
 colors, each opening on GitHub, and its branch; one with a branch alone says
-it has no pull request. **All**, **Claude** and **Codex** pick whose, each
+it has no pull request, shown once no pull request left to read can be its
+(where some are, only a branch newer than the oldest read). **All**, **Claude** and **Codex** pick whose, each
 with how many; a **Filter** picks by any word of a title, author, branch,
 number or session. Pages read on as the end of the scroll nears, as History's
 do, the sessions made again of all read.
@@ -1642,7 +1643,10 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues and the hundred newest of
-each agent's branches. Each pull request's body, head and merge commits'
+each agent's branches: GitHub lists branches by name alone, so every branch
+an agent's prefix names is read, as many as ten pages of a hundred of each,
+named in full whatever prefix GitHub splits off, and the newest kept by
+their tips' times. Each pull request's body, head and merge commits'
 messages and last comments, each commit's message, each issue's body and
 comments, and each branch's tip commit are read for the sessions and tasks
 they link and Claude's marks (`signals`), and those alone are answered,

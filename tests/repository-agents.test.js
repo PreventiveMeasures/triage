@@ -37,7 +37,9 @@ const firstPage = () => ({
   pulls: [pull(9, 'claude/one', claude('session_A'), { state: 'open' }), pull(8, 'claude/one', claude('session_A')), pull(5, 'codex/two', none), pull(4, 'deps/bump', none)],
   commits: [{ oid: 'c'.repeat(40), title: 'Pushed to main', at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude('session_A') }],
   issues: [{ number: 3, title: 'Asked', state: 'closed', author: 'grace', createdAt: 1, updatedAt: 1, signals: claude('session_A') }],
-  branches: [{ name: 'codex/left', at: 1, author: 'ada', signals: none }],
+  // One left without a pull request, and one older than every pull request
+  // read, which may be among those yet to read.
+  branches: [{ name: 'codex/left', at: Date.now() - 60_000, author: 'ada', signals: none }, { name: 'codex/old', at: 1, author: 'ada', signals: none }],
   more: true, after: { pulls: 'p_1', commits: null },
 })
 
@@ -60,6 +62,7 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
   assert.doesNotMatch(text, /Pull 4/u)
+  assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
 })
 
@@ -75,6 +78,7 @@ test('more read on from the cursors a page ended at, each pull request and commi
   const text = templateText(view.render())
   assert.match(text, /5 pull requests read/u)
   assert.match(text, />Pull 2<[^]*4 tasks/u, 'an older one on its branch, its first task now')
+  assert.match(text, /codex\/old[^]*no pull request/u, 'all read, a branch without one shows')
   assert.doesNotMatch(text, />More</u)
 })
 
@@ -84,7 +88,7 @@ test('the agent picked, and the filter, pick among the sessions read; a session 
   view.render()
   await setImmediate()
   const sessions = view.list().entry.sessions
-  assert.deepEqual(filterSessions(sessions, 'codex', '').map(item => item.title), ['Pull 5', 'codex/left'])
+  assert.deepEqual(filterSessions(sessions, 'codex', '').map(item => item.title), ['codex/left', 'Pull 5'])
   assert.deepEqual(filterSessions(sessions, 'all', 'ccccccc').map(item => item.title), ['Pull 8'])
   assert.deepEqual(filterSessions(sessions, 'all', 'asked #9').map(item => item.title), ['Pull 8'])
   assert.deepEqual(filterSessions(sessions, 'claude', 'left'), [])

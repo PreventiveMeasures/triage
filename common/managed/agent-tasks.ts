@@ -184,13 +184,18 @@ function sessionOf({ agents, keys }: Group, { pulls, commits, issues, branches }
 // recently updated first: each a set of them, joined by the sessions and
 // tasks they link and the branches pull requests are from, with the issues
 // the session links, a pull request closes, or a branch is named for.
-// Artifacts no agent left marks on belong to none.
-export function agentSessions(artifacts: Artifacts): AgentSession[] {
+// Artifacts no agent left marks on belong to none. Where pull requests
+// updated before `branchesSince` are yet to be read, a session of branches
+// alone older than that waits for them: its pull request may be among them.
+export function agentSessions(artifacts: Artifacts, { branchesSince = null }: { branchesSince?: number | null } = {}): AgentSession[] {
   const lookups = {
     pulls: new Map((artifacts.pulls ?? []).map(pull => [pull.number, pull])),
     commits: new Map((artifacts.commits ?? []).map(commit => [commit.oid, commit])),
     issues: new Map((artifacts.issues ?? []).map(issue => [issue.number, issue])),
     branches: new Map((artifacts.branches ?? []).map(branch => [branch.name, branch])),
   }
-  return artifactGroups(artifacts).flatMap(group => sessionOf(group, lookups) ?? []).toSorted(byTime(session => session.updatedAt)).toReversed()
+  const waiting = (session: AgentSession) => branchesSince !== null && session.pulls.length === 0 && session.commits.length === 0 && session.issues.length === 0
+    && (session.updatedAt ?? 0) < branchesSince
+  return artifactGroups(artifacts).flatMap(group => sessionOf(group, lookups) ?? []).filter(session => !waiting(session))
+    .toSorted(byTime(session => session.updatedAt)).toReversed()
 }

@@ -71,13 +71,23 @@ const firstPage = () => ({ data: { repository: {
   ] } } },
   issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada' }, body: 'Hard to read.', comments: { nodes: [] } },
     { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null, body: null, comments: { nodes: [{ body: `Working on it: ${session}` }] } }] },
-  claude: { nodes: [{ name: 'magical-mayer-83oicz', target: { committedDate: '2026-10-15T02:00:00Z', message: `Tabs\n\nClaude-Session: ${session}`, author: { user: { login: 'ChristopherTuring' } } } }] },
-  codex: { nodes: [{ name: 'try-lazy-trees', target: { committedDate: '2026-10-15T03:00:00Z', message: 'Try', author: null } }] },
 } } })
+// An agent's branches as GitHub lists them, by name, a page at a time; a
+// name whole under `refs/heads/`, or under the prefix listed.
+const ref = (prefix, name, at, message = 'Work') => ({ prefix, name, target: { committedDate: at, message, author: { user: { login: 'ChristopherTuring' } } } })
+const refPages = {
+  'refs/heads/claude/': { null: { pageInfo: { hasNextPage: true, endCursor: 'b_2' }, nodes: [ref('refs/heads/', 'claude/aaa-old', '2026-01-01T00:00:00Z'),
+    ref('refs/heads/', 'claude/magical-mayer-83oicz', '2026-10-15T02:00:00Z', `Tabs\n\nClaude-Session: ${session}`)] },
+  b_2: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/', 'claude/zzz-newest', '2026-10-15T04:00:00Z')] } },
+  'refs/heads/codex/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/codex/', 'try-lazy-trees', '2026-10-15T03:00:00Z'), null] } },
+}
+const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
+  ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
+  : firstPage()
 
 test('the first page reads pull requests, the default branch\'s commits no pull request merged, issues and agents\' branches, and answers their agents\' marks, never their texts', async t => {
   const request = await fixture(t)
-  const asked = github(t, firstPage)
+  const asked = github(t, graphql)
   const { status, body } = await request({ repoId: '1' })
   assert.equal(status, 200)
   const sessionSignals = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true }
@@ -92,25 +102,29 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true }]], 'those no agent marked, or a pull request merged, are not')
   assert.deepEqual(body.issues.map(issue => [issue.number, issue.state, issue.signals]), [[12, 'open', { sessions: [], tasks: [], claude: false }],
     [13, 'closed', { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: false }]])
-  assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions]), [['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn']],
-    ['codex/try-lazy-trees', []]])
+  // Every page of each agent's branches read, the newest first, named in full.
+  assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions]), [['claude/zzz-newest', []],
+    ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn']], ['claude/aaa-old', []], ['codex/try-lazy-trees', []]])
   assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: null }])
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Hard to read|Working on it/u, 'no text read is answered')
-  assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
-  assert.match(asked[0].query, /refs\(refPrefix: "refs\/heads\/codex\/", first: 100, orderBy: \{ field: TAG_COMMIT_DATE, direction: DESC \}\)/u)
-  assert.equal(asked[0].auth, 'Bearer login-token')
+  const page = asked.find(query => query.query.includes('pullRequests('))
+  assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
+  assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
+    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null]])
+  assert.ok(asked.every(query => query.auth === 'Bearer login-token'))
 })
 
 test('a later page reads on from the cursors it names alone, without issues and branches again', async t => {
   const request = await fixture(t)
   const asked = github(t, () => ({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [pullNode(800, {})] } } } }))
   const { body } = await request({ repoId: '1', pulls: cursor })
+  assert.equal(asked.length, 1, 'no branches read again')
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', pulls: cursor, commits: null, first: false, readPulls: true, readCommits: false })
   assert.deepEqual([body.pulls.map(pull => pull.number), body.commits, body.issues, body.branches, body.more], [[800], [], undefined, undefined, false])
 })
 
 test('agents\' work is read only with a token by a reader whose grants reach the whole repository; a cursor that isn\'t one is a bad request', async t => {
-  github(t, firstPage)
+  github(t, graphql)
   assert.deepEqual(await (await fixture(t, { tokens: null }))({ repoId: '1' }), { status: 403, body: { error: 'github-token-required' } })
   assert.deepEqual(await (await fixture(t, { role: 'manage' }))({ repoId: '1' }), { status: 404, body: { error: 'no-directory' } })
   const request = await fixture(t)

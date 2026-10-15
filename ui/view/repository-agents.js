@@ -51,8 +51,11 @@ function checked(answer) {
   }
 }
 
-// The sessions what an entry read makes, kept with it.
-const reconstructed = entry => Object.assign(entry, { sessions: agentSessions(entry) })
+// The sessions what an entry read makes, kept with it: where pull requests
+// are left to read, those of branches alone older than the oldest read wait.
+const reconstructed = entry => Object.assign(entry, { sessions: agentSessions(entry, {
+  branchesSince: entry.after?.pulls ? Math.min(...entry.pulls.map(pull => pull.updatedAt ?? Number.POSITIVE_INFINITY)) : null,
+}) })
 
 // What the repository `key` names showed, as held, else read: `{ status }`,
 // 'loading', then 'ready' with the artifacts read, the `sessions` they make,

@@ -59,6 +59,12 @@ test('without a session named, a branch\'s pull requests are one, an agent\'s br
   assert.equal(sessions.some(item => item.issues.some(linked => linked.number === 43)), false, 'one no agent touched is none\'s')
 })
 
+test('where older pull requests are yet to be read, a session of branches alone older than those read waits for them', () => {
+  const artifacts = { pulls: [pull(9, 'codex/new')], branches: [branch('codex/new', none, 80), branch('codex/old', none, 50), branch('codex/fresh', none, 120)] }
+  assert.deepEqual(agentSessions(artifacts, { branchesSince: 95 }).map(item => item.id), ['codex/fresh', 'pull-9'])
+  assert.deepEqual(agentSessions(artifacts).map(item => item.id), ['codex/fresh', 'pull-9', 'codex/old'], 'all read, it shows')
+})
+
 test('a Claude session a Codex task pushed to is both agents\'', () => {
   const [both] = agentSessions({ pulls: [pull(8, 'claude/shared', session('session_C')), pull(9, 'claude/shared', { sessions: [], tasks: ['task_e_123456'], claude: false })] })
   assert.deepEqual([both.agents, both.sessions, both.tasks], [['claude', 'codex'], ['session_C'], ['task_e_123456']])
