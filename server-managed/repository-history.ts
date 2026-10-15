@@ -9,6 +9,8 @@
 import { GithubApiError, githubJson } from './github-app.ts'
 
 export const HISTORY_PAGE = 100
+// The deepest page read, as far as Older commits goes.
+export const MAX_HISTORY_PAGE = 100
 // `--all`: the branches most recently committed to, the latest commits of
 // each (as many as a GraphQL connection gives), and the latest tags.
 export const ALL_BRANCHES = 25
@@ -53,12 +55,12 @@ const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.s
 
 // A page of the commits `commit` reaches, newest first as GitHub lists them,
 // those touching `path` alone where it names a directory; `more` where a
-// full page leaves some for the next.
+// full page leaves some for the next, one that may be read.
 export async function repositoryHistory(fullName: string, token: string | null, commit: string, path: string, page: number, fetchImpl: typeof fetch = globalThis.fetch) {
   const params = new URLSearchParams({ sha: commit, per_page: String(HISTORY_PAGE), page: String(page), ...path ? { path } : {} })
   const data = await githubJson(`${repoApi(fullName)}/commits?${params}`, token, fetchImpl)
   if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
-  return { commits: data.flatMap(item => restCommit(item as RestCommit) ?? []), more: data.length >= HISTORY_PAGE }
+  return { commits: data.flatMap(item => restCommit(item as RestCommit) ?? []), more: data.length >= HISTORY_PAGE && page < MAX_HISTORY_PAGE }
 }
 
 // The commits the repository's branches and tags point at, as GitHub's

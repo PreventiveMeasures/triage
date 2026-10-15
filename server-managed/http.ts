@@ -159,7 +159,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { MAX_HISTORY_PAGE, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -1442,7 +1442,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   const { repoId, ref, path } = asked
   const page = Number(query.get('page') ?? '1')
   const all = query.get('all') === 'true'
-  if (!Number.isSafeInteger(page) || page < 1 || page > 100 || (all && (path !== '' || page !== 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || page !== 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, path)
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }

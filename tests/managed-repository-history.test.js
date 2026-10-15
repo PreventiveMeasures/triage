@@ -17,7 +17,7 @@ const restCommit = (sha, parents, message, login = 'octo') => ({
 })
 
 // GitHub, as the reader and the history read it: `asked` the requests made.
-function github(t, { graphql = null } = {}) {
+function github(t, { graphql = null, full = false } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', (input, options = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
@@ -26,6 +26,9 @@ function github(t, { graphql = null } = {}) {
     const path = url.pathname
     if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     if (path === '/repos/org/repo/commits/heads%2Fmain') return Promise.resolve(Response.json({ sha: a }))
+    if (path === '/repos/org/repo/commits' && full) {
+      return Promise.resolve(Response.json(Array.from({ length: 100 }, (_, index) => restCommit(index.toString(16).padStart(40, '0'), [], `Work ${index}`))))
+    }
     if (path === '/repos/org/repo/commits') {
       return Promise.resolve(Response.json([restCommit(a, [b, c], 'Merge feature\n\nLonger body'), restCommit(b, [d], 'Main work', null), restCommit('short', [], 'not a commit')]))
     }
@@ -74,6 +77,13 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.equal(later.body.page, 2)
   assert.equal(later.body.branches, undefined)
   assert.deepEqual(asked.findLast(entry => entry.path === '/repos/org/repo/commits').query, { sha: a, per_page: '100', page: '2' })
+})
+
+test('a full page offers the next, but for the deepest page read', async t => {
+  const request = await fixture(t)
+  github(t, { full: true })
+  assert.equal((await request({ repoId: '1', ref: a, page: '99' })).body.more, true)
+  assert.equal((await request({ repoId: '1', ref: a, page: '100' })).body.more, false, 'page 101 is no page to read')
 })
 
 test('a directory\'s history lists the commits touching it, read only where the reader\'s grants reach all of it', async t => {
