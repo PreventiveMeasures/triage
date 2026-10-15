@@ -3691,8 +3691,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 }
 
 /* A repository's agents (repository-agents.js): a session a tile, as an
-   issue is, its agents' marks a rail beside its lines, Claude's a burst in
-   its orange, Codex's a prompt, an app agent's its GitHub App's avatar: its
+   issue is, its agents' marks a rail beside its lines, Claude's in its
+   orange, Codex's OpenAI's, an app agent's its GitHub App's avatar: its
    title, opening where it ran, then a line each, none wrapping, its author,
    age, tasks and size, its tasks and issues as chips in their states'
    colors, and its branch. */
@@ -3704,11 +3704,9 @@ repository-agents { --claude: #d97757; }
 .agent-mark, .agent-logo { display: inline-flex; }
 .agent-mark :is(svg, img) { width: 14px; height: 14px; }
 .agent-avatar { border-radius: 3px; }
-/* Claude's burst drawn in its orange, Codex's OpenAI mark filled. */
-:is(.agent-pick, .agent-mark).is-claude svg {
-  color: var(--claude); fill: none; stroke: currentcolor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
-}
-:is(.agent-pick, .agent-mark).is-codex svg { fill: currentcolor; stroke: none; }
+/* Claude's mark filled in its orange, Codex's OpenAI mark in the text's. */
+:is(.agent-pick, .agent-mark):is(.is-claude, .is-codex) svg { fill: currentcolor; stroke: none; }
+:is(.agent-pick, .agent-mark).is-claude svg { color: var(--claude); }
 .agent-mark.is-codex { color: var(--text); }
 /* What each agent did among the sessions read, at the bar's end: its mark,
    then its pull requests, branches and commits to the default branch
@@ -3720,7 +3718,7 @@ repository-agents { --claude: #d97757; }
 }
 .agent-stats {
   display: inline-flex; align-items: center; gap: .55rem; font-variant-numeric: tabular-nums;
-  & .agent-mark :is(svg, img) { width: 12px; height: 12px; }
+  & .agent-mark :is(svg, img) { width: 16px; height: 16px; }
 }
 .agent-stat {
   display: inline-flex; align-items: center; gap: .2rem;
