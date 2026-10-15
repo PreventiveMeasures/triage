@@ -114,6 +114,8 @@ export interface State {
   selectedBundleWorkspace: string | null
   scanSelection: { bundleId: string, repoId?: string | number } | { mode: 'report', reportMode: 'link' } | null
   bundleCreationRepoId: number | null
+  // The repository the code page picks, as its link names it.
+  codeRepoId: number | null
   bundleDetails: unknown
   bundleDetailsTab: string
   selectedPackage: string | null
@@ -143,6 +145,9 @@ export interface State {
   // The npm version opening, as its route names it, while its page shows
   // its header (render-bundle.js renderNpmOpening).
   npmOpening: { name: string; spec: string | null; tab: string } | null
+  // A repository's directory opening in the code viewer, or why it didn't
+  // (ui/view/repository-code.js).
+  repositoryCodeOpening: { repoId: number; commit: string; path: string; tab: string; repo: string | null; error: string | null } | null
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
@@ -566,6 +571,7 @@ export const state: State = store<State>({
   selectedBundleWorkspace: null,
   scanSelection: null,
   bundleCreationRepoId: null,
+  codeRepoId: null,
   bundleDetails: null,
   // Active tab in the bundle view's tab strip: 'overview' (the
   // metadata + Packages / Files / Reports nested view), 'terminal',
@@ -662,6 +668,7 @@ export const state: State = store<State>({
   bundleCodeFileRequest: null,
   npmLookup: { input: '', error: null },
   npmOpening: null,
+  repositoryCodeOpening: null,
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',

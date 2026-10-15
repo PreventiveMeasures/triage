@@ -58,6 +58,25 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
   }
 }
 
+// The files of the tree `tree` (its id) of the repository `fullName`, and of
+// every tree under it, as GitHub lists them at once with `token`, a reader's
+// (readToken): how many and their bytes, or null where GitHub cuts the
+// listing short, as it does past 100,000 entries.
+export async function repositoryTreeFiles(fullName: string, token: string | null, tree: string, fetchImpl: typeof fetch = globalThis.fetch) {
+  if (!/^[a-f\d]{40}$/u.test(tree)) throw new GithubApiError(400, 'bad-tree')
+  const url = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/git/trees/${tree}?recursive=1`
+  const data = await githubJson(url, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
+  if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
+  if (data.truncated === true) return null
+  let bytes = 0, files = 0
+  for (const item of data.tree as { type?: unknown; size?: unknown }[]) {
+    if (item?.type !== 'blob') continue
+    files++
+    if (typeof item.size === 'number' && item.size > 0) bytes += item.size
+  }
+  return { files, bytes }
+}
+
 async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch) {
   const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
   // Public reads can use the signed-in user's quota without repository grants.

@@ -36,11 +36,12 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
-import { NPM_TABS } from '../../common/managed/routes.js'
+import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
+import { repositoryCodeName, repositoryCodeRoute } from './repository-code.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -1503,6 +1504,8 @@ function renderBundleCodeView(details, entry = null) {
     managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', managedCodeLocation(state)))
   } else if (path && entry?.npm && isManagedUiMode()) {
     managedHistory?.replaceCodeRoute(npmPackageRoute(entry, 'code', managedCodeLocation(state)))
+  } else if (path && entry?.repository && isManagedUiMode()) {
+    managedHistory?.replaceCodeRoute(repositoryCodeRoute(entry, 'code', managedCodeLocation(state)))
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -1778,7 +1781,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
   if (!query) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-hint">
-        Search across every ${details.npm ? 'file of this version' : 'source in this bundle'}. Each match shows the surrounding
+        Search across every ${details.npm ? 'file of this version' : details.repository ? 'file of this directory' : 'source in this bundle'}. Each match shows the surrounding
         lines for context — fewer matches get more context. Toggle
         <span class="bundle-search-hint-kbd">Aa</span> for case-sensitive and
         <span class="bundle-search-hint-kbd">.*</span> for regular-expression matching.
@@ -1873,7 +1876,7 @@ function renderBundleSearchView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-search-view">
-      <div class="bundle-code-empty">${details.npm ? 'This version has no text files to search.' : 'This bundle doesn\'t carry any source content.'}</div>
+      <div class="bundle-code-empty">${details.npm ? 'This version has no text files to search.' : details.repository ? 'This directory has no text files to search.' : 'This bundle doesn\'t carry any source content.'}</div>
     </div>`
   }
   const query = state.bundleSearchQuery
@@ -1930,13 +1933,26 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
   ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
   ['overview', 'Overview']]
 
+// The tabs a repository's directory shows (repository-code.js).
+const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search']]
+
+// A repository directory's header: the repository and the directory in it,
+// and the commit shown, linking its tree on GitHub there.
+function repositoryCodeTitle({ repo, commit, path }) {
+  const tree = repo ? `https://github.com/${[...repo.split('/'), 'tree', commit, ...path ? path.split('/') : []].map(encodeURIComponent).join('/')}` : null
+  return html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${repo ? repositoryCodeName({ repo, path }) : 'Repository'}>${repo ? repositoryCodeName({ repo, path }) : 'Repository'}</div>
+    ${tree ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
+      aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>`
+      : html`<span class="bundles-slide-commit">${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></span>`}`
+}
+
 // The bundle slide: its header, with the bundle's name, or an npm version's
 // with the package's versions to switch to, and its `tabs`, `tab` the one
 // open; that tab's `body` under it. An npm version opening (`opening`)
 // shows the header it will have, its versions and tabs waiting for it.
 // Both render through here, so the header stays put as the version opens.
 function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false } = {}) {
-  const { npm } = entry
+  const { npm, repository } = entry
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
       ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
@@ -1947,10 +1963,15 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
         <button type="button" @click=${() => navigateToNpm()}>npm</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
-      <div class="bundles-slide-title">
+      ${repository ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-code', codeRepoId: repository.repoId }, bubbles: true, composed: true }))}>Code</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
           <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
+          : repository ? repositoryCodeTitle(repository)
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
@@ -1966,6 +1987,17 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
 export function renderNpmOpening({ name, spec, tab }) {
   return bundleSlideView({ npm: { name, version: spec ?? 'latest' } }, tab, npmTabs(),
     html`<div class="bundles-slide-placeholder" role="status">Opening ${npmPackageInput(name, spec)}…</div>`, { opening: true })
+}
+
+// A repository's directory opening (repository-code.js
+// openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
+// body what opens, or why it didn't. Its repository's name shows where it
+// was picked from, which knows it.
+export function renderRepositoryCodeOpening({ repoId, commit, path, tab, repo, error }) {
+  const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
+  return bundleSlideView({ repository: { repoId, repo, commit, path } }, tab, repositoryCodeTabs(), error
+    ? html`<div class="bundles-slide-placeholder is-error" role="alert">Couldn't open ${what} at ${commit.slice(0, 7)}: ${error}</div>`
+    : html`<div class="bundles-slide-placeholder" role="status">Opening ${what} at ${commit.slice(0, 7)}…</div>`, { opening: true })
 }
 
 // Top-level bundle view. The header carries the bundle's filename
@@ -1985,6 +2017,9 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
+  // A repository's directory shows its Code, Search and Treemap alone.
+  const repository = Boolean(entry.repository)
+  if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch
@@ -1996,7 +2031,7 @@ function renderBundleSlide(entry) {
   // the LEFTMOST entry on purpose, so the post-parse stamp-in for
   // a fresh stasis bundle pushes the other tabs right rather than
   // landing in their middle — no in-flight click theft.
-  const showAdvisories = !npm && showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
+  const showAdvisories = !npm && !repository && showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
   // 'overview' only without security access, or for a bundle known to have
   // no package versions (see `showAdvisoriesTab`). A sourcemap, or a bundle
@@ -2049,7 +2084,7 @@ function renderBundleSlide(entry) {
   // (2) an orphan tab state where a persisted `b:<integrity> issues`
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
-  const tabs = npm ? npmTabs() : [
+  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs() : [
     ...showAdvisories ? [['advisories', 'Advisories']] : [],
     ...showIssues ? [['issues', 'Issues']] : [],
     ['terminal', 'Terminal'], ['treemap', 'Treemap'], ['graph', 'Graph'], ['code', 'Code'], ['search', 'Search'],

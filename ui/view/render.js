@@ -43,6 +43,7 @@ import {
   renderBundleSourceModal,
   renderBundlesList,
   renderNpmOpening,
+  renderRepositoryCodeOpening,
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
@@ -54,6 +55,7 @@ import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
 import { npmPackageInput, renderNpmLookup } from './npm-package.js'
+import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
@@ -1664,6 +1666,7 @@ const ADMIN_VIEWS = {
   'manage-repo-risk': { slot: 'manage-repo-risk-slot', tag: 'managed-admin-repo-risk', title: 'DeepView — repository risk' },
   'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
+  'manage-code':    { slot: 'manage-code-slot',    tag: 'managed-admin-code',    title: 'DeepView — code' },
   'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
   'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
   'manage-import':  { slot: 'manage-import-slot',  tag: 'managed-admin-import',  title: 'DeepView — import' },
@@ -1872,8 +1875,8 @@ function renderImpl() {
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
       showReport()
-      const npm = state.bundles.find(entry => entry.integrity === state.selectedBundle)?.npm
-      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : 'DeepView — bundles'
+      const { npm, repository } = state.bundles.find(entry => entry.integrity === state.selectedBundle) ?? {}
+      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : repository ? `DeepView — ${repositoryCodeName(repository)}` : 'DeepView — bundles'
       return
     }
   }
@@ -1892,6 +1895,16 @@ function renderImpl() {
     if (slot) litRender(opening ? renderNpmOpening(opening) : renderNpmLookup(), slot)
     showReport()
     document.title = opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages'
+    return
+  }
+  // A repository's directory opening, or why it didn't; once it opens it
+  // shows as a bundle, its header the same, in the same slot.
+  if (state.currentView === 'repository-code') {
+    const opening = state.repositoryCodeOpening
+    const slot = ensureReportSlot('bundles-slot')
+    if (slot && opening) litRender(renderRepositoryCodeOpening(opening), slot)
+    showReport()
+    document.title = `DeepView — ${opening?.repo ?? 'code'}`
     return
   }
   // Packages view — cross-report aggregation by package, fed by
@@ -1991,6 +2004,10 @@ function renderImpl() {
         el.createRepoId = state.bundleCreationRepoId
         el.installTooltips = installTooltips
       }
+      if (state.currentView === 'manage-code') {
+        el.repoId = state.codeRepoId
+        el.installTooltips = installTooltips
+      }
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -2013,6 +2030,7 @@ function renderImpl() {
     }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
     if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
+    if (state.currentView === 'manage-code' && slot?.firstElementChild) slot.firstElementChild.repoId = state.codeRepoId
     showReport()
     document.title = adminView.title
     return

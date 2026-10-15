@@ -170,6 +170,9 @@ window also navigate to their managed page URL.
 | `…/bundle/:bundleSlug/compare[/:otherSlug[/code\|/diff]]` | Its Compare tab, with another bundle, in its Code or Diff mode |
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
+| `/manage/code` | Code: a repository directory to open at a revision; optional `?repo=<id>` |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab |
+| `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
@@ -906,7 +909,8 @@ current default's directory before returning either result.
 entries and a resolved commit SHA, which pins subsequent navigation. These
 read-only endpoints independently enforce the same two gates.
 Managers see only their team directory grants and the ancestors needed to reach
-them; both managed access and GitHub access are rechecked after source reads.
+them, an ancestor's listing marked `scoped: true`; both managed access and
+GitHub access are rechecked after source reads.
 Private repositories use the configured repository App, but its installation
 access alone is never a user grant. Existing upload/link pickers retain their
 managed-data permissions; they do not grant live source browsing.
@@ -1467,6 +1471,38 @@ Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;
 the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
+
+
+# Repository code viewer
+
+Admins and managers open a connected repository's files on the **Code** page
+(`/manage/code`), which picks a repository, a revision and a directory as
+Create a bundle does (`ui/managed/repository-browser.js`, shared by both):
+**Open code** opens the directory browsed at the revision's commit, and a file
+picked in it opens Code on that file. The directory opens in the bundle view,
+as an npm version does, with the Code, Search and Treemap tabs, its header
+naming the repository and directory beside the commit (linking its tree on
+GitHub), a breadcrumb back to the page with the repository picked, and each
+file's head linking it on GitHub at the commit. Its route names the
+repository by id, the commit and the directory (see Page routes), so a link
+or a reload opens the same files, whatever the branch has moved to since.
+
+`GET /api/admin/repositories/code?repoId=…&ref=…&path=…` answers the
+directory's files, Brotli-encoded, as `{ repoId, repo, commit, path, tree,
+files }`, the files as `GET /api/npm/package` answers a version's (by their
+paths in the directory, text inline, a digest for those not UTF-8), for the
+viewer to hold in memory only while it shows them. It is read as browsing is,
+with the same two gates and the reader's own GitHub access, and only where
+the reader's grants reach the whole directory: an ancestor of a manager's
+grants (`scoped: true` in its listing) is `no-directory`, as is a directory
+the commit has none at. GitHub's listing of the directory's tree, every tree
+under it with it, says first whether it holds at most 20,000 files and
+64 MiB, as a package may (`repository-code.ts`), else `413
+directory-too-large`, before its tarball is asked for: the tree's, verified
+against the tree's id as bundle builds verify theirs, and kept in upstream's
+disk cache with them. Readers asking for the same directory meanwhile share
+one load, among the npm viewer's (`429 repository-busy` past them), and access
+is checked again once it is read, before any of it is sent.
 
 
 # npm package viewer

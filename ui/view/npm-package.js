@@ -11,6 +11,7 @@ import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-pac
 import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
+import { fileRowDetails } from './bundle-sources.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
@@ -78,20 +79,13 @@ export function npmPackageEntry(data) {
   }
 }
 
-// Its parsed details, in the shape of a sourcemap carrying its sources: one
-// source per file, text inline, and every file's size from its bytes, so a
-// file that is not text still lists with its size. Those carry a digest of
-// their bytes instead (`npmBinaries`), which Compare compares them by.
+// Its parsed details (bundle-sources.js fileRowDetails), Code opening on
+// what `main` names.
 export function npmPackageDetails(entry, data) {
-  const files = Array.isArray(data.files) ? data.files : []
-  const sources = files.map(([path]) => path)
+  const details = fileRowDetails(entry, data.files)
   return {
-    integrity: entry.integrity, kind: 'sourcemap', size: entry.size, npm: entry.npm,
-    json: { version: 3, sources, sourcesContent: files.map(([, , text]) => typeof text === 'string' ? text : null) },
-    fileSizes: new Map(files.map(([path, size]) => [path, size])),
-    npmBinaries: new Map(files.filter(([, , text, digest]) => typeof text !== 'string' && typeof digest === 'string')
-      .map(([path, size, , digest]) => [path, { size, digest }])),
-    npmEntries: npmPackageEntries(entry.npm.manifest, sources),
+    ...details, npm: entry.npm,
+    npmEntries: npmPackageEntries(entry.npm.manifest, details.json.sources),
     // What the server's risk tells of it, once it arrives (file-risk.js).
     risk: () => npmRisk(entry.npm),
   }

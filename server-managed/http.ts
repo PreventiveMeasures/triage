@@ -25,6 +25,8 @@
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
 //   GET /api/admin/repositories/impact → admin attached data summary
 //   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
+//   GET /api/admin/repositories/code?repoId=&ref=&path= → the files of a directory at a revision, within the reader's grants,
+//        Brotli-encoded | 400/401/403/404/409/413/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -130,7 +132,7 @@ import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
 import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
-import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
+import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
@@ -154,6 +156,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -178,6 +181,7 @@ const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const BROWSABLE_REPOS_PATH = '/api/admin/repositories/browsable'
 const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
+const REPO_CODE_PATH = '/api/admin/repositories/code'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -1283,31 +1287,60 @@ async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo:
   return { ...refs.value, defaultContents: contents.value }
 }
 
+// A directory the reader's grants reach only part of lists those parts alone,
+// `scoped`: the code viewer reads none of it (handleRepositoryCode).
 function scopeRepositoryContents(contents: RepositoryContents | null, virtualEntries: RepositoryEntry[] | null) {
   return contents && { ...contents, ...(virtualEntries ? {
-    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false,
+    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false, scoped: true,
   } : {}) }
 }
 
-// Recheck repository/path grants after upstream reads, before returning names.
-async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
+// A browse's repository, revision and directory, as its query names them;
+// null, answered, where it names none.
+function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
   const repoId = Number(query.get('repoId'))
   const normalized = normalizeTeamPath(query.get('path') ?? '')
   const ref = query.get('ref') ?? ''
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
-    sendJson(res, 400, { error: 'bad-request' }); return
+    sendJson(res, 400, { error: 'bad-request' }); return null
   }
+  return { repoId, ref, path: normalized.path ?? '' }
+}
+
+// The repository `repoId` as the reader may browse it at `path`: one of their
+// bundle repositories, and what their grants show of that directory
+// (`virtualEntries`, null where they reach all of it: scopedDirectory). Null,
+// answered, where it is none of theirs.
+async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return null
+  const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
+  if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
+  const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
+  return { repo, virtualEntries: scopedDirectory(path, scopes), user: s.user }
+}
+
+// The repository as it was authorized, but for the shared default branch hint,
+// which a read may refresh meanwhile: that changes none of its identity,
+// credentials or managed grants.
+const sameRepository = (current: SelectedRepo, authorized: SelectedRepo) =>
+  JSON.stringify({ ...current, cachedDefaultBranch: authorized.cachedDefaultBranch }) === JSON.stringify(authorized)
+
+function sendGithubError(res: ServerResponse, err: GithubApiError) {
+  sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+}
+
+// Recheck repository/path grants after upstream reads, before returning names.
+async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref } = asked
   const withDefault = refs && query.get('withDefault') === 'true'
-  const path = refs ? '' : normalized.path ?? ''
+  const path = refs ? '' : asked.path
   const authorize = async () => {
-    const s = await readManageSession(res, deps, cookie)
-    if (!s) return null
-    const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
-    if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
-    const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
-    const virtualEntries = scopedDirectory(path, scopes)
-    if ((!refs || withDefault) && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return { repo, virtualEntries, user: s.user }
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && (!refs || withDefault) && access.virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
   }
   const access = await authorize()
   if (!access) return
@@ -1329,19 +1362,66 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
-    // This request (or another reader) may have refreshed the shared hint. It
-    // does not change repository identity, credentials, or managed grants.
-    if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
-      sendJson(res, 409, { error: 'repository-changed' }); return
-    }
+    // This request (or another reader) may have refreshed the shared hint.
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     sendJson(res, 200, refs ? { ...listed, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
     } : {}) } : scopeRepositoryContents(contents, current.virtualEntries))
   } catch (err) {
-    if (err instanceof GithubApiError) {
-      sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
-      return
-    }
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    throw err
+  }
+}
+
+// GET /api/admin/repositories/code: the files of a directory of a repository
+// at a revision, for the code viewer (repository-code.ts), read as browsing
+// it is, with the reader's own GitHub access, and only where their grants
+// reach the whole directory: one they reach only the ancestor of is none to
+// read. Its tree's listing says first whether its files fit, before its
+// tarball is asked for; the reader's access is checked again once it is
+// read, before any of it is sent. The load stays held until this response is
+// written or abandoned, and a reader who stops reading it gives it up after
+// a while.
+async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, ref, path } = asked
+  const authorize = async () => {
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const commit = await reader.commit(ref)
+    const repo = access.repo.fullName
+    const client = createClient({ token: reader.readToken() })
+    // A directory the commit has none at is none to read, as browsing it says.
+    const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
+      throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
+    }))
+    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) { sendJson(res, 413, { error: 'directory-too-large' }); return }
+    if (res.destroyed) return
+    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
+    res.once('close', load.release)
+    const bytes = await load.result
+    await reader.recheckAccess()
+    const current = await authorize()
+    if (!current) return
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    if (res.destroyed) return
+    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+    res.writeHead(200, {
+      'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
+      'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
+    })
+    writeResponse(res, bytes)
+  } catch (err) {
+    if (res.headersSent || res.destroyed) return
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
     throw err
   }
 }
@@ -3319,6 +3399,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_REFS_PATH || path === REPO_CONTENTS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryBrowser(res, deps, cookie, url.searchParams, path === REPO_REFS_PATH); return
+    }
+    if (path === REPO_CODE_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryCode(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }

@@ -334,13 +334,25 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
     : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
+  const commit = /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40)
+  // The code viewer's read of a directory: its files as `GET
+  // /api/npm/package` answers a version's, a line of text each.
+  if (url.pathname.endsWith('/code')) {
+    const inside = files.filter(file => file.startsWith(prefix)).toSorted()
+    if (inside.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return }
+    const rows = inside.map(file => {
+      const text = file === 'README.md' ? `# ${repo.fullName}\n\nFixture repository for the managed code viewer.\n` : `// ${file} at ${commit.slice(0, 7)}\n`
+      return [file.slice(prefix.length), Buffer.byteLength(text), text]
+    })
+    sendJson(res, 200, { repoId: repo.id, repo: repo.fullName, commit, path, tree: 'f'.repeat(40), files: rows }); return
+  }
   const entries = new Map()
   for (const file of files.filter(candidate => candidate.startsWith(prefix))) {
     const rest = file.slice(prefix.length)
     const name = rest.split('/')[0]!
     entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
   }
-  const contents = { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
+  const contents = { path, commit, entries: [...entries.values()], limited: false,
     ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
     ...(repo.id !== 102 && (path === '' || path === 'contracts') ? { solidityEntryPoints: ['contracts/Token.sol', ...(path === '' ? ['contracts/vault/Vault.sol'] : [])], soliditySuggestionsLimited: false } : {}),
   }
@@ -527,7 +539,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
+  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents', '/api/admin/repositories/code'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

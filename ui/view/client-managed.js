@@ -57,6 +57,10 @@ export async function fetchNpmPackage(name, version, options) {
   return (await loadManagedBundle()).fetchNpmPackage(name, version, options)
 }
 
+export async function fetchRepositoryCode(repoId, commit, path, options) {
+  return (await loadManagedBundle()).fetchRepositoryCode(repoId, commit, path, options)
+}
+
 export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }
