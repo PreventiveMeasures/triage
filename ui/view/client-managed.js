@@ -89,6 +89,10 @@ export async function fetchRepositoryItem(repoId, number, options) {
   return (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options)
 }
 
+export async function fetchRepositoryPulse(repoId, weeks, options) {
+  return (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options)
+}
+
 export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }

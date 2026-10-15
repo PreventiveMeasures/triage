@@ -21,6 +21,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
+import { PULSE_WEEKS, pulseSince } from './repository-pulse.ts'
 import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
@@ -474,6 +475,80 @@ function itemFixture(url: URL, res: ServerResponse): void {
   sendJson(res, 404, { error: 'github-not-found' })
 }
 
+// A repository's pulse, for its Pulse tab: a year of weeks, busier lately and
+// quiet over the holidays, a few contributors doing most of it, commits on
+// weekdays' working hours, and the pull requests and issues the Issues and
+// Pull requests tabs list, in the last `weeks` weeks and as long before.
+// Repository 102's statistics are pending the first two times they are
+// asked, as GitHub's are while it computes them.
+let pulsePending = 2
+const WEEK_MS = 7 * 86_400_000
+
+function pulseFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const weeks = Number(url.searchParams.get('weeks') ?? '4')
+  if (!PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const since = pulseSince(weeks, now)
+  const back = weeks * WEEK_MS
+  type Tile = { number: number; title: string; author: string; createdAt: number; closedAt: number | null; state: string; mergedAt?: number | null; draft?: boolean
+    reason?: string | null }
+  const listed = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown, from: number, to: number) => {
+    const items = (issueTiles(kind, now) as Tile[]).flatMap(item => {
+      const when = at(item)
+      return typeof when === 'number' && when >= from && when <= to ? [{ ...item, at: when }] : []
+    })
+    return items.toSorted((a, b) => b.at - a.at)
+  }
+  const told = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown) => {
+    const current = listed(kind, at, since, now)
+    return { count: current.length, previous: listed(kind, at, since - back, now - back).length,
+      items: current.slice(0, 10).map(({ number, title, author, at: when, createdAt, state, draft, reason }) => ({ number, title, author, at: when, createdAt, kind, state,
+        ...kind === 'pulls' ? { draft } : { reason } })) }
+  }
+  const activity = { since, previousSince: since - back, merged: told('pulls', item => item.mergedAt), opened: told('pulls', item => item.createdAt),
+    closed: told('issues', item => item.closedAt), created: told('issues', item => item.createdAt) }
+  if (url.searchParams.get('repoId') === '102' && pulsePending > 0) {
+    pulsePending--
+    sendJson(res, 200, { weeks, ...activity, stats: null, pending: true }); return
+  }
+  sendJson(res, 200, { weeks, ...activity, stats: pulseStats(now), pending: false })
+}
+
+// The default branch's statistics over the year to `now`, as
+// repository-pulse.ts repositoryStats gives them.
+function pulseStats(now: number) {
+  let seed = 7
+  const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647
+  const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', 'alan-kay']
+  const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
+  const first = pulseSince(52, now)
+  const theirs = new Map(people.map(login => [login, [] as [number, number, number, number][]]))
+  const weeks = Array.from({ length: 52 }, (_, index) => {
+    const week = first + index * WEEK_MS
+    const holiday = index >= 10 && index <= 11
+    const commits = holiday ? Math.round(random() * 4) : Math.round(12 + index * 0.6 + random() * 18 + (index % 9 === 4 ? 25 : 0))
+    const days = [0.03, 0.22, 0.24, 0.2, 0.19, 0.1, 0.02].map(share => Math.round(commits * share * (0.7 + random() * 0.6)))
+    const total = days.reduce((sum, day) => sum + day, 0)
+    let additions = 0, deletions = 0
+    for (const [at, login] of people.entries()) {
+      const theirCommits = Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2))
+      if (theirCommits === 0) continue
+      const added = theirCommits * Math.round(20 + random() * 140), removed = Math.round(added * (index % 13 === 7 && at === 1 ? 3.2 : 0.2 + random() * 0.5))
+      additions += added
+      deletions += removed
+      theirs.get(login)!.push([week, theirCommits, added, removed])
+    }
+    return { week, days, commits: total, additions, deletions }
+  })
+  const contributors = people.map(login => ({ login, weeks: theirs.get(login)! })).filter(person => person.weeks.length > 0)
+  const punch = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (__, hour) => {
+    const weekday = day >= 1 && day <= 5
+    const working = hour >= 9 && hour <= 18 ? (hour === 12 ? 0.6 : 1) : hour >= 19 && hour <= 23 ? 0.35 : hour <= 1 ? 0.15 : 0.02
+    return Math.round((weekday ? 40 : 9) * working * (0.6 + random() * 0.8))
+  }))
+  return { weeks, contributors, punch, lines: true }
+}
+
 // What a repository's agents left, for its Agents tab: Claude Code sessions,
 // one holding several pull requests and commits pushed to main, one the
 // Claude GitHub App ran for an issue; Codex tasks on branches of their own, one
@@ -623,6 +698,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
+  if (url.pathname.endsWith('/pulse')) { pulseFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
@@ -839,7 +915,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents|item)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents|item|pulse)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

@@ -42,6 +42,9 @@
 //        the default branch no pull request merged, with issues, agents' branches and the app agents first | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week over the last
+//        year, its contributors and when in the week they commit (pending while GitHub computes them), and the pull requests
+//        merged and opened and the issues closed and opened in the last `weeks` weeks and as long before | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -178,6 +181,7 @@ import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { APP_AGENTS, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
+import { PULSE_WEEKS, StatsPending, repositoryActivity, repositoryStats } from './repository-pulse.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -208,6 +212,7 @@ const REPO_HISTORY_PATH = '/api/admin/repositories/history'
 const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
 const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
+const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -1673,6 +1678,15 @@ function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
 // (keptAnswer), sent as kept, its reader's access checked as they ask.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   read: (fullName: string, token: string) => Promise<object>, key: string | null = null): Promise<void> {
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => key === null ? { value: await read(fullName, token), kept: false }
+    : keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token)))
+}
+
+// What `answer` gives of the whole of repository `repoId` (with its name and
+// a token), as readWholeRepository reads it: sent at once where it was kept,
+// else once access is checked again.
+async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
+  answer: (fullName: string, token: string) => Promise<{ value: object; kept: boolean }>): Promise<void> {
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, '')
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1684,15 +1698,13 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-    const answer = key === null ? { value: await read(access.repo.fullName, token), kept: false }
-      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(access.repo.fullName, token))
-    if (answer.kept) { sendJson(res, 200, answer.value); return }
-    const body = answer.value
+    const answered = await answer(access.repo.fullName, token)
+    if (answered.kept) { sendJson(res, 200, answered.value); return }
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, body)
+    sendJson(res, 200, answered.value)
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1738,6 +1750,28 @@ async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, 
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${number}`)
+}
+
+// GET /api/admin/repositories/pulse: what the code viewer's Pulse tab shows
+// (repository-pulse.ts): the default branch's statistics over the last year,
+// kept apart from the pull requests and issues of the last `weeks` weeks for
+// every period to share; `stats` null, `pending`, while GitHub is still
+// computing them, unkept, for the client to ask again. They are the whole
+// repository's (readWholeRepository).
+async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const weeks = Number(query.get('weeks') ?? '4')
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
+    const [period, stats] = await Promise.all([
+      keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => repositoryActivity(fullName, token, weeks)),
+      keptAnswer(deps, `${repoId}\0pulse-stats`, () => repositoryStats(fullName, token)).catch((err: unknown) => {
+        if (err instanceof StatsPending) return null
+        throw err
+      }),
+    ])
+    return { value: { weeks, ...period.value, stats: stats?.value ?? null, pending: stats === null }, kept: period.kept && stats?.kept === true }
+  })
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
@@ -3758,6 +3792,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_ITEM_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryItem(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_PULSE_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryPulse(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }

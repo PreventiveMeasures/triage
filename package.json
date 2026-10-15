@@ -168,6 +168,7 @@
     "server-managed/repository-agents.ts",
     "server-managed/repository-history.ts",
     "server-managed/repository-issues.ts",
+    "server-managed/repository-pulse.ts",
     "server-managed/repository-aliases.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
