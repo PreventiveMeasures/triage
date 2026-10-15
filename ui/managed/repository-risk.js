@@ -11,6 +11,7 @@
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { npmRiskLevel } from '../../risk/npm/score.js'
@@ -19,6 +20,7 @@ import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
@@ -121,12 +123,13 @@ export const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolea
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
-// Which package rows are shown, by the filter's value.
+// Which package rows are shown, by the filter's value: its label, which
+// rows, and its tooltip.
 const FILTERS = {
-  all: ['All packages', () => true],
-  flagged: ['Flagged', row => Boolean(severityOf(row))],
-  failed: ['Not assessed: failed', row => Boolean(row.risk?.error) && !differs(row)],
-  elsewhere: ['Not assessed: not from npm', row => !assessable(row.source)],
+  all: ['All', () => true, 'Every package of those shown.'],
+  flagged: ['Flagged', row => Boolean(severityOf(row)), 'Those of a finding: malware, a copy differing from npm’s, or what risk finds.'],
+  failed: ['Failed', row => Boolean(row.risk?.error) && !differs(row), 'Those risk couldn’t assess, each saying why.'],
+  elsewhere: ['Not from npm', row => !assessable(row.source), 'From git, a tarball or a file: listed, not assessed.'],
 }
 
 // What a package's risk is, as its column's heading tells it.
@@ -151,6 +154,15 @@ const PACKAGE_KINDS = {
   development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware, and a copy differing from npm’s, is shown either way.'],
 }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
+
+// A package's cell: npm's mark, or a package's for one from elsewhere (git, a
+// tarball, a file), its name, linked to npm's viewer at `path` where given,
+// and its `version`, muted, where it has one; and its dev tag.
+function packageCell({ name, source, dev }, version, path, devSaid) {
+  const named = html`${name}${version ? html`<span class="risk-version">@${version}</span>` : nothing}`
+  return html`<span class="risk-package">${icon(assessable(source) ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}${path
+    ? html`<a class="risk-name" href=${path}>${named}</a>` : html`<span>${named}</span>`}${dev ? devTag(devSaid) : nothing}</span>`
+}
 
 // Whether a risk line tells what risk found: its findings, or its copy
 // differing from npm's (differs); not why it couldn't be assessed.
@@ -192,15 +204,19 @@ const formatCount = new Intl.NumberFormat()
 const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).length, flagged: rows.filter(severityOf).length,
   stale: rows.filter(row => row.risk?.stale).length })
 
-// Where a package or an advisory is locked: its lockfile, a link to it on
-// GitHub where it is listed (`links`, _lockfileLinks), or how many, each in
-// the tooltip.
+// An icon before a cell's text, muted (risk-icon).
+const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
+
+// Where a package or an advisory is locked, after GitHub's mark: its
+// lockfile, a link to it on GitHub where it is listed (`links`,
+// _lockfileLinks), or how many, each in the tooltip.
 function usedInCell(lockfiles, links) {
   const used = [...lockfiles]
-  if (used.length !== 1) return html`<span class="risk-clip risk-used-in" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`
-  const href = links.get(used[0])
-  return href ? html`<a class="risk-name risk-clip risk-used-in" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</a>`
+  const href = used.length === 1 ? links.get(used[0]) : undefined
+  const one = href ? html`<a class="risk-name risk-clip risk-used-in" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</a>`
     : html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used[0]}>${used[0]}</span>`
+  return html`<span class="risk-used">${icon(GITHUB_ICON_SVG)}${used.length === 1 ? one
+    : html`<span class="risk-clip risk-used-in" data-tooltip=${used.join('\n')}>${formatCount.format(used.length)} lockfiles</span>`}</span>`
 }
 
 // The lines of a scan of `params` (`team` or `repo`, or neither),
@@ -548,12 +564,22 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
-  // Which of `kinds` ({ kind: [label, tooltip] }) of `what` are shown, the
-  // one `value` names pressed, each with how many there are (`counts`),
-  // another `choose`n.
-  _kindToggle(what, kinds, counts, value, choose) {
-    return html`<div class="risk-scope" role="group" aria-label=${`Which ${what}`}>${Object.entries(kinds).map(([kind, [label, said]]) => html`<button type="button"
-      aria-pressed=${value === kind} data-tooltip=${said} @click=${() => choose(kind)}>${label} (${formatCount.format(counts[kind])})</button>`)}</div>`
+  // A toggle (`name`d) of `kinds` ({ kind: [label, tooltip] }), the one
+  // `value` names pressed, each with how many there are (`counts`), in a
+  // balloon, another `choose`n.
+  _kindToggle(name, kinds, counts, value, choose) {
+    return html`<div class="risk-scope" role="group" aria-label=${name}>${Object.entries(kinds).map(([kind, [label, said]]) => html`<button type="button"
+      aria-pressed=${value === kind} data-tooltip=${said ?? nothing} @click=${() => choose(kind)}>${label}<span class="count">${formatCount.format(counts[kind])}</span></button>`)}</div>`
+  }
+
+  // Which of `rows`, a kind's, are shown, by FILTERS, each with how many:
+  // those of none left out but All and the one chosen; none where All alone
+  // is left.
+  _filterToggle(rows) {
+    const counts = Object.fromEntries(Object.entries(FILTERS).map(([filter, [, shown]]) => [filter, rows.filter(shown).length]))
+    const offered = Object.entries(FILTERS).filter(([filter]) => filter === 'all' || filter === this._filter || counts[filter] > 0)
+    return offered.length === 1 ? nothing : this._kindToggle('Show packages', Object.fromEntries(offered.map(([filter, [label, , said]]) => [filter, [label, said]])),
+      counts, this._filter, filter => { this._filter = filter })
   }
 
   // Each listed lockfile's link on GitHub, at the commit it was read at, by
@@ -584,7 +610,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _tabs() {
-    const tabs = [['packages', 'Packages'], ['advisories', `Advisories${this._advisories.size > 0 ? ` (${formatCount.format(this._advisories.size)})` : ''}`]]
+    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="count">${formatCount.format(this._advisories.size)}</span>` : nothing}`]]
     return html`<div class="risk-tabs" role="tablist" aria-label="Results">${tabs.map(([tab, label]) => html`<button type="button" role="tab"
       aria-selected=${this._tab === tab} @click=${() => { this._tab = tab }}>${label}</button>`)}</div>`
   }
@@ -680,13 +706,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const counts = Object.fromEntries(Object.keys(PACKAGE_KINDS).map(kind => [kind, all.filter(row => ofKind(row, kind)).length]))
     const links = this._lockfileLinks()
     return html`<section class="risk-section" aria-label="Packages">
-      ${this._resultsHead(html`${this._kindToggle('packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
-        <select aria-label="Show packages" .value=${this._filter} @change=${event => { this._filter = event.target.value }}>
-          ${Object.entries(FILTERS).map(([value, [label]]) => html`<option value=${value}>${label}</option>`)}
-        </select>
+      ${this._resultsHead(html`${this._kindToggle('Which packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
+        ${this._filterToggle(all.filter(row => ofKind(row, this._packageKind)))}
         ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th>Version</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
+        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
         <tbody>${rows.slice(0, MAX_ROWS).map(row => this._packageRow(row, links))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
@@ -696,8 +720,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _packageRow(row, links) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
-      <td>${path ? html`<a class="risk-name" href=${path}>${row.name}</a>` : row.name}${row.dev ? devTag(DEV_SAID) : nothing}</td>
-      <td class="mono">${row.version ?? '—'}</td>
+      <td>${packageCell(row, row.version, path, DEV_SAID)}</td>
       <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
       <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
@@ -744,7 +767,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       .filter(lockfile => lockfile.advisoriesError).map(lockfile => `${repo.fullName}/${lockfile.path}`))
     const none = this._kind === 'production' ? 'npm has no advisories of the versions an install for production takes.' : 'npm has no advisories of the versions only devDependencies need.'
     return html`<section class="risk-section" aria-label="Advisories">
-      ${this._resultsHead(html`${this._kindToggle('advisories', KINDS, { production: kinds.production.length, development: kinds.development.length }, this._kind, kind => { this._kind = kind })}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
+      ${this._resultsHead(html`${this._kindToggle('Which advisories', KINDS, { production: kinds.production.length, development: kinds.development.length }, this._kind, kind => { this._kind = kind })}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
       ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : none}</p>` : html`<div class="link-table"><table>
         <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
@@ -758,7 +781,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const versions = [...row.versions]
     const severity = row.malware ? 'critical' : row.severity
     return html`<tr>
-      <td><a class="risk-name" href=${managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] })}>${row.name}</a>${row.dev ? devTag(ADVISORY_DEV_SAID) : nothing}</td>
+      <td>${packageCell({ ...row, source: 'registry' }, null, managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: versions[0] }), ADVISORY_DEV_SAID)}</td>
       <td class="mono">${versions.join(', ')}</td>
       <td>${row.malware ? html`<span class="risk-chip risk-critical">Malware</span>`
         : severity ? html`<span class=${`risk-chip risk-${severity}`}>${severityLabel(severity)}</span>` : nothing}</td>
