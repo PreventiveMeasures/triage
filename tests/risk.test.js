@@ -223,6 +223,17 @@ test('a file a version held alike that its code now loads, told as new: what nod
   assert.deepEqual(findings.find(({ id }) => id === 'new-hosts')?.hosts.map(({ host, path }) => [host, path]), [['collector.attacker.dev', 'data.txt']], 'and a host it names new')
 })
 
+test('a file a version held alike with a line no one writes, that its code now loads, told as now unreadable', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const files = { 'package.json': '{}', 'notes.md': `# Notes\n${'x'.repeat(3000)}\n` }
+  const before = version('opaque-notes', '1.0.0', { ...files, 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('opaque-notes', '1.0.1', { ...files, 'index.js': "require('./notes.md')\n" }, meta, ago(40))
+  npm(t, [{ name: 'opaque-notes', versions: [before, after] }])
+  const { findings } = await assessNpm('opaque-notes', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.find(({ id }) => id === 'now-unreadable'), { id: 'now-unreadable', severity: 'critical', files: [{ path: 'notes.md', was: 3000, now: 3000 }] },
+    'prose read as no script before, its line passed over')
+})
+
 test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const large = 'x = 1\n'.repeat(48 * 1024)

@@ -51,7 +51,8 @@ function npmWokenFiles(base, other, files) {
 // build minifies a file and writes its map together, and in a `major`
 // release (npmMajorRelease): `now-unreadable` orange where every such file is
 // either, else red. A file it held alike that node now runs as a script
-// (npmWokenFiles) counts as one it changes.
+// (npmWokenFiles) counts as one it changes, unreadable now where it wasn't
+// as no script, its lines alike.
 function npmFileFindings(base, other, files, major) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
@@ -76,7 +77,8 @@ function npmFileFindings(base, other, files, major) {
     }),
     { id: 'large-code', severity: 'critical', files: [...files.onlyOther, ...woken].filter(row => npmLargeCode(row.path, sizes.get(row.path), npmLoadedScripts(other).has(row.path)))
       .map(row => ({ path: row.path, bytes: sizes.get(row.path) })) },
-    { id: 'now-unreadable', ...unreadableFinding(major, changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability, npmLoadedScripts(other).has(row.path)))
+    { id: 'now-unreadable', ...unreadableFinding(major, [...changed.filter(row => npmBecameUnreadable(row.path, before(row)?.readability, after(row).readability, npmLoadedScripts(other).has(row.path))),
+      ...woken.filter(row => npmUnreadable(row.path, after(row).readability, true) && !npmUnreadable(row.renamedFrom ?? row.path, before(row).readability))]
       .map(row => ({ path: row.path, was: before(row).readability.longest, now: after(row).readability.longest,
         ...rebuiltWithMap(base, other, row.path, row.renamedFrom ?? row.path) ? { rebuilt: true } : {} }))) },
     { id: 'obfuscated', severity: 'critical', files: touched.filter(row => after(row).readability.obfuscation && !before(row)?.readability.obfuscation)
