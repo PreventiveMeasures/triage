@@ -19,7 +19,7 @@
 // parent's pipeline has to move the native value because the
 // attribute is ignored once the user has picked something. The
 // Packages / Repositories pages rebuild their slot wholesale on
-// cross-view entry (`report.innerHTML` in render.js), so returning
+// cross-view entry (`report.replaceChildren` in render.js), so returning
 // to the page with a non-default sort is exactly the first-paint
 // case.
 //

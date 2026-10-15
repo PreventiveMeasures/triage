@@ -22,6 +22,9 @@ test('the vault overlay waits for mode detection, follows mode changes, and canc
     wipeAllVaultData: () => { wipes++; return Promise.resolve() },
   } })
   t.mock.module('../ui/view/sidebar.js', { namedExports: { ensureClientMode: () => modeReady } })
+  // The card's markup is Lit's to paint, and a real DOM's: here the overlay
+  // only has to answer for the elements its handlers use.
+  t.mock.module('lit', { namedExports: { html: () => null, render: () => {} } })
   // Minimal DOM event targets; exercise the real controller and handlers.
   // Chromium regressions separately check the painted overlay and navigation.
   class Element extends EventTarget {

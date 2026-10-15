@@ -19,7 +19,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { compareVersionsDesc, ensureBundleFindingsIndexed, getPackagesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
 import { SEVERITIES, displayedSeverity } from './format.js'
@@ -581,7 +581,7 @@ function renderPackageOverview(pkg, bucket, version) {
       const iconHtml = FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default
       return html`<li>
         <button type="button" class="packages-detail-report" data-package-report=${r}>
-          ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label" data-tooltip-truncated data-tooltip=${r}>${displayName(r)}</span>
+          ${appMarkup(iconHtml)}<span class="packages-detail-report-label" data-tooltip-truncated data-tooltip=${r}>${displayName(r)}</span>
         </button>
       </li>`
     })}

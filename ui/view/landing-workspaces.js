@@ -1,6 +1,6 @@
 import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { LINKS_KIND, getKind, getWorkspaceAppMetadata } from '#client/index.js'
 import { WORKSPACE_ICON_SVG } from './icons.js'
 
@@ -20,7 +20,7 @@ export function renderLandingWorkspaces(workspaces) {
           const reports = w.reports.filter((name) => getKind(name) !== LINKS_KIND).length
           return html`
           <button type="button" class="landing-workspace" data-landing-workspace=${w.id}>
-            ${unsafeHTML(WORKSPACE_ICON_SVG)}
+            ${appMarkup(WORKSPACE_ICON_SVG)}
             <span class="landing-workspace-text">
               <span class="landing-workspace-name">${w.name}</span>
               <span class="landing-workspace-count">${app?.appMode ? `${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'} · ` : ''}${reports.toLocaleString()} report${reports === 1 ? '' : 's'}</span>

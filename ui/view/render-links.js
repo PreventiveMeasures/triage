@@ -3,7 +3,7 @@
 // separate. The OPFS finding index preserves this without reading reports again.
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, isLinkableFindingId, isReportIgnored, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
 import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
@@ -54,7 +54,7 @@ function reportChipsTemplate(reports) {
     data-links-report=${management ? nothing : name} data-links-finding=${findingId} data-managed-report=${managedReportId ?? nothing}
     data-links-preview=${management ? findingId : nothing} data-preview-report=${management ? name : nothing}
     data-preview-row=${management ? rowIndex : nothing} data-preview-managed-report=${management ? managedReportId : nothing}
-  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label" data-tooltip-truncated data-tooltip=${displayName(name)}>${displayName(name)}</span></button>`)}</div>`
+  >${appMarkup(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label" data-tooltip-truncated data-tooltip=${displayName(name)}>${displayName(name)}</span></button>`)}</div>`
 }
 
 function reportRowTemplate(row, linked) {
@@ -115,7 +115,7 @@ export function renderLinksView(badge = nothing) {
       <div class="page-title">
         <h1>Links${badge}</h1>
         <div class="meta-row">
-          <span class="links-file-name" data-tooltip-truncated data-tooltip=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
+          <span class="links-file-name" data-tooltip-truncated data-tooltip=${name}>${appMarkup(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
           <span>${count(groups.length, 'link', 'links')}</span>
           <span>${count(linkedIds.size, 'finding', 'findings')}</span>
           ${holders.size > 0 ? html`<span>found in ${count(holders.size, 'report', 'reports')}</span>` : nothing}

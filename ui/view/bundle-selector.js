@@ -1,5 +1,5 @@
 import { css, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { SearchableSelector } from './searchable-selector.js'
 import { BUNDLE_ICON_SVG, NPM_ICON_SVG } from './icons.js'
 import { sourceMetrics } from '../scan/metrics.js'
@@ -92,8 +92,8 @@ class BundleSelector extends SearchableSelector {
 
   optionIcon(option) {
     if (!option.format) return nothing
-    return html`<span class="bundle-icon" aria-hidden="true">${option.format === 'npm' ? unsafeHTML(NPM_ICON_SVG)
-      : option.format === 'sourcemap' ? unsafeHTML(BUNDLE_ICON_SVG) : html`<img src="./stasis.svg" alt="">`}</span>`
+    return html`<span class="bundle-icon" aria-hidden="true">${option.format === 'npm' ? appMarkup(NPM_ICON_SVG)
+      : option.format === 'sourcemap' ? appMarkup(BUNDLE_ICON_SVG) : html`<img src="./stasis.svg" alt="">`}</span>`
   }
 
   choices() {

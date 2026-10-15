@@ -17,7 +17,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { npmRiskLevel } from '../../risk/npm/score.js'
@@ -214,7 +214,7 @@ const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).
   stale: rows.filter(row => row.risk?.stale).length, wasStale: rows.filter(row => row.wasStale).length })
 
 // An icon before a cell's text, muted (risk-icon).
-const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
+const icon = svg => html`<span class="risk-icon" aria-hidden="true">${appMarkup(svg)}</span>`
 
 // A lockfile (`used`, a repository's name and its path), cut short: a link
 // to its Dependabot alert, after Dependabot's mark, where an advisory's

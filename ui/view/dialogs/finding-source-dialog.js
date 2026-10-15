@@ -1,7 +1,7 @@
 // Managed findings open the full file from the report-scoped memory cache.
 // A native dialog also stacks correctly above the Kanban finding dialog.
 import { html, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../markup.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchReportSources, readReportSources } from '../client-managed.js'
 import { lineRange } from '../format.js'
@@ -79,7 +79,7 @@ class FindingSourceDialog extends AppDialog {
           ? html`<p class="source-status" role="status">${this._loading ? 'Loading source…' : 'Source unavailable'}</p>`
           : html`<div class="source-lines">
               <aside aria-hidden="true">${this._content.split('\n').map((_, index) => html`<div class=${range && index + 1 >= range.start && index + 1 <= range.end ? 'cited' : ''}>${index + 1}</div>`)}</aside>
-              <pre><code>${typeof this._highlighted === 'string' ? unsafeHTML(this._highlighted) : this._content}</code></pre>
+              <pre><code>${typeof this._highlighted === 'string' ? appMarkup(this._highlighted) : this._content}</code></pre>
             </div>`}
       </div>
     </dialog>`

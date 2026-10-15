@@ -42,6 +42,7 @@
 
 import { render } from 'lit'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { trustedHTML } from './trusted-types.js'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
 
 const TEXT_ICONS = { commit: COMMIT_ICON_SVG }
@@ -178,7 +179,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     // Only the built-in icon is markup; the text stays literal.
     const line = document.createElement('span')
     line.className = 'tooltip-text'
-    line.innerHTML = TEXT_ICONS[textIcon]
+    line.innerHTML = trustedHTML(TEXT_ICONS[textIcon])
     const label = document.createElement('span')
     label.textContent = text
     line.append(label)
@@ -207,7 +208,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     row.className = 'tooltip-repo'
     // Only the built-in icon is markup; repository/path stays literal text.
     if (repo) {
-      row.innerHTML = GITHUB_ICON_SVG
+      row.innerHTML = trustedHTML(GITHUB_ICON_SVG)
       const label = document.createElement('span')
       label.textContent = repo
       row.append(label)
@@ -215,7 +216,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     if (commit) {
       const reference = document.createElement('span')
       reference.className = 'tooltip-commit'
-      reference.innerHTML = COMMIT_ICON_SVG
+      reference.innerHTML = trustedHTML(COMMIT_ICON_SVG)
       const label = document.createElement('span')
       label.textContent = commit.slice(0, 7)
       reference.append(label)
@@ -230,7 +231,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       for (const tag of commitInfo.tags.slice(0, MAX_TOOLTIP_TAGS)) {
         const chip = document.createElement('span')
         chip.className = 'tooltip-tag'
-        chip.innerHTML = TAG_ICON_SVG
+        chip.innerHTML = trustedHTML(TAG_ICON_SVG)
         const name = document.createElement('span')
         name.textContent = tag
         chip.append(name)
@@ -254,7 +255,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       icon.src = './stasis.svg'
       icon.alt = ''
       row.append(icon)
-    } else row.innerHTML = BUNDLE_ICON_SVG
+    } else row.innerHTML = trustedHTML(BUNDLE_ICON_SVG)
     const label = document.createElement('span')
     const type = bundle === 'stasis' ? 'Stasis' : bundle === 'sourcemap' ? 'Sourcemap' : ''
     label.textContent = [type, built ? 'Built on server' : '', stats].filter(Boolean).join(' · ')

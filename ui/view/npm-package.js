@@ -5,7 +5,7 @@
 // answered is kept in memory only for the versions shown and compared, and
 // for no longer than the session and role it answered.
 import { LitElement, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
 import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
@@ -456,7 +456,7 @@ export function renderNpmLookup() {
   const recent = npmRecentSearches()
   return html`<section class="npm-lookup" aria-labelledby="npm-lookup-title">
     <header class="npm-lookup-head">
-      <span class="npm-lookup-icon" aria-hidden="true">${unsafeHTML(NPM_ICON_SVG)}</span>
+      <span class="npm-lookup-icon" aria-hidden="true">${appMarkup(NPM_ICON_SVG)}</span>
       <h1 id="npm-lookup-title">npm packages</h1>
     </header>
     <p class="npm-lookup-intro">Open a published version to read its files, as its tarball has them.
@@ -567,7 +567,7 @@ function npmCommitTags(entry, github) {
     answer => ({ tags: Array.isArray(answer.tags) ? answer.tags.filter(tag => typeof tag === 'string' && tag) : [] }))
   if (data.status !== 'ready' || data.tags.length === 0) return nothing
   return html`<span class="bundle-origin-tags">${data.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link"
-    href=${githubTagHref(github, tag)} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
+    href=${githubTagHref(github, tag)} target="_blank" rel="noopener noreferrer">${appMarkup(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
 }
 
 // A file of the package, as a fact names it: a button opening it in the
@@ -628,11 +628,11 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, p
     ${published ? html`<dt>Published</dt><dd>${npmRecentRelease(list, published)
       ? html`<span class="npm-recent">${npmPublished(published)}</span>` : npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
-      <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
+      <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${appMarkup(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
       ${githubFigures}
     </dd>
     <dt>Commit</dt><dd class="bundle-origin-row">${origin.commit
-      ? html`<a class="bundle-origin-link bundle-commit-link" href=${origin.commit.href} data-tooltip=${origin.commit.hash} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${origin.commit.text}</span></a>
+      ? html`<a class="bundle-origin-link bundle-commit-link" href=${origin.commit.href} data-tooltip=${origin.commit.hash} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${appMarkup(COMMIT_ICON_SVG)}<span>${origin.commit.text}</span></a>
         ${npmCommitTags(entry, github)}`
       : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
     ${provenance === nothing ? nothing : html`<dt>Provenance</dt><dd class="bundle-origin-row">${provenance}</dd>`}

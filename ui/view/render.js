@@ -2,7 +2,7 @@ import { html, render as litRender, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, displayName as reportDisplayName } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, migrateLoadedIgnores, saveTriage, state } from '#client/index.js'
 import { openLocalContentImportDialog, openLocalTriageImportDialog, openObjstoreRecoveryDialog, openSyncSuggestDialog, openSyncUploadDialog, openTriageComparisonDialog, openWorkspaceUnlockBundleDialog } from './lazy-dialogs.js'
@@ -260,7 +260,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   // Workspace/team counts open their report list. Individual reports keep
   // their branded filename button and click-to-copy behavior.
   const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
-  const singleSticker = unsafeHTML(FILE_ICONS[singleStickerKey])
+  const singleSticker = appMarkup(FILE_ICONS[singleStickerKey])
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
   if (context) {
@@ -803,7 +803,7 @@ const fileLineCmp = (pa, pb) =>
 // optionally grouped by file). `applySorting` already ordered
 // `filtered` by sortBy.
 // Set by findingsBodyHtml's table branch and consumed by render()
-// after report.innerHTML lands; passes the sorted dedup-group list
+// after #report's slots land; passes the sorted dedup-group list
 // to the <finding-table> custom element via property assignment so
 // item identity survives the trip.
 let pendingTableItems = null
@@ -979,7 +979,7 @@ function kanbanCardTemplate(g, opts = {}) {
         ? nothing
         : html`<span class="kanban-conf" data-tooltip=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
       ${brand
-        ? html`<span class="kanban-analyzer" role="img" data-tooltip=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
+        ? html`<span class="kanban-analyzer" role="img" data-tooltip=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${appMarkup(REPORT_LOGOS[brand])}</span>`
         : nothing}
     </div>`
   if (isKanban) {
@@ -1053,7 +1053,7 @@ function focusCodeLinesTemplate(code) {
       })}
     </aside>
     <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
-      ? unsafeHTML(highlighted)
+      ? appMarkup(highlighted)
       : focusPlainText(content)}</code></pre>
   </div>`
 }
@@ -1322,7 +1322,7 @@ function findingsBodyTemplate(filtered, selectedGroup) {
     // severity / confidence sorts. Rows are owned by the
     // <finding-table> Lit component (see view/finding-table.js); we
     // stash the sorted list in pendingTableItems so render() can
-    // assign it as a property after innerHTML lands.
+    // assign it as a property after the slots land.
     const items = state.sortBy === 'file'
       ? sortGroupsByPrimary(filtered, fileLineCmp)
       : filtered
@@ -1610,8 +1610,8 @@ function findingsBodyTemplate(filtered, selectedGroup) {
 // `[Code]` shortcut piggybacks on this — set
 // `state.bundleSourceFile` + load `state.bundleDetails`, render
 // runs, and the overlay picks it up. Keeping the slot outside
-// `#report` means the modal survives the report's `innerHTML`
-// rebuilds the dispatch branches do.
+// `#report` means the modal survives the rebuilds of `#report` the
+// dispatch branches do.
 function mountBundleSourceOverlay() {
   if (state.bundleSourceFile) ensureBundleSources().catch(() => {})
   const slot = document.querySelector('#bundle-source-overlay-slot')
@@ -1625,17 +1625,20 @@ export function render() {
   renderView(state.currentView)
 }
 
-// Reuse #report's single slot div across renders — `innerHTML =
-// '<div id=...>'` would wipe Lit's part-cache (it's keyed on the
-// container element) and force a full DOM rebuild on every render(),
-// trashing scroll state and triggering a flash of layout. A stale
-// slot only appears when we just arrived from another view; #report's
-// content is replaced only in that case.
+// An empty slot div for #report, for Lit to render a view into.
+const reportSlot = (id) => Object.assign(document.createElement('div'), { id })
+
+// Reuse #report's single slot div across renders — replacing it with a
+// fresh one would wipe Lit's part-cache (it's keyed on the container
+// element) and force a full DOM rebuild on every render(), trashing
+// scroll state and triggering a flash of layout. A stale slot only
+// appears when we just arrived from another view; #report's content is
+// replaced only in that case.
 function ensureReportSlot(id) {
   let slot = document.querySelector(`#${id}`)
   if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
-    report.innerHTML = `<div id="${id}"></div>`
-    slot = document.querySelector(`#${id}`)
+    slot = reportSlot(id)
+    report.replaceChildren(slot)
   }
   return slot
 }
@@ -2428,9 +2431,9 @@ function renderImpl() {
     let fHeader = document.querySelector('#header-slot')
     let treeSlot = document.querySelector('#tree-view-slot')
     if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
-      report.innerHTML = '<div id="header-slot"></div><div id="tree-view-slot"></div>'
-      fHeader = document.querySelector('#header-slot')
-      treeSlot = document.querySelector('#tree-view-slot')
+      fHeader = reportSlot('header-slot')
+      treeSlot = reportSlot('tree-view-slot')
+      report.replaceChildren(fHeader, treeSlot)
     }
     if (fHeader) litRender(headerTpl, fHeader)
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
@@ -2579,12 +2582,12 @@ function renderImpl() {
   const haveShape = hadGraphSlot ? 'graph' : (hadBodySlot ? 'body' : null)
   const shapeMatches = wrapper && haveShape === wantedShape
   if (!headerSlot || !wrapper || !report.contains(headerSlot) || !report.contains(wrapper) || !shapeMatches) {
-    const inner = renderGraphInBody
-      ? '<div id="findings-graph-slot"></div>'
-      : '<div id="toolbar-slot"></div><div id="empty-state-slot"></div><div id="findings-body-slot"></div>'
-    report.innerHTML = `<div id="header-slot"></div><div class="${wrapperClass}">${inner}</div>`
-    headerSlot = document.querySelector('#header-slot')
-    wrapper = report.querySelector(':scope > .findings-content')
+    headerSlot = reportSlot('header-slot')
+    wrapper = Object.assign(document.createElement('div'), { className: wrapperClass })
+    wrapper.append(...(renderGraphInBody
+      ? [reportSlot('findings-graph-slot')]
+      : [reportSlot('toolbar-slot'), reportSlot('empty-state-slot'), reportSlot('findings-body-slot')]))
+    report.replaceChildren(headerSlot, wrapper)
   } else if (wrapper.className !== wrapperClass) {
     wrapper.className = wrapperClass
   }

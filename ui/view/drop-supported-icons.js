@@ -12,6 +12,7 @@
 
 import { FILE_ICONS } from './file-display.js'
 import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { trustedHTML } from './trusted-types.js'
 
 // `data-icon` value → raw SVG string. Sourcemaps keep the generic
 // bundle glyph shared with the sidebar.
@@ -30,5 +31,5 @@ const ICONS = {
 
 for (const el of document.querySelectorAll('.drop-supported-icon[data-icon]')) {
   const svg = ICONS[el.dataset.icon]
-  if (svg) el.innerHTML = svg
+  if (svg) el.innerHTML = trustedHTML(svg)
 }

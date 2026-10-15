@@ -1,6 +1,6 @@
 import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, NPM_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
 
@@ -66,7 +66,7 @@ export function updateManagedLanding(options) {
       <nav class="managed-team-list" aria-label="Teams">
         ${repeat(nonemptyTeams, (team) => team.id, (team) => html`
           <button type="button" class="managed-team-button" data-managed-team=${team.id}>
-            <span class="managed-team-icon" aria-hidden="true">${unsafeHTML(WORKSPACE_ICON_SVG)}</span>
+            <span class="managed-team-icon" aria-hidden="true">${appMarkup(WORKSPACE_ICON_SVG)}</span>
             <span class="managed-team-copy">
               <strong>${team.name}</strong>
               <span>${team.app?.appMode ? `${team.app.appFindings.toLocaleString()} ${team.app.appFindings === 1 ? 'finding' : 'findings'} · ` : ''}${team.reports.length} ${team.reports.length === 1 ? 'report' : 'reports'} · Open findings</span>
@@ -87,14 +87,14 @@ export function updateManagedLanding(options) {
         ['npm', 'npm packages', NPM_ICON_SVG],
       ].map(([view, label, icon]) => html`
         <button type="button" class="managed-content-card" data-managed-page=${view}>
-          <span class="managed-content-icon" aria-hidden="true">${unsafeHTML(icon)}</span>
+          <span class="managed-content-icon" aria-hidden="true">${appMarkup(icon)}</span>
           <span>${label}</span>
         </button>
       `)}
     </nav>
     ${canManage ? html`
       <div class="managed-landing-actions">
-        <button type="button" class="managed-manage-button" data-managed-page="manage"><span aria-hidden="true">${unsafeHTML(MANAGE_ICON_SVG)}</span><span>Manage</span></button>
+        <button type="button" class="managed-manage-button" data-managed-page="manage"><span aria-hidden="true">${appMarkup(MANAGE_ICON_SVG)}</span><span>Manage</span></button>
       </div>
     ` : nothing}
   `, slot)

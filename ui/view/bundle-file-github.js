@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { repoDirectory, reportRepoGithub } from '@preventive/report'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
 import { bundleCommitTooltip } from './bundle-origin-links.js'
@@ -77,5 +77,5 @@ export function githubFileLink(github, commitInfo = null) {
     data-tooltip-commit-info=${bundleCommitTooltip(commitInfo, github.commit, github.github) ?? nothing}
     data-tooltip-package=${github.package?.name ?? nothing} data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
     data-tooltip-version=${github.package?.version ?? nothing}
-  >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${sourcePackageIcon(github.package.ecosystem)}</span>` : nothing}</a>`
+  >${appMarkup(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${sourcePackageIcon(github.package.ecosystem)}</span>` : nothing}</a>`
 }

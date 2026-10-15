@@ -1,5 +1,5 @@
 import { html, nothing, unsafeCSS } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../markup.js'
 import { state } from '#client/index.js'
 import { MAX_COMMENT_TEXT } from '../../../common/managed/comments.ts'
 import { canDeleteManagedComment, canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, subscribeManagedComments, writeManagedComment } from '../managed-comments.js'
@@ -148,10 +148,10 @@ class ManagedCommentsDialog extends AppDialog {
     const canDelete = canDeleteManagedComment(comment)
     if (!canEdit && !canDelete) return nothing
     return html`${canEdit ? html`<button type="button" class="comment-action" aria-label="Edit comment"
-        aria-pressed=${this._editing?.id === comment.id} ?disabled=${this._busy} @click=${() => this._edit(comment)}>${unsafeHTML(EDIT_ICON_SVG)}</button>` : nothing}
+        aria-pressed=${this._editing?.id === comment.id} ?disabled=${this._busy} @click=${() => this._edit(comment)}>${appMarkup(EDIT_ICON_SVG)}</button>` : nothing}
       ${canDelete ? html`<button type="button" class="comment-action danger" aria-label="Delete comment"
         aria-expanded=${this._deleting === comment.id} ?disabled=${this._busy}
-        @click=${() => { this._deleting = this._deleting === comment.id ? null : comment.id }}>${unsafeHTML(DELETE_ICON_SVG)}</button>` : nothing}`
+        @click=${() => { this._deleting = this._deleting === comment.id ? null : comment.id }}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}`
   }
 
   _deleteConfirmation(comment) {

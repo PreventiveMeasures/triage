@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { BUNDLE_ICON_SVG, CODE_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG } from '../view/icons.js'
 
 const PAGES = [
@@ -26,10 +26,10 @@ export function adminNavigation(current, role, allowShare = false) {
 }
 
 export function adminIcon(kind) {
-  if (kind === 'bundle') return unsafeHTML(BUNDLE_ICON_SVG)
-  if (kind === 'report' || kind === 'preview') return unsafeHTML(REPORT_ICON_SVG)
-  if (kind === 'scan') return unsafeHTML(SCAN_ICON_SVG)
-  if (kind === 'code') return unsafeHTML(CODE_ICON_SVG)
+  if (kind === 'bundle') return appMarkup(BUNDLE_ICON_SVG)
+  if (kind === 'report' || kind === 'preview') return appMarkup(REPORT_ICON_SVG)
+  if (kind === 'scan') return appMarkup(SCAN_ICON_SVG)
+  if (kind === 'code') return appMarkup(CODE_ICON_SVG)
   const paths = {
     users: 'M10.75 4.75a2.75 2.75 0 1 1-5.5 0 2.75 2.75 0 0 1 5.5 0ZM3 14v-1.5A3.5 3.5 0 0 1 6.5 9h3a3.5 3.5 0 0 1 3.5 3.5V14',
     team: 'M8.5 5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM1.5 14v-1.5A3.5 3.5 0 0 1 5 9h2a3.5 3.5 0 0 1 3.5 3.5V14M11 2.75a2.5 2.5 0 0 1 0 4.5m1 2a3 3 0 0 1 2.5 3V14',

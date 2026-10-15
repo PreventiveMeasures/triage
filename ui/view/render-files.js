@@ -41,9 +41,8 @@ function fileCodeButton(fileHash) {
 // here), a search input that does a case-insensitive substring
 // match on file paths, and a `N of M` count.
 //
-// Returns a Lit `TemplateResult`; render.js drops a `tree-view-slot`
-// placeholder into the report html string and `litRender`s the
-// template into it after `report.innerHTML = …` lands.
+// Returns a Lit `TemplateResult`; render.js puts a `tree-view-slot`
+// placeholder into #report and `litRender`s the template into it.
 export function renderTreeView(treeData, findingCounts) {
   const allFiles = Object.keys(treeData).toSorted()
   // Inverse adjacency: file → list of files that import it.

@@ -2,7 +2,7 @@ import { html } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../markup.js'
 import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
@@ -18,10 +18,10 @@ import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-
 
 // The bundle layouts, in their selector's order: id, label, icon.
 const BUNDLE_LAYOUTS = [
-  ['graph', 'Graph', unsafeHTML(GRAPH_ICON_SVG)],
-  ['layers', 'Layers', unsafeHTML(LAYERS_ICON_SVG)],
-  ['matrix', 'Matrix', unsafeHTML(MATRIX_ICON_SVG)],
-  ['dependencies', 'Dependencies', unsafeHTML(DEPENDENCIES_ICON_SVG)],
+  ['graph', 'Graph', appMarkup(GRAPH_ICON_SVG)],
+  ['layers', 'Layers', appMarkup(LAYERS_ICON_SVG)],
+  ['matrix', 'Matrix', appMarkup(MATRIX_ICON_SVG)],
+  ['dependencies', 'Dependencies', appMarkup(DEPENDENCIES_ICON_SVG)],
   ['flow', 'Size flow', html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg>`],
 ]
 
