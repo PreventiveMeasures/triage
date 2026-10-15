@@ -16,7 +16,6 @@ const compareModeSuffix = mode => COMPARE_MODES.has(mode) ? '/code' : ''
 export const MANAGED_PAGES = Object.freeze({
   manage: '/manage',
   'manage-bundles': '/manage/bundle',
-  'manage-code': '/manage/code',
   'manage-scans': '/manage/scans',
   'manage-reports': '/manage/report',
   'manage-repos': '/manage/repositories',
@@ -66,7 +65,6 @@ export function managedRoutePath(route) {
     const path = MANAGED_PAGES[route.view]
     if (route.view === 'manage-deduplication' && route.linkId) return `${path}?report=${encodeURIComponent(route.linkId)}`
     if (route.view === 'manage-bundles' && Number.isSafeInteger(route.createRepoId) && route.createRepoId > 0) return `${path}?createRepo=${route.createRepoId}`
-    if (route.view === 'manage-code' && isRepoId(route.codeRepoId)) return `${path}?repo=${route.codeRepoId}`
     if (route.view === 'manage-scans' && route.scanMode === 'link') return `${path}?mode=link`
     if (route.view === 'manage-scans' && route.bundleId) {
       return `${path}?bundle=${encodeURIComponent(route.bundleId)}${route.scanMode === 'dependencies' ? '&mode=dependencies' : ''}`
@@ -135,8 +133,10 @@ function parseNpmRoute(path, hash) {
 // Search or Treemap tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
 // the repository's root where it names no directory. Code, the tab a bare
 // link opens, names its file by number and its lines in the fragment, as a
-// bundle's Code does: `/code/<file>#L4`. `/manage/code` alone is the page
-// picking one (`?repo=<id>` picking that repository).
+// bundle's Code does: `/code/<file>#L4`. Without a commit,
+// `/manage/code/<repo id>[?path=<directory>]`, it opens on the default
+// branch's head, or on the revision a route held in memory names (`ref`),
+// and its route then names the commit it opened.
 export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap'])
 const COMMIT = /^[a-f\d]{40}$/u
 const MAX_DIRECTORY = 500
@@ -153,22 +153,23 @@ export function isRepositoryDirectory(path) {
 function repositoryCodePath(route) {
   const tab = route.bundleTab ?? 'code'
   const path = route.path ?? ''
-  if (!isRepoId(route.repoId) || !COMMIT.test(route.commit ?? '') || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)) return null
+  if (!isRepoId(route.repoId) || (route.commit != null && !COMMIT.test(route.commit)) || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)) return null
+  const directory = path ? `?path=${path.split('/').map(encodeURIComponent).join('/')}` : ''
+  if (route.commit == null) return `/manage/code/${route.repoId}${directory}`
   const file = tab === 'code' && isLineNumber(route.file) ? `/code/${route.file}` : tab === 'code' ? '' : `/${tab}`
   const lines = tab === 'code' && isLineNumber(route.file) && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-  const directory = path ? `?path=${path.split('/').map(encodeURIComponent).join('/')}` : ''
   return `/manage/code/${route.repoId}/${route.commit}${file}${directory}${lines}`
 }
 
 function parseRepositoryCodeRoute(url) {
-  const match = /^\/manage\/code\/([1-9]\d*)\/([a-f\d]{40})(?:\/(code|search|treemap)(?:\/([1-9]\d*))?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
+  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap)(?:\/([1-9]\d*))?)?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
   if (!match) return undefined
   const repoId = Number(match[1])
   const path = url.searchParams.get('path') ?? ''
   const tab = match[3] ?? 'code'
   if (!isRepoId(repoId) || !isRepositoryDirectory(path) || (match[4] != null && tab !== 'code')) return null
-  const route = { view: 'repository-code', repoId, commit: match[2], path, bundleTab: tab }
+  const route = { view: 'repository-code', repoId, commit: match[2] ?? null, path, bundleTab: tab }
   const file = Number(match[4])
   return match[4] != null && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(url.hash) } : route
 }
@@ -192,11 +193,9 @@ export function parseManagedRoute(url) {
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) {
     const createRepoId = Number(url.searchParams.get('createRepo'))
-    const codeRepoId = Number(url.searchParams.get('repo'))
     return { view,
       ...(view === 'manage-deduplication' && url.searchParams.get('report') ? { linkId: url.searchParams.get('report') } : {}),
       ...(view === 'manage-bundles' && Number.isSafeInteger(createRepoId) && createRepoId > 0 ? { createRepoId } : {}),
-      ...(view === 'manage-code' && isRepoId(codeRepoId) ? { codeRepoId } : {}),
       ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
       ...(view === 'manage-scans' ? url.searchParams.get('mode') === 'link' ? { scanMode: 'link' }
         : url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle'),

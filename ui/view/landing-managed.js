@@ -1,7 +1,7 @@
 import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { BUNDLE_ICON_SVG, CODE_ICON_SVG, MANAGE_ICON_SVG, NPM_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, NPM_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
 
 let pendingLanding = null
@@ -80,7 +80,6 @@ export function updateManagedLanding(options) {
       ${[
         ...canManage ? [
           ['manage-bundles', 'Bundles', BUNDLE_ICON_SVG],
-          ['manage-code', 'Code', CODE_ICON_SVG],
           ['manage-scans', 'Scans', SCAN_ICON_SVG],
           ['manage-reports', 'Reports', REPORT_ICON_SVG],
         ] : [],

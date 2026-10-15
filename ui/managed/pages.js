@@ -31,7 +31,6 @@ import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
-import './repository-code.js'
 import '../view/mode-switch.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
@@ -75,7 +74,6 @@ class ManagedAdminHome extends ManagedPage {
   render() {
     const content = [
       ['manage-bundles', 'Bundles', 'Keep source archives ready for review.', 'bundle'],
-      ['manage-code', 'Code', 'Read a repository’s files at any revision.', 'code'],
       ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
       ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
     ]
@@ -644,9 +642,12 @@ class ManagedAdminRepos extends ManagedPage {
     const access = `${this._accessLabel(repo)}${this._scope === 'connected' && repo.active === false ? ' · Deactivated' : ''}`
     const copy = html`${REPO_ICON}<span class="repo-copy"><span class="repo-name">${label}</span><span class="repo-meta">${access}</span></span>`
     if (this._scope === 'connected') {
-      return html`<li><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
-        ${copy}<svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
-      </button></li>`
+      // Its code opens from beside the row's arrow, in the same place on every
+      // row, but a deactivated one's, which no one reads.
+      return html`<li class="repo-item"><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
+        ${copy}<span class="repo-code-slot" aria-hidden="true"></span><svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
+      </button>${repo.active === false ? nothing : html`<a class="repo-code" href=${managedRoutePath({ view: 'repository-code', repoId: repo.id })}
+        aria-label=${`Open ${repo.fullName}'s code`} data-tooltip="Code" @click=${event => this._openCode(event, repo)}>${adminIcon('code')}</a>`}</li>`
     }
     return html`<li class="repo-row">${copy}
       ${repo.selected ? html`<span class="connected"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>Connected</span>`
@@ -654,6 +655,14 @@ class ManagedAdminRepos extends ManagedPage {
           ? html`<span class="repo-meta">Needs App access</span>`
           : html`<button type="button" class="btn" aria-label=${`Add ${repo.fullName}`} ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, true) }}>${this._busy === repo.id ? 'Adding…' : 'Add'}</button>`}
     </li>`
+  }
+
+  // In the code viewer, at its default branch; a new tab's or window's opens
+  // there from its link.
+  _openCode(event, repo) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    this.dispatchEvent(new CustomEvent('managed-repository-code-open', { detail: { repoId: repo.id }, bubbles: true, composed: true }))
   }
 
   _accessLabel(repo) {

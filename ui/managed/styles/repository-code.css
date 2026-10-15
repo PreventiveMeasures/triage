@@ -1,5 +1,0 @@
-button.file-tile { cursor: default; }
-.code-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .65rem 1rem; margin: 1.2rem 0; }
-.code-actions .note { flex: 1 1 16rem; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.5; }
-.code-actions .note code { color: var(--text); overflow-wrap: anywhere; }
-.code-actions .btn { flex: none; }
