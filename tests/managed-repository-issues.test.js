@@ -175,7 +175,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
       commits: { totalCount: 4, nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, mergedBy: { login: 'ada' }, author: { login: 'grace' },
       closingIssuesReferences: { nodes: [{ number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED' }, null] } },
     3: { __typename: 'Issue', ...common, number: 3, title: 'Chips unreadable', issueState: 'CLOSED', stateReason: 'COMPLETED', body: 'x'.repeat(30_000), author: null,
-      closedByPullRequestsReferences: { nodes: [{ number: 7, title: 'Fix the chips', pullState: 'MERGED', isDraft: false }, { number: 'x' }] } },
+      closedByPullRequestsReferences: { totalCount: 12, nodes: [{ number: 7, title: 'Fix the chips', pullState: 'MERGED', isDraft: false }, { number: 'x' }] } },
   }
   const asked = github(t, ({ variables }) => ({ data: { repository: { item: items[variables.number] ?? null } } }))
   const request = await fixture(t)
@@ -185,10 +185,12 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   assert.deepEqual(pull.body, { kind: 'pulls', number: 7, title: 'Fix the chips', author: 'grace', createdAt: Date.parse(common.createdAt), updatedAt: Date.parse(common.updatedAt),
     closedAt: Date.parse(common.closedAt), comments: 2, labels: [{ name: 'bug', color: 'd73a4a' }], moreLabels: 1, state: 'merged', draft: false,
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
-    body: 'Fixes #3.\n\nhttps://claude.ai/code/session_X', closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }], commits: 4, files: 2, mergedBy: 'ada' })
+    body: 'Fixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
+    commits: 4, files: 2, mergedBy: 'ada' })
   const issue = await item('3')
-  assert.deepEqual([issue.body.kind, issue.body.state, issue.body.reason, issue.body.body.length, issue.body.closedBy],
-    ['issues', 'closed', 'completed', 20_000, [{ number: 7, title: 'Fix the chips', state: 'merged', draft: false }]])
+  // A description too long shortened, and the linked past those named counted, each said so.
+  assert.deepEqual([issue.body.kind, issue.body.state, issue.body.reason, issue.body.body.length, issue.body.bodyShortened, issue.body.closedBy, issue.body.moreLinked],
+    ['issues', 'closed', 'completed', 20_000, true, [{ number: 7, title: 'Fix the chips', state: 'merged', draft: false }], 11])
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', number: 7 })
   // Each type's state named apart, as GitHub's GraphQL requires of an issue's and a pull request's.
   assert.match(asked[0].query, /issueState: state[^]*pullState: state/u)

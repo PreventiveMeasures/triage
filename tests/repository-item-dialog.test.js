@@ -35,7 +35,7 @@ test('an issue or pull request shows what its tile knew at once, then the rest a
   assert.match(text, /3 comments[^]*>bug<[^]*<code>claude\/fix-chips<\/code> → <code>main<\/code>[^]*\+30[^]*−4[^]*Approved[^]*Checks passed/u)
   assert.match(text, /role="status">Reading it…/u)
   assert.match(text, /class=primary href=https:\/\/github\.com\/org\/repo\/pull\/5 target="_blank"[^>]*>Open on GitHub</u, 'its link on GitHub')
-  read({ ...tile, state: 'merged', mergedAt: Date.UTC(2026, 9, 2), mergedBy: 'ada', body: 'Fixes #3.', commits: 4, files: 2,
+  read({ ...tile, state: 'merged', mergedAt: Date.UTC(2026, 9, 2), mergedBy: 'ada', body: 'Fixes #3.', bodyShortened: true, moreLinked: 0, commits: 4, files: 2,
     closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }] })
   await setImmediate()
   text = templateText(dialog.render())
@@ -44,19 +44,21 @@ test('an issue or pull request shows what its tile knew at once, then the rest a
   assert.match(text, /4 commits<\/span><span>2 files changed/u)
   assert.doesNotMatch(text, /Approved/u, 'a review only while open')
   assert.match(text, /<h4>Closes<\/h4>[^]*aria-label=Closed[^]*#3<\/span><span class="repo-item-title">Chips unreadable/u)
-  assert.match(text, /\[flowed\]Fixes #3\./u)
+  assert.match(text, /\[flowed\]Fixes #3\.[^]*Shortened here; the rest of it is on GitHub\./u)
+  assert.doesNotMatch(text, /more, on GitHub/u)
   assert.doesNotMatch(text, /Reading it…/u)
 })
 
 test('an issue it names opens in its place, read once, Back returning; one that fails says why', async () => {
   answer = number => number === 3 ? Promise.reject(new Error('GitHub has no issue or pull request of that number here.'))
-    : Promise.resolve({ ...tile, body: '', closes: [], commits: 1, files: 1, mergedBy: null })
+    : Promise.resolve({ ...tile, body: '', closes: [], moreLinked: 12, commits: 1, files: 1, mergedBy: null })
   asked.length = 0
   const dialog = shown()
   dialog.open({ number: 5, preview: tile })
   await setImmediate()
   assert.doesNotMatch(templateText(dialog.render()), /class="back"/u)
   assert.match(templateText(dialog.render()), /No description\./u)
+  assert.match(templateText(dialog.render()), /<h4>Closes<\/h4><p class="repo-item-quiet">12 more, on GitHub<\/p>/u, 'those GitHub has past the first, counted')
   dialog.open({ number: 3, preview: { kind: 'issues', number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed', labels: [], comments: 0 } })
   await setImmediate()
   let text = templateText(dialog.render())

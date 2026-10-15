@@ -1653,7 +1653,10 @@ tile's fields, `kind` (`issues` or `pulls`), its description's Markdown as
 written (`body`, never GitHub's HTML of it, shown as finding descriptions
 are), an issue's pull requests closing it (`closedBy`), a pull request's
 issues it closes (`closes`), its `commits`, `files` changed and `mergedBy`;
-`404 github-not-found` where the repository has none of that number.
+`404 github-not-found` where the repository has none of that number. A
+description past 20,000 characters is shortened (`bodyShortened`), and of
+those it closes or that closed it, ten are named and the rest counted
+(`moreLinked`), the popup saying so and that the rest are on GitHub.
 
 What a page or item read is kept in the database (`managed_upstream_cache`,
 under `repository/reads`, a day), for every reader, their access checked as

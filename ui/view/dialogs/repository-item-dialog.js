@@ -110,25 +110,26 @@ class RepositoryItemDialog extends AppDialog {
         ${REVIEWS[item.review] && item.state === 'open' ? marked(REVIEWS[item.review], item.review) : nothing}
         ${CHECKS[item.checks] ? marked(CHECKS[item.checks], item.checks) : nothing}
       </p>` : nothing}
-      ${full ? this.renderLinked(pulls ? 'Closes' : 'Closed by', pulls ? 'issues' : 'pulls', pulls ? full.closes : full.closedBy) : nothing}
-      ${full ? html`<div class="repo-item-description">${full.body ? renderHighlighted(flowText(full.body)) : html`<p class="repo-item-quiet">No description.</p>`}</div>`
+      ${full ? this.renderLinked(pulls ? 'Closes' : 'Closed by', pulls ? 'issues' : 'pulls', pulls ? full.closes : full.closedBy, full.moreLinked) : nothing}
+      ${full ? html`<div class="repo-item-description">${full.body ? renderHighlighted(flowText(full.body)) : html`<p class="repo-item-quiet">No description.</p>`}</div>
+        ${full.bodyShortened ? html`<p class="repo-item-quiet">Shortened here; the rest of it is on GitHub.</p>` : nothing}`
         : held?.status === 'error' ? html`<p class="repo-item-quiet" role="alert">${held.error}</p>`
         : html`<p class="repo-item-quiet" role="status">Reading it…</p>`}`
     return [heading, body, external(href, 'Open on GitHub', true)]
   }
 
   // The issues or pull requests (`kind`) an item or session names, each
-  // opening in its place.
-  renderLinked(title, kind, items) {
-    if (!items?.length) return nothing
-    return html`<section class="repo-item-section"><h4>${title}</h4><ul>${items.map(linked => {
+  // opening in its place, and how many more GitHub has.
+  renderLinked(title, kind, items, more = 0) {
+    if (!items?.length && !more) return nothing
+    return html`<section class="repo-item-section"><h4>${title}</h4>${items?.length ? html`<ul>${items.map(linked => {
       const preview = { ...linked, kind, labels: [], comments: 0 }
       const [stateClass, stateName] = issueState(kind, preview)
       return html`<li><button type="button" class="repo-item-row" @click=${() => this.open({ number: linked.number, preview })}>
         <span class=${`repo-item-state is-${stateClass}`} role="img" aria-label=${stateName}>${STATE_ICONS[kind][stateClass]}</span>
         <span class="repo-item-number">#${linked.number}</span><span class="repo-item-title">${linked.title || '(no title)'}</span>
       </button></li>`
-    })}</ul></section>`
+    })}</ul>` : nothing}${more > 0 ? html`<p class="repo-item-quiet">${items?.length ? 'and ' : ''}${more.toLocaleString('en-US')} more, on GitHub</p>` : nothing}</section>`
   }
 
   // A session: its agents' marks and title; who, when, its state, tasks and
