@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit'
+import { styleMap } from './style-map.js'
 import { REVIEW_VERDICTS, parseReviewNotes } from '../../common/dependency-reviews.js'
 
 export const verdictLabels = { ...REVIEW_VERDICTS, 'accept-with-nits': 'Accept with nits' }
@@ -9,7 +10,7 @@ export const verdictLabel = status => html`<span class="npm-review-verdict">${ve
 export const reviewBadge = review => html`<span class=${`npm-review-badge ${review.revokedAt === null ? review.publishedAt === null ? '' : 'published' : 'revoked'}`}>${reviewState(review)}</span>`
 export const reviewDate = time => html`<time datetime=${new Date(time).toISOString()}>${new Date(time).toLocaleString()}</time>`
 export const reviewProgress = (checked, total) => html`<div class="npm-review-progress" role="progressbar" aria-label="Files checked"
-  aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${`width:${total ? checked / total * 100 : 0}%`}></span></div>`
+  aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${styleMap({ width: `${total ? checked / total * 100 : 0}%` })}></span></div>`
 
 export function reviewFileStates(entries = [], nonTextFiles = []) {
   const nonText = new Set(nonTextFiles)

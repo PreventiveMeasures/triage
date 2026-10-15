@@ -18,7 +18,7 @@ import { sharedFindingTriage } from '../../client/ignored-triage.js'
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { compareVersionsDesc, ensureBundleFindingsIndexed, getPackagesIndex, state } from '#client/index.js'
 import { tabKey } from './group.js'
@@ -161,13 +161,13 @@ export function renderPackagesView() {
       ${packagesToolbarTemplate(triageCounts)}
     </header>
     ${filtered.length === 0
-      ? html`<p style="color:var(--muted)">${buckets.size === 0
+      ? html`<p style=${styleMap({ color: 'var(--muted)' })}>${buckets.size === 0
           ? 'Indexing reports… this view populates as the OPFS scan finishes.'
           : state.shownTriage
             ? `No ${state.shownTriage} findings in any package.`
             : 'No untriaged findings in any package.'}</p>`
       : visible.length === 0
-        ? html`<p style="color:var(--muted)">No packages match "${state.packagesSearchQuery}".</p>`
+        ? html`<p style=${styleMap({ color: 'var(--muted)' })}>No packages match "${state.packagesSearchQuery}".</p>`
         : html`<div class=${layoutClass}>
           <ul class="packages-list">
             ${repeat(buildVisibleRows(visible), keyForVisibleRow, (row) => renderPackageRow(row, selected, state.selectedPackageVersion))}

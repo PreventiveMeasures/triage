@@ -1,7 +1,7 @@
 import { html, render as litRender, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, displayName as reportDisplayName } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, migrateLoadedIgnores, saveTriage, state } from '#client/index.js'
@@ -2556,13 +2556,13 @@ function renderImpl() {
     // where the board has nothing to shift and the line is the only
     // thing saying why.
     if (state.shownTriage && allGroups.length === 0) {
-      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No ${state.shownTriage} findings.</p>`
+      emptyStateTpl = html`<p style=${styleMap({ color: 'var(--muted)', margin: '1rem 0' })}>No ${state.shownTriage} findings.</p>`
     } else if (filtered.length === 0 && allGroups.length > 0 && !isKanban) {
-      emptyStateTpl = html`<p style="color:var(--muted); margin: 1rem 0;">No findings match the current filters.</p>`
+      emptyStateTpl = html`<p style=${styleMap({ color: 'var(--muted)', margin: '1rem 0' })}>No findings match the current filters.</p>`
     } else if (allGroups.length === 0) {
       emptyStateTpl = mergedGroups.length > 0
-        ? html`<p style="color:var(--green)">All ${typeLabel} issues triaged.</p>`
-        : html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
+        ? html`<p style=${styleMap({ color: 'var(--green)' })}>All ${typeLabel} issues triaged.</p>`
+        : html`<p style=${styleMap({ color: 'var(--green)' })}>No ${typeLabel} issues found.</p>`
     }
 
     bodyTemplate = findingsBodyTemplate(filtered, selectedGroup)

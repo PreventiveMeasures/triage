@@ -16,7 +16,7 @@
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { styleMap } from 'lit/directives/style-map.js'
+import { styleMap } from '../view/style-map.js'
 import { appMarkup } from '../view/markup.js'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'

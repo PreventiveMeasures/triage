@@ -1,4 +1,5 @@
 import { LitElement, css, html, nothing } from 'lit'
+import { styleMap } from './style-map.js'
 import { defaultEffort, effortName, fetchScanModels, modelDeveloper, modelName } from './scan-models.js'
 import { modelColumns, modelRows, modelSections } from './scan-model-layout.js'
 import { providerIcon } from './provider-icons.js'
@@ -294,8 +295,8 @@ class ScanModelPicker extends LitElement {
     const index = Math.max(0, efforts.indexOf(this.effort))
     const max = Math.max(1, efforts.length - 1)
     return html`<div class="field"><div class="label"><label for="effort">Effort</label><output for="effort">${effortName(efforts[index])}</output></div>
-      <div class="slider" style=${`--effort-fill: calc(var(--thumb-size) / 2 + (100% - var(--thumb-size)) * ${index / max})`}><input id="effort" type="range" min="0" max=${max} step="1" .value=${String(index)} ?disabled=${efforts.length === 1} aria-valuetext=${effortName(efforts[index])} @input=${(event) => this._setEffort(efforts[Number(event.target.value)])}>
-        <div class="steps">${efforts.map((effort, step) => html`<button type="button" class=${`step ${effort === this.effort ? 'active' : ''}`} style=${`--step-position: ${step / max * 100}%`} aria-label=${`Set effort to ${effortName(effort)}`} aria-pressed=${effort === this.effort} @click=${() => this._setEffort(effort)}>${effortName(effort)}</button>`)}</div>
+      <div class="slider" style=${styleMap({ '--effort-fill': `calc(var(--thumb-size) / 2 + (100% - var(--thumb-size)) * ${index / max})` })}><input id="effort" type="range" min="0" max=${max} step="1" .value=${String(index)} ?disabled=${efforts.length === 1} aria-valuetext=${effortName(efforts[index])} @input=${(event) => this._setEffort(efforts[Number(event.target.value)])}>
+        <div class="steps">${efforts.map((effort, step) => html`<button type="button" class=${`step ${effort === this.effort ? 'active' : ''}`} style=${styleMap({ '--step-position': `${step / max * 100}%` })} aria-label=${`Set effort to ${effortName(effort)}`} aria-pressed=${effort === this.effort} @click=${() => this._setEffort(effort)}>${effortName(effort)}</button>`)}</div>
       </div></div>`
   }
 }

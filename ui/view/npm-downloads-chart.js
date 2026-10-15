@@ -3,6 +3,7 @@
 // between weeks and months and the hovered period's downloads at its top
 // right. Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
+import { styleMap } from './style-map.js'
 import { dayOf, npmDownloadMonths, npmDownloadTier, npmDownloadWeeks, npmTierLevel, npmTierLow } from '../../risk/npm/downloads.js'
 
 const HEIGHT = 72
@@ -209,9 +210,9 @@ class NpmDownloadsChart extends LitElement {
 
   _plot(at) {
     const shape = this._shape
-    if (!shape) return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px"></div>`
+    if (!shape) return html`<div class="npm-downloads-plot" style=${styleMap({ height: `${HEIGHT}px` })}></div>`
     const width = this._width
-    return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px" tabindex="0" role="img" aria-label=${shape.label}
+    return html`<div class="npm-downloads-plot" style=${styleMap({ height: `${HEIGHT}px` })} tabindex="0" role="img" aria-label=${shape.label}
       @pointermove=${event => { this._at = shape.indexAt(event.offsetX) }} @pointerleave=${() => { this._at = null }}
       @keydown=${event => this._key(event)} @blur=${() => { this._at = null }}>
       <svg width=${width} height=${HEIGHT} viewBox="0 0 ${width} ${HEIGHT}" aria-hidden="true">

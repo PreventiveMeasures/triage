@@ -31,6 +31,7 @@
 //     @range-change=${(e) => commit(e.detail.low, e.detail.high)}>
 //   </range-slider>
 import { LitElement, html, unsafeCSS } from 'lit'
+import { styleMap } from './style-map.js'
 import sliderCSS from './range-slider.css'
 
 class RangeSlider extends LitElement {
@@ -68,7 +69,7 @@ class RangeSlider extends LitElement {
     // updating `low` / `high`) won't reassign their values and yank the
     // held thumb. `firstUpdated` seeds initial values; `updated` syncs
     // only when external code changes `low` / `high`.
-    return html`<div class="track-wrap" style=${`--low:${lowPct}%;--high:${highPct}%`}>
+    return html`<div class="track-wrap" style=${styleMap({ '--low': `${lowPct}%`, '--high': `${highPct}%` })}>
       <div class="track"></div>
       <input type="range" min=${this.min} max=${this.max} step=${this.step}
         @input=${this._onInput}

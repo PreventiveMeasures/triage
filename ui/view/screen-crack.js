@@ -2,6 +2,14 @@ import { createCrackModel } from './screen-crack-model.js'
 import screenCrackCSS from './screen-crack.css'
 
 const NS = 'http://www.w3.org/2000/svg'
+// Adopted rather than set as a `<style>`, which the page's CSP refuses.
+let sheet = null
+function adoptStyles() {
+  if (sheet) return
+  sheet = new CSSStyleSheet()
+  sheet.replaceSync(screenCrackCSS)
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
+}
 const CRACK_TIME_SCALE = 1.5
 let effectId = 0
 
@@ -15,8 +23,7 @@ function buildOverlay(model) {
   const overlay = document.createElement('div')
   overlay.className = 'screen-crack'
   overlay.setAttribute('aria-hidden', 'true')
-  const style = document.createElement('style')
-  style.textContent = screenCrackCSS
+  adoptStyles()
   const svg = svgElement('svg', { viewBox: `0 0 ${model.width} ${model.height}`, preserveAspectRatio: 'none' })
   svg.classList.add('screen-crack-svg')
   const defs = svgElement('defs')
@@ -55,7 +62,7 @@ function buildOverlay(model) {
   flash.className = 'screen-crack-flash'
   flash.style.left = `${model.impact.x}px`
   flash.style.top = `${model.impact.y}px`
-  overlay.append(style, glass, svg, flash)
+  overlay.append(glass, svg, flash)
   return { overlay, glass, cracks, shards, flash }
 }
 

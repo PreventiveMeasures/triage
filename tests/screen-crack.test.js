@@ -30,7 +30,8 @@ test('the effect reveals once, synchronizes the mask, and cleans up on completio
       return motion
     }
   }
-  const globals = ['window', 'document', 'Element']
+  class SheetStub { replaceSync(css) { this.css = css } }
+  const globals = ['window', 'document', 'Element', 'CSSStyleSheet']
   const previous = globals.map(name => Object.getOwnPropertyDescriptor(globalThis, name))
   t.after(() => {
     for (const [i, name] of globals.entries()) {
@@ -42,19 +43,21 @@ test('the effect reveals once, synchronizes the mask, and cleans up on completio
   Object.assign(window, { innerWidth: 1280, innerHeight: 720, matchMedia: () => ({ matches: false }) })
   Object.assign(document, {
     URL: 'https://example.test/managed/route?test=1#old-hash',
-    timeline: { currentTime: 1234 }, body: new ElementStub(),
+    timeline: { currentTime: 1234 }, body: new ElementStub(), adoptedStyleSheets: [],
     createElement: () => new ElementStub(), createElementNS: () => new ElementStub(),
   })
-  Object.assign(globalThis, { document, window, Element: ElementStub })
+  Object.assign(globalThis, { document, window, Element: ElementStub, CSSStyleSheet: SheetStub })
   let reveals = 0
   const onReveal = () => { reveals++ }
   const completed = playScreenCrack(onReveal)
   const overlay = document.body.children[0]
   assert.equal(overlay.attributes.get('aria-hidden'), 'true')
+  assert.equal(document.adoptedStyleSheets.length, 1, 'its styles are adopted, not a `<style>` the CSP refuses')
+  assert.match(document.adoptedStyleSheets[0].css, /\.screen-crack\b/u)
   assert.equal(reveals, 0, 'the old theme stays visible while cracks propagate')
-  const glass = overlay.children[1]
+  const glass = overlay.children[0]
   assert.match(glass.style.maskImage, /^url\("https:\/\/example\.test\/managed\/route\?test=1#screen-crack-mask-\d+"\)$/u)
-  const mask = overlay.children[2].children[0].children[0]
+  const mask = overlay.children[1].children[0].children[0]
   assert.equal(mask.attributes.get('width'), '1280', 'HTML and SVG masks use the actual viewport pixels')
   assert.equal(mask.attributes.get('height'), '720')
   assert.ok(motions.every(motion => motion.startTime === 1234), 'all phases share one clock')
@@ -79,7 +82,7 @@ test('the effect reveals once, synchronizes the mask, and cleans up on completio
   assert.equal(reveals, 1)
   for (const motion of motions) motion.resolve()
   await completed
-  assert.equal(document.body.children.length, 0, 'completion removes glass, cracks, outlines, styles, and flash')
+  assert.equal(document.body.children.length, 0, 'completion removes glass, cracks, outlines and flash')
   assert.equal(reveals, 1, 'completion does not replay the theme change')
 
   for (const interrupt of [

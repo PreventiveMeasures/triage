@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit'
+import { styleMap } from './style-map.js'
 import { renderCompareStats } from './bundle-compare-stats.js'
 // A choice’s tags are cut short beyond this width.
 const TAGS_FIT = 24
@@ -18,7 +19,7 @@ export function comparePickerStyle(source) {
   if (!source) return nothing
   const fit = ({ name = '', detail = '' } = {}) => name.length + Math.min(detail.length, TAGS_FIT) * .87 + 1
   const chars = (source.choices ?? []).reduce((most, choice) => Math.max(most, fit(choice)), Math.max(`Choose a ${source.noun ?? 'bundle'}…`.length, fit(source.widest)))
-  return `--compare-select-chars: ${Math.ceil(chars)}`
+  return styleMap({ '--compare-select-chars': `${Math.ceil(chars)}` })
 }
 
 // Both pages use this picker and header. The page owns navigation and supplies
