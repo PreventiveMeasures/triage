@@ -74,6 +74,8 @@ const RELATIVE = /^\.\.?(?:\/|$)/u
 // What `require` doesn't run as JavaScript: JSON, and a native addon, by
 // their names as it knows them, in lowercase: `.JSON` it runs.
 const NOT_RUN = /\.(?:json|node)$/u
+// The extensions `require` tries a path with that names no file.
+const TRIED = ['.js', '.json', '.node']
 // A name with an extension, which `import` runs only where it knows it: not
 // `.npmignore`, nor `payload`.
 const EXTENSION = /[^/.][^/]*\.[^/]*$/u
@@ -133,7 +135,9 @@ const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split
 // `payload.txt`; a lone surrogate the U+FFFD node writes a name with for it.
 const folded = path => path.toWellFormed().normalize('NFC').toUpperCase().toLowerCase()
 // The files a path names once installed, as a filesystem tells them
-// (folded): its own, and for a .npmignore, a .gitignore npm installs as that.
+// (folded): its own, and for a .npmignore, a .gitignore npm installs as that;
+// and those a path folded already names (`keyed`), with what follows it in
+// ASCII (`.json`, `/index`), which folds as it is.
 function installedOf(files) {
   const index = new Map()
   const put = (key, path) => index.has(key) ? index.get(key).push(path) : index.set(key, [path])
@@ -141,7 +145,8 @@ function installedOf(files) {
     put(folded(path), path)
     if (/(?:^|\/)\.gitignore$/u.test(path)) put(folded(path.replace(/\.gitignore$/u, '.npmignore')), path)
   }
-  return path => path === null ? [] : index.get(folded(path)) ?? []
+  const keyed = key => index.get(key) ?? []
+  return { installed: path => path === null ? [] : keyed(folded(path)), keyed }
 }
 
 // Every string a JSON value holds, however deep it nests them, read
@@ -249,7 +254,7 @@ export function npmLoadedScripts(version) {
   let loaded = loadedByVersion.get(keyOf(version))
   if (loaded) return loaded
   loaded = new Set()
-  const files = bundleFilesAsMap(version), installed = installedOf(files), queue = []
+  const files = bundleFilesAsMap(version), { installed, keyed } = installedOf(files), queue = []
   const top = entriesOf(files.get(files.has('package.json') ? 'package.json' : installed('package.json')[0]))
   const root = rootOf(top.name)
   // What a loader takes (`by`) runs, as the name it is asked by tells, or
@@ -269,13 +274,25 @@ export function npmLoadedScripts(version) {
       if (typeof text === 'string') queue.push(file)
     }
   }
-  // A path `require` takes: its file, else a directory's package.json `main`.
+  // A path `require` takes, as it finds it: its file, else one by its name
+  // and an extension it tries (`.js`, `.json`, `.node`, found as a
+  // filesystem tells them: `payload.JSON`); else a directory's package.json
+  // `main` found so, and its `index` alike.
+  const found = (path, key = folded(path)) => {
+    const extension = path === '' ? undefined : ['', ...TRIED].find(each => keyed(`${key}${each}`).length > 0)
+    return extension === undefined ? undefined : `${path}${extension}`
+  }
+  const indexed = (path, key = folded(path)) => found(path === '' ? 'index' : `${path}/index`, key === '' ? 'index' : `${key}/index`) ?? null
   const requires = path => {
-    if (path === null || installed(path).length > 0) return add(path, 'require')
-    for (const manifest of installed(path === '' ? 'package.json' : `${path}/package.json`)) {
+    if (path === null) return
+    const key = folded(path)
+    const file = found(path, key)
+    if (file !== undefined) return add(file, 'require')
+    for (const manifest of keyed(path === '' ? 'package.json' : `${key}/package.json`)) {
       const { main } = entriesOf(files.get(manifest))
-      if (main !== null) for (const spec of separated(main)) add(joined(root, path, spec), 'require')
+      for (const at of main === null ? [] : [...separated(main)].map(spec => joined(root, path, spec))) if (at !== null) add(found(at) ?? indexed(at), 'require')
     }
+    add(indexed(path, key), 'require')
   }
   requires('')
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))

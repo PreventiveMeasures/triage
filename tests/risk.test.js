@@ -150,14 +150,14 @@ test('a path a script writes out whole read wherever it is: whatever takes it, i
     "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
     "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require('../../@S/WHERE/folded.txt')", "require('@S/Where/named.txt')", "require('@s/where\\\\slashed.txt')", "require.resolve('./resolved.txt')",
     "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
-    "require(`./tmpl\\${x}.txt`)", "require(String.raw`./raw\\x2Etxt`)", "require('./lone\\uD800.txt')", "require('./cased.txt')", "require('./caf\\u00e9.txt')",
+    "require(`./tmpl\\${x}.txt`)", "require(String.raw`./raw\\x2Etxt`)", "require('./lone\\uD800.txt')", "require('./cased.txt')", "require('./probed')", "require('./probedir')", "require('./caf\\u00e9.txt')",
     "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
   ].join('\n')
   const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'folded', 'named', 'slashed', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
-  const cased = ['tmpl${x}.txt', 'raw\\x2Etxt', 'lone\uFFFD.txt', 'Cased.TXT', 'cafe\u0301.txt']
+  const cased = ['tmpl${x}.txt', 'raw\\x2Etxt', 'lone\uFFFD.txt', 'probed.JSON', 'probedir/index.JSON', 'Cased.TXT', 'cafe\u0301.txt']
   const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
-    'a template\'s escaped `\\${` its text, a raw one\'s escapes as written; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too, and a lone surrogate as the U+FFFD node writes; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
+    'a template\'s escaped `\\${` its text, a raw one\'s escapes as written; as a filesystem telling neither case nor Unicode\'s normalization apart finds it too, by an extension `require` tries, and a lone surrogate as the U+FFFD node writes; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
 })
 
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
@@ -250,6 +250,12 @@ test('a file a version changes as its code now loads it, told as newly loaded al
   npm(t, [{ name: 'reworked', versions: [before, after, moved, renamed] }])
   assert.ok(!(await assessNpm('reworked', '1.0.3', { oldVersion: '1.0.2', now: NOW, downloads: false })).findings.some(({ id }) => id === 'large-code'),
     'nor is one renamed from a script by its name, which ran before')
+  const blob = Buffer.concat([Buffer.from(large), Buffer.from('// '), Buffer.from([0xFF]), Buffer.from('\n')])
+  const binary = version('reworked', '1.0.4', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'lib/blob.js': blob }, meta, ago(10))
+  const unbinned = version('reworked', '1.0.5', { 'package.json': '{}', 'index.js': "require('./payload.txt')\n", 'payload.txt': blob }, meta, ago(5))
+  npm(t, [{ name: 'reworked', versions: [before, after, moved, renamed, binary, unbinned] }])
+  assert.ok(!(await assessNpm('reworked', '1.0.5', { oldVersion: '1.0.4', now: NOW, downloads: false })).findings.some(({ id }) => id === 'large-code'),
+    'one that isn\'t text by its name alone')
 })
 
 test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {

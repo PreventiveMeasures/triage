@@ -29,7 +29,8 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 function npmWokenFiles(base, other, files) {
   const added = new Set(files.onlyOther.map(row => row.path)), rows = new Map(files.changed.map(row => [row.path, row]))
   const before = bundleFilesAsMap(base), loadedBefore = npmLoadedScripts(base)
-  const ran = path => loadedBefore.has(path) || npmIsScript(path, before.get(path))
+  // A file that isn't text by its name alone (`payload.js`).
+  const ran = path => loadedBefore.has(path) || (before.has(path) && npmIsScript(path, typeof before.get(path) === 'string' ? before.get(path) : ''))
   return [...npmLoadedScripts(other)].filter(path => !added.has(path)).map(path => rows.get(path) ?? { path })
     .filter(row => !ran(row.renamedFrom ?? row.path))
 }
