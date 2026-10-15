@@ -80,6 +80,8 @@ function store() {
 
 const version = (name, number, files, extra, published) => ({ ...packageOf(name, number, files, extra), published })
 const ids = assessment => assessment.findings.map(({ id }) => id)
+// A version holding `files`, as the viewer holds one.
+const holding = files => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(files), sourcesContent: Object.values(files) } })
 
 // Upstream matches versions by npm's semver, borrowed from the npm beside
 // node, else its `semver` peer: a serverless function (Vercel) has no npm
@@ -108,34 +110,29 @@ test('a version alone: what it holds, its files stamped, too new under the minim
 })
 
 // Node runs a file as JavaScript whatever its name where `require` loads it,
-// and where `import` does one with no extension; a package's `main` and
-// `exports` alike. npm installs a .gitignore as .npmignore.
-test('a file node runs as JavaScript though its name says otherwise, read as a script: one code loads, a main, what exports name', async t => {
+// and where `import` does one with no extension; a package's `main`, and what
+// its `exports` and `imports` name, read as URLs. npm installs a .gitignore as
+// .npmignore.
+test('a file node runs as JavaScript though its name says otherwise, read as a script: one code loads, a main, what exports and imports name', async t => {
   const runs = "require('child_process').exec(cmd)\n"
   const minifiedCss = `${'.a{color:red;margin:0;padding:0}'.repeat(5)}\n`.repeat(20)
   const files = {
-    'package.json': `﻿${JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf', './feat/*': './feat/*.txt', './raw/*': './raw/*' } })}`,
-    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire.resolve('./resolved.txt')\nrequire('./theme.min.css')\n"
-      + "require('./extra.txt', 0)\nrequire(/* a */ './commented.txt')\nmodule.require('./module.txt')\n`${require('./template.txt')}`\nrequire('./esc\\x2etxt')\n"
-      + "// require('./comment.txt')\nconst said = \"require('./quoted.txt')\"\nrequire('./built' + '.txt')\n"
-      + "require('./up.JSON')\nrequire('./lower.json')\nrequire('./oct\\056txt')\n`docs: require('./prose.txt') ${kind}`\n`${'}' + require('./brace.txt')}`\n"
-      + "require?.('./optional.txt')\nrequ\\u0069re('./escaped-id.txt')\nrequire('.\\\\win.txt')\n",
-    'esm.mjs': "export { x } from './sub/next'\n",
+    'package.json': `\uFEFF${JSON.stringify({ name: 'loads', main: 'main.dat', exports: { '.': { require: './main.dat', import: './esm.mjs' }, './cfg': './cfg.conf', './feat/*': './feat/*.txt', './raw/*': './raw/*', './query': './query.txt?entry', './escaped': './escaped%2Etxt' }, imports: { '#own': './own.txt' } })}`,
+    'index.js': "require('./data.txt')\nrequire(`./.npmignore`)\nrequire('./lib')\nimport('./payload')\nimport('./styles.css')\nrequire('./conf.json')\nrequire('./theme.min.css')\n"
+      + "require('./esc\\x2etxt')\nrequire('./oct\\056txt')\nrequire('.\\\\win.txt')\nrequire('./up.JSON')\nrequire('./lower.json')\nrequire('./built' + '.txt')\nrequire('#own')\n",
+    'esm.mjs': "export { x } from './sub/next'\nimport y from './static.txt'\n",
     'main.dat': runs, 'cfg.conf': runs, 'data.txt': `${runs}require('./more.cfg')\n`, 'more.cfg': runs, '.gitignore': runs, 'payload': runs, 'sub/next': runs,
     'lib/package.json': '{"main":"entry.bin"}', 'lib/entry.bin': runs,
-    'styles.css': runs, 'conf.json': '{}', 'resolved.txt': runs, 'unloaded.txt': runs, 'README.md': runs,
+    'styles.css': runs, 'conf.json': '{}', 'static.txt': runs, 'unloaded.txt': runs, 'README.md': runs,
     'theme.min.css': minifiedCss, 'copy.min.css': minifiedCss,
-    'extra.txt': runs, 'commented.txt': runs, 'module.txt': runs, 'template.txt': runs, 'esc.txt': runs,
-    'comment.txt': runs, 'quoted.txt': runs, 'built.txt': runs,
-    'up.JSON': runs, 'lower.json': runs, 'oct.txt': runs, 'prose.txt': runs, 'brace.txt': runs, 'feat/a.txt': runs,
-    'raw/tool': runs, 'raw/LICENSE': runs, 'raw/note.txt': runs, 'optional.txt': runs, 'escaped-id.txt': runs, 'win.txt': runs,
+    'esc.txt': runs, 'oct.txt': runs, 'win.txt': runs, 'up.JSON': runs, 'lower.json': runs, 'built.txt': runs, 'own.txt': runs,
+    'feat/a.txt': runs, 'raw/tool': runs, 'raw/LICENSE': runs, 'raw/note.txt': runs, 'query.txt': runs, 'escaped.txt': runs,
   }
   npm(t, [{ name: 'loads', versions: [version('loads', '1.0.0', files, { dependencies: {}, scripts: {} }, ago(60))] }])
   const assessment = await assessNpm('loads', '1.0.0', { now: NOW, downloads: false })
   assert.deepEqual(assessment.findings.find(({ id }) => id === 'held-runs-code').files.map(({ path }) => path),
-    ['.gitignore', 'brace.txt', 'cfg.conf', 'commented.txt', 'data.txt', 'esc.txt', 'escaped-id.txt', 'extra.txt', 'feat/a.txt', 'lib/entry.bin', 'main.dat', 'module.txt', 'more.cfg',
-      'oct.txt', 'optional.txt', 'payload', 'raw/tool', 'sub/next', 'template.txt', 'up.JSON', 'win.txt'],
-    'not one `import` takes by an extension it doesn\'t know, JSON by its lowercase name, a path only resolved, one named in a comment, a string or a template\'s text, one built, '
+    ['.gitignore', 'cfg.conf', 'data.txt', 'esc.txt', 'escaped.txt', 'feat/a.txt', 'lib/entry.bin', 'main.dat', 'more.cfg', 'oct.txt', 'own.txt', 'payload', 'query.txt', 'raw/tool', 'sub/next', 'up.JSON', 'win.txt'],
+    'not one `import` takes by an extension it doesn\'t know, JSON by its lowercase name, one built, '
     + 'one an `exports` pattern naming nothing past its `*` reaches only by a name with an extension or prose\'s, nor one nothing loads')
   assert.deepEqual(assessment.files['.gitignore'].stamps, [{ name: 'child_process', severity: 'high' }])
   assert.deepEqual(assessment.files['unloaded.txt'].stamps, [])
@@ -143,10 +140,26 @@ test('a file node runs as JavaScript though its name says otherwise, read as a s
   assert.deepEqual(assessment.files['theme.min.css'].stamps, assessment.files['copy.min.css'].stamps)
 })
 
+// A path a script writes out whole is read wherever it is in its text, as
+// code can be written to have its tokens read wrong (a regular expression, a
+// comment, a template's text taken for another).
+test('a path a script writes out whole read wherever it is: whatever takes it, in a template, a comment or a string, or by the package\'s own name', () => {
+  const index = [
+    "require('./extra.txt', 0)", "require(/* a */ './commented.txt')", "module.require('./module.txt')", "require?.('./optional.txt')", "require(('./paren.txt'))",
+    "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
+    "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require.resolve('./resolved.txt')",
+    "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
+    "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
+  ].join('\n')
+  const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
+  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries(names.map(name => [`${name}.txt`, 'x'])) }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), names.slice(0, -3).map(name => `${name}.txt`).toSorted(),
+    'not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
+})
+
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
   const exports = Object.fromEntries(Array.from({ length: 65 }, (_, at) => [`./p${at}/*`, `./p${at}/*.x`]))
   const files = { 'package.json': JSON.stringify({ exports }), 'a.txt': 'x', 'b.json': '{}', 'c.js': 'x', 'p1/d.x': 'x' }
-  const holding = all => ({ kind: 'sourcemap', json: { version: 3, sources: Object.keys(all), sourcesContent: Object.values(all) } })
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['a.txt', 'p1/d.x'])
   assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'package.json': JSON.stringify({ exports: { './p1/*': './p1/*.x' } }) }))], ['p1/d.x'], 'as its patterns say, with fewer')
 })
