@@ -189,11 +189,11 @@ test('the progress counts packages only devDependencies need apart from the rest
   assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '3/3', [['read', 3]], null],
     ['Packages assessed', '2/4', [['prod', 2], ['dev', 0]], '2/3 prod · 0/1 dev'], ['Flagged', '2', [['prod', 2], ['dev', 0]], '2 prod'],
     ['Stale', '1', [['prod', 1], ['dev', 0]], `1 prod: ${stale}`]])
-  // Drawn: the state, then each metric, its label and count, and its bar a segment each of those there are.
+  // Drawn: the state, then each metric, its label and count, its split said to a screen reader, and its bar a segment each of those there are.
   const text = templateText(page.render())
   assert.match(text, /<span class="risk-state" data-state=running>Scanning<\/span>/u)
   assert.match(text, /Lockfiles<\/span>\s*<span class="risk-metric-value">3<span class="risk-metric-of">\/3<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-read/u)
-  assert.match(text, /<span class=risk-metric risk-high[^>]*>\s*<span class="risk-metric-label">Flagged<\/span>\s*<span class="risk-metric-value">2<\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-prod[^<]*<\/span><\/span>/u)
+  assert.match(text, /<span class=risk-metric risk-high[^>]*>\s*<span class="risk-metric-label">Flagged<\/span>\s*<span class="risk-metric-value">2<span class="sr-only">, 2 prod<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-prod[^<]*<\/span><\/span>/u)
 })
 
 test('a scan the server answers in parts is asked again from where it stopped, what it told kept, until done', async t => {

@@ -696,14 +696,16 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     ]
   }
 
-  // The scan's state, and its metrics (_metrics), each read with a bar.
+  // The scan's state, and its metrics (_metrics), each read with a bar, its
+  // tooltip said to a screen reader too, as the bar is hidden from one and the
+  // tooltip shows on hover alone.
   _progress() {
     if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
     const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     return html`<div class="risk-progress" role="status"><span class="risk-state" data-state=${this._state}>${state}</span>
       ${this._metrics().map(({ label, value, of, bar, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
         <span class="risk-metric-label">${label}</span>
-        <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}</span>
+        <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}${tooltip ? html`<span class="sr-only">, ${tooltip}</span>` : nothing}</span>
         <span class="risk-bar" aria-hidden="true">${bar.filter(([, some]) => some > 0).map(([kind, some]) => html`<span class=${`risk-bar-${kind}`}
           style=${styleMap({ width: `${some / (of ?? value) * 100}%` })}></span>`)}</span>
       </span>`)}</div>`
