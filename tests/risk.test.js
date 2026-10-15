@@ -234,6 +234,19 @@ test('a file a version held alike with a line no one writes, that its code now l
     'prose read as no script before, its line passed over')
 })
 
+test('a file a version changes as its code now loads it, told as newly loaded all the same: large code, now unreadable', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const large = 'x = 1\n'.repeat(48 * 1024), long = `# Notes\n${'x'.repeat(3000)}\n`
+  const before = version('reworked', '1.0.0', { 'package.json': '{}', 'index.js': 'module.exports = 1\n', 'payload.txt': `${large}y`, 'notes.md': `${long}y` }, meta, ago(60))
+  const after = version('reworked', '1.0.1', { 'package.json': '{}', 'index.js': "require('./payload.txt')\nrequire('./notes.md')\n", 'payload.txt': `${large}z`, 'notes.md': `${long}z` }, meta, ago(40))
+  npm(t, [{ name: 'reworked', versions: [before, after] }])
+  const { findings } = await assessNpm('reworked', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(({ id }) => id === 'large-code' || id === 'now-unreadable'), [
+    { id: 'large-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: large.length + 1 }] },
+    { id: 'now-unreadable', severity: 'critical', files: [{ path: 'notes.md', was: 3000, now: 3000 }] },
+  ], 'a byte changed hides neither')
+})
+
 test('a file of 256 KiB or more that its code loads, told as large code whatever its name', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const large = 'x = 1\n'.repeat(48 * 1024)
