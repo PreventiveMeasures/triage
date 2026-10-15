@@ -173,16 +173,18 @@ function mapped(map, subpaths) {
 }
 
 // A package.json's `name`, `main`, and the paths its `exports` and `imports`
-// name (`./x`, mapped), its `imports` by their keys apart (`#x`), read past a
-// byte order mark as node reads it; none where it is no JSON object.
+// name (`./x`, mapped); and its maps by their keys (`./x`, `#x`), its
+// `imports` to the package's own name too (`<name>/x`), read past a byte
+// order mark as node reads it; none where it is no JSON object.
 function entriesOf(text) {
-  const none = { name: null, main: null, targets: [], imports: [] }
+  const none = { name: null, main: null, targets: [], exports: [], imports: [] }
   if (typeof text !== 'string') return none
   try {
     const { name, main, exports, imports } = JSON.parse(text.replace(/^\uFEFF/u, ''))
-    const own = mapped(imports, key => key.startsWith('#')).filter(({ key, target }) => key.startsWith('#') && target.startsWith('./'))
-    const targets = [...mapped(exports, key => key.startsWith('.')).filter(({ target }) => target.startsWith('./')), ...own]
-    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets, imports: own }
+    const subpaths = mapped(exports, key => key.startsWith('.')).filter(({ key, target }) => key.startsWith('.') && target.startsWith('./'))
+    const own = mapped(imports, key => key.startsWith('#')).filter(({ key }) => key.startsWith('#'))
+    const targets = [...subpaths, ...own.filter(({ target }) => target.startsWith('./'))]
+    return { name, main: typeof main === 'string' && main !== '' ? main : null, targets, exports: subpaths, imports: own }
   } catch {
     return none
   }
@@ -224,6 +226,21 @@ function exported(names, root, dir, target, pattern) {
     })
   }).map(([name]) => name)
 }
+
+// What a map's entries (`{ dir, key, target }` each) take `value` to, as
+// node maps a specifier through `exports` or `imports`: the target of a key
+// that is it, or of a pattern's (`#lib/*`, `./lib/*`, one `*`) it matches,
+// what it matches put in each of the target's `*`.
+const mappedTo = (entries, value) => entries.flatMap(({ dir, key, target }) => {
+  const star = key.indexOf('*')
+  if (star === -1 ? key !== value : star !== key.lastIndexOf('*') || value.length < key.length || !value.startsWith(key.slice(0, star)) || !value.endsWith(key.slice(star + 1))) return []
+  return [{ dir, target: star === -1 ? target : target.replaceAll('*', value.slice(star, value.length - (key.length - star - 1))) }]
+})
+
+// The `#` specifiers each package.json of a version's files maps
+// (`imports`), each from its directory.
+const specifiersOf = files => [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
+  .flatMap(([path, text]) => entriesOf(text).imports.map(({ key, target }) => ({ dir: path.slice(0, -'package.json'.length - 1), key, target })))
 
 // How many `exports` and `imports` patterns a package's package.json files
 // have each matched against its files (exported): more than a package names
@@ -311,27 +328,26 @@ export function npmLoadedScripts(version) {
     for (const [dir, target, pattern] of targets) for (const file of exported(names, root, dir, target, pattern)) add(file, 'require')
   }
   for (const [path, text] of files) if (npmIsScript(path, text)) queue.push(path)
-  // The `#` specifiers each package.json maps (`imports`), from its
-  // directory.
-  const specifiers = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
-    .flatMap(([path, text]) => entriesOf(text).imports.map(({ key, target }) => ({ dir: path.slice(0, -'package.json'.length - 1), key, target })))
+  const specifiers = specifiersOf(files)
   // The package's own name, as a filesystem tells it (rootOf), a path from
   // it after a `/`, or a `\\` as on Windows.
   const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
     && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
   const seen = new Set(), strings = quoted([...root.length > 0 ? foldsInto(top.name[0]) : [], ...specifiers.length > 0 ? ['#'] : []])
-  // A `#` specifier as the package's `imports` map it: the target of a key
-  // that is it, or of a pattern's (`#lib/*`) its `*` matches, what it matches
-  // put in each of the target's, read as a URL (urlJoined), loaded as code
-  // takes it (`by`), once each.
+  // The package's own subpath (`./x`, `.`) as its `exports` map it, as node
+  // resolves a specifier by its own name (`<name>/x`), read as URLs.
+  const subpathsOf = spec => mappedTo(top.exports.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => urlJoined(root, '', target))
+  // A `#` specifier as the package's `imports` map it (mappedTo), to a path
+  // of its own, read as a URL (urlJoined), or to its own name, as its
+  // `exports` map that (subpathsOf), loaded as code takes it (`by`), once
+  // each.
   const own = (value, by) => {
     if (seen.has(`${by}\0#\0${value}`)) return
     seen.add(`${by}\0#\0${value}`)
-    for (const { dir, key, target } of specifiers) {
-      const star = key.indexOf('*')
-      const after = key.length - star - 1
-      if (star === -1 ? key !== value : star !== key.lastIndexOf('*') || value.length < key.length || !value.startsWith(key.slice(0, star)) || !value.endsWith(key.slice(star + 1))) continue
-      add(urlJoined(root, dir, star === -1 ? target : target.replaceAll('*', value.slice(star, value.length - after))), by)
+    for (const { dir, target } of mappedTo(specifiers, value)) {
+      const paths = target.startsWith('./') ? [urlJoined(root, dir, target)] : named(target) ? subpathsOf(`./${target.slice(top.name.length + 1)}`)
+        : root.length > 0 && target === top.name ? subpathsOf('.') : []
+      for (const path of paths) add(path, by)
     }
   }
   // A string's value from the directory `dir`, a load `import` takes where
@@ -343,6 +359,7 @@ export function npmLoadedScripts(version) {
     const by = importing() ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
     if (seen.has(key)) return
     seen.add(key)
+    if (named(value)) for (const path of subpathsOf(spec)) add(path, by)
     if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
     add(urlJoined(root, from, spec), 'import')
   }

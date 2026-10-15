@@ -166,6 +166,12 @@ test('a `#` specifier a script names, as the package\'s `imports` map it, a patt
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['fixed.txt', 'lib/payload.txt'], 'not one `import` takes by an extension it doesn\'t know, nor one no script names')
 })
 
+test('the package\'s own name as its `exports` map it, from code or an `imports` target', () => {
+  const files = { 'package.json': JSON.stringify({ name: 'p', exports: { '.': './index.js', './*': './lib/*' }, imports: { '#run': 'p/run.txt' } }),
+    'index.js': "require('#run')\nrequire('p/self.txt')\n", 'lib/run.txt': 'x', 'lib/self.txt': 'x', 'lib/unnamed.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/run.txt', 'lib/self.txt'], 'not one no code names')
+})
+
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
   const exports = Object.fromEntries(Array.from({ length: 65 }, (_, at) => [`./p${at}/*`, `./p${at}/*.x`]))
   const files = { 'package.json': JSON.stringify({ exports }), 'a.txt': 'x', 'b.json': '{}', 'c.js': 'x', 'p1/d.x': 'x' }
