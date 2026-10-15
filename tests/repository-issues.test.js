@@ -48,7 +48,7 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   assert.match(text, /aria-label=Open[^]*Issue 12[^]*#12[^]*octo[^]*3h<\/time>/u)
   assert.match(text, />bug<[^]*>ui<[^]*>docs<\/span><span class="issue-label is-more">\+3</u, 'three labels, then how many more')
   assert.equal(text.split('class="issue-labels"').length - 1, 1, 'a line of labels only where there are any')
-  assert.match(text, /class="issue-comments" role="img" aria-label=4 comments title=4 comments><svg[^]*<\/svg><span>4<\/span>/u)
+  assert.match(text, /class="issue-comments" role="img" aria-label=4 comments data-tooltip=4 comments><svg[^]*<\/svg><span>4<\/span>/u)
   assert.match(text, /aria-label=1,234 comments [^]*<span>1\.2K<\/span>/u, 'a count of thousands as compact as its rail')
   assert.match(text, /\(no title\)/u)
   assert.equal(text.split('<li ').length - 1, 2, 'one GitHub names no number for left out')
