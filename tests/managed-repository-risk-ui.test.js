@@ -1,7 +1,7 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, differs, findingsOf, malwareOf, malwareSaid, putOff, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
+import { ago, differs, findingsOf, malwareOf, malwareSaid, riskOf, scoreOf } from '../ui/managed/repository-risk.js'
 import { templateText } from './_lit.js'
 
 test('a package’s malware is told from npm’s registry or a mirror alike, but where its integrity differs from npm’s', () => {
@@ -99,7 +99,7 @@ test('a risk line told as kept is stale where it says so, an error of one stale 
   assert.deepEqual([5 * 60_000, 3 * 60 * 60_000, 3 * 24 * 60 * 60_000].map(before => ago(now - before, now)), ['5 minutes ago', '3 hours ago', '3 days ago'])
 })
 
-test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed after the rest, but malware; their advisories toggled apart, malware\'s shown either way', () => {
+test('packages only devDependencies need, in every lockfile that locks them, are tagged dev and listed by their risk among the rest; their advisories toggled apart, malware\'s shown either way', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'done'
   const advisory = (id, name, severity, versions, malware = false) => ({ id, name, title: id, severity, url: null, range: null, versions, malware })
@@ -120,8 +120,8 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   ]) page._apply(line)
   assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['left-pad', false], ['mocha', false], ['eslint', true], ['crossenv', true]],
     'dev only where every lockfile locks it so')
-  assert.deepEqual(page._rows().map(row => [row.name, putOff(row)]), [['crossenv', false], ['left-pad', false], ['mocha', false], ['eslint', true]],
-    'the riskiest first of those needed, malware among them, those of devDependencies alone after')
+  assert.deepEqual(page._rows().map(row => [row.name, row.dev]), [['crossenv', true], ['eslint', true], ['left-pad', false], ['mocha', false]],
+    'by their risk alone: a riskier one only devDependencies need above a less risky one production takes')
   const text = templateText(page.render())
   assert.match(text, />eslint<\/a><span class="risk-dev" data-tooltip=Only devDependencies need it[^>]*>dev<\/span>/u)
   assert.doesNotMatch(text, />mocha<\/a><span class="risk-dev"/u)
@@ -382,7 +382,7 @@ test('packages are shown all in one list, or those production takes, or those on
     { type: 'risk', name: 'crossenv', version: '1.0.0', published: null, severity: 'critical', score: 100, findings: [{ id: 'malware', severity: 'critical', takenDown: true }] },
   ]) page._apply(line)
   const names = () => page._rows().map(row => row.name)
-  assert.deepEqual(names(), ['crossenv', 'left-pad', 'eslint'], 'all, those only devDependencies need after the rest but malware')
+  assert.deepEqual(names(), ['crossenv', 'eslint', 'left-pad'], 'all, by their risk alone')
   assert.match(templateText(page.render()), /aria-label=Which packages>[^]*?aria-pressed=true[^]*?>All \(3\)<[^]*?>Production \(2\)<[^]*?>Development \(2\)<\/button><\/div>\s*<select aria-label="Show packages"/u,
     'beside the filter, each saying how many')
   page._packageKind = 'production'

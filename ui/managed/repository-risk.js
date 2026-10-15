@@ -2,12 +2,12 @@
 // lockfiles, or a team's or one repository's, their packages, and what risk
 // tells of each, as the server finds them (GET /api/admin/repositories/risk,
 // server-managed/repository-risk.ts); npm's advisories of them on a tab of
-// their own, those of malware a package's risk too. Those only devDependencies
-// need are tagged so and listed after the rest, and either kind shown alone
-// as toggled, as are advisories of the versions production takes or of those,
-// malware's either way. A mirror's copy differing from npm's is flagged
-// critical, listed first but for malware. Each lockfile used links to it on
-// GitHub, at the commit read.
+// their own, those of malware a package's risk too. Packages are listed by
+// their risk alone, those only devDependencies need tagged so, and either
+// kind shown alone as toggled, as are advisories of the versions production
+// takes or of those, malware's either way. A mirror's copy differing from
+// npm's is flagged critical, listed first but for malware. Each lockfile used
+// links to it on GitHub, at the commit read.
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -110,14 +110,10 @@ export const malwareSaid = row => [...malwareOf(row) ?? [],
   ...row.risk?.findings?.some(({ id, takenDown }) => id === 'malware' && takenDown) ? ['Taken down by npm'] : []]
 // Whether a package row has malware: the advisories', or risk's own.
 const hasMalware = row => findingsOf(row).some(({ id }) => id === 'malware')
-// Whether a package row is told whatever needs it: malware, or a copy
+// Whether a package row is shown whatever needs it: malware, or a copy
 // differing from npm's, either of which runs wherever it is installed, CI and
 // a developer's machine among them.
 const regardless = row => differs(row) || hasMalware(row)
-// Whether a package row is listed after the rest: only devDependencies need
-// it, in every lockfile that locks it, as an install of none leaves it out;
-// but not one told regardless.
-export const putOff = row => Boolean(row.dev) && !regardless(row)
 // Whether a package row is of `kind` (PACKAGE_KINDS): development's where
 // only devDependencies need it, production's where more do, or its lockfiles
 // don't say; one told regardless of both.
@@ -136,7 +132,7 @@ const FILTERS = {
 // What a package's risk is, as its column's heading tells it.
 const RISK_SAID = 'Out of 100: what its findings call for, lowered by how long the version has been out among how many download its package. Malware is 100.'
 // What a package's dev tag, or an advisory's, tells.
-const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest, and listed after them unless it is malware.'
+const DEV_SAID = 'Only devDependencies need it, in every lockfile that locks it: an install without them leaves it out. Assessed after the rest.'
 const ADVISORY_DEV_SAID = 'Only devDependencies need these versions, in every lockfile that locks them: an install without them leaves them out.'
 // What a package's copy differing from npm's tells.
 const DIFFERS_SAID = 'Its lockfile’s integrity, a mirror’s, isn’t npm’s of this name and version: not npm’s package, as a private one of a public one’s name is, or one tampered with.'
@@ -150,7 +146,7 @@ const KINDS = {
 // The packages shown: all, those an install for production takes, or those
 // only devDependencies need (ofKind).
 const PACKAGE_KINDS = {
-  all: ['All', 'Every package the lockfiles lock, those only devDependencies need tagged dev and listed after the rest.'],
+  all: ['All', 'Every package the lockfiles lock, those only devDependencies need tagged dev.'],
   production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware, and a copy differing from npm’s, is shown either way.'],
   development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware, and a copy differing from npm’s, is shown either way.'],
 }
@@ -502,13 +498,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // The package rows of the kind shown (`_packageKind`), filtered and
-  // searched for, the riskiest first, those only devDependencies need after
-  // the rest but malware (putOff), a copy differing from npm's after malware.
+  // searched for, by their risk alone (rank), whatever needs them: the
+  // riskiest first, of more findings ahead.
   _rows() {
     const query = this._query.trim().toLowerCase()
     const [, shown] = FILTERS[this._filter]
     return [...this._packages.values()].filter(row => ofKind(row, this._packageKind) && shown(row) && (!query || row.name.toLowerCase().includes(query)))
-      .toSorted((a, b) => Number(putOff(a)) - Number(putOff(b)) || rank(a) - rank(b) || findingsOf(b).length - findingsOf(a).length
+      .toSorted((a, b) => rank(a) - rank(b) || findingsOf(b).length - findingsOf(a).length
         || a.name.localeCompare(b.name) || (a.version ?? '').localeCompare(b.version ?? ''))
   }
 
