@@ -3574,7 +3574,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 }
 .issue-rail {
   --rail-gap: .1875rem;
-  display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); flex: none; width: 1.5rem; padding-top: .1rem; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); flex: none; width: 1.5rem; padding-top: .1rem;
+  color: var(--muted);
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }
 }
