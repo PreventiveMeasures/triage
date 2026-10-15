@@ -81,6 +81,10 @@ test('a user of the app is one contributor whichever of their GitHub accounts co
     { login: 'mona', name: 'Mona', weeks: week(2, 5) }, { login: null, name: 'Mona', weeks: week(1, 1) }], SINCE), [
     { login: 'mona-work', name: 'M', commits: 6, additions: 15, deletions: 2 }, { login: 'other', name: null, commits: 5, additions: 1, deletions: 1 },
     { login: null, name: 'Mona', commits: 1, additions: 1, deletions: 1 }], 'one known by name alone is no user\'s')
+  assert.deepEqual(periodContributors([{ login: 'claude', name: 'Claude', weeks: week(1, 1) }, { login: 'claude[bot]', name: null, weeks: week(2, 2) },
+    { login: null, name: 'Claude', weeks: week(3, 3) }, { login: null, name: 'Codex', weeks: week(1, 1) }], SINCE), [
+    { login: 'claude', name: 'Claude', commits: 6, additions: 6, deletions: 3 }, { login: null, name: 'Codex', commits: 1, additions: 1, deletions: 1 }],
+  'an agent is one contributor whichever of its identities committed')
 })
 
 test('the pulse reads a month first: its figures beside the month before, the year\'s weeks with the period\'s marked, its contributors, when commits are made, and its lists', async t => {
@@ -107,7 +111,8 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   assert.match(text, /<span style=--at: 1><span>15<\/span>/u, 'commits\' scale to a round top over the most')
   assert.match(text, /class="pulse-months"[^]*<span>Nov<\/span>[^]*<span>2026<\/span>/u, 'months named where they start, January by its year')
   assert.match(text, /href=https:\/\/github\.com\/ada [^>]*>ada<\/a>[^]*--value: 1[^]*>5<\/span>[^]*\+35 −5/u)
-  assert.match(text, /href=https:\/\/github\.com\/apps\/claude [^>]*>claude\[bot\]</u, 'an app by its page')
+  assert.match(text, /href=https:\/\/github\.com\/apps\/claude [^>]*><span class="app-user" data-tooltip=@claude\[bot\] on GitHub>[^]*?is-claude[^]*?app-user-name">Claude</u,
+    'an app by its page, Claude\'s by its mark')
   assert.match(text, /<span class="pulse-rank-name">Alan Kay<\/span>/u, 'one GitHub names no account for, by name, unlinked')
   assert.doesNotMatch(text, />grace</u, 'none of the period\'s')
   assert.match(text, /class=pulse-cell is-6 role="img" aria-label=Tuesdays, 14:00–15:00: 12 commits/u)

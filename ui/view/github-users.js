@@ -4,6 +4,7 @@
 // a linked account's as its user, which are kept here as they come for each
 // tab to show by their avatar and the name they chose.
 import { html } from 'lit'
+import { providerIcon } from './provider-icons.js'
 
 const known = new Map()
 
@@ -47,4 +48,37 @@ export function githubUsers(logins) {
     if (!seen.has(key)) seen.set(key, login)
   }
   return [...seen.values()]
+}
+
+// Agents by their own GitHub identities: Claude Code's commits, authored as
+// Claude <noreply@anthropic.com>, which GitHub names `claude`, the Claude
+// GitHub App's and Codex's; one GitHub names no account for, authored as
+// Claude or Codex by name alone. Codex otherwise commits as whoever ran it,
+// and those commits are theirs.
+const AGENT_LOGINS = new Map([['claude', 'claude'], ['claude[bot]', 'claude'], ['chatgpt-codex-connector[bot]', 'codex']])
+const AGENT_NAMES = new Map([['claude', 'claude'], ['codex', 'codex']])
+// Each agent's name and mark, as the Agents tab draws it (provider-icons.js).
+const AGENTS = { claude: ['Claude', 'anthropic'], codex: ['Codex', 'openai'] }
+
+// The agent that authored a commit, by its author's login and name; null for
+// one an agent didn't.
+export function commitAgent(login, name = null) {
+  if (typeof login === 'string') return AGENT_LOGINS.get(login.toLowerCase()) ?? null
+  return typeof name === 'string' ? AGENT_NAMES.get(name.trim().toLowerCase()) ?? null : null
+}
+
+// A commit's author as the app shows them: an agent by its mark and name, a
+// user of the app as githubUser does; else `fallback`, their name, else login.
+export function commitAuthor(login, name = null, fallback = name ?? login ?? '') {
+  const agent = commitAgent(login, name)
+  if (!agent) return githubUser(login, fallback)
+  const [title, mark] = AGENTS[agent]
+  return html`<span class="app-user" data-tooltip=${login ? `@${login} on GitHub` : name}><span class=${`app-user-avatar is-${agent}`}
+    aria-hidden="true">${providerIcon(mark)}</span><span class="app-user-name">${title}</span></span>`
+}
+
+// What a commit's author shows as, in words.
+export function commitAuthorName(login, name = null) {
+  const agent = commitAgent(login, name)
+  return agent ? AGENTS[agent][0] : login ? githubUserName(login) : name
 }

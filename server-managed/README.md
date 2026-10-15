@@ -125,6 +125,13 @@ cached of the repository; readers are never sent a list of users. Logins match
 regardless of case. A login two users claim, which happens once one of them
 renames on GitHub, shows as the login alone.
 
+Commits by Claude or Codex show by their marks, as the Agents tab draws them:
+those GitHub names `claude` (Claude Code's, authored as
+`Claude <noreply@anthropic.com>`), `claude[bot]` or
+`chatgpt-codex-connector[bot]`, and those GitHub names no account for authored
+as Claude or Codex. Codex otherwise commits as whoever ran it, and those
+commits show as theirs. Pulse counts each agent as one contributor.
+
 # Managed browser navigation
 
 ## Public workspace links
