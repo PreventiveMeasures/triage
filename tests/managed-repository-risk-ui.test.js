@@ -80,9 +80,9 @@ test('a risk kept and gone stale is told, dimmed and said so, until assessed aga
   assert.match(text(), /<tr class=is-stale>/u)
   assert.match(text(), /risk-high>54<\/span><span class="risk-stale" data-tooltip=Assessed 3 days ago; to be assessed again once the rest are>stale/u)
   const stale = () => page._metrics().find(({ label }) => label === 'Stale')
-  assert.deepEqual([stale().value, stale().tooltip], [1, 'Assessed over an hour ago; to be assessed again once the rest are.'])
+  assert.deepEqual([stale().value, stale().bar, stale().tooltip], [1, [['prod', 1], ['dev', 0]], '1 prod: assessed over an hour ago; to be assessed again once the rest are.'])
   page._state = 'done'
-  assert.equal(stale().tooltip, 'Assessed over an hour ago; not assessed again yet.', 'the scan over: no more promised')
+  assert.equal(stale().tooltip, '1 prod: assessed over an hour ago; not assessed again yet.', 'the scan over: no more promised')
   page._state = 'running'
   page._apply({ type: 'risk', name: 'debug', version: '4.4.0', error: 'upstream-unavailable', detail: 'fetch failed' })
   assert.match(text(), /risk-high>54<[^]*couldn’t be assessed again: npm unavailable: fetch failed>stale/u, 'the stale risk kept')
@@ -124,6 +124,8 @@ test('packages only devDependencies need, in every lockfile that locks them, are
   ]) page._apply(line)
   assert.deepEqual([...page._packages.values()].map(row => [row.name, row.dev]), [['left-pad', false], ['mocha', false], ['eslint', true], ['crossenv', true]],
     'dev only where every lockfile locks it so')
+  assert.deepEqual(page._metrics().find(({ label }) => label === 'Advisories'), { label: 'Advisories', value: 3,
+    bar: [['malware', 1], ['prod', 1], ['dev', 1]], tooltip: '1 malware · 1 prod · 1 dev' }, 'malware, then those production takes, then those only devDependencies need')
   assert.deepEqual(page._rows().map(row => [row.name, row.dev]), [['crossenv', true], ['eslint', true], ['left-pad', false], ['mocha', false]],
     'by their risk alone: a riskier one only devDependencies need above a less risky one production takes')
   const text = templateText(page.render())
@@ -165,29 +167,33 @@ test('an advisory is shown with the versions of each kind it affects, and the lo
 test('the progress counts packages only devDependencies need apart from the rest, where there are any, one a later lockfile needs otherwise among the rest', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   page._state = 'running'
-  // Each metric as its label, value, of how many and detail say it.
-  const metrics = () => page._metrics().map(({ label, value, of, detail }) => [label, of === undefined ? `${value}` : `${value}/${of}`, detail ?? null])
+  // Each metric as its label, value, of how many, bar and tooltip say it.
+  const metrics = () => page._metrics().map(({ label, value, of, bar, tooltip }) => [label, of === undefined ? `${value}` : `${value}/${of}`, bar, tooltip ?? null])
   const lockfile = (path, packages) => ({ type: 'lockfile', repo: 1, path, format: 'npm', packages })
+  const stale = 'assessed over an hour ago; to be assessed again once the rest are.'
   page._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }] })
   page._apply({ type: 'repo', id: 1, commit: 'a'.repeat(40), lockfiles: ['package-lock.json', 'web/package-lock.json', 'docs/package-lock.json'].map(path => ({ path, format: 'npm' })) })
   page._apply(lockfile('package-lock.json', [{ name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'is-number', version: '7.0.0', source: 'registry' },
     { name: 'mine', version: '1.0.0', source: 'git', dev: true }]))
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] })
-  assert.deepEqual(metrics(), [['Repositories', '1/1', null], ['Lockfiles', '1/3', null], ['Packages assessed', '1/2', null], ['Flagged', '1', null]],
-    'none assessed of devDependencies alone: no split')
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '1/3', [['read', 1]], null],
+    ['Packages assessed', '1/2', [['prod', 1], ['dev', 0]], '1/2 prod'], ['Flagged', '1', [['prod', 1], ['dev', 0]], '1 prod']],
+    'none of devDependencies alone: none said')
   page._apply(lockfile('web/package-lock.json', [{ name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }]))
   page._apply({ type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }], stale: { assessedAt: 1 } })
-  assert.deepEqual(metrics(), [['Repositories', '1/1', null], ['Lockfiles', '2/3', null], ['Packages assessed', '2/4', '1/2 prod · 1/2 dev'],
-    ['Flagged', '2', '1 prod · 1 dev'], ['Stale', '1', '0 prod · 1 dev']])
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '2/3', [['read', 2]], null],
+    ['Packages assessed', '2/4', [['prod', 1], ['dev', 1]], '1/2 prod · 1/2 dev'], ['Flagged', '2', [['prod', 1], ['dev', 1]], '1 prod · 1 dev'],
+    ['Stale', '1', [['prod', 0], ['dev', 1]], `1 dev: ${stale}`]])
   // docs needs eslint otherwise: it is among the rest from now on.
   page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
-  assert.deepEqual(metrics(), [['Repositories', '1/1', null], ['Lockfiles', '3/3', null], ['Packages assessed', '2/4', '2/3 prod · 0/1 dev'],
-    ['Flagged', '2', '2 prod · 0 dev'], ['Stale', '1', '1 prod · 0 dev']])
-  // Drawn: the state, then each metric, those counting toward a total with a bar.
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '3/3', [['read', 3]], null],
+    ['Packages assessed', '2/4', [['prod', 2], ['dev', 0]], '2/3 prod · 0/1 dev'], ['Flagged', '2', [['prod', 2], ['dev', 0]], '2 prod'],
+    ['Stale', '1', [['prod', 1], ['dev', 0]], `1 prod: ${stale}`]])
+  // Drawn: the state, then each metric, its label and count, its split said to a screen reader, and its bar a segment each of those there are.
   const text = templateText(page.render())
   assert.match(text, /<span class="risk-state" data-state=running>Scanning<\/span>/u)
-  assert.match(text, /Lockfiles<\/span>\s*<span class="risk-metric-value">3<span class="risk-metric-of">\/3<\/span><\/span>\s*<span class="risk-bar"/u)
-  assert.match(text, /<span class=risk-metric risk-high[^>]*>\s*<span class="risk-metric-label">Flagged<\/span>\s*<span class="risk-metric-value">2<\/span>\s*<span class="risk-metric-detail">2 prod · 0 dev</u)
+  assert.match(text, /Lockfiles<\/span>\s*<span class="risk-metric-value">3<span class="risk-metric-of">\/3<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-read/u)
+  assert.match(text, /<span class=risk-metric risk-high[^>]*>\s*<span class="risk-metric-label">Flagged<\/span>\s*<span class="risk-metric-value">2<span class="sr-only">, 2 prod<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-prod[^<]*<\/span><\/span>/u)
 })
 
 test('a scan the server answers in parts is asked again from where it stopped, what it told kept, until done', async t => {
@@ -435,12 +441,12 @@ test('a mirror\'s copy differing from npm\'s is flagged critical and listed firs
   assert.deepEqual(page._rows().map(row => row.name), ['ms'], 'not among those that couldn\'t be assessed')
   page._filter = 'all'
   assert.match(templateText(page.render()), /<li class="risk-critical" data-tooltip=Its lockfile’s integrity, a mirror’s, isn’t npm’s[^>]*>Differs from npm’s<\/li>/u)
-  assert.deepEqual(page._metrics().find(({ label }) => label === 'Flagged'), { label: 'Flagged', value: 5, detail: '4 prod · 1 dev', tone: 'high' })
+  assert.deepEqual(page._metrics().find(({ label }) => label === 'Flagged'), { label: 'Flagged', value: 5, bar: [['prod', 4], ['dev', 1]], tooltip: '4 prod · 1 dev', tone: 'high' })
   // Told stale, then not assessed again: still flagged.
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'integrity-mismatch', stale: { assessedAt: 1 } })
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', integrity: 'sha512-mirror', error: 'npm-busy' })
   assert.ok(differs(page._packages.get('left-pad@1.3.0\0sha512-mirror')), 'kept where it couldn\'t be assessed again')
-  assert.deepEqual(page._metrics().find(({ label }) => label === 'Flagged'), { label: 'Flagged', value: 5, detail: '4 prod · 1 dev', tone: 'high' })
+  assert.deepEqual(page._metrics().find(({ label }) => label === 'Flagged'), { label: 'Flagged', value: 5, bar: [['prod', 4], ['dev', 1]], tooltip: '4 prod · 1 dev', tone: 'high' })
 })
 
 test('a lockfile a package or advisory is used in links to it on GitHub, at the commit read, as a package\'s name does', () => {

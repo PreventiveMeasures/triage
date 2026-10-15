@@ -570,7 +570,10 @@ class ManagedAdminRepos extends ManagedPage {
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
       <div class="manage-list"><div aria-busy=${this._loading}>${this._body(choices)}</div>
-        ${connected && this._role === 'admin' ? html`<div class="aliases-link"><button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button></div>` : nothing}
+        ${connected && this._role === 'admin' ? html`<div class="repository-pages">
+          <button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button>
+          <button type="button" class="btn" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repo-risk' }, bubbles: true, composed: true }))}>Risk</button>
+        </div>` : nothing}
       </div>
     </div>`
   }
