@@ -171,7 +171,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues or Pull requests tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues, Pull requests or Agents tab |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1479,8 +1479,8 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Code, Search, Treemap, History, Issues and
-Pull requests tabs: from the
+as an npm version shows, with the Code, Search, Treemap, History, Issues,
+Pull requests and Agents tabs: from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1603,6 +1603,53 @@ pull request's checks only with **Checks: read** and **Commit statuses:
 read**, its tiles showing none where GitHub refuses those alone (see GitHub
 App setup). Access is checked again before they are sent.
 
+
+## Agents
+
+The **Agents** tab shows the Claude and Codex sessions the repository's work
+was done in, reconstructed from what each leaves on GitHub
+(`common/managed/agent-tasks.ts`), in the same compact tiles as Issues, the
+most recently active first. A session holds its tasks: the pull requests it
+opened, and the commits it pushed straight to the default branch, which no
+pull request merged. It is told by the links and marks the agents leave:
+
+- a Claude Code session, by `https://claude.ai/code/session_…`: in a pull
+  request's body, its head or merge commit's message (the `Claude-Session:`
+  trailer), a commit's message, a branch's tip commit, or an issue;
+- a Codex task, by `https://chatgpt.com/codex/tasks/task_…` in the same, or
+  a pull request's comments;
+- without a session named, by its branch, `claude/…` or `codex/…`, one
+  session a branch, its pull requests together; and by Claude's marks
+  (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
+  authored), a pull request or commit its own session.
+
+Everything naming one session is that session, whatever branch each is on; a
+pull request joins its branch's. An issue joins the session it names, and is
+shown with a session whose pull request closes it, or whose branch the
+Claude GitHub App named for it (`claude/issue-12-…`). A tile shows its
+agent, its title (its first task's) opening where it ran, a Claude Code
+session or a Codex task, else on GitHub, its author, age, how many tasks and
+lines it holds, its pull requests, commits and issues in their states'
+colors, each opening on GitHub, and its branch; one with a branch alone says
+it has no pull request. **All**, **Claude** and **Codex** pick whose, each
+with how many; a **Filter** picks by any word of a title, author, branch,
+number or session. Pages read on as the end of the scroll nears, as History's
+do, the sessions made again of all read.
+
+`GET /api/admin/repositories/agents?repoId=…[&pulls=…][&commits=…]` answers
+`{ pulls, commits, issues, branches, more, after: { pulls, commits } }` from
+GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
+updated first, and a hundred of the default branch's commits, the newest
+first, each on from its own cursor; and, on the first page alone, naming
+neither, the hundred most recently updated issues and the hundred newest of
+each agent's branches. Each pull request's body, head and merge commits'
+messages and last comments, each commit's message, each issue's body and
+comments, and each branch's tip commit are read for the sessions and tasks
+they link and Claude's marks (`signals`), and those alone are answered,
+never the texts; of the default branch's commits, only those no pull request
+merged and an agent marked. They are read as Issues are: with the reader's
+own GitHub access, only where their grants reach the whole repository, a
+token needed, and access checked again before they are sent.
 
 # npm package viewer
 

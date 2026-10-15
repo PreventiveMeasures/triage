@@ -396,6 +396,70 @@ function issuesFixture(url: URL, res: ServerResponse): void {
     more: end < listed.length, after: end < listed.length ? `page_${end}` : null })
 }
 
+// What a repository's agents left, for its Agents tab: Claude Code sessions,
+// one holding several pull requests and commits pushed to main, one the
+// Claude GitHub App ran for an issue; Codex tasks on branches of their own, one
+// a Codex cloud task linked; work no agent touched; read ten pull requests
+// and twenty commits at a time, as the server answers, its texts read.
+const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
+
+function agentsFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const hours = (count: number) => now - count * 3_600_000
+  const none = { sessions: [], tasks: [], claude: false }
+  const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true })
+  const commits: object[] = [], pulls: object[] = []
+  const pull = (number: number, title: string, head: string, at: number, signals: object, more: object = {}) => pulls.push({ number, title, state: 'merged', draft: false,
+    author: 'ChristopherTuring', createdAt: hours(at + 1), updatedAt: hours(at), head, additions: (number * 37) % 900 + 4, deletions: (number * 13) % 200, commits: number % 4 + 1,
+    closes: [], signals, ...more })
+  // A long session: the code viewer, a pull request at a time, and two fixes pushed to main.
+  const viewer = ['Code viewer: a repository\'s directory at a revision', 'Code: open from repository rows, picked in the viewer\'s header',
+    'Code: show switches loading; no tooltip on a repository\'s code link', 'Code: a History tab with the graph of branches',
+    'Revision picker: focus ring on keyboard focus only', 'History: All branches reads older commits', 'Code viewer: Issues and Pull requests tabs']
+  viewer.forEach((title, index) => pull(882 + index * 3, title, index === 5 ? 'claude/magical-mayer-83oicz-history-reuse' : 'claude/magical-mayer-83oicz', 30 - index * 4,
+    session('01MamW9SFrduHwBFipxyjRnn'), index === 6 ? { state: 'open' } : {}))
+  for (const [index, title] of ['History: keep the graph\'s lanes in their colors', 'Issues: read past the first page'].entries()) {
+    commits.push({ oid: createHash('sha1').update(title).digest('hex'), title, at: hours(5 + index * 9), author: 'ChristopherTuring', additions: 12, deletions: 4,
+      signals: session('01MamW9SFrduHwBFipxyjRnn') })
+  }
+  // Another session, of two pull requests on one branch.
+  pull(870, 'Repository risk: packages toggled All/Production/Development', 'claude/practical-ride-7Qx2', 52, session('01Practical7Qx2Ride'))
+  pull(874, 'Repository risk: the progress line counts dev', 'claude/practical-ride-7Qx2', 48, session('01Practical7Qx2Ride'), { state: 'closed' })
+  // The Claude GitHub App, asked on an issue.
+  pull(861, 'Dark mode: tag chips are readable', 'claude/issue-842-20261013-0912', 70, { sessions: [], tasks: [], claude: true }, { closes: [842] })
+  // Codex: a branch a task, one a cloud task linked, one still open, one left without a pull request.
+  const codex = ['Use Compare directory expansion defaults in Review', 'Preserve Markdown in copied audit notes', 'Fix My reviews empty-state alignment and spacing',
+    'Advisories: show the fixed version beside the range', 'Align the popup header', 'Workspace import: keep unattributed comments']
+  codex.forEach((title, index) => pull(845 - index * 4, title, `codex/${title.toLowerCase().replaceAll(/[^a-z\d]+/gu, '-').slice(0, 30).replace(/-$/u, '')}`,
+    12 + index * 11, index === 1 ? { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false } : none, index === 0 ? { state: 'open', draft: true } : index === 4 ? { state: 'closed' } : {}))
+  // A commit Claude authored straight to main, naming no session.
+  commits.push({ oid: createHash('sha1').update('direct').digest('hex'), title: 'Fix a flaky upload test', at: hours(26), author: null, additions: 3, deletions: 1,
+    signals: { sessions: [], tasks: [], claude: true } })
+  // Work no agent touched.
+  pull(850, 'Bump dependencies', 'deps/bump', 40, none)
+  pull(851, 'Docs: the managed mode', 'docs/managed', 44, none)
+  pulls.sort((a, b) => (b as { updatedAt: number }).updatedAt - (a as { updatedAt: number }).updatedAt)
+  commits.sort((a, b) => (b as { at: number }).at - (a as { at: number }).at)
+  const issues = [{ number: 842, title: 'Dark mode: tag chips are hard to read', state: 'closed', author: 'ada', createdAt: hours(90), updatedAt: hours(70), signals: none },
+    { number: 860, title: 'Code viewer: history of a directory', state: 'open', author: 'ChristopherTuring', createdAt: hours(34), updatedAt: hours(30),
+      signals: { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: false } },
+    { number: 855, title: 'Slow first paint', state: 'open', author: 'grace', createdAt: hours(80), updatedAt: hours(60), signals: none }]
+  const branches = [{ name: 'claude/magical-mayer-83oicz', at: hours(2), author: 'ChristopherTuring', signals: session('01MamW9SFrduHwBFipxyjRnn') },
+    { name: 'codex/try-lazy-trees', at: hours(8), author: 'ChristopherTuring', signals: none }]
+  // Cursors with a `_`, as GitHub's base64url ones can have.
+  const at = (name: string) => Number(/^page_(\d+)$/u.exec(url.searchParams.get(name) ?? '')?.[1] ?? '0')
+  const first = !url.searchParams.has('pulls') && !url.searchParams.has('commits')
+  const read = (list: object[], name: 'pulls' | 'commits') => {
+    if (!first && !url.searchParams.has(name)) return { items: [], after: null }
+    const from = at(name)
+    const end = from + AGENT_FIXTURE_PAGE[name]
+    return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
+  }
+  const [readPulls, readCommits] = [read(pulls, 'pulls'), read(commits, 'commits')]
+  sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches } : {},
+    more: readPulls.after !== null || readCommits.after !== null, after: { pulls: readPulls.after, commits: readCommits.after } })
+}
+
 function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
   const commits = HISTORY_FIXTURE.map(([label, subject, parents, hours, author]) => ({
@@ -457,6 +521,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
+  if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
@@ -673,7 +738,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

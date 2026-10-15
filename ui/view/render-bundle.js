@@ -45,6 +45,7 @@ import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import './repository-history.js'
+import './repository-agents.js'
 import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
@@ -1994,12 +1995,13 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
 
 // The tabs a repository's directory shows (repository-code.js).
 const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History'], ['issues', 'Issues'],
-  ['pulls', 'Pull requests']]
+  ['pulls', 'Pull requests'], ['agents', 'Agents']]
 
 // The body of a tab of a repository's directory reading none of its files
-// (REPOSITORY_FILELESS_TABS): its History, Issues or Pull requests.
+// (REPOSITORY_FILELESS_TABS): its History, Issues, Pull requests or Agents.
 function repositoryFilelessTab(repository, tab) {
   return tab === 'history' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
+    : tab === 'agents' ? html`<repository-agents .repository=${repository}></repository-agents>`
     : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
 }
 
@@ -2090,8 +2092,8 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search, Treemap, History, Issues
-  // and Pull requests alone.
+  // A repository's directory shows its Code, Search, Treemap, History, Issues,
+  // Pull requests and Agents alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2177,6 +2179,7 @@ function renderBundleSlide(entry) {
           ['search', () => renderBundleSearchView(details, entry)],
           ['history', () => repositoryFilelessTab(entry.repository, 'history')],
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
+          ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
           ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`],
           ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}

@@ -1,0 +1,142 @@
+// What the code viewer's Agents tab reconstructs Claude and Codex sessions
+// from (GET /api/admin/repositories/agents, common/managed/agent-tasks.ts):
+// a page of the repository's pull requests, the most recently updated first,
+// and of its default branch's commits, the newest first, those no pull
+// request merged; on the first page, its latest issues and the newest of
+// its agents' branches. Each artifact's texts are read here for the marks an
+// agent leaves, and those alone are answered, never the texts. GraphQL alone
+// gives them, so it needs a token.
+import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, agentSignals } from '../common/managed/agent-tasks.ts'
+import { GithubApiError } from './github-app.ts'
+import { githubGraphql } from './repository-history.ts'
+import { ISSUES_CURSOR } from './repository-issues.ts'
+
+export const AGENT_PULLS_PAGE = 50
+export const AGENT_COMMITS_PAGE = 100
+const AGENT_ISSUES = 100
+const AGENT_BRANCHES = 100
+const COMMENTS = 5
+const CLOSES = 5
+const MAX_TITLE = 1000
+const MAX_NAME = 256
+const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
+const SHA = /^[a-f\d]{40}$/u
+// The address Claude's own commits are authored with.
+const CLAUDE_EMAIL = 'noreply@anthropic.com'
+
+const branches = (agent: string) => `${agent}: refs(refPrefix: "refs/heads/${agent}/", first: ${AGENT_BRANCHES}, orderBy: { field: TAG_COMMIT_DATE, direction: DESC })
+      @include(if: $first) { nodes { name target { ... on Commit { committedDate message author { user { login } } } } } }`
+const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $commits: String, $first: Boolean!, $readPulls: Boolean!, $readCommits: Boolean!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $readPulls) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title state isDraft createdAt updatedAt author { login } body headRefName additions deletions
+        commits(last: 1) { totalCount nodes { commit { message } } }
+        mergeCommit { message }
+        closingIssuesReferences(first: ${CLOSES}) { nodes { number } }
+        comments(last: ${COMMENTS}) { nodes { body } } }
+    }
+    defaultBranchRef { target { ... on Commit {
+      history(first: ${AGENT_COMMITS_PAGE}, after: $commits) @include(if: $readCommits) {
+        pageInfo { hasNextPage endCursor }
+        nodes { oid messageHeadline message committedDate additions deletions author { email user { login } } associatedPullRequests(first: 1) { totalCount } }
+      }
+    } } }
+    issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
+      nodes { number title state createdAt updatedAt author { login } body comments(last: ${COMMENTS}) { nodes { body } } }
+    }
+    ${branches('claude')}
+    ${branches('codex')}
+  }
+}`
+
+type Login = { login?: unknown } | null | undefined
+type Texts = { nodes?: ({ body?: unknown } | null)[] } | null | undefined
+type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
+  headRefName?: unknown; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
+  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; comments?: Texts }
+type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
+  author?: { email?: unknown; user?: Login } | null; associatedPullRequests?: { totalCount?: unknown } }
+type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown; comments?: Texts }
+type RefNode = { name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: { user?: Login } | null } | null }
+type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
+type Page = { repository?: { pullRequests?: Connection<PullNode>; defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null
+  issues?: Connection<IssueNode>; claude?: Connection<RefNode>; codex?: Connection<RefNode> } | null }
+
+const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
+const number = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null
+const timeOf = (value: unknown) => {
+  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
+  return Number.isSafeInteger(at) ? at : null
+}
+const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
+const loginOf = (author: Login) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
+const bodies = (texts: Texts) => (texts?.nodes ?? []).map(node => node?.body)
+const PULL_STATES: Record<string, AgentPull['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
+
+function pull(node: PullNode | null): AgentPull | null {
+  const at = number(node?.number)
+  if (!node || !at) return null
+  const own = [node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message]
+  return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: PULL_STATES[String(node.state)] ?? 'closed', draft: node.isDraft === true,
+    author: loginOf(node.author), createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), head: nameOf(node.headRefName),
+    additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
+    closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
+    signals: agentSignals([...own, ...bodies(node.comments)], own) }
+}
+
+// A commit to the default branch no pull request merged, where an agent left
+// its marks on it, or Claude authored it.
+function directCommit(node: CommitNode | null): AgentCommit | null {
+  if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
+  const signals = agentSignals([node.message])
+  if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
+  if (!signals.claude && signals.sessions.length === 0 && signals.tasks.length === 0) return null
+  return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate), author: loginOf(node.author?.user),
+    additions: count(node.additions), deletions: count(node.deletions), signals }
+}
+
+function issue(node: IssueNode | null): AgentIssue | null {
+  const at = number(node?.number)
+  if (!node || !at) return null
+  return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: node.state === 'OPEN' ? 'open' : 'closed', author: loginOf(node.author),
+    createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), signals: agentSignals([node.body, ...bodies(node.comments)], [node.body]) }
+}
+
+const branch = (agent: string) => (node: RefNode | null): AgentBranch | null => {
+  const name = nameOf(node?.name)
+  return name ? { name: `${agent}/${name}`, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
+    signals: agentSignals([node?.target?.message]) } : null
+}
+
+const nextCursor = (connection: Connection<unknown> | undefined) => {
+  const info = connection?.pageInfo
+  return info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
+}
+
+// A page of what the repository's agents left: its pull requests on from
+// the cursor `pulls` ends at, its default branch's commits on from
+// `commits` (the first page where neither is named, with its issues and its
+// agents' branches), and the cursors reading on from each, null where
+// either is read whole.
+export async function repositoryAgents(fullName: string, token: string, cursors: { pulls: string | null; commits: string | null },
+  fetchImpl: typeof fetch = globalThis.fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const first = cursors.pulls === null && cursors.commits === null
+  const data = await githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
+    readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Page
+  const repository = data?.repository
+  if (!repository) throw new GithubApiError(404, 'github-not-found')
+  const history = repository.defaultBranchRef?.target?.history
+  const after = { pulls: nextCursor(repository.pullRequests), commits: nextCursor(history) }
+  return {
+    pulls: (repository.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),
+    commits: (history?.nodes ?? []).flatMap(node => directCommit(node) ?? []),
+    ...first ? {
+      issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
+      branches: [...(repository.claude?.nodes ?? []).flatMap(node => branch('claude')(node) ?? []),
+        ...(repository.codex?.nodes ?? []).flatMap(node => branch('codex')(node) ?? [])],
+    } : {},
+    more: after.pulls !== null || after.commits !== null, after,
+  }
+}

@@ -32,6 +32,8 @@
 //        names | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/issues?repoId=&kind=issues|pulls&state=open|closed[&after=] → a page of the repository's issues
 //        or pull requests, the most recently updated first, with how many are open and closed | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what Claude and Codex left: pull requests and
+//        commits to the default branch no pull request merged, with issues and agents' branches first | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -163,6 +165,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues } from './repository-issues.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
@@ -191,6 +194,7 @@ const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const REPO_CODE_PATH = '/api/admin/repositories/code'
 const REPO_HISTORY_PATH = '/api/admin/repositories/history'
 const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
+const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -1495,19 +1499,12 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   }
 }
 
-// GET /api/admin/repositories/issues: what the code viewer's Issues and Pull
-// requests tabs show (repository-issues.ts), read as browsing is, with the
-// reader's own GitHub access: `kind`'s open or closed (`state`), a page at a
-// time, on from the cursor `after` names. They are the whole repository's,
-// so only a reader whose grants reach all of it reads them, and GraphQL needs
-// a token. Access is checked again once they are read, before any is sent.
-async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  const kind = query.get('kind')
-  const state = query.get('state') ?? 'open'
-  const after = query.get('after')
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
-    || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
+// What the whole of repository `repoId` gives in GraphQL (`read`, with its
+// name and a token), read as browsing is, with the reader's own GitHub
+// access: only by a reader whose grants reach all of it, with a token, and
+// sent once access is checked again after it is read.
+async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
+  read: (fullName: string, token: string) => Promise<object>): Promise<void> {
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, '')
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1519,7 +1516,7 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-    const body = { kind, state, ...await repositoryIssues(access.repo.fullName, token, kind, state, after) }
+    const body = await read(access.repo.fullName, token)
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
@@ -1529,6 +1526,34 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
   }
+}
+
+// GET /api/admin/repositories/issues: what the code viewer's Issues and Pull
+// requests tabs show (repository-issues.ts): `kind`'s open or closed
+// (`state`), a page at a time, on from the cursor `after` names. They are
+// the whole repository's (readWholeRepository).
+async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const kind = query.get('kind')
+  const state = query.get('state') ?? 'open'
+  const after = query.get('after')
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
+    || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }))
+}
+
+// GET /api/admin/repositories/agents: what the code viewer's Agents tab
+// reconstructs Claude and Codex sessions from (repository-agents.ts): a page
+// of pull requests on from the cursor `pulls` names, and of the default
+// branch's commits on from `commits`, the first page, naming neither, with
+// issues and branches. They are the whole repository's (readWholeRepository).
+async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || Object.values(cursors).some(cursor => cursor !== null && !ISSUES_CURSOR.test(cursor))) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors))
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
@@ -3516,6 +3541,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_ISSUES_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryIssues(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_AGENTS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryAgents(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
