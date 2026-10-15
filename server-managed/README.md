@@ -989,9 +989,13 @@ beside the search, those of the versions only devDependencies need, each
 with the versions of its kind, tagged `dev` in the latter, and each toggle
 saying how many; an advisory of malware is shown either way, first, with
 all its versions, as is the package it names among the riskiest.
-The page's progress line counts packages assessed, flagged and stale of
-devDependencies alone apart from the rest, as each lockfile tells it so far:
-a later lockfile that needs one otherwise moves it among the rest.
+The page's progress shows the scan's state (scanning, and which part, done
+or stopped), then a metric each: repositories and lockfiles read and
+packages assessed, each of how many with a bar, and packages flagged, stale
+and advisories, those of malware said apart. Packages' metrics say those an
+install for production takes and those only devDependencies need apart
+(`prod` and `dev`), as each lockfile tells it so far: a later lockfile that
+needs one otherwise moves it among the rest.
 Each lockfile's packages of npm's registry or a mirror are asked of npm's
 registry's advisories at once, as `npm audit` asks (upstream's `advisories`,
 kept by the lockfile's blob for an hour, in the instance's memory and the

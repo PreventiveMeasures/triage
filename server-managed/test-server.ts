@@ -376,6 +376,22 @@ function historyFixture(url: URL, res: ServerResponse): void {
   sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
 }
 
+// The fixture repository's package-lock.json, as npm 11 writes one, for the
+// code viewer's View lockfile: debug's own ms a second copy of ms.
+const fixtureLockfile = `${JSON.stringify({
+  name: 'managed-fixtures', version: '1.0.0', lockfileVersion: 3, requires: true,
+  packages: {
+    '': { name: 'managed-fixtures', version: '1.0.0', dependencies: { debug: '4.3.4' }, devDependencies: { ms: '2.0.0' } },
+    'node_modules/debug': { version: '4.3.4', resolved: 'https://registry.npmjs.org/debug/-/debug-4.3.4.tgz',
+      integrity: 'sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==', license: 'MIT',
+      dependencies: { ms: '2.1.2' }, engines: { node: '>=6.0' }, peerDependenciesMeta: { 'supports-color': { optional: true } } },
+    'node_modules/debug/node_modules/ms': { version: '2.1.2', resolved: 'https://registry.npmjs.org/ms/-/ms-2.1.2.tgz',
+      integrity: 'sha512-sGkPx+VjMtmA6MX27oA4FBFELFCZZ4S4XqeGOXCv68tT+jb3vk/RyaKWP0PTKyWtmLSM0b+adUTEvbs1PEaH2w==', license: 'MIT' },
+    'node_modules/ms': { version: '2.0.0', resolved: 'https://registry.npmjs.org/ms/-/ms-2.0.0.tgz',
+      integrity: 'sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==', dev: true, license: 'MIT' },
+  },
+}, null, 2)}\n`
+
 function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
   if (url.pathname.endsWith('/browsable')) {
@@ -389,7 +405,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const path = refs ? '' : url.searchParams.get('path') ?? ''
   const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'
   const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
-    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'README.md']
+    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
   const commit = /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40)
@@ -401,7 +417,8 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
     const inside = files.filter(file => file.startsWith(prefix)).toSorted()
     if (inside.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return }
     const rows = inside.map(file => {
-      const text = file === 'README.md' ? `# ${repo.fullName}\n\nFixture repository for the managed code viewer.\n` : `// ${file} at ${commit.slice(0, 7)}\n`
+      const text = file === 'README.md' ? `# ${repo.fullName}\n\nFixture repository for the managed code viewer.\n`
+        : file === 'package-lock.json' ? fixtureLockfile : `// ${file} at ${commit.slice(0, 7)}\n`
       return [file.slice(prefix.length), Buffer.byteLength(text), text]
     })
     sendJson(res, 200, { repoId: repo.id, repo: repo.fullName, commit, path, tree: 'f'.repeat(40), files: rows }); return

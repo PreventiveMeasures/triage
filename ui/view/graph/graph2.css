@@ -683,6 +683,15 @@
   font-style: italic;
 }
 
+/* A lockfile package's installed versions, in the dependency card. */
+.g2-sel-versions {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
 .g2-sel-jumps {
   padding: 11px 13px;
   display: flex;

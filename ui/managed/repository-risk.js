@@ -12,6 +12,7 @@
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isHttpUrl } from '@preventive/report'
 import { SEVERITIES } from '../../risk/files/stamps.js'
@@ -124,13 +125,13 @@ export const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolea
 const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
-// Which package rows are shown, by the filter's value: its label, which
-// rows, and its tooltip.
+// Which package rows are shown, by the filter's value: its label, and which
+// rows.
 const FILTERS = {
-  all: ['All', () => true, 'Every package of those shown.'],
-  flagged: ['Flagged', row => Boolean(severityOf(row)), 'Those of a finding: malware, a copy differing from npm’s, or what risk finds.'],
-  failed: ['Failed', row => Boolean(row.risk?.error) && !differs(row), 'Those risk couldn’t assess, each saying why.'],
-  elsewhere: ['Not from npm', row => !assessable(row.source), 'From git, a tarball or a file: listed, not assessed.'],
+  all: ['All', () => true],
+  flagged: ['Flagged', row => Boolean(severityOf(row))],
+  failed: ['Failed', row => Boolean(row.risk?.error) && !differs(row)],
+  elsewhere: ['Not from npm', row => !assessable(row.source)],
 }
 
 // What a package's risk is, as its column's heading tells it.
@@ -150,7 +151,7 @@ const KINDS = {
 // The packages shown: all, those an install for production takes, or those
 // only devDependencies need (ofKind).
 const PACKAGE_KINDS = {
-  all: ['All', 'Every package the lockfiles lock, those only devDependencies need tagged dev.'],
+  all: ['All'],
   production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware, and a copy differing from npm’s, is shown either way.'],
   development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware, and a copy differing from npm’s, is shown either way.'],
 }
@@ -571,12 +572,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
-  // A toggle (`name`d) of `kinds` ({ kind: [label, tooltip] }), the one
-  // `value` names pressed, each with how many there are (`counts`), in a
-  // balloon, another `choose`n.
+  // A toggle (`name`d) of `kinds` ({ kind: [label, tooltip] }, a tooltip
+  // where one tells more), the one `value` names pressed, each with how many
+  // there are (`counts`) in a bubble, another `choose`n.
   _kindToggle(name, kinds, counts, value, choose) {
     return html`<div class="risk-scope" role="group" aria-label=${name}>${Object.entries(kinds).map(([kind, [label, said]]) => html`<button type="button"
-      aria-pressed=${value === kind} data-tooltip=${said ?? nothing} @click=${() => choose(kind)}>${label}<span class="count">${formatCount.format(counts[kind])}</span></button>`)}</div>`
+      aria-pressed=${value === kind} data-tooltip=${said ?? nothing} @click=${() => choose(kind)}>${label}<span class="n">${formatCount.format(counts[kind])}</span></button>`)}</div>`
   }
 
   // Which of `rows`, a kind's, are shown, by FILTERS, each with how many:
@@ -585,7 +586,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _filterToggle(rows) {
     const counts = Object.fromEntries(Object.entries(FILTERS).map(([filter, [, shown]]) => [filter, rows.filter(shown).length]))
     const offered = Object.entries(FILTERS).filter(([filter]) => filter === 'all' || filter === this._filter || counts[filter] > 0)
-    return offered.length === 1 ? nothing : this._kindToggle('Show packages', Object.fromEntries(offered.map(([filter, [label, , said]]) => [filter, [label, said]])),
+    return offered.length === 1 ? nothing : this._kindToggle('Show packages', Object.fromEntries(offered.map(([filter, [label]]) => [filter, [label]])),
       counts, this._filter, filter => { this._filter = filter })
   }
 
@@ -609,7 +610,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
       ${this._scopeBar()}
-      <p class="risk-progress" role="status">${this._progress()}</p>
+      <div class="risk-progress" role="status">${this._progress()}</div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size === 0 ? nothing : html`<div class="manage-list">${this._lockfiles()}
         ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}</div>`}
@@ -617,7 +618,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _tabs() {
-    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="count">${formatCount.format(this._advisories.size)}</span>` : nothing}`]]
+    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`]]
     return html`<div class="risk-tabs" role="tablist" aria-label="Results">${tabs.map(([tab, label]) => html`<button type="button" role="tab"
       aria-selected=${this._tab === tab} @click=${() => { this._tab = tab }}>${label}</button>`)}</div>`
   }
@@ -657,18 +658,39 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </select>`
   }
 
-  _progress() {
-    if (this._state === 'idle') return 'Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.'
+  // The scan's progress, a metric each: its `label`, how many (`value`), of
+  // how many where it reads them (`of`), those an install for production
+  // takes and those only devDependencies need apart (`detail`) where there
+  // are any of the latter, and a `tone` where it calls for one.
+  _metrics() {
     const counts = this._counts()
     const { needed, dev } = counts
-    const of = (read, total, what) => `${formatCount.format(read)} of ${formatCount.format(total)}${what ? ` ${what}` : ''}`
-    // Packages' counts, those of devDependencies alone apart where there are any.
-    const packages = (what, count) => dev.total === 0 ? `${count(needed)} ${what}` : `${count(needed)} non-dev and ${count(dev)} dev ${what}`
-    const state = this._state === 'running' && this._parts > 1 ? `Scanning, part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
-    return [state, of(counts.reposRead, counts.repos, 'repositories read'), of(counts.lockfilesRead, counts.lockfiles, 'lockfiles'),
-      packages('packages assessed', ({ told, total }) => of(told, total)), packages('flagged', ({ flagged }) => formatCount.format(flagged)),
-      ...needed.stale + dev.stale > 0 ? [packages('stale', ({ stale }) => formatCount.format(stale))] : [],
-      ...counts.advisories > 0 ? [`${formatCount.format(counts.advisories)} advisories${counts.malware > 0 ? `, ${formatCount.format(counts.malware)} of malware` : ''}`] : []].join(' · ')
+    const count = value => formatCount.format(value)
+    const split = said => dev.total === 0 ? null : `${said(needed)} prod · ${said(dev)} dev`
+    const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale
+    return [
+      { label: 'Repositories', value: counts.reposRead, of: counts.repos },
+      { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles },
+      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, detail: split(({ told, total }) => `${count(told)}/${count(total)}`) },
+      { label: 'Flagged', value: flagged, detail: split(({ flagged: some }) => count(some)), tone: flagged > 0 ? 'high' : null },
+      ...stale > 0 ? [{ label: 'Stale', value: stale, detail: split(({ stale: some }) => count(some)),
+        tooltip: `Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
+      ...counts.advisories > 0 ? [{ label: 'Advisories', value: counts.advisories,
+        detail: counts.malware > 0 ? `${count(counts.malware)} of malware` : null, tone: counts.malware > 0 ? 'critical' : null }] : [],
+    ]
+  }
+
+  // The scan's state, and its metrics (_metrics), each read with a bar.
+  _progress() {
+    if (this._state === 'idle') return html`<p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p>`
+    const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
+    return html`<span class="risk-state" data-state=${this._state}>${state}</span>
+      ${this._metrics().map(({ label, value, of, detail, tone, tooltip }) => html`<span class=${tone ? `risk-metric risk-${tone}` : 'risk-metric'} data-tooltip=${tooltip ?? nothing}>
+        <span class="risk-metric-label">${label}</span>
+        <span class="risk-metric-value">${formatCount.format(value)}${of === undefined ? nothing : html`<span class="risk-metric-of">/${formatCount.format(of)}</span>`}</span>
+        ${of === undefined ? nothing : html`<span class="risk-bar" aria-hidden="true"><span style=${styleMap({ width: `${of === 0 ? 0 : Math.round(value / of * 100)}%` })}></span></span>`}
+        ${detail ? html`<span class="risk-metric-detail">${detail}</span>` : nothing}
+      </span>`)}`
   }
 
   _pending(running, otherwise) {
@@ -712,25 +734,27 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const all = [...this._packages.values()]
     const counts = Object.fromEntries(Object.keys(PACKAGE_KINDS).map(kind => [kind, all.filter(row => ofKind(row, kind)).length]))
     const links = this._lockfileLinks()
+    // Where they are from, but where all are npm's registry's, as most are.
+    const sourced = all.some(row => row.source !== 'registry')
     return html`<section class="risk-section" aria-label="Packages">
       ${this._resultsHead(html`${this._kindToggle('Which packages', PACKAGE_KINDS, counts, this._packageKind, kind => { this._packageKind = kind })}
         ${this._filterToggle(all.filter(row => ofKind(row, this._packageKind)))}
         ${this._search(rows.length, counts[this._packageKind], 'packages')}`)}
       <div class="link-table"><table>
-        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th><th>Source</th><th>Used in</th></tr></thead>
-        <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links))}</tbody>
+        <thead><tr><th>Package</th><th><span data-tooltip=${RISK_SAID}>Risk</span></th><th class="risk-findings-column">Findings</th>${sourced ? html`<th>Source</th>` : nothing}<th>Used in</th></tr></thead>
+        <tbody>${repeat(rows.slice(0, MAX_ROWS), packageKey, row => this._packageRow(row, links, sourced))}</tbody>
       </table></div>
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search or filter to see others.</p>` : nothing}
     </section>`
   }
 
-  _packageRow(row, links) {
+  _packageRow(row, links, sourced) {
     const path = assessable(row.source) ? managedRoutePath({ view: 'npm', packageName: row.name, packageSpec: row.version }) : null
     return html`<tr class=${row.risk?.stale ? 'is-stale' : ''}>
       <td>${packageCell(row, row.version, path, DEV_SAID)}</td>
       <td>${this._score(row)}</td>
       <td>${this._findings(row)}</td>
-      <td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>
+      ${sourced ? html`<td><span data-tooltip=${row.from ?? nothing}>${SOURCE_LABELS[row.source] ?? row.source}${row.source === 'mirror' && row.from ? ` (${new URL(row.from).host})` : ''}</span></td>` : nothing}
       <td>${usedInCell(row.usedIn, links)}</td>
     </tr>`
   }

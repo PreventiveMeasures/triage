@@ -36,7 +36,9 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { lockfileFormat, lockfileTooltip, viewedLockfile } from './lockfile-view.js'
+import './lockfile-graph.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
@@ -87,7 +89,8 @@ import { renderHighlighted } from './render-finding.js'
 // for hoisted function declarations, and the call sites are async
 // (always after init).
 import { render } from './render.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
+import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, TERMINAL_ICON, WRAP_ICON } from './lit-icons.js'
+import { focusTerminal } from './terminal-attach.js'
 
 // Bundles graph — like the findings-tab graph but sourced from a
 // parsed bundle (sourcemap / stasis). The refresh helpers below
@@ -669,6 +672,15 @@ function viewedSource(details, entry, path, content, fileFindings, lineFindings)
     fileFindings: pretty ? [] : fileFindings, lineFindings: pretty ? new Map() : lineFindings }
 }
 
+// The Code tab's View lockfile toggle, on a lockfile the lockfile viewer
+// reads, busy while its read runs and red where that failed (lockfile-view.js).
+function renderLockfileToggle(read) {
+  const status = read?.status
+  return html`<button type="button" class=${classMap({ 'bundle-source-lockfile-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
+    data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
+    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>`
+}
+
 // Auto-pick bookkeeping for the Code slide. When the pick ran
 // before any findings were indexed (page refresh straight into the
 // Code tab: the hash pass and the OPFS finding index both land
@@ -993,6 +1005,33 @@ function collapseBundleTree(tree) {
   }
   walk(tree)
   render()
+}
+
+// The rail's terminal toggle, and the pane's close. Opening puts the caret
+// on the terminal's command line; closing hands focus back to the toggle,
+// as the close button that had it goes with the pane.
+function showBundleCodeTerminal(open) {
+  state.bundleCodeTerminal = open
+  render()
+  if (open) void focusTerminal()
+  else document.querySelector('[data-bundle-code-terminal-toggle]')?.focus()
+}
+
+// The Code tab's terminal pane, under the code panel and a handle resizing
+// it: the Terminal tab's own terminal, attached into the slot by render.js,
+// so one session carries between the two.
+function renderBundleCodeTerminal() {
+  return html`<bundle-code-terminal-splitter role="separator" tabindex="0" aria-orientation="horizontal"
+      aria-label="Resize terminal" data-tooltip="Drag to resize · double-click to reset"
+    ></bundle-code-terminal-splitter>
+    <section class="bundle-code-terminal" aria-label="Terminal">
+    <header class="bundle-code-terminal-bar">
+      <span class="bundle-code-rail-label">Terminal</span>
+      <button type="button" class="bundle-code-rail-action" aria-label="Close terminal"
+        @click=${() => showBundleCodeTerminal(false)}>×</button>
+    </header>
+    <div id="bundle-terminal-slot" class="bundle-code-terminal-slot"></div>
+  </section>`
 }
 
 // Aggregate issue count + worst severity across every file under a
@@ -1531,6 +1570,10 @@ function renderBundleCodeView(details, entry = null) {
         <span class="bundle-code-rail-label">Files</span>
         <span class="bundle-code-rail-count">${allPaths.length}</span>
         <span class="bundle-code-rail-actions">
+          <button type="button" class="bundle-code-rail-action" aria-label="Terminal" data-tooltip="Terminal" data-bundle-code-terminal-toggle
+            aria-pressed=${state.bundleCodeTerminal ? 'true' : 'false'} @click=${() => showBundleCodeTerminal(!state.bundleCodeTerminal)}>
+            ${TERMINAL_ICON}
+          </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Reveal current file" data-tooltip="Reveal current file"
             ?disabled=${!path} @click=${() => revealBundleTreeFile(path, prefix)}>
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
@@ -1559,6 +1602,7 @@ function renderBundleCodeView(details, entry = null) {
       ${path
         ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
+      ${state.bundleCodeTerminal ? renderBundleCodeTerminal() : nothing}
     </div>
   </div>`
 }
@@ -1593,9 +1637,17 @@ function textStats(text) {
 // own and three characters more (`.bundle-code-main-stats-room`), right-
 // aligned, so pressing the toggle, whose copy has more lines and bytes,
 // moves neither toggle. The stepper comes first, as a copy has no findings.
+// A lockfile has a View lockfile toggle last: once read, its packages show in
+// the lockfile viewer in place of its text, with the file's own stats and
+// none of the toggles and stepper that are of the text.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
-  const { pretty, toggle, content, fileFindings, lineFindings } = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+  const { pretty, toggle, fileFindings, lineFindings } = viewed
+  const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
+  const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (state.bundleSourceFile === path) render() }) : null
+  const graphed = read?.status === 'ready'
+  const content = graphed ? sourceContent : viewed.content
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1613,7 +1665,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       <span class="bundle-code-main-spacer"></span>
-      ${fileFindings.length > 0 ? html`<span
+      ${fileFindings.length > 0 && !graphed ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
       >
@@ -1634,14 +1686,16 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
           aria-label="Next issue"
         >›</button>
       </span>` : nothing}
-      ${renderSourceWrapToggle()}
-      ${toggle}
+      ${graphed ? nothing : renderSourceWrapToggle()}
+      ${graphed ? nothing : toggle}
+      ${lockfile ? renderLockfileToggle(read) : nothing}
       ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-        !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
+      ${graphed ? html`<lockfile-graph .lockfile=${read.lockfile}></lockfile-graph>`
+        : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
+          !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
     </div>`
 }
 

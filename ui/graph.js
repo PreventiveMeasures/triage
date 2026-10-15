@@ -33,8 +33,10 @@ export { attachGraph2Interaction } from './view/graph/canvas.js'
 // together. Called by the main-bundle wrappers
 // `refreshGraph2Sidebar` (render.js) / `refreshBundleGraphSidebar`
 // (render-bundle.js), which compute `graph` + `ctx` from state.
-export function refreshSidebar(prep, ctx) {
-  const root = document.querySelector('graph-layout')?.shadowRoot
+// `host` is the page's one `<graph-layout>` unless named: the lockfile
+// viewer's sits in its own shadow root (view/lockfile-graph.js).
+export function refreshSidebar(prep, ctx, host = document.querySelector('graph-layout')) {
+  const root = host?.shadowRoot
   if (!root) return
   const graph = buildGraphFromPrep(prep)
   const area = root.querySelector('#g2-selection-area')
@@ -46,8 +48,8 @@ export function refreshSidebar(prep, ctx) {
 // Repaint just the right-panel Top-packages block — fires when
 // the user flips the Issues / Files mini-tab so the canvas's rAF
 // + hover state aren't torn down by a full render() cycle.
-export function refreshTopPkgs(prep) {
-  const root = document.querySelector('graph-layout')?.shadowRoot
+export function refreshTopPkgs(prep, host = document.querySelector('graph-layout')) {
+  const root = host?.shadowRoot
   if (!root) return
   const block = root.querySelector('#g2-top-pkgs-block')
   if (!block) return
@@ -75,6 +77,10 @@ export function buildGraphFromPrep(prep) {
   // a toggle value persisted from another bundle can't flip a
   // 2-package (or findings-tab) graph into package mode.
   graph.canPackagesView = prep.canPackagesView ?? false
+  // A graph of packages alone (a lockfile's, see lockfile-graph-inputs.js):
+  // its members are a package's installed copies, not files, so every view
+  // stays at package altitude whatever the Packages toggles say.
+  graph.packagesOnly = prep.packagesOnly ?? false
   graph.supportsLayers = prep.supportsLayers ?? false
   graph.layerRoots = prep.layerRoots
   graph.flowEntries = prep.flowEntries

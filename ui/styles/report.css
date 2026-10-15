@@ -794,6 +794,7 @@
 }
 .bundle-code-rail-action:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
 .bundle-code-rail-action:disabled { opacity: .35; }
+.bundle-code-rail-action[aria-pressed=true] { color: var(--accent); }
 .bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
@@ -814,24 +815,34 @@
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* A one-pixel divider with a wider grab area over the pane edges. */
-bundle-code-splitter {
+/* A one-pixel divider with a wider grab area over the pane edges:
+   between the file tree and the code, and between the code and the
+   terminal pane under it. */
+bundle-code-splitter,
+bundle-code-terminal-splitter {
   flex: none;
   position: relative; z-index: 1;
-  width: 7px; margin-inline: -3px;
   cursor: default;
   touch-action: none;
   user-select: none;
 
   &::before {
     content: '';
-    position: absolute; inset: 0 3px;
+    position: absolute;
     background: var(--border);
   }
   &:hover::before, &:focus-visible::before, &.dragging::before { background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 }
-.bundle-code-view:has(> bundle-code-splitter.dragging) {
+bundle-code-splitter {
+  width: 7px; margin-inline: -3px;
+  &::before { inset: 0 3px; }
+}
+bundle-code-terminal-splitter {
+  height: 7px; margin-block: -3px;
+  &::before { inset: 3px 0; }
+}
+.bundle-code-view:has(> bundle-code-splitter.dragging, bundle-code-terminal-splitter.dragging) {
   &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
@@ -1207,6 +1218,7 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path,
 .bundle-code-github-link,
 .bundle-source-pretty-toggle,
+.bundle-source-lockfile-toggle,
 .bundle-source-wrap-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1220,13 +1232,19 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-copy-path:hover,
 .bundle-code-github-link:hover,
 .bundle-source-pretty-toggle:hover,
+.bundle-source-lockfile-toggle:hover,
 .bundle-source-wrap-toggle:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
 .bundle-source-pretty-toggle[aria-pressed=true],
+.bundle-source-lockfile-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
-/* Busy while its copy is asked for; red where that failed. */
-.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: default; }
-.bundle-source-pretty-toggle.is-error { color: var(--critical); }
+/* Busy while its copy is asked for, or its lockfile read; red where that
+   failed. */
+.bundle-source-pretty-toggle.is-loading,
+.bundle-source-lockfile-toggle.is-loading { opacity: .55; cursor: default; }
+.bundle-source-pretty-toggle.is-error,
+.bundle-source-lockfile-toggle.is-error { color: var(--critical); }
+.bundle-source-lockfile-toggle svg { width: 13px; height: 13px; }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
 /* A grid of one cell, the stats over the room kept for them where the file
@@ -1273,6 +1291,34 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-main-body > .bundle-source-code-wrap {
   flex: 1; min-width: 0;
   overflow: auto;
+  -webkit-app-region: no-drag; app-region: no-drag;
+}
+/* Terminal pane — under the code panel, across the right column: a
+   bar naming it, with its close, over the Terminal tab's terminal
+   (render-bundle.js renderBundleCodeTerminal). The code panel above
+   gives up the height, which the handle between them sets (bundle-
+   code-splitter.js), 40% of the column until it does. */
+.bundle-code-terminal {
+  flex: 0 0 var(--bundle-code-terminal-height, 40%);
+  min-height: 0;
+  display: flex; flex-direction: column;
+}
+.bundle-code-terminal-bar {
+  flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .2rem .5rem .2rem .75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+
+  & > .bundle-code-rail-action { font-size: 1rem; line-height: 1; }
+}
+.bundle-code-terminal-slot {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* A lockfile's packages, in place of its text (renderBundleCodeMain). */
+.bundle-code-main-body > lockfile-graph {
+  flex: 1; min-width: 0;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
 .bundle-code-placeholder,
@@ -2576,11 +2622,15 @@ body.report-fullscreen {
   background: transparent;
   & code { font: inherit; background: transparent; padding: 0; }
 }
+/* The underline paints in the button's own colour, so that is the code's
+   text colour wherever the button sits: a C `#include` string is nested in
+   the macro's token, whose red it would otherwise inherit. The linked text
+   keeps its token colour. */
 .bundle-source-link {
   display: inline;
   padding: 0; border: 0; border-radius: var(--ui-radius, 2px);
   background: transparent;
-  color: inherit;
+  color: var(--text);
   font: inherit;
   line-height: inherit;
   white-space: inherit;
