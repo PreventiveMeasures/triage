@@ -41,7 +41,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
   repository(owner: $owner, name: $name) {
     pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $readPulls) {
       pageInfo { hasNextPage endCursor }
-      nodes { number title state isDraft createdAt updatedAt author { login } body headRefName additions deletions
+      nodes { number title state isDraft createdAt updatedAt author { login } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
         commits(last: 1) { totalCount nodes { commit { message } } }
         mergeCommit { message }
         closingIssuesReferences(first: ${CLOSES}) { nodes { number } }
@@ -62,7 +62,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
 type Login = { login?: unknown } | null | undefined
 type Texts = { nodes?: ({ body?: unknown } | null)[] } | null | undefined
 type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
-  headRefName?: unknown; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
+  headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
   mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; comments?: Texts }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: { email?: unknown; user?: Login } | null; associatedPullRequests?: { totalCount?: unknown } }
@@ -90,6 +90,8 @@ function pull(node: PullNode | null): AgentPull | null {
   const own = [node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message]
   return { number: at, title: nameOf(node.title, MAX_TITLE) ?? '', state: PULL_STATES[String(node.state)] ?? 'closed', draft: node.isDraft === true,
     author: loginOf(node.author), createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), head: nameOf(node.headRefName),
+    // A fork's, its owner; one GitHub no longer names, a fork of its own.
+    fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
     signals: agentSignals([...own, ...bodies(node.comments)], own) }

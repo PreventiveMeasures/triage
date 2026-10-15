@@ -5,7 +5,7 @@ import { agentBranch, agentSessions, agentSignals } from '../common/managed/agen
 const none = { sessions: [], tasks: [], claude: false }
 const session = id => ({ sessions: [id], tasks: [], claude: true })
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
-  updatedAt: number * 10 + 5, head, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
+  updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
 const commit = (oid, signals, at) => ({ oid: oid.repeat(40), title: `Commit ${oid}`, at, author: 'ada', additions: 3, deletions: 1, signals })
 const issue = (number, signals = none, more = {}) => ({ number, title: `Issue ${number}`, state: 'open', author: 'grace', createdAt: number, updatedAt: number, signals, ...more })
 const branch = (name, signals = none, at = 1) => ({ name, at, author: 'ada', signals })
@@ -63,6 +63,14 @@ test('where older pull requests are yet to be read, a session of branches alone 
   const artifacts = { pulls: [pull(9, 'codex/new')], branches: [branch('codex/new', none, 80), branch('codex/old', none, 50), branch('codex/fresh', none, 120)] }
   assert.deepEqual(agentSessions(artifacts, { branchesSince: 95 }).map(item => item.id), ['codex/fresh', 'pull-9'])
   assert.deepEqual(agentSessions(artifacts).map(item => item.id), ['codex/fresh', 'pull-9', 'codex/old'], 'all read, it shows')
+})
+
+test('pull requests from forks, of one branch name, are a session each, apart from the repository\'s own branch of that name', () => {
+  const sessions = agentSessions({ pulls: [pull(1, 'codex/fix', none, { fork: 'ada' }), pull(2, 'codex/fix', none, { fork: 'grace' }), pull(3, 'codex/fix'),
+    pull(4, 'codex/fix', none, { fork: 'ada' })], branches: [branch('codex/fix')] })
+  assert.deepEqual(sessions.map(item => [item.pulls.map(linked => linked.number), item.branches]).toSorted(), [
+    [[2], ['grace:codex/fix']], [[3], ['codex/fix']], [[4, 1], ['ada:codex/fix']],
+  ])
 })
 
 test('a Claude session a Codex task pushed to is both agents\'', () => {

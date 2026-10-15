@@ -1624,7 +1624,9 @@ pull request merged. It is told by the links and marks the agents leave:
   authored), a pull request or commit its own session.
 
 Everything naming one session is that session, whatever branch each is on; a
-pull request joins its branch's. An issue joins the session it names, and is
+pull request joins its branch's, a fork's branch, named `owner:branch` as
+GitHub names it, apart from the repository's of that name and another
+fork's. An issue joins the session it names, and is
 shown with a session whose pull request closes it, or whose branch the
 Claude GitHub App named for it (`claude/issue-12-…`). A tile shows its
 agent, its title (its first task's) opening where it ran, a Claude Code

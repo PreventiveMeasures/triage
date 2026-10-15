@@ -19,7 +19,9 @@ export type Agent = 'claude' | 'codex'
 export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean }
 
 export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null
-  createdAt: number | null; updatedAt: number | null; head: string | null; additions: number; deletions: number; commits: number
+  // Its branch, and the owner of the fork it is in, null where it is in the
+  // repository itself.
+  createdAt: number | null; updatedAt: number | null; head: string | null; fork: string | null; additions: number; deletions: number; commits: number
   closes: number[]; signals: AgentSignals }
 export interface AgentIssue { number: number; title: string; state: 'open' | 'closed'; author: string | null; createdAt: number | null; updatedAt: number | null
   signals: AgentSignals }
@@ -75,6 +77,10 @@ export function agentBranch(name: string | null): { agent: Agent | null; issue: 
   return { agent, issue: named?.[1] === 'issue' ? Number(named[2]) : null, pull: named?.[1] === 'pr' ? Number(named[2]) : null }
 }
 
+// A pull request's branch, as GitHub names one in a fork: `owner:branch`;
+// two forks' of one name, or a fork's and the repository's, are two.
+const headName = (pull: AgentPull) => pull.head && pull.fork ? `${pull.fork}:${pull.head}` : pull.head
+
 const signalAgents = (signals: AgentSignals): Agent[] => [...signals.sessions.length > 0 || signals.claude ? ['claude' as const] : [],
   ...signals.tasks.length > 0 ? ['codex' as const] : []]
 
@@ -117,8 +123,9 @@ function artifactGroups({ pulls = [], commits = [], issues = [], branches = [] }
     linked(key, pull.signals)
     const { agent, pull: named } = agentBranch(pull.head)
     if (agent) mark(key, [agent])
-    // Its branch, an agent's or its own, read or not.
-    if (pull.head && (agent || signalAgents(pull.signals).length > 0 || branchNames.has(pull.head))) join(key, `branch:${pull.head}`)
+    // Its branch, an agent's or its own, read or not; a fork's its own.
+    const head = headName(pull)
+    if (head && (agent || signalAgents(pull.signals).length > 0 || branchNames.has(head))) join(key, `branch:${head}`)
     if (named) join(key, `pull:${named}`)
   }
   for (const commit of commits) linked(`commit:${commit.oid}`, commit.signals)
@@ -147,7 +154,7 @@ function sessionOf({ agents, keys }: Group, { pulls, commits, issues, branches }
   const of = (prefix: string) => keys.filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length))
   const taskPulls = of('pull:').flatMap(number => pulls.get(Number(number)) ?? []).toSorted(byTime(pull => pull.createdAt))
   const taskCommits = of('commit:').flatMap(oid => commits.get(oid) ?? []).toSorted(byTime(commit => commit.at))
-  const names = [...new Set([...of('branch:'), ...taskPulls.flatMap(pull => pull.head ?? [])])]
+  const names = [...new Set([...of('branch:'), ...taskPulls.flatMap(pull => headName(pull) ?? [])])]
   const issueNumbers = new Set([...of('issue:').map(Number), ...taskPulls.flatMap(pull => pull.closes), ...names.flatMap(name => agentBranch(name).issue ?? [])])
   const taskIssues = [...issueNumbers].flatMap(number => issues.get(number) ?? []).toSorted(byTime(issue => issue.createdAt))
   const taskBranches = names.flatMap(name => branches.get(name) ?? [])
