@@ -20,7 +20,7 @@
 // registry or a mirror are asked of npm's advisories all at once, as `npm
 // audit` asks, each advisory told with whether it is of malware (risk's
 // npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
-// vulnerabilities, told beside. A repository's open Dependabot alerts of npm's
+// vulnerabilities, told beside. A repository's Dependabot alerts of npm's, open or dismissed,
 // are told once its lockfiles' advisories are, each with the versions its
 // lockfile locks that it covers, for the page to blend them into npm's; one
 // whose alerts couldn't be had tells why, and the scan goes on.

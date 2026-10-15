@@ -866,9 +866,9 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     malware: cwe.includes('CWE-506'),
   })
   // A Dependabot alert, as a scan tells it (repository-risk.ts DependabotAlertRow).
-  const alert = (repo: string, number: number, manifest: string, name: string, ghsa: string, title: string, severity: string, range: string, versions: string[], dev = false) => ({
-    number, url: `https://github.com/${repo}/security/dependabot/${number}`, manifest, name, ghsa, aliases: [], title, severity, range, cwe: [], versions, malware: false,
-    ...dev ? { dev: true } : {},
+  const alert = (repo: string, number: number, manifest: string, name: string, ghsa: string, title: string, severity: string, range: string, versions: string[],
+    more: Record<string, unknown> = {}) => ({
+    number, url: `https://github.com/${repo}/security/dependabot/${number}`, manifest, name, ghsa, aliases: [], title, severity, range, cwe: [], versions, malware: false, ...more,
   })
   const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
     severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
@@ -890,11 +890,14 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
       advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '<0.2.4', ['0.0.8']),
       advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '>=1.0.0 <1.2.6', ['1.2.5']),
     ].filter(row => row.versions.length > 0) },
-    // minimist's alert is of the advisory npm tells, lodash's of one it doesn't,
-    // in a lockfile not read.
+    // event-stream's and minimist's alerts are of the advisories npm tells, both
+    // dismissed; lodash's of one it doesn't, in a lockfile not read.
     { type: 'dependabot', repo: first!.id, alerts: [
-      alert(first!.fullName, 12, 'package-lock.json', 'minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', '>= 1.0.0, < 1.2.6', ['1.2.5']),
-      alert(first!.fullName, 14, 'docs/bun.lock', 'lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', '< 4.17.21', [], true),
+      alert(first!.fullName, 11, 'package-lock.json', 'event-stream', 'GHSA-mh6f-8j2x-4483', 'Critical severity vulnerability that affects event-stream and flatmap-stream',
+        'critical', '= 3.3.6', ['3.3.6'], { dismissed: { reason: 'inaccurate', at: '2026-10-02T09:30:00Z', by: 'grace-hopper' } }),
+      alert(first!.fullName, 12, 'package-lock.json', 'minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', '>= 1.0.0, < 1.2.6', ['1.2.5'],
+        { dismissed: { reason: 'tolerable_risk', at: '2026-10-01T12:00:00Z', by: 'ada', comment: 'Only in a CLI we run ourselves.' } }),
+      alert(first!.fullName, 14, 'docs/bun.lock', 'lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', '< 4.17.21', [], { dev: true }),
     ] },
     risk('minimist', '0.0.8', []),
     { type: 'risk', name: 'minimist', version: '1.2.5', error: 'upstream-unavailable', detail: 'npm couldn\'t be asked for minimist\'s downloads: The operation was aborted due to timeout' },

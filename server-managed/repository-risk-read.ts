@@ -2,7 +2,7 @@
 // (repository-risk.ts): opened at its default branch's head, its lockfiles
 // of npm's ecosystem listed (findRepoLockfiles), those of its `paths` alone,
 // each read for its packages (@preventive/lockfile), and access to it checked
-// again before they are told (`recheck`); and its open Dependabot alerts of
+// again before they are told (`recheck`); and its Dependabot alerts, open or dismissed, of
 // npm's, where the source asks them (dependabot-alerts.ts), asked meanwhile
 // and never kept, a failure to have them its own. A listing is kept by the commit it was listed at, and
 // a lockfile's packages by its blob, neither of which changes: in the
@@ -37,7 +37,7 @@ export type RepositoryFailure = Extract<RepositoryRiskLine, { type: 'repo'; erro
 // A repository opened at its default branch's head (`commit`): its lockfiles,
 // as findRepoLockfiles lists them, each with its blob's id, and a file's
 // text; `recheck` checks access to it again, throwing where it is gone; and
-// `dependabot`, where asked, its open Dependabot alerts of npm's, as GitHub
+// `dependabot`, where asked, its Dependabot alerts of npm's, open or dismissed, as GitHub
 // has them now.
 export interface OpenedRepository {
   commit: string

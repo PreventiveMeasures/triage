@@ -11,7 +11,9 @@
 // Dependabot alerts are blended into the advisories: one of an advisory npm
 // tells too, by its GHSA and package, links where it is used to the alert,
 // adding where npm didn't tell it, and one npm tells none of is listed as its
-// own; whose alerts couldn't be had is said beside, the rest shown all the same.
+// own; one dismissed is paired alike, where it is used struck through, but
+// lists none of its own. Whose alerts couldn't be had is said beside, the
+// rest shown all the same.
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -216,15 +218,34 @@ const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).
 // An icon before a cell's text, muted (risk-icon).
 const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
 
+// Why a Dependabot alert was dismissed, as GitHub offers the reasons.
+const DISMISSED_REASONS = {
+  fix_started: 'A fix has already been started',
+  inaccurate: 'This alert is inaccurate or incorrect',
+  no_bandwidth: 'No bandwidth to fix this',
+  not_used: 'Vulnerable code is not actually used',
+  tolerable_risk: 'Risk is tolerable to this project',
+}
+
+// What a Dependabot alert's link says of it: its number, and where it was
+// dismissed, why, by whom and when, then what they said.
+export function alertSaid({ number, dismissed }) {
+  if (!dismissed) return `Dependabot alert #${number}`
+  const why = dismissed.auto ? 'auto-dismissed by a rule' : `dismissed${DISMISSED_REASONS[dismissed.reason] ? `: ${DISMISSED_REASONS[dismissed.reason]}` : ''}`
+  const who = [dismissed.by ? `by @${dismissed.by}` : '', dismissed.at?.slice(0, 10) ?? ''].filter(Boolean).join(', ')
+  return [`Dependabot alert #${number}, ${why}${who ? ` (${who})` : ''}`, ...dismissed.comment ? [`“${dismissed.comment}”`] : []].join('\n')
+}
+
 // A lockfile (`used`, a repository's name and its path), cut short: a link
 // to its Dependabot alert, after Dependabot's mark, where an advisory's
-// alert of it is (`alerts`, by where it is used), else to it on GitHub, after
-// GitHub's mark, where it is listed (`links`, _lockfileLinks).
+// alert of it is (`alerts`, by where it is used), struck through where it
+// was dismissed, else to it on GitHub, after GitHub's mark, where it is
+// listed (`links`, _lockfileLinks).
 function lockfileLink(used, links, alerts) {
   const alert = alerts?.get(used)
   if (alert && isHttpUrl(alert.url)) {
-    return html`<a class="risk-name risk-used" href=${alert.url} target="_blank" rel="noopener noreferrer">${icon(DEPENDABOT_ICON_SVG)}<span
-      class="risk-clip risk-used-in" data-tooltip=${`${used}\nDependabot alert #${alert.number}`}>${used}</span></a>`
+    return html`<a class=${alert.dismissed ? 'risk-name risk-used is-dismissed' : 'risk-name risk-used'} href=${alert.url} target="_blank" rel="noopener noreferrer">${icon(DEPENDABOT_ICON_SVG)}<span
+      class="risk-clip risk-used-in" data-tooltip=${`${used}\n${alertSaid(alert)}`}>${used}</span>${alert.dismissed ? html`<span class="sr-only"> (dismissed)</span>` : nothing}</a>`
   }
   const href = links.get(used)
   const path = html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used}>${used}</span>`
@@ -236,7 +257,8 @@ function lockfileLink(used, links, alerts) {
 function usedInCell(lockfiles, links, alerts) {
   const used = [...lockfiles]
   if (used.length === 1) return lockfileLink(used[0], links, alerts)
-  return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} lockfiles</summary>
+  const dismissed = used.filter(each => alerts?.get(each)?.dismissed).length
+  return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} lockfiles${dismissed > 0 ? `, ${formatCount.format(dismissed)} dismissed` : ''}</summary>
     <ul>${used.map(each => html`<li>${lockfileLink(each, links, alerts)}</li>`)}</ul></details>`
 }
 
@@ -540,36 +562,39 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Each repository's Dependabot alerts blended into the advisories npm's
   // told: an alert of an advisory told, by its GHSA (its id, or one of its
   // aliases) and package, is kept with it, by where it is used, its versions
-  // and malware with the rest; one of none is listed as its own, as GitHub
-  // tells it, its range its own. Where it is used, as its manifest's path,
-  // adds to where the advisory is, linked to the alert (lockfileLink).
+  // and malware with the rest, whether open or dismissed; an open one of none
+  // is listed as its own, as GitHub tells it, its range its own, and a
+  // dismissed one joins it, but lists none of its own. Where it is used, as
+  // its manifest's path, adds to where the advisory is, linked to the alert
+  // (lockfileLink).
   _alert() {
     const byGhsa = new Map()
     const keyOf = (ghsa, name) => `${ghsa.toUpperCase()}\0${name}`
     for (const row of this._advisories.values()) {
       for (const id of [row.id, row.ghsa, ...row.aliases ?? []]) if (isGhsa(id) && !byGhsa.has(keyOf(id, row.name))) byGhsa.set(keyOf(id, row.name), row)
     }
-    for (const repo of this._repos.values()) {
-      for (const alert of repo.dependabot?.alerts ?? []) {
-        const usedIn = `${repo.fullName}/${alert.manifest}`
-        let row = byGhsa.get(keyOf(alert.ghsa, alert.name))
-        if (!row) {
-          row = { id: alert.ghsa, ghsa: alert.ghsa, name: alert.name, title: alert.title, severity: alert.severity, url: `https://github.com/advisories/${alert.ghsa}`,
-            aliases: alert.aliases, cwe: alert.cwe, malware: false, dependabot: true, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() }
-          this._advisories.set(`${alert.ghsa}\0${alert.name}`, row)
-          byGhsa.set(keyOf(alert.ghsa, alert.name), row)
-        }
-        if (row.dependabot && alert.range) row.ranges.add(alert.range)
-        row.alerts ??= new Map()
-        row.alerts.set(usedIn, alert)
-        row.usedIn.add(usedIn)
-        if (alert.versions.length > 0) {
-          const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
-          for (const version of alert.versions) { told.add(version); row.versions.add(version) }
-        }
-        row.malware ||= alert.malware
-        this._markMalware(row)
+    // The open ones first, as only they list an advisory of their own.
+    const alerts = [...this._repos.values()].flatMap(repo => (repo.dependabot?.alerts ?? []).map(alert => ({ repo, alert })))
+    for (const { repo, alert } of [...alerts.filter(each => !each.alert.dismissed), ...alerts.filter(each => each.alert.dismissed)]) {
+      const usedIn = `${repo.fullName}/${alert.manifest}`
+      let row = byGhsa.get(keyOf(alert.ghsa, alert.name))
+      if (!row && alert.dismissed) continue
+      if (!row) {
+        row = { id: alert.ghsa, ghsa: alert.ghsa, name: alert.name, title: alert.title, severity: alert.severity, url: `https://github.com/advisories/${alert.ghsa}`,
+          aliases: alert.aliases, cwe: alert.cwe, malware: false, dependabot: true, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() }
+        this._advisories.set(`${alert.ghsa}\0${alert.name}`, row)
+        byGhsa.set(keyOf(alert.ghsa, alert.name), row)
       }
+      if (row.dependabot && alert.range) row.ranges.add(alert.range)
+      row.alerts ??= new Map()
+      row.alerts.set(usedIn, alert)
+      row.usedIn.add(usedIn)
+      if (alert.versions.length > 0) {
+        const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
+        for (const version of alert.versions) { told.add(version); row.versions.add(version) }
+      }
+      row.malware ||= alert.malware
+      this._markMalware(row)
     }
   }
 
@@ -954,19 +979,24 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </tr>`
   }
 
-  // What Dependabot told, small, beside the advisories: how many open alerts
-  // of how many repositories, and of how many they couldn't be had, each
-  // saying why in its tooltip; nothing where none told any.
+  // What Dependabot told, small, beside the advisories: how many alerts, open
+  // and dismissed, of how many repositories, and of how many they couldn't be
+  // had, each saying why in its tooltip; nothing where none told any.
   _dependabotStatus() {
     const repos = [...this._repos.values()].filter(repo => repo.dependabot)
     if (repos.length === 0) return nothing
     const had = repos.filter(repo => repo.dependabot.alerts)
     const failed = repos.filter(repo => repo.dependabot.error)
-    const alerts = had.reduce((sum, repo) => sum + repo.dependabot.alerts.length, 0)
     const count = (value, one, many = `${one}s`) => `${formatCount.format(value)} ${value === 1 ? one : many}`
+    // How many open, and dismissed where any are, of `alerts`.
+    const said = alerts => {
+      const dismissed = alerts.filter(alert => alert.dismissed).length, open = alerts.length - dismissed
+      return dismissed === 0 ? count(open, 'open alert')
+        : `${formatCount.format(open)} open and ${formatCount.format(dismissed)} dismissed ${alerts.length === 1 ? 'alert' : 'alerts'}`
+    }
     const why = failed.map(({ fullName, dependabot: { error, detail } }) => `${fullName}: ${errorText(error)}${detail ? ` (${detail})` : ''}`).join('\n')
     return html`<p class="risk-dependabot" role="status">${icon(DEPENDABOT_ICON_SVG)}<span>Dependabot</span>
-      ${had.length > 0 ? html`<span data-tooltip=${had.map(repo => `${repo.fullName}: ${count(repo.dependabot.alerts.length, 'open alert')}`).join('\n')}>${count(alerts, 'open alert')} of ${count(had.length, 'repository', 'repositories')}</span>` : nothing}
+      ${had.length > 0 ? html`<span data-tooltip=${had.map(repo => `${repo.fullName}: ${said(repo.dependabot.alerts)}`).join('\n')}>${said(had.flatMap(repo => repo.dependabot.alerts))} of ${count(had.length, 'repository', 'repositories')}</span>` : nothing}
       ${failed.length > 0 ? html`<span class="risk-dependabot-failed" data-tooltip=${why}>${had.length > 0 ? 'unavailable for ' : 'alerts unavailable for '}${failed.length === 1 ? failed[0].fullName : count(failed.length, 'repository', 'repositories')}${failed.length === 1 ? html`: ${errorText(failed[0].dependabot.error)}` : nothing}</span>` : nothing}
     </p>`
   }

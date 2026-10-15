@@ -24,7 +24,7 @@ function github(answers) {
   return { asked, fetchImpl }
 }
 
-test('a repository\'s open Dependabot alerts of npm\'s are asked a page of 100 at a time, each by the cursor the one before names, with the user\'s token', async () => {
+test('a repository\'s Dependabot alerts of npm\'s, open or dismissed, are asked a page of 100 at a time, each by the cursor the one before names, with the user\'s token', async () => {
   const next = '<https://api.github.com/repositories/1/dependabot/alerts?state=open&ecosystem=npm&per_page=100&after=Y3Vyc29yOjI%3D>; rel="next"'
   const { asked, fetchImpl } = github([
     { body: [raw(1, 'lodash', 'GHSA-35jh-r3h4-6jhm'), raw(2, 'minimist', 'GHSA-xvch-5gv4-984h', { dependency: { package: { ecosystem: 'npm', name: 'minimist' },
@@ -34,8 +34,8 @@ test('a repository\'s open Dependabot alerts of npm\'s are asked a page of 100 a
   ])
   const alerts = await dependabotAlerts('org/one', 'user-token', fetchImpl)
   assert.deepEqual(asked.map(({ url }) => url), [
-    'https://api.github.com/repos/org/one/dependabot/alerts?state=open&ecosystem=npm&per_page=100',
-    'https://api.github.com/repos/org/one/dependabot/alerts?state=open&ecosystem=npm&per_page=100&after=Y3Vyc29yOjI%3D',
+    'https://api.github.com/repos/org/one/dependabot/alerts?state=open%2Cdismissed%2Cauto_dismissed&ecosystem=npm&per_page=100',
+    'https://api.github.com/repos/org/one/dependabot/alerts?state=open%2Cdismissed%2Cauto_dismissed&ecosystem=npm&per_page=100&after=Y3Vyc29yOjI%3D',
   ], 'the next page\'s cursor alone taken of its link, the repository asked by its name')
   assert.ok(asked.every(({ authorization, redirect }) => authorization === 'Bearer user-token' && redirect === 'error'))
   assert.deepEqual(alerts[0], { number: 1, url: 'https://github.com/org/one/security/dependabot/1', manifest: 'package-lock.json', name: 'lodash',
@@ -44,17 +44,32 @@ test('a repository\'s open Dependabot alerts of npm\'s are asked a page of 100 a
   assert.deepEqual(alerts.map(alert => alert.number), [1, 2, 3])
 })
 
-test('an alert that isn\'t an open one of npm\'s package and a GHSA, at a path git would take, is left out', async () => {
+test('an alert that isn\'t an open or dismissed one of npm\'s package and a GHSA, at a path git would take, is left out', async () => {
   const of = (more, advisory = {}) => raw(9, 'lodash', 'GHSA-35jh-r3h4-6jhm', { ...more, ...Object.keys(advisory).length > 0
     ? { security_advisory: { ...raw(9, 'lodash', 'GHSA-35jh-r3h4-6jhm').security_advisory, ...advisory } } : {} })
   const dependency = (manifest, name = 'lodash', ecosystem = 'npm') => ({ dependency: { package: { ecosystem, name }, manifest_path: manifest } })
   const { fetchImpl } = github([{ body: [
-    of({ state: 'dismissed' }), of({ number: 0 }), of(dependency('package-lock.json', 'lodash', 'pip')), of(dependency('package-lock.json', '../lodash')),
+    of({ state: 'fixed' }), of({ state: undefined }), of({ number: 0 }), of(dependency('package-lock.json', 'lodash', 'pip')), of(dependency('package-lock.json', '../lodash')),
     of(dependency('../package-lock.json')), of(dependency('/package-lock.json')), of(dependency('web//package-lock.json')), of(dependency('a\u0007/package-lock.json')),
     of({}, { ghsa_id: 'GHSA-../..-xxxx' }), of({}, { ghsa_id: 'CVE-2021-23337' }), null, 'alert',
     of({ number: 7 }), of({ number: 7 }),
   ] }])
   assert.deepEqual((await dependabotAlerts('org/one', 'token', fetchImpl)).map(alert => alert.number), [7], 'and one GitHub answers twice, once')
+})
+
+test('a dismissed alert tells who dismissed it, when, why and what they said, as far as GitHub tells it soundly; one a rule dismissed, so', async () => {
+  const { fetchImpl } = github([{ body: [
+    raw(1, 'lodash', 'GHSA-35jh-r3h4-6jhm', { state: 'dismissed', dismissed_at: '2026-10-01T12:00:00Z', dismissed_by: { login: 'ada' },
+      dismissed_reason: 'tolerable_risk', dismissed_comment: `  Only in a CLI we run ourselves. ${'x'.repeat(400)}` }),
+    raw(2, 'lodash', 'GHSA-35jh-r3h4-6jhm', { state: 'dismissed', dismissed_at: 'yesterday', dismissed_by: { login: '<script>' }, dismissed_reason: 'because', dismissed_comment: '' }),
+    raw(3, 'lodash', 'GHSA-35jh-r3h4-6jhm', { state: 'auto_dismissed', auto_dismissed_at: '2026-09-30T08:00:00Z', dismissed_reason: null }),
+    raw(4, 'lodash', 'GHSA-35jh-r3h4-6jhm', { state: 'open', dismissed_at: null }),
+  ] }])
+  const alerts = await dependabotAlerts('org/one', 'token', fetchImpl)
+  assert.deepEqual(alerts[0].dismissed, { reason: 'tolerable_risk', at: '2026-10-01T12:00:00Z', by: 'ada', comment: `Only in a CLI we run ourselves. ${'x'.repeat(248)}` })
+  assert.deepEqual(alerts[1].dismissed, {}, 'none of what isn\'t sound')
+  assert.deepEqual(alerts[2].dismissed, { auto: true, at: '2026-09-30T08:00:00Z' })
+  assert.equal('dismissed' in alerts[3], false)
 })
 
 test('alerts that can\'t be had are thrown as why, never GitHub\'s text: off, not to be seen, a rate limit, GitHub not reached', async () => {

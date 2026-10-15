@@ -1059,9 +1059,12 @@ package taken down by npm is risk's `malware`, critical, whatever version is
 locked, as is an advisory of malware naming it, npm's or, where anyone can
 read its package, OSV's (nx's malicious versions have OSV's alone), and the
 page says so in its tooltip; one nothing tells of is told as not on npm.
-Each repository's open Dependabot alerts of npm's are asked of GitHub too
+Each repository's Dependabot alerts of npm's, open or dismissed (a fixed one's
+dependency is no longer what it was), are asked of GitHub too
 (`dependabot-alerts.ts`, `GET /repos/:repo/dependabot/alerts`, a page of 100
-at a time by the cursor each page's Link header names, 2,000 at most), while
+at a time by the cursor each page's Link header names, 2,000 at most), a
+dismissed one with who dismissed it, when, why and what they said, or that
+one of the repository's rules did, while
 its lockfiles are read, never kept, those of a team's directories alone as its
 lockfiles are, and told in a `dependabot` line once its lockfiles' advisories
 are: each alert with the versions of its package that the lockfile it is of
@@ -1078,11 +1081,15 @@ advisory npm tells, by its GHSA (its id or one of its aliases) and package, is
 kept with it, where it is used linked to the alert rather than the lockfile,
 and where npm didn't tell it, as a lockfile not read, added among where it is
 used; an advisory used in lockfiles A and B whose alerts are in B and C links
-A to its lockfile and B and C to their alerts. An alert npm tells none of is
-listed as its own, its range GitHub's, of the kind its versions tell, or,
-where no lockfile read locks one, its scope (development's or production's).
-Above the table, a line says how many open alerts of how many repositories
-were had, and of which they couldn't be, each with why in its tooltip.
+A to its lockfile and B and C to their alerts. A dismissed alert is paired
+alike, where it is used struck through, its tooltip saying how it was
+dismissed, and a lockfiles' count how many are. An open alert npm tells none
+of is listed as its own, its range GitHub's, of the kind its versions tell,
+or, where no lockfile read locks one, its scope (development's or
+production's); a dismissed one joins it, but lists none of its own. Above the
+table, a line says how many alerts, open and dismissed, of how many
+repositories were had, and of which they couldn't be, each with why in its
+tooltip.
 Assessments are `spare` ones (`npm-risk.ts`): two at most across
 the server, leaving the rest to readers, and without asking npm of each
 dependency's package, nor of the version's advisories, which a lockfile's are
