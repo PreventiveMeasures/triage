@@ -407,6 +407,8 @@ test('a declaration file is read as node runs it, its types stripped', () => {
     + 'last of its branch, and a case')
   assert.deepEqual(found('a.js', 'new Worker(code, { eval: true })\nnew Q(A,{eval:!0}).on("error",f)\nnew Worker(file, { eval: false })\n'), { eval: [1, 2] },
     'a worker told to run its string as code, minified or not')
+  assert.deepEqual(found('a.js', 'const { eval: run } = globalThis\n({ a, eval: e } = window)\nconst {eval:r}=self\nconst { eval: v } = vm\n'), { eval: [1, 2, 3] },
+    'eval destructured from the global object, not from another')
 })
 
 test('what is no script runs nothing: prose, data', () => {

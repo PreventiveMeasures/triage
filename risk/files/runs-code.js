@@ -124,8 +124,10 @@ const TOKEN_NAME = String.raw`(?=NPM|GITHUB)(?<![\p{ID_Continue}$])(?<!\b(?:cons
 // eval: T`); not where anything else comes before it, as a ternary's choice
 // does, whole or last of its branch (`c ? eval : f`, `c ? x && eval : f`),
 // nor a worker told to run its string as code (`new Worker(code, { eval:
-// true })`, minified `{eval:!0}`).
+// true })`, minified `{eval:!0}`), nor eval destructured from the global
+// object (`const { eval: run } = globalThis`, `({ a, eval: run } = window)`).
 const KEYED = String.raw`(?<=[{,;]${GAP}eval)\s*:(?!${GAP}(?:true|!0)(?![\p{ID_Continue}$]))`
+  + String.raw`(?![^{};]{0,200}\}${GAP}=${GAP}(?:${GLOBAL})(?![\p{ID_Continue}$]))`
 // A script's strings, regular expressions and comments, as script.js
 // tells them, each taking its own text, and its code in none of them: eval,
 // not a property TypeScript types as optional (`eval?: T`, JavaScript's `?:`
