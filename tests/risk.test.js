@@ -170,7 +170,14 @@ test('a package naming more `exports` patterns than any does has every file read
 test('a `main` read with `\\` a separator too, as on Windows; an `exports` pattern\'s every `*` the same text, as node fills them', () => {
   assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ main: 'lib\\payload.txt' }), 'lib/payload.txt': 'x' }))], ['lib/payload.txt'])
   const files = { 'package.json': JSON.stringify({ exports: { './*': './lib/*/*.txt' } }), 'lib/x/x.txt': 'x', 'lib/x/y.txt': 'x', 'lib/ab/ab.txt': 'x' }
-  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/ab/ab.txt', 'lib/x/x.txt'], 'not `lib/x/y.txt`, which no request reaches')
+  assert.deepEqual([...npmLoadedScripts(holding({ ...files, 'lib/a/a/.txt': 'x' }))].toSorted(), ['lib/a/a/.txt', 'lib/ab/ab.txt', 'lib/x/x.txt'],
+    'not `lib/x/y.txt`, which no request reaches; `lib/a/a/.txt` by `pkg/a/`, the filesystem folding the slashes it puts beside the pattern\'s')
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': JSON.stringify({ exports: { './*': './lib/*.txt' } }), 'lib/.txt': 'x' }))], ['lib/.txt'], 'by `pkg//`')
+})
+
+test('a `main` read past `imports` nested deeper than a call stack goes, as JSON and node read it', () => {
+  const manifest = `{"main":"payload.txt","imports":{"#deep":${'['.repeat(20_000)}${']'.repeat(20_000)}}}`
+  assert.deepEqual([...npmLoadedScripts(holding({ 'package.json': manifest, 'payload.txt': 'x' }))], ['payload.txt'])
 })
 
 test('a file new to a version that its code loads, though its name says otherwise, told as any script it adds: a .gitignore npm installs as the .npmignore it requires', async t => {

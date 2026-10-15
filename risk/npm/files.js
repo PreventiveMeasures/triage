@@ -130,11 +130,22 @@ function installedOf(files) {
   return path => path === null ? [] : index.get(folded(path)) ?? []
 }
 
+// Every string a JSON value holds, however deep it nests them, read
+// without recursing, which nesting deeper than a call stack would end.
+function leaves(value) {
+  const found = [], pending = [value]
+  while (pending.length > 0) {
+    const item = pending.pop()
+    if (typeof item === 'string') found.push(item)
+    else if (item && typeof item === 'object') for (const each of Object.values(item)) pending.push(each)
+  }
+  return found
+}
+
 // A package.json's `name`, `main`, and the paths its `exports` and `imports`
-// name (`./x`), read past a byte order mark as node reads it; none where it
-// is no JSON object.
+// name (`./x`, leaves), read past a byte order mark as node reads it; none
+// where it is no JSON object.
 function entriesOf(text) {
-  const leaves = value => typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(leaves) : []
   if (typeof text !== 'string') return { name: null, main: null, targets: [] }
   try {
     const { name, main, exports, imports } = JSON.parse(text.replace(/^\uFEFF/u, ''))
@@ -144,24 +155,41 @@ function entriesOf(text) {
   }
 }
 
+// A path as a filesystem reads it, from the package's top: each run of `/`
+// one, none leading.
+const collapsed = path => path.replaceAll(/\/+/gu, '/').replace(/^\//u, '')
+
 // The paths an `exports` or `imports` target names, from the directory of the
 // package.json naming it, read as a URL (urlJoined): its own, or each file a
-// pattern matches, as a filesystem tells them (folded), each of its `*` the
-// same text, as node puts what a consumer asks for (`pkg/x`) in every one,
-// where the pattern names what follows the last (`./lib/*.txt`); where it
-// names nothing (`./*`), only one with no extension that isn't prose by its
-// name (not `LICENSE`), the rest a consumer reaches only asking for them by
-// their names.
-function exported(files, root, dir, target) {
+// pattern matches, as a filesystem tells them (folded, collapsed), each of
+// its `*` the same text, as node puts what a consumer asks for (`pkg/x`) in
+// every one, where the pattern names what follows the last (`./lib/*.txt`);
+// where it names nothing (`./*`), only one with no extension that isn't prose
+// by its name (not `LICENSE`), the rest a consumer reaches only asking for
+// them by their names. What a `*` stands for may be text with a `/` before
+// it, after it, both or neither, or a `/` alone, the filesystem folding it
+// into a `/` beside it (`pkg//` reaching `lib/.txt` through `./lib/*.txt`):
+// each such shape's length told by one `x`'s, a file of the pattern's is the
+// pattern with its text in each; a `/` before or after it counted apart only
+// where it folds into a `/` of the pattern's, or the top, beside one `*` and
+// not another, else its text holds it, or it folds alike at every one.
+function exported(names, root, dir, target) {
   const path = urlJoined(root, dir, target)
   if (path === null || !path.includes('*')) return [path]
-  const parts = folded(path).split('*')
-  const fixed = parts.join('').length, stars = parts.length - 1
-  return [...files.keys()].filter(name => {
-    const file = folded(name), length = (file.length - fixed) / stars
-    if (!Number.isInteger(length) || length <= 0 || (parts.at(-1) === '' && (EXTENSION.test(name) || NPM_PROSE.test(name)))) return false
-    return parts.join(file.slice(parts[0].length, parts[0].length + length)) === file
-  })
+  const parts = folded(path).split('*'), stars = parts.length - 1
+  const head = parts[0].replace(/\/+$/u, ''), slashes = collapsed(parts.join('/')), tail = parts.at(-1).replace(/^\/+/u, '')
+  const both = sides => sides.includes(true) && sides.includes(false) ? ['', '/'] : ['']
+  const afters = both(parts.slice(1).map(part => part.startsWith('/'))), befores = both(parts.slice(0, -1).map((part, index) => part.endsWith('/') || (index === 0 && part === '')))
+  const shapes = befores.flatMap(before => afters.map(after => ({ after, at: collapsed(`${parts[0]}${before}x`).length - 1, before, length: collapsed(parts.join(`${before}x${after}`)).length })))
+  return names.filter(([name, file]) => {
+    if (!file.startsWith(head) || !file.endsWith(tail) || (parts.at(-1) === '' && (EXTENSION.test(name) || NPM_PROSE.test(name)))) return false
+    return file === slashes || shapes.some(({ after, at, before, length }) => {
+      const core = (file.length - length) / stars + 1
+      if (!Number.isInteger(core) || core <= 0) return false
+      const built = parts.join(`${before}${file.slice(at, at + core)}${after}`)
+      return built === file || ((built.includes('//') || built.startsWith('/')) && collapsed(built) === file)
+    })
+  }).map(([name]) => name)
 }
 
 // How many `exports` and `imports` patterns a package's package.json files
@@ -228,7 +256,12 @@ export function npmLoadedScripts(version) {
   const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
     .flatMap(([path, text]) => entriesOf(text).targets.map(target => [path.slice(0, -'package.json'.length - 1), target]))
   if (targets.filter(([, target]) => target.includes('*')).length > MAX_PATTERNS) for (const path of files.keys()) add(path, 'require')
-  else for (const [dir, target] of targets) for (const file of exported(files, root, dir, target)) add(file, 'require')
+  else {
+    // Each file's path and its path as a filesystem tells it (folded), for
+    // the patterns to match.
+    const names = targets.some(([, target]) => target.includes('*')) ? [...files.keys()].map(name => [name, folded(name)]) : []
+    for (const [dir, target] of targets) for (const file of exported(names, root, dir, target)) add(file, 'require')
+  }
   for (const [path, text] of files) if (npmIsScript(path, text)) queue.push(path)
   const own = root.length > 0 ? `${top.name}/` : null, seen = new Set(), strings = quoted(root.length > 0 ? top.name : null)
   for (let index = 0; index < queue.length; index++) {
