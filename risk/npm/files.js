@@ -237,6 +237,13 @@ const mappedTo = (entries, value) => entries.flatMap(({ dir, key, target }) => {
   return [{ dir, target: star === -1 ? target : target.replaceAll('*', value.slice(star, value.length - (key.length - star - 1))) }]
 })
 
+// A package's own subpath (`./x`, `.`) as its `exports` (`entries`) map it,
+// as node resolves a specifier by its own name (`<name>/x`), read as URLs;
+// with no `exports`, the path itself, as node finds the package where it is
+// installed (`root`).
+const selfResolved = (root, entries, spec) => entries.length === 0 ? [urlJoined(root, '', spec)]
+  : mappedTo(entries.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => urlJoined(root, '', target))
+
 // The `#` specifiers each package.json of a version's files maps
 // (`imports`), each from its directory.
 const specifiersOf = files => [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
@@ -334,9 +341,7 @@ export function npmLoadedScripts(version) {
   const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
     && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
   const seen = new Set(), strings = quoted([...root.length > 0 ? foldsInto(top.name[0]) : [], ...specifiers.length > 0 ? ['#'] : []])
-  // The package's own subpath (`./x`, `.`) as its `exports` map it, as node
-  // resolves a specifier by its own name (`<name>/x`), read as URLs.
-  const subpathsOf = spec => mappedTo(top.exports.map(entry => ({ ...entry, dir: '' })), spec).map(({ target }) => urlJoined(root, '', target))
+  const subpathsOf = spec => selfResolved(root, top.exports, spec)
   // A `#` specifier as the package's `imports` map it (mappedTo), to a path
   // of its own, read as a URL (urlJoined), or to its own name, as its
   // `exports` map that (subpathsOf), loaded as code takes it (`by`), once

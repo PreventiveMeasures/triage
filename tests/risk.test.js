@@ -170,6 +170,8 @@ test('the package\'s own name as its `exports` map it, from code or an `imports`
   const files = { 'package.json': JSON.stringify({ name: 'p', exports: { '.': './index.js', './*': './lib/*' }, imports: { '#run': 'p/run.txt' } }),
     'index.js': "require('#run')\nrequire('p/self.txt')\n", 'lib/run.txt': 'x', 'lib/self.txt': 'x', 'lib/unnamed.txt': 'x' }
   assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), ['lib/run.txt', 'lib/self.txt'], 'not one no code names')
+  const legacy = { 'package.json': JSON.stringify({ name: 'q', imports: { '#run': 'q/run.txt' } }), 'index.js': "require('#run')\n", 'run.txt': 'x', 'unnamed.txt': 'x' }
+  assert.deepEqual([...npmLoadedScripts(holding(legacy))], ['run.txt'], 'with no `exports`, by its path')
 })
 
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {
