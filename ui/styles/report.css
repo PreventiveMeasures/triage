@@ -815,24 +815,34 @@
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
 }
-/* A one-pixel divider with a wider grab area over the pane edges. */
-bundle-code-splitter {
+/* A one-pixel divider with a wider grab area over the pane edges:
+   between the file tree and the code, and between the code and the
+   terminal pane under it. */
+bundle-code-splitter,
+bundle-code-terminal-splitter {
   flex: none;
   position: relative; z-index: 1;
-  width: 7px; margin-inline: -3px;
   cursor: default;
   touch-action: none;
   user-select: none;
 
   &::before {
     content: '';
-    position: absolute; inset: 0 3px;
+    position: absolute;
     background: var(--border);
   }
   &:hover::before, &:focus-visible::before, &.dragging::before { background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 }
-.bundle-code-view:has(> bundle-code-splitter.dragging) {
+bundle-code-splitter {
+  width: 7px; margin-inline: -3px;
+  &::before { inset: 0 3px; }
+}
+bundle-code-terminal-splitter {
+  height: 7px; margin-block: -3px;
+  &::before { inset: 3px 0; }
+}
+.bundle-code-view:has(> bundle-code-splitter.dragging, bundle-code-terminal-splitter.dragging) {
   &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
@@ -1279,12 +1289,12 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 /* Terminal pane — under the code panel, across the right column: a
    bar naming it, with its close, over the Terminal tab's terminal
    (render-bundle.js renderBundleCodeTerminal). The code panel above
-   gives up the height. */
+   gives up the height, which the handle between them sets (bundle-
+   code-splitter.js), 40% of the column until it does. */
 .bundle-code-terminal {
-  flex: 0 0 40%;
-  min-height: 9rem;
+  flex: 0 0 var(--bundle-code-terminal-height, 40%);
+  min-height: 0;
   display: flex; flex-direction: column;
-  border-top: 1px solid var(--border);
 }
 .bundle-code-terminal-bar {
   flex: none;
