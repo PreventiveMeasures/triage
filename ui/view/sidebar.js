@@ -17,7 +17,7 @@ import { openNpmRoute } from './npm-package.js'
 import { navigateToRepositoryCode, openRepositoryCodeRoute } from './repository-code.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
+import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, managedTeamCollapses } from './managed-sidebar.js'
 import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
@@ -269,7 +269,7 @@ function teamsSectionTemplate() {
     ${groupHeaderTemplate('Teams')}
     ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => {
       const app = t.app
-      const compact = app?.appMode === true
+      const compact = managedTeamCollapses(app, (t.reports ?? []).filter(r => r.analyzer !== LINKS_KIND).length)
       const showReports = teamSections.shown(t.id, 'reports', compact, searchActive)
       const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
       const reportCount = reports.filter(r => r.analyzer !== LINKS_KIND).length
@@ -280,7 +280,7 @@ function teamsSectionTemplate() {
           ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
         </div>
         ${compact ? html`<div class="workspace-meta">
-          <span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>
+          ${app.appMode ? html`<span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>` : nothing}
           <span class="workspace-sections" role="group" aria-label="Team files">
             <button type="button" data-team-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${reportCount.toLocaleString()} report${reportCount === 1 ? '' : 's'}</button>
             ${bundles.length > 0 ? html`<button type="button" data-team-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${bundles.length.toLocaleString()} bundle${bundles.length === 1 ? '' : 's'}</button>` : nothing}
