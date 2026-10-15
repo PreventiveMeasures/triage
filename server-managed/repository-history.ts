@@ -119,9 +119,10 @@ const HEADS_QUERY = `query($owner: String!, $name: String!, $after: String, $tag
 }`
 
 // As many commits as gluing kept pages on goes to, in as many rounds of
-// looking them up.
+// looking them up, each looking up as many commits as tops.
 export const HISTORY_GLUED = 2000
 const MAX_GLUE_ROUNDS = 20
+const GLUE_LOOKUP = 50
 
 // The pages of a repository's history kept, each by the commit it starts at
 // (its top): the first page of the history from that commit, which never
@@ -184,9 +185,10 @@ async function readPages(fullName: string, token: string | null, tops: string[],
 
 // The history from each of `starts`, a page of each, kept (`pages`), or read
 // and then kept by its top; glued on to it, the pages kept that start at a
-// commit listed, or at a parent of one not listed, and those that start where
-// those go on, while they number fewer than HISTORY_GLUED. Each commit once,
-// and whether any goes on past those listed (`more`).
+// parent of a commit listed not listed, or at a commit listed, the oldest
+// first (where each goes on furthest), GLUE_LOOKUP looked up at a time, and
+// those that start where those go on, till HISTORY_GLUED are listed. Each
+// commit once, and whether any goes on past those listed (`more`).
 export async function historyFrom(fullName: string, token: string | null, starts: string[], pages: HistoryPages, fetchImpl: typeof fetch = globalThis.fetch) {
   const kept = await pages.read(starts)
   const unread = starts.filter(top => !kept.has(top))
@@ -198,11 +200,15 @@ export async function historyFrom(fullName: string, token: string | null, starts
   for (const top of starts) add(kept.get(top) ?? read.get(top) ?? [])
   const looked = new Set(starts)
   for (let round = 0; round < MAX_GLUE_ROUNDS && listed.size < HISTORY_GLUED; round++) {
-    const tops = [...new Set([...listed.values()].flatMap(commit => [commit.sha, ...commit.parents]))].filter(sha => !looked.has(sha))
+    const parents = [...listed.values()].flatMap(commit => commit.parents.filter(parent => !listed.has(parent)))
+    const tops = [...new Set([...parents, ...[...listed.keys()].toReversed()])].filter(sha => !looked.has(sha)).slice(0, GLUE_LOOKUP)
+    if (tops.length === 0) break
     for (const sha of tops) looked.add(sha)
-    const glued = tops.length > 0 ? await pages.read(tops) : new Map<string, HistoryCommit[]>()
-    if (glued.size === 0) break
-    for (const commits of glued.values()) add(commits)
+    const glued = await pages.read(tops)
+    for (const commit of [...glued.values()].flat()) {
+      if (listed.size >= HISTORY_GLUED) break
+      if (!listed.has(commit.sha)) listed.set(commit.sha, commit)
+    }
   }
   const commits = [...listed.values()]
   return { commits, more: commits.some(commit => commit.parents.some(parent => !listed.has(parent))) }

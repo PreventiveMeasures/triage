@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { HISTORY_GLUED, historyFrom } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -251,4 +252,21 @@ test('a whole repository\'s history is kept a page from a commit at a time, by t
   // One 50 down: its page read, listing commit 100 halfway, whose page kept glues on, and the one after it.
   assert.deepEqual(listed((await request({ repoId: '1', ref: chain(50) })).body), [...range(50, 150), ...range(150, 300)])
   assert.deepEqual(read, [100, 200, 0, 50])
+})
+
+test('gluing stops at as many commits as it goes to, looking up fifty tops at a time, however many pages are kept', async () => {
+  // A linear history of 3000 commits, a page kept from every one of them.
+  const commit = at => ({ sha: chain(at), parents: at < 2999 ? [chain(at + 1)] : [], subject: '', authorName: null, authorLogin: null, committedAt: null })
+  const lookups = []
+  const pages = {
+    read: tops => {
+      lookups.push(tops.length)
+      return Promise.resolve(new Map(tops.map(top => [top, Array.from({ length: Math.min(100, 3000 - Number.parseInt(top, 16)) }, (_, index) => commit(Number.parseInt(top, 16) + index))])))
+    },
+    write: () => Promise.resolve(),
+  }
+  const { commits, more } = await historyFrom('org/repo', 'token', [chain(0)], pages, () => assert.fail('nothing read of GitHub'))
+  assert.equal(commits.length, HISTORY_GLUED)
+  assert.equal(more, true)
+  assert.ok(lookups.slice(1).every(count => count <= 50), JSON.stringify(lookups))
 })
