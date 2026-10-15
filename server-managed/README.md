@@ -1607,14 +1607,19 @@ The **Issues** and **Pull requests** tabs show the repository's issues and
 pull requests as a grid of compact tiles rather than a list, filling the
 width, the most recently updated first. **Open** and **Closed** pick which,
 each with how many there are; a pull request's closed include those merged.
-A tile is two lines, a pull request's three, more only where its title or
-labels wrap: its title, in up to two lines, beside its state, an icon and a
-stripe in GitHub's colors (open green, merged and completed purple, closed
-red, draft and not planned muted); under it, its number, author and age, a
-pull request's review (approved, changes requested or review required) while
-open, its first three labels, each by a dot of its color, a pull request's
-checks (passed, failed or running) and how many comments it has; and a pull
-request's branch, the one it merges into, and its lines added and removed. A tile opens on GitHub. A
+A tile is its title, in up to two lines, then a line each, none wrapping:
+its number, author and age; its labels, if it has any; and a pull request's
+branch, the one it merges into, and its lines added and removed. Beside
+them is a rail: its state, an icon and a stripe in GitHub's colors (open
+green, merged and completed purple, closed red, draft and not planned
+muted); under it, a pull request's review (approved, changes requested or
+review required) while open and its checks (passed, failed or running),
+each an icon, room held for both; then how many comments it has. Its
+labels, each by a dot of its color, show whole while they fit, then the
+last is shortened first, to its dot alone, then the one before it; each
+tells its name on hover where it is shortened. As many show as the
+narrowest tile has room for as dots, eight, else seven and how many more;
+up to twenty are read, which the filter searches. A tile opens on GitHub. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
 **More** button nears the end of the scroll, as History's Older commits are,

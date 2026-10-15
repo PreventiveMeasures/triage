@@ -17,7 +17,7 @@ import { compactTime } from './repository-history.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
-const MAX_LABELS = 3
+const MAX_LABELS = 8
 
 const lists = new Map()
 const shownElements = new Set()
@@ -149,12 +149,18 @@ const compactThousands = new Intl.NumberFormat('en-US', { notation: 'compact', m
 // two digits at most and their unit ("1.2K", "12K").
 export const commentCount = count => count < 1000 ? String(count) : compactThousands.format(count)
 
-// A tile's labels, each by a dot of its color: the first few, then how many
-// more.
+// A tile's labels, each by a dot of its color, whole while they fit, then
+// the last shortened first, to its dot alone, then the one before it: each
+// after the first in a run of those after it, which gives way before it
+// does (report.css). As many as the narrowest tile has room for as dots,
+// eight, else seven and how many more.
 function labelChips(item) {
-  const more = item.labels.length - MAX_LABELS + (item.moreLabels ?? 0)
-  return html`${item.labels.slice(0, MAX_LABELS).map(label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})} data-tooltip-truncated data-tooltip=${label.name}>${label.name}</span>`)}${more > 0
-    ? html`<span class="issue-label is-more">+${more}</span>` : nothing}`
+  const total = item.labels.length + (item.moreLabels ?? 0)
+  const shown = item.labels.slice(0, total > MAX_LABELS ? MAX_LABELS - 1 : MAX_LABELS)
+  const chip = label => html`<span class="issue-label" style=${styleMap(label.color ? { '--label': `#${label.color}` } : {})} data-tooltip-truncated data-tooltip=${label.name}>${label.name}</span>`
+  const run = labels => html`${chip(labels[0])}${labels.length > 1
+    ? html`<span class="issue-labels-rest" style=${styleMap({ '--labels': String(labels.length - 1) })}>${run(labels.slice(1))}</span>` : nothing}`
+  return html`${shown.length > 0 ? run(shown) : nothing}${total > shown.length ? html`<span class="issue-label is-more">+${total - shown.length}</span>` : nothing}`
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an

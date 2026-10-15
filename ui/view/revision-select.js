@@ -182,6 +182,9 @@ export class RevisionSelect extends LitElement {
 
   updated(changed) {
     if (changed.has('installTooltips')) this.installTooltips?.(this.renderRoot)
+    // A commit has no suggestions: switching to it closes those of the kind
+    // before, as focusing the name again may have opened them.
+    if (changed.has('kind') && this.kind === 'commit' && this._open) this.close()
     this.position()
   }
 
