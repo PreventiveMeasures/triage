@@ -124,4 +124,9 @@ test('an agent\'s pull request older than another\'s from its branch, the agent\
   const byId = new Map(sessions.map(item => [item.id, item]))
   assert.deepEqual([byId.get('session_B').agents, byId.get('session_B').pulls.map(item => item.number)], [['claude'], [25]])
   assert.deepEqual([byId.get('pull-21').agents, byId.get('pull-21').branches], [['neo', 'claude'], ['claude/x']])
+  // Read first, as one updated since the newer was opened is: newest by when
+  // it was opened all the same, the marks on its branch's tip the newer's.
+  const updated = new Map(agentSessions({ pulls: [pull(21, 'neo/y', neo), pull(25, 'neo/y', neo)], branches: [branch('neo/y', { ...neo, claude: true }, 300)] })
+    .map(item => [item.id, item]))
+  assert.deepEqual([updated.get('pull-25').agents, updated.get('pull-21').agents], [['neo', 'claude'], ['neo']])
 })

@@ -1759,7 +1759,8 @@ pull request merged. It is told by the links and marks the agents leave:
   its), its login authoring the pull request, commit or branch's tip, or its
   branch's prefix. It names no session, so a pull request of its is a session
   alone, joining none by what it links, and its branch only if it is the
-  newest of the pull requests from it, any agent's or none. Claude's or Codex's marks on its work
+  newest of the pull requests read from it (by its number, as GitHub numbers
+  them as they are opened), any agent's or none. Claude's or Codex's marks on its work
   show their marks after its own, as its tools.
 
 Everything naming one session is that session, whatever branch each is on; a

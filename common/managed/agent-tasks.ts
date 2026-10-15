@@ -145,8 +145,13 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     const { agent } = agentBranch(branch.name)
     if (agent) mark(key, [agent])
   }
-  // The branches the pull requests seen are from, the newest first.
-  const heads = new Set<string>()
+  // The newest pull request read from each branch, by its number, as GitHub
+  // numbers them as they are opened: they are read as they were updated.
+  const newest = new Map<string, number>()
+  for (const pull of pulls) {
+    const head = headName(pull)
+    if (head !== null && pull.number > (newest.get(head) ?? 0)) newest.set(head, pull.number)
+  }
   for (const pull of pulls) {
     const key = `pull:${pull.number}`
     linked(key, pull.signals)
@@ -154,10 +159,8 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     if (agent) mark(key, [agent])
     // Its branch, an agent's or its own, read or not; a fork's its own.
     const head = headName(pull)
-    const newest = head !== null && !heads.has(head)
-    if (head) heads.add(head)
     if (pull.signals.agents.length > 0) {
-      if (newest) join(key, `branch:${head}`)
+      if (head !== null && newest.get(head) === pull.number) join(key, `branch:${head}`)
       continue
     }
     if (head && (agent || signalAgents(pull.signals).length > 0 || branchNames.has(head))) join(key, `branch:${head}`)
