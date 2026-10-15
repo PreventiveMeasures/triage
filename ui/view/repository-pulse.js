@@ -230,7 +230,7 @@ class RepositoryPulse extends LitElement {
     // While a period reads, the last one read, faded.
     const shown = entry.status === 'ready' ? entry : entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
     const now = Date.now()
-    return html`<div class="history-bar pulse-bar">
+    return html`<div class="history-bar">
         <div class="history-modes" role="group" aria-label="Period">
           ${PERIODS.map(([weeks, name]) => html`<button type="button" aria-pressed=${String(shownWeeks === weeks)} @click=${() => this.pick(weeks)}>${name}</button>`)}
         </div>

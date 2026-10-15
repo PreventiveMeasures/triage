@@ -79,6 +79,7 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, 4]])
+  assert.match(text, /^<div class="history-bar">/u, 'the bar none of the charts\' bars')
   assert.match(text, /aria-pressed=true [^\n]*>Month</u)
   assert.match(text, /class="pulse-range">Sep 20 – Oct 15</u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ from 33 the month before</u)
