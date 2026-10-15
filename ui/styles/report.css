@@ -3671,10 +3671,11 @@ repository-agents { --claude: #d97757; }
 .agent-mark.is-codex { color: var(--text); }
 /* What each agent did among the sessions read, at the bar's end: its mark,
    then its pull requests, branches and commits to the default branch
-   without one, each its icon and count. */
+   without one, each its icon and count, the two agents and how many were
+   read set well apart, each to be told from the next. */
 .agent-totals {
-  display: inline-flex; flex-wrap: wrap; gap: .3rem 1rem; margin-left: auto;
-  & + .history-summary { margin-left: 0; }
+  display: inline-flex; flex-wrap: wrap; gap: .3rem 1.75rem; margin-left: auto;
+  & + .history-summary { margin-left: 1rem; }
 }
 .agent-stats {
   display: inline-flex; align-items: center; gap: .55rem; font-variant-numeric: tabular-nums;

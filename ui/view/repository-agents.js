@@ -256,7 +256,7 @@ class RepositoryAgents extends LitElement {
         ${STATS.map(([kind, glyph, one, many]) => {
           const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
-          return html`<span class="agent-stat" role="img" aria-label=${name} title=${name}>${glyph}${count}</span>`
+          return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
         })}
       </span>`
     })}</span>`
