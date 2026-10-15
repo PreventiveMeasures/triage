@@ -79,7 +79,11 @@ test('a risk kept and gone stale is told, dimmed and said so, until assessed aga
   const text = () => templateText(page.render())
   assert.match(text(), /<tr class=is-stale>/u)
   assert.match(text(), /risk-high>54<\/span><span class="risk-stale" data-tooltip=Assessed 3 days ago; to be assessed again once the rest are>stale/u)
-  assert.deepEqual(page._metrics().find(({ label }) => label === 'Stale')?.value, 1)
+  const stale = () => page._metrics().find(({ label }) => label === 'Stale')
+  assert.deepEqual([stale().value, stale().tooltip], [1, 'Assessed over an hour ago; to be assessed again once the rest are.'])
+  page._state = 'done'
+  assert.equal(stale().tooltip, 'Assessed over an hour ago; not assessed again yet.', 'the scan over: no more promised')
+  page._state = 'running'
   page._apply({ type: 'risk', name: 'debug', version: '4.4.0', error: 'upstream-unavailable', detail: 'fetch failed' })
   assert.match(text(), /risk-high>54<[^]*couldn’t be assessed again: npm unavailable: fetch failed>stale/u, 'the stale risk kept')
   page._apply({ type: 'risk', name: 'debug', version: '4.4.0', published: null, severity: null, score: 0, findings: [] })

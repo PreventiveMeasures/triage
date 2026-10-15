@@ -674,7 +674,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total, detail: split(({ told, total }) => `${count(told)}/${count(total)}`) },
       { label: 'Flagged', value: flagged, detail: split(({ flagged: some }) => count(some)), tone: flagged > 0 ? 'high' : null },
       ...stale > 0 ? [{ label: 'Stale', value: stale, detail: split(({ stale: some }) => count(some)),
-        tooltip: 'Kept from a scan over an hour ago: assessed again once the rest are.' }] : [],
+        tooltip: `Assessed over an hour ago; ${this._state === 'running' ? 'to be assessed again once the rest are' : 'not assessed again yet'}.` }] : [],
       ...counts.advisories > 0 ? [{ label: 'Advisories', value: counts.advisories,
         detail: counts.malware > 0 ? `${count(counts.malware)} of malware` : null, tone: counts.malware > 0 ? 'critical' : null }] : [],
     ]
