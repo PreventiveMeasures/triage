@@ -43,6 +43,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
+import { activityTab } from './repository-activity.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import './repository-history.js'
 import './repository-agents.js'
@@ -1995,9 +1996,9 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
   ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
   ['overview', 'Overview']]
 
-// The tabs a repository's directory shows (repository-code.js).
-const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History'], ['issues', 'Issues'],
-  ['pulls', 'Pull requests'], ['agents', 'Agents'], ['pulse', 'Pulse']]
+// The tabs a repository's directory shows (repository-code.js), `tab` the
+// one open: its Activity one, opening on the view of it last shown.
+const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], [activityTab(tab), 'Activity']]
 
 // The body of a tab of a repository's directory reading none of its files
 // (REPOSITORY_FILELESS_TABS): its History, Issues, Pull requests, Agents or
@@ -2021,6 +2022,14 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
   const pending = entry.repository && !opening ? repositoryCodePending(entry) : null
   const repository = pending ?? entry.repository
   const loading = Boolean(pending) || (opening && Boolean(repository) && !state.repositoryCodeOpening?.error)
+  // Where tabs open by `onTab`, a tab picked in the body (an Activity view's
+  // picker, repository-activity.js) opens by it too, not as a bundle's.
+  const pickInBody = onTab ? event => {
+    const picked = event.target.closest?.('[data-bundle-tab]')?.dataset.bundleTab
+    if (!picked) return
+    event.stopPropagation()
+    if (picked !== tab) onTab(picked)
+  } : nothing
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
       ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
@@ -2047,7 +2056,7 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
       ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
     </header></bundle-slide-header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview, 'is-pending': Boolean(pending) })}
-      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing}>${body}</div>
+      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing} @click=${pickInBody}>${body}</div>
   </div>`
 }
 
@@ -2071,7 +2080,7 @@ export function renderRepositoryCodeOpening(opening) {
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
   const repository = { repoId, repo, commit, path, revision }
   const tabsOpen = Boolean(commit && (historyOnly || error))
-  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(tab), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
     ? repositoryFilelessTab(repository, tab)
     : error
       ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
@@ -2165,7 +2174,7 @@ function renderBundleSlide(entry) {
   // (2) an orphan tab state where a persisted `b:<integrity> issues`
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
-  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs() : [
+  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs(state.bundleDetailsTab) : [
     ...showAdvisories ? [['advisories', 'Advisories']] : [],
     ...showIssues ? [['issues', 'Issues']] : [],
     ['terminal', 'Terminal'], ['treemap', 'Treemap'], ['graph', 'Graph'], ['code', 'Code'], ['search', 'Search'],

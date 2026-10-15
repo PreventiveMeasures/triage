@@ -205,7 +205,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues, Pull requests, Agents or Pulse tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab, or a view of its Activity: `history` (Commits), `issues`, `pulls`, `agents` or `pulse` |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1516,8 +1516,8 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Code, Search, Treemap, History, Issues,
-Pull requests, Agents and Pulse tabs: from the
+as an npm version shows, with the Treemap, Code, Search and Activity tabs:
+from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1550,9 +1550,21 @@ disk cache with them. Readers asking for the same directory meanwhile share
 one load, among the npm viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
 
+## Activity
+
+The **Activity** tab holds what happens around the code, in five views, each
+its own route's tab (`history`, `issues`, `pulls`, `agents`, `pulse`): its
+**Commits** (History, below), **Issues** and **Pull requests**, **Agents**
+and **Pulse**. It opens on the view last shown, Commits until one is
+(`ui/view/repository-activity.js`). Each view's bar starts with their
+picker, an icon each (a commit on its line, an issue's ring, a pull
+request's branches, a robot's head, a pulse's beat), as the graph's layouts
+are picked, which switches the view as a tab does, Back returning to the
+one before.
+
 ## History
 
-The History tab lists commits as `git log --oneline --decorate --graph` does,
+Activity's Commits view, History, lists commits as `git log --oneline --decorate --graph` does,
 one compact line each: its short id, the branches and tags naming it (the
 default branch's first, the revision shown marked), its subject, author and
 time, beside the graph of the lines its parents make

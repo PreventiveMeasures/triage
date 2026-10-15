@@ -17,6 +17,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
+import { activityPicker } from './repository-activity.js'
 
 export { sessionLink }
 
@@ -228,6 +229,7 @@ class RepositoryAgents extends LitElement {
     const counted = agent => ready ? html` <span class="issues-count">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
     const shown = filterSessions(sessions, shownAgent, this._filter)
     return html`<div class="history-bar issues-bar">
+        ${activityPicker('agents')}
         <div class="history-modes" role="group" aria-label="Agents">
           <button type="button" aria-pressed=${String(shownAgent === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
           ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(shownAgent === agent)}

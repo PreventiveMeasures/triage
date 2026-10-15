@@ -19,6 +19,7 @@ import { fetchRepositoryPulse } from './client-managed.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
+import { activityPicker } from './repository-activity.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -231,6 +232,7 @@ class RepositoryPulse extends LitElement {
     const shown = entry.status === 'ready' ? entry : entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
     const now = Date.now()
     return html`<div class="history-bar">
+        ${activityPicker('pulse')}
         <div class="history-modes" role="group" aria-label="Period">
           ${PERIODS.map(([weeks, name]) => html`<button type="button" aria-pressed=${String(shownWeeks === weeks)} @click=${() => this.pick(weeks)}>${name}</button>`)}
         </div>
