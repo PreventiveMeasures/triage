@@ -34,6 +34,8 @@ class LockfileGraph extends LitElement {
     this._prep = null
     this._graphState = null
     this._attachment = 0
+    // The bundle graph's layout, held while this graph draws by it.
+    this._bundleLayout = null
     this.addEventListener('click', (e) => this._click(e))
     this.addEventListener('input', (e) => this._input(e))
   }
@@ -70,17 +72,23 @@ class LockfileGraph extends LitElement {
   }
 
   // The canvas listens on the window: stop it with the graph it drew, and
-  // any attachment still waiting to mount.
+  // any attachment still waiting to mount. The bundle graph gets its layout
+  // back.
   _detach() {
     this._attachment++
     if (this._graphState && graph2.graphState === this._graphState) cleanupGraph2()
     this._graphState = null
+    if (this._bundleLayout !== null) graph2.bundleLayout = this._bundleLayout
+    this._bundleLayout = null
   }
 
   // (Re)mount the graph for the current layout. Called on a new lockfile
   // and on every view switch, after any teardown (cleanupGraph2).
   async _attach() {
-    if (!LOCKFILE_LAYOUTS.includes(graph2.bundleLayout)) graph2.bundleLayout = 'graph'
+    // The viewer draws by the bundle graph's layout: this graph's, until it
+    // leaves the page.
+    this._bundleLayout ??= graph2.bundleLayout
+    graph2.bundleLayout = graph2.lockfileLayout
     const slot = this.renderRoot.querySelector('.slot')
     if (!slot) return
     // Only the latest attachment of an element still on the page mounts. One
@@ -111,7 +119,7 @@ class LockfileGraph extends LitElement {
     const pkg = at('[data-g2-pkg]')?.dataset.g2Pkg
     if (layout !== undefined) {
       if (LOCKFILE_LAYOUTS.includes(layout) && layout !== graph2.bundleLayout) {
-        graph2.bundleLayout = layout
+        graph2.lockfileLayout = graph2.bundleLayout = layout
         graph2.selected = null
         graph2.solo = null
         graph2.layoutCache = null
