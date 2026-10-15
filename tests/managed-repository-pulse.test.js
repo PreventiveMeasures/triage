@@ -104,7 +104,7 @@ test('a period starts on the Sunday (UTC) that many weeks back, this week the la
   assert.equal(pulseSince(1, Date.UTC(2026, 9, 11)), Date.UTC(2026, 9, 11), 'a Sunday starts its own week')
 })
 
-test('the pull requests and issues of a period are searched by the day, and as long a time just before; the latest listed first', async t => {
+test('the pull requests and issues of a period are searched by the day, and over the same days a period earlier; the latest listed first', async t => {
   const node = (number, more) => ({ number, title: ` Pull ${number} `, createdAt: '2026-10-01T00:00:00Z', author: { login: 'ada' }, ...more })
   const asked = github(t, { graphql: () => ({ data: {
     merged: { issueCount: 12, nodes: [node(4, { pullState: 'MERGED', isDraft: false, mergedAt: '2026-10-02T00:00:00Z' }),
@@ -115,6 +115,10 @@ test('the pull requests and issues of a period are searched by the day, and as l
     created: { issueCount: 'x' },
   } }) })
   const read = await repositoryActivity('org/repo', 'token', 4, Date.UTC(2026, 9, 15, 12))
+  assert.match(asked[0].query, /merged: search\(type: ISSUE, query: \$merged, first: 50\) \{\s*issueCount nodes/u, 'merged searched wide, GitHub sorting by no merge')
+  assert.match(asked[0].query, /opened: search\(type: ISSUE, query: \$opened, first: 10\)/u)
+  assert.match(asked[0].query, /closed: search\(type: ISSUE, query: \$closed, first: 50\)/u)
+  assert.match(asked[0].query, /mergedBefore: search\(type: ISSUE, query: \$mergedBefore, first: 1\) \{\s*issueCount\s*\}/u, 'counted alone')
   assert.deepEqual(asked[0].variables, {
     merged: 'repo:org/repo is:pr is:merged merged:>=2026-09-20 sort:updated-desc', mergedBefore: 'repo:org/repo is:pr is:merged merged:2026-08-23..2026-09-17 sort:updated-desc',
     opened: 'repo:org/repo is:pr created:>=2026-09-20 sort:created-desc', openedBefore: 'repo:org/repo is:pr created:2026-08-23..2026-09-17 sort:created-desc',
@@ -198,4 +202,14 @@ test('GitHub refusing the statistics refuses the pulse as it refused them', asyn
   const request = await fixture(t)
   const answer = await request({ repoId: '1', weeks: '1' })
   assert.equal(answer.status, 404)
+})
+
+test('the latest merged are listed of those most recently updated, one merged long ago but updated since giving way to those merged later', async t => {
+  const merged = day => ({ number: day, title: `Pull ${day}`, pullState: 'MERGED', isDraft: false, createdAt: '2026-09-20T00:00:00Z', author: { login: 'ada' },
+    mergedAt: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z` })
+  // As GitHub answers them, by when each was last updated: the first merged
+  // on the 1st, a comment on it since.
+  github(t, { graphql: () => ({ data: { merged: { issueCount: 12, nodes: [merged(1), ...Array.from({ length: 11 }, (_, at) => merged(12 - at))] } } }) })
+  const read = await repositoryActivity('org/repo', 'token', 4, Date.UTC(2026, 9, 15, 12))
+  assert.deepEqual(read.merged.items.map(item => item.number), [12, 11, 10, 9, 8, 7, 6, 5, 4, 3])
 })

@@ -54,7 +54,7 @@ const pulse = (more = {}) => ({ weeks: 4, since: SINCE, previousSince: SINCE - 4
   stats: stats(), pending: false, ...more })
 const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
 
-test('a period\'s figures: its commits, beside as many days just before where the year reaches back; its lines; who made commits', () => {
+test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
   const read = pulse()
   assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, additions: 40, deletions: 8, authors: 2 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')

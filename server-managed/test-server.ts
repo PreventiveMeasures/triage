@@ -478,7 +478,8 @@ function itemFixture(url: URL, res: ServerResponse): void {
 // A repository's pulse, for its Pulse tab: a year of weeks, busier lately and
 // quiet over the holidays, a few contributors doing most of it, commits on
 // weekdays' working hours, and the pull requests and issues the Issues and
-// Pull requests tabs list, in the last `weeks` weeks and as long before.
+// Pull requests tabs list, in the last `weeks` weeks and the same days a
+// period earlier.
 // Repository 102's statistics are pending the first two times they are
 // asked, as GitHub's are while it computes them.
 let pulsePending = 2

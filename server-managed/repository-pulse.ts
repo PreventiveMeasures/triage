@@ -3,9 +3,9 @@
 // week over the last year, as GitHub's statistics give it (its commits each
 // day, its lines added and removed, each contributor's commits and lines,
 // and when in the week commits are made); and, since the start of the week
-// `weeks` weeks back, and over as long a time just before it, the pull
-// requests merged and opened and the issues closed and opened, how many and
-// the latest of each. GitHub computes its statistics when first asked,
+// `weeks` weeks back, and over the same days of the week `weeks` weeks
+// earlier, the pull requests merged and opened and the issues closed and
+// opened, how many and the latest of each. GitHub computes its statistics when first asked,
 // answering 202 till they are: asked again a few times, then they are told
 // pending (StatsPending), for the client to ask again.
 import { GithubApiError, githubJson } from './github-app.ts'
@@ -16,6 +16,10 @@ const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
 const LISTED = 10
+// Merged pull requests and closed issues are searched by when each was last
+// updated, GitHub sorting by no merge or close: as many as this are read, and
+// the latest merged or closed of them listed.
+const SEARCHED = 50
 const STATS_TRIES = 3
 const STATS_WAIT_MS = 1500
 const MAX_TITLE = 1000
@@ -128,19 +132,19 @@ export function pulseSince(weeks: number, now: number) {
   return sunday - (weeks - 1) * WEEK_MS
 }
 
-const SEARCH = (name: string, fragment: string, listing: boolean) => `${name}: search(type: ISSUE, query: $${name}, first: ${listing ? LISTED : 1}) {
-    issueCount${listing ? ` nodes { ...${fragment} }` : ''}
+const SEARCH = (name: string, fragment: string, first = 0) => `${name}: search(type: ISSUE, query: $${name}, first: ${Math.max(first, 1)}) {
+    issueCount${first > 0 ? ` nodes { ...${fragment} }` : ''}
   }`
 const ACTIVITY_QUERY = `query($merged: String!, $mergedBefore: String!, $opened: String!, $openedBefore: String!,
   $closed: String!, $closedBefore: String!, $created: String!, $createdBefore: String!) {
-  ${SEARCH('merged', 'pull', true)}
-  ${SEARCH('mergedBefore', 'pull', false)}
-  ${SEARCH('opened', 'pull', true)}
-  ${SEARCH('openedBefore', 'pull', false)}
-  ${SEARCH('closed', 'issue', true)}
-  ${SEARCH('closedBefore', 'issue', false)}
-  ${SEARCH('created', 'issue', true)}
-  ${SEARCH('createdBefore', 'issue', false)}
+  ${SEARCH('merged', 'pull', SEARCHED)}
+  ${SEARCH('mergedBefore', 'pull')}
+  ${SEARCH('opened', 'pull', LISTED)}
+  ${SEARCH('openedBefore', 'pull')}
+  ${SEARCH('closed', 'issue', SEARCHED)}
+  ${SEARCH('closedBefore', 'issue')}
+  ${SEARCH('created', 'issue', LISTED)}
+  ${SEARCH('createdBefore', 'issue')}
 }
 fragment pull on PullRequest { number title pullState: state isDraft createdAt mergedAt author { login } }
 fragment issue on Issue { number title issueState: state stateReason createdAt closedAt author { login } }`
@@ -162,9 +166,14 @@ function listed(node: SearchNode, at: unknown) {
 }
 
 // The pull requests merged and opened and the issues closed and opened since
-// the start of the week `weeks` weeks back (`since`), and in as long a time
-// just before (`previous`, its count), the latest of each listed, as many as
-// LISTED. A search counts by the day (UTC).
+// the start of the week `weeks` weeks back (`since`), and over the same days
+// of the week `weeks` weeks earlier (`previous`, its count: a week's Sunday to
+// Thursday beside the week before's, not the days just before, whose days of
+// the week differ), the latest of each listed, as many as LISTED: those
+// opened as GitHub sorts them, those merged or closed the latest of the
+// SEARCHED most recently updated, which are the latest of all where the
+// period holds no more, or the last listed was merged or closed after the
+// SEARCHED-th was last updated. A search counts by the day (UTC).
 export async function repositoryActivity(fullName: string, token: string, weeks: number, now: number = Date.now(), fetchImpl: typeof fetch = globalThis.fetch) {
   const since = pulseSince(weeks, now)
   const back = weeks * WEEK_MS
@@ -184,7 +193,7 @@ export async function repositoryActivity(fullName: string, token: string, weeks:
   const told = Object.fromEntries((Object.keys(kinds) as (keyof typeof kinds)[]).map(name => [name, {
     count: count(data?.[name]?.issueCount),
     previous: count(data?.[`${name}Before`]?.issueCount),
-    items: (data?.[name]?.nodes ?? []).flatMap(node => listed(node, node?.[at[name]]) ?? []).toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)),
+    items: (data?.[name]?.nodes ?? []).flatMap(node => listed(node, node?.[at[name]]) ?? []).toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, LISTED),
   }]))
   return { since, previousSince: since - back, ...told }
 }

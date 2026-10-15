@@ -1787,9 +1787,10 @@ last of them. Its dates are named in the bar, beside **Charts** and
 - **Figures**, a tile each: the default branch's commits, how many people
   made them, the pull requests merged (and opened) and the issues closed
   (and opened), and the lines added and removed. Commits, pull requests and
-  issues are each set beside as many days just before the period ("↑ from
-  110 the month before"), the year's commits beside none, GitHub counting
-  only the last year's.
+  issues are each set beside the same days of the week a period earlier
+  ("↑ from 110 the month before"): this week's Sunday to Thursday beside
+  last week's, not the days just before, whose days of the week differ. The
+  year's commits are set beside none, GitHub counting only the last year's.
 - **Commits**, a column a week over the last year, the period's in blue, the
   rest gray, over a scale of round counts; under them **Lines**, added above
   a line in blue and removed below it in red, one scale for both, the weeks
@@ -1819,9 +1820,12 @@ shows none.
 `{ weeks, since, previousSince, merged, opened, closed, created, stats,
 pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed` and
 `created` are each `{ count, previous, items }`: how many GitHub's search
-finds in the period (`since`, its first day, to today) and in as many days
-just before it (`previousSince` on), and the ten latest, from one GraphQL
-query of eight searches, searched by the day. `stats` is the default
+finds in the period (`since`, its first day, to today) and in the same days
+of the week a period earlier (`previousSince` on), and the ten latest, from
+one GraphQL query of eight searches, searched by the day. GitHub sorts no
+search by when a pull request was merged or an issue closed, so the fifty
+most recently updated are read and the ten latest merged or closed of them
+listed: all of them where the period holds fifty or fewer. `stats` is the default
 branch's statistics, from GitHub's `stats/commit_activity`,
 `code_frequency`, `contributors` and `punch_card`: `weeks`, a row a week of
 the last year, its commits each day and in all and its lines added and

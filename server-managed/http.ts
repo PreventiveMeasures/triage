@@ -44,7 +44,7 @@
 //        description's Markdown | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week over the last
 //        year, its contributors and when in the week they commit (pending while GitHub computes them), and the pull requests
-//        merged and opened and the issues closed and opened in the last `weeks` weeks and as long before | 400/401/403/404/409/429/502
+//        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404

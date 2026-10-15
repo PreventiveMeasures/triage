@@ -2,8 +2,8 @@
 // as the server reads it (GET /api/admin/repositories/pulse) for the week,
 // month, quarter or year the reader picks, each a run of whole weeks to
 // today as GitHub counts them (Sunday first, UTC). Its figures first, each
-// beside what the same time just before it gave, where GitHub's counts go
-// by the day: the default branch's commits, who made them, the pull
+// beside what the same days of the week a period earlier gave, where
+// GitHub's counts go by the day: the default branch's commits, who made them, the pull
 // requests merged and the issues closed, the lines added and removed. Then
 // the year's weeks, the period's marked in them: commits a week, and lines
 // added over removed; the period's contributors ranked by their commits; when
@@ -29,7 +29,7 @@ const PENDING_TRIES = 6
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
 const TOP_CONTRIBUTORS = 8
-// The periods, each its weeks, its name, and the same time just before it.
+// The periods, each its weeks, its name, and the same days a period earlier.
 export const PERIODS = [[1, 'Week', 'the week before'], [4, 'Month', 'the month before'], [13, 'Quarter', 'the quarter before'], [52, 'Year', 'the year before']]
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 // The punch card's rows, Monday first, the weekend under the working week.
@@ -126,8 +126,9 @@ const commitsBetween = (weeks, from, to) => weeks.reduce((sum, week) => sum + we
   return at >= from && at <= to ? days + counted(count) : days
 }, 0), 0)
 
-// The period's figures, `now` in its last day: its commits, and as many days
-// just before it, where the year's weeks reach that far back; its lines
+// The period's figures, `now` in its last day: its commits, and those of the
+// same days of the week a period earlier (a week's Sunday to Thursday beside
+// the week before's), where the year's weeks reach that far back; its lines
 // added and removed, where GitHub counts them; and how many made commits.
 export function pulseSummary(answer, now = Date.now()) {
   const { stats, since } = answer
@@ -173,7 +174,7 @@ const rangeName = (since, now) => {
   const years = new Date(since).getUTCFullYear() !== new Date(today).getUTCFullYear()
   return since >= today ? day(today, years) : `${day(since, years)} – ${day(today, years)}`
 }
-// A figure beside what as long just before gave.
+// A figure beside what the same days a period earlier gave.
 const versus = (count, previous, before) => previous === null || count === null ? null
   : count === previous ? `Same as ${before}` : `${count > previous ? '↑' : '↓'} from ${number(previous)} ${before}`
 const profile = login => login.endsWith('[bot]') ? `https://github.com/apps/${encodeURIComponent(login.slice(0, -5))}` : `https://github.com/${encodeURIComponent(login)}`
