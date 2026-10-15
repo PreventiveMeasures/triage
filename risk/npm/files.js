@@ -44,9 +44,15 @@ function quoted(first) {
   return new RegExp(String.raw`(?<=(?:^|[^\\])(?:\\\\)*)(?:${line('"')}|${line("'")}|\x60(?=${starts}((?:[^\x60\\]|\\[\s\S])*)\x60))`, 'gu')
 }
 
-// A string's value, from its quote and what it holds: null for a template
-// with something put in it, a `${` no backslash escapes (`\${` its text).
-const valueOf = (quote, body) => quote === '`' && body.includes('${') && body.replaceAll(/\\[\s\S]/gu, '').includes('${') ? null : body.includes('\\') ? unescaped(body) : body
+// A string's values, from its quote and what it holds: as JavaScript reads
+// its escapes (unescaped), and a template's as written too, as a tag reads it
+// (`String.raw`); none for a template with something put in it, a `${` no
+// backslash escapes (`\${` its text).
+function valuesOf(quote, body) {
+  if (!body.includes('\\')) return quote === '`' && body.includes('${') ? [] : [body]
+  if (quote !== '`') return [unescaped(body)]
+  return body.replaceAll(/\\[\s\S]/gu, '').includes('${') ? [] : [unescaped(body), body]
+}
 
 // Where a string is what `import` takes, rather than what `require` may: a
 // declaration's (`import './x'`, `from './x'`), on the keyword's line with
@@ -287,19 +293,23 @@ export function npmLoadedScripts(version) {
   const named = value => root.length > 0 && value.length > top.name.length && '/\\'.includes(value[top.name.length])
     && folded(value.slice(0, top.name.length)) === root.slice(1).join('/')
   const seen = new Set(), strings = quoted(root.length > 0 ? top.name[0] : null)
+  // A string's value from the directory `dir`, a load `import` takes where
+  // its place says so (`importing`), else one `require` may take, once each.
+  const follow = (value, dir, importing) => {
+    const [from, spec] = named(value) ? ['', `./${value.slice(top.name.length + 1)}`] : [dir, value]
+    if (!RELATIVE.test(spec.replaceAll('\\', '/'))) return
+    const by = importing() ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
+    if (seen.has(key)) return
+    seen.add(key)
+    if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
+    add(urlJoined(root, from, spec), 'import')
+  }
   for (let index = 0; index < queue.length; index++) {
     const path = queue[index], text = files.get(path)
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     for (const { 1: double, 2: single, 3: template, index: start } of text.matchAll(strings)) {
-      const body = double ?? single ?? template, quote = text[start], value = valueOf(quote, body)
-      if (value === null) continue
-      const [from, spec] = named(value) ? ['', `./${value.slice(top.name.length + 1)}`] : [dir, value]
-      if (!RELATIVE.test(spec.replaceAll('\\', '/'))) continue
-      const by = imported(text, quote, start, start + body.length + 2) ? 'import' : 'require', key = `${by}\0${from}\0${spec}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      if (by === 'require') for (const required of requiredPaths(root, from, spec)) requires(required)
-      add(urlJoined(root, from, spec), 'import')
+      const body = double ?? single ?? template, quote = text[start]
+      for (const value of valuesOf(quote, body)) follow(value, dir, () => imported(text, quote, start, start + body.length + 2))
     }
   }
   loadedByVersion.set(keyOf(version), loaded)
