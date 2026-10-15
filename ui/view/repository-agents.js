@@ -1,5 +1,6 @@
-// The code viewer's Agents tab (render-bundle.js): the Claude and Codex
-// sessions the repository shows, reconstructed (common/managed/agent-tasks.ts)
+// The code viewer's Agents tab (render-bundle.js): the sessions of Claude, of
+// Codex and of the agents the server knows by their GitHub Apps that the
+// repository shows, reconstructed (common/managed/agent-tasks.ts)
 // from its pull requests, the commits merging them and those pushed to its
 // default branch, its branches and its issues, as the server reads them
 // (GET /api/admin/repositories/agents), a page at a time as the end of the
@@ -15,11 +16,12 @@ import { fetchRepositoryAgents } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { AGENT_ICONS, AGENT_NAMES, BRANCH_ICON, COMMIT_ICON, PULL_ICON, plainClick, sessionLink } from './repository-tiles.js'
+import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
 
 export { sessionLink }
 
 const KEEP_MS = 5 * 60_000
+const APP_AGENT = /^[a-z][a-z\d-]{0,31}$/u
 const RETRY_MS = 30_000
 const MAX_CHIPS = 12
 
@@ -40,15 +42,24 @@ function sessionLists() {
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
 
-// A server's answer, its artifacts those it names by number, id or name.
+// A server's answer, its artifacts those it names by number, id or name, and
+// the agents it knows by their GitHub Apps (its first page's), each by id,
+// name and app; an artifact's those of them it names.
 function checked(answer) {
   if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new Error('The server answered with no pull requests or commits.')
+  const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
+    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim() && Number.isSafeInteger(agent.app) && agent.app > 0)
+    .map(({ id, name, app }) => [id, { id, name: name.trim().slice(0, 64), app }])
   const signed = item => Array.isArray(item?.signals?.sessions) && Array.isArray(item.signals.tasks)
+  // An artifact's app agents, by id.
+  const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents)
+    ? item.signals.agents.filter(agent => typeof agent === 'string' && APP_AGENT.test(agent) && !['claude', 'codex', 'all'].includes(agent)) : [] } })
   return {
-    pulls: answer.pulls.filter(pull => Number.isSafeInteger(pull?.number) && typeof pull.title === 'string' && Array.isArray(pull.closes) && signed(pull)),
-    commits: answer.commits.filter(commit => typeof commit?.oid === 'string' && /^[a-f\d]{40}$/u.test(commit.oid) && signed(commit)),
+    pulls: answer.pulls.filter(pull => Number.isSafeInteger(pull?.number) && typeof pull.title === 'string' && Array.isArray(pull.closes) && signed(pull)).map(marked),
+    commits: answer.commits.filter(commit => typeof commit?.oid === 'string' && /^[a-f\d]{40}$/u.test(commit.oid) && signed(commit)).map(marked),
     issues: Array.isArray(answer.issues) ? answer.issues.filter(issue => Number.isSafeInteger(issue?.number)) : [],
-    branches: Array.isArray(answer.branches) ? answer.branches.filter(branch => typeof branch?.name === 'string' && signed(branch)) : [],
+    branches: Array.isArray(answer.branches) ? answer.branches.filter(branch => typeof branch?.name === 'string' && signed(branch)).map(marked) : [],
+    agents: [...new Map(agents).values()],
     more: answer.more === true,
     after: answer.more === true ? { pulls: answer.after?.pulls ?? null, commits: answer.after?.commits ?? null } : null,
   }
@@ -71,6 +82,7 @@ function listRead(key, ask) {
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(null).then(answer => {
+    knowAgents(answer.agents)
     if (data.get(key) === loading) data.set(key, reconstructed({ status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null }))
     return null
   }, err => {
@@ -131,6 +143,12 @@ export function filterSessions(sessions, agent, filter) {
 }
 
 const TILE_STATES = { open: 'open', merged: 'merged', closed: 'closed', branch: 'draft' }
+// The agents an entry's sessions are picked among, Claude and Codex first,
+// then those the server knows by their apps; and counted by, at the bar's
+// end, those first and Claude and Codex last: either way, Claude's and
+// Codex's in their places whatever others there are.
+const appAgentsOf = entry => (entry.agents ?? []).map(agent => agent.id)
+const agentsOf = entry => ['claude', 'codex', ...appAgentsOf(entry)]
 // What an agent did, by icon: the pull requests it opened, the branches it
 // pushed, and its commits to the default branch no pull request merged.
 const STATS = [
@@ -212,8 +230,8 @@ class RepositoryAgents extends LitElement {
     return html`<div class="history-bar issues-bar">
         <div class="history-modes" role="group" aria-label="Agents">
           <button type="button" aria-pressed=${String(shownAgent === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
-          ${['claude', 'codex'].map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(shownAgent === agent)}
-            @click=${() => this.pick(agent)}>${AGENT_ICONS[agent]}${AGENT_NAMES[agent]}${counted(agent)}</button>`)}
+          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(shownAgent === agent)}
+            @click=${() => this.pick(agent)}>${agentIcon(agent)}${agentName(agent)}${counted(agent)}</button>`)}
         </div>
         <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
@@ -223,19 +241,22 @@ class RepositoryAgents extends LitElement {
       ${ready ? this.renderSessions(entry, shown, more)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionLists().delete(key); repaint() }}>Retry</button></div>`
-        : html`<div class="bundles-slide-placeholder" role="status">Reading what Claude and Codex did…</div>`}`
+        : html`<div class="bundles-slide-placeholder" role="status">Reading what the agents did…</div>`}`
   }
 
   // Each agent's mark, and beside it what it did among the sessions read,
   // each by its icon and count, more to come where its pages are left to
   // read: pull requests', which a branch alone may wait for, or commits'.
+  // An agent shows only with a session among those read, and with no commit
+  // to the default branch without a pull request, no count of them.
   renderStats(entry) {
     const left = { pulls: Boolean(entry.after?.pulls), branches: Boolean(entry.after?.pulls), commits: Boolean(entry.after?.commits) }
-    return html`<span class="agent-totals">${['claude', 'codex'].map(agent => {
+    const shown = agent => entry.sessions.some(session => session.agents.includes(agent))
+    return html`<span class="agent-totals">${[...appAgentsOf(entry), 'claude', 'codex'].filter(shown).map(agent => {
       const stats = agentStats(entry.sessions, agent)
-      return html`<span class="agent-stats" role="group" aria-label=${AGENT_NAMES[agent]}>
-        <span class=${`agent-mark is-${agent}`}>${AGENT_ICONS[agent]}</span>
-        ${STATS.map(([kind, glyph, one, many]) => {
+      return html`<span class="agent-stats" role="group" aria-label=${agentName(agent)}>
+        <span class=${`agent-mark is-${agent}`}>${agentIcon(agent)}</span>
+        ${STATS.filter(([kind]) => kind !== 'commits' || stats.commits > 0).map(([kind, glyph, one, many]) => {
           const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
           return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
@@ -245,7 +266,7 @@ class RepositoryAgents extends LitElement {
   }
 
   renderSessions(entry, shown, more) {
-    const what = shownAgent === 'all' ? 'Claude or Codex sessions' : `${AGENT_NAMES[shownAgent]} sessions`
+    const what = shownAgent === 'all' ? 'agents\' sessions' : `${agentName(shownAgent)} sessions`
     return html`<div class="issues-scroll">
       ${shown.length > 0 ? html`<ol class="issues-grid" aria-label="Sessions">${shown.map(session => this.renderSession(session))}</ol>`
         : html`<p class="history-note">${entry.sessions.length > 0 && this._filter.trim() ? `None of the ${what} read match.` : `No ${what} among those read.`}</p>`}
@@ -292,7 +313,7 @@ class RepositoryAgents extends LitElement {
         html`<span class="sr-only">Issue </span>#${issue.number}`, { kind: 'issues', reason: null, ...issue }]),
     ]
     return html`<li class=${`issue-tile agent-tile is-${TILE_STATES[session.state]}`}><div class="issue-body" @click=${event => this.openSession(event, session)}>
-      <span class="issue-rail">${session.agents.map(agent => html`<span class=${`agent-mark is-${agent}`} role="img" aria-label=${AGENT_NAMES[agent]}>${AGENT_ICONS[agent]}</span>`)}</span>
+      <span class="issue-rail">${session.agents.map(agent => html`<span class=${`agent-mark is-${agent}`} role="img" aria-label=${agentName(agent)}>${agentIcon(agent)}</span>`)}</span>
       <span class="issue-lines">
         ${link ? html`<a class="issue-name" href=${link} target="_blank" rel="noopener noreferrer">${session.title || '(no title)'}</a>`
           : html`<button type="button" class="issue-name">${session.title || '(no title)'}</button>`}

@@ -357,6 +357,41 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
   await db.close()
 })
 
+test('GET /api/avatar/app-<id>: a listed GitHub App\'s avatar, fetched from GitHub once and kept; no other app\'s', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
+  await db.setUserRole(sess.userId, 'view')
+  const fetched = []
+  t.mock.method(globalThis, 'fetch', (input, options) => {
+    fetched.push([String(input), options?.redirect])
+    return Promise.resolve(new Response(Buffer.from([7, 7]), { headers: { 'content-type': 'image/jpeg' } }))
+  })
+  let pending = Promise.resolve()
+  const handler = createManagedRequestHandler({
+    config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
+    originGate: { trustProxy: false, isOriginAllowed: () => true },
+    isShuttingDown: () => false, track: (p) => { pending = p },
+  })
+  async function get(url, cookie) {
+    const res = { statusCode: 0, headers: {}, body: Buffer.alloc(0), writeHead(code, headers) { this.statusCode = code; this.headers = headers ?? {} },
+      end(b) { if (b != null) this.body = Buffer.concat([this.body, Buffer.from(b)]) } }
+    handler({ method: 'GET', url, headers: cookie ? { cookie } : {} }, res)
+    await pending
+    return res
+  }
+  const ck = cookiePair(sess.setCookie)
+  assert.equal((await get('/api/avatar/app-3115942', null)).statusCode, 401)
+  for (let read = 0; read < 2; read++) {
+    const res = await get('/api/avatar/app-3115942', ck)
+    assert.deepEqual([res.statusCode, res.headers['content-type'], [...res.body]], [200, 'image/jpeg', [7, 7]])
+  }
+  assert.deepEqual(fetched, [['https://avatars.githubusercontent.com/in/3115942', 'manual']], 'fetched once, redirects not followed')
+  assert.equal((await get('/api/avatar/app-1', ck)).statusCode, 404, 'an app not listed is not fetched')
+  assert.equal(fetched.length, 1)
+  await db.close()
+})
+
 test('buildLoginRedirect: GitHub authorize URL with a matching state cookie', () => {
   const { location, setCookie } = buildLoginRedirect(config)
   const u = new URL(location)

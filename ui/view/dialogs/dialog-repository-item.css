@@ -70,6 +70,7 @@ svg .dotted { stroke-dasharray: 1 2.2; }
 .agent-mark.is-claude svg { color: var(--claude); stroke-width: 1.6; }
 .agent-mark.is-codex svg { fill: currentcolor; stroke: none; }
 .agent-logo { display: inline-flex; }
+.agent-avatar { border-radius: 3px; }
 .repo-item-section {
   & h4 { margin: 0 0 .3rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   & ul { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden; }

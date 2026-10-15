@@ -23,7 +23,7 @@
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>[?own]  → cached avatar bytes by user id, of the account chosen on their profile (`own`: the
-//        sign-in account's), or by linked account id | 401/404
+//        sign-in account's), or by linked account id; `app-<id>`, an app agent's GitHub App's (APP_AGENTS) | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -38,8 +38,8 @@
 //        names | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/issues?repoId=&kind=issues|pulls&state=open|closed[&after=] → a page of the repository's issues
 //        or pull requests, the most recently updated first, with how many are open and closed | 400/401/403/404/409/429/502
-//   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what Claude and Codex left: pull requests and
-//        commits to the default branch no pull request merged, with issues and agents' branches first | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what agents left: pull requests and commits to
+//        the default branch no pull request merged, with issues, agents' branches and the app agents first | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
@@ -148,7 +148,7 @@ import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySa
 import { RepositoryDiscovery } from './repository-discovery.ts'
 import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
-import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
+import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
@@ -176,7 +176,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
-import { repositoryAgents } from './repository-agents.ts'
+import { APP_AGENTS, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
@@ -408,6 +408,26 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
     'cache-control': 'no-store',
   })
   res.end(avatar.bytes)
+}
+
+// The GitHub Apps whose avatars `/api/avatar/app-<id>` serves, these alone:
+// the agents' known by their apps (APP_AGENTS), each its mark on the Agents
+// tab. Each is fetched from GitHub once and kept, under a key no user's, a
+// v4 UUID, can be.
+const AVATAR_APPS: ReadonlySet<number> = new Set(APP_AGENTS.map(agent => agent.app))
+const APP_AVATAR = /^app-([1-9]\d{0,11})$/u
+function avatarApp(id: string): number | null {
+  const app = Number(APP_AVATAR.exec(id)?.[1])
+  return AVATAR_APPS.has(app) ? app : null
+}
+
+async function serveAppAvatar(res: ServerResponse, avatarStore: AvatarStore, app: number): Promise<void> {
+  const key = `00000000-0000-0000-0000-${String(app).padStart(12, '0')}`
+  if (await avatarStore.get(key) == null) {
+    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/in/${app}`, globalThis.fetch)
+      .catch((err) => { console.warn('managed: app avatar caching failed:', err) })
+  }
+  await serveAvatar(res, avatarStore, key)
 }
 
 const MAX_JSON_BODY_BYTES = 4096
@@ -1659,7 +1679,7 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
 }
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
-// reconstructs Claude and Codex sessions from (repository-agents.ts): a page
+// reconstructs agents' sessions from (repository-agents.ts): a page
 // of pull requests on from the cursor `pulls` names, and of the default
 // branch's commits on from `commits`, the first page, naming neither, with
 // issues and branches. They are the whole repository's (readWholeRepository).
@@ -3640,6 +3660,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       const id = path.slice(AVATAR_PREFIX.length)
+      const app = avatarApp(id)
+      if (app !== null) { await serveAppAvatar(res, avatarStore, app); return }
       await serveAvatar(res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
       return
     }

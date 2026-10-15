@@ -13,7 +13,7 @@ import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchRepositoryItem } from '../client-managed.js'
 import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
-import { AGENT_ICONS, AGENT_NAMES, CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
+import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
 import proseCSS from '../../styles/prose.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-repository-item.css'
@@ -140,7 +140,7 @@ class RepositoryItemDialog extends AppDialog {
     const [stateClass, stateName] = SESSION_STATES[session.state] ?? SESSION_STATES.branch
     const tasks = session.pulls.length + session.commits.length
     const heading = html`<span class="repo-item-agents">${session.agents.map(agent => html`<span class=${`agent-mark is-${agent}`} role="img"
-      aria-label=${AGENT_NAMES[agent]}>${AGENT_ICONS[agent]}</span>`)}</span><span>${session.title || '(no title)'}</span>`
+      aria-label=${agentName(agent)}>${agentIcon(agent)}</span>`)}</span><span>${session.title || '(no title)'}</span>`
     const ran = sessionRan(session)
     const body = html`
       <p class="repo-item-meta">

@@ -3,7 +3,7 @@
 // tiles (dialogs/repository-item-dialog.js) draw alike: an issue's or pull
 // request's state, review and checks, by their icons, as GitHub draws them;
 // the agents' marks; and where a session opens.
-import { html, svg } from 'lit'
+import { html, nothing, svg } from 'lit'
 import { providerIcon } from './provider-icons.js'
 
 export const icon = body => html`<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${body}</svg>`
@@ -53,11 +53,25 @@ export function issueState(kind, item) {
 }
 
 // Claude a burst in its orange, Codex OpenAI's mark.
-export const AGENT_ICONS = {
+const AGENT_ICONS = {
   claude: icon(svg`<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>`),
   codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
 }
-export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
+// The agents known by their GitHub Apps, as the server named them (its
+// APP_AGENTS, repository-agents.ts), by id: each its name and app.
+const appAgents = new Map()
+export function knowAgents(agents) {
+  for (const agent of agents) appAgents.set(agent.id, agent)
+}
+// An agent's name and mark: Claude's or Codex's, else an app agent's, its
+// app's avatar, served by the server (/api/avatar/app-<app>).
+export const agentName = agent => AGENT_NAMES[agent] ?? appAgents.get(agent)?.name ?? agent
+export function agentIcon(agent) {
+  if (AGENT_ICONS[agent]) return AGENT_ICONS[agent]
+  const app = appAgents.get(agent)?.app
+  return app ? html`<img class="agent-avatar" src=${`/api/avatar/app-${app}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
+}
 
 // A click to open a tile's popup: the main button's, none held with it, which
 // would open its link in a new tab or window instead.
