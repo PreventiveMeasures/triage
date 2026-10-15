@@ -1794,13 +1794,16 @@ pull request merged. It is told by the links and marks the agents leave:
   authored), a pull request or commit its own session;
 - an agent known by its GitHub App or account (`APP_AGENTS` in
   `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
-  its fingerprint or the logins its work is authored by: now Neo, by
-  `🤖 Generated with [Neo](` and `neo/…`; Copilot, by its accounts,
-  `Copilot` and `copilot-swe-agent`, and `copilot/…`; and Dependabot, by its
-  app's login, `dependabot`, and `dependabot/…`), by its fingerprint
-  beginning a line of the same texts (one quoting it, as a review does, isn't
-  its), its login authoring the pull request, commit or branch's tip, or its
-  branch's prefix. It names no session, so a pull request of its is a session
+  its fingerprint or the account its work is authored by: now Neo, by
+  `🤖 Generated with [Neo](` and `neo/…`; Copilot, by its account, 198982749,
+  `Copilot` or `copilot-swe-agent`, and `copilot/…`; and Dependabot, by its
+  account, 49699333, `dependabot` or `dependabot[bot]`, and `dependabot/…`),
+  by its fingerprint beginning a line of the same texts (one quoting it, as a
+  review does, isn't its), its account authoring the pull request, commit or
+  branch's tip, told by its id and login both (a commit's by its GitHub
+  no-reply address, `<id>+<login>@users.noreply.github.com`, where GitHub
+  names no user for it, as for a bot's), or its branch's prefix. It names no
+  session, so a pull request of its is a session
   alone, joining none by what it links, and its branch only if it is the
   newest of the pull requests read from it (by its number, as GitHub numbers
   them as they are opened), any agent's or none. Claude's or Codex's marks on its work
