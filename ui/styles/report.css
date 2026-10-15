@@ -3376,6 +3376,15 @@ repository-code-source {
   /* The revision grows into room left, as wide as a full one it names. */
   & > .repository-code-revision { flex: 1 1 16rem; min-width: 10rem; max-width: max-content; }
 }
+/* A side of a directory's Compare (repository-compare.js): as wide as the
+   revision it names, and before one is picked, as what it asks for, within
+   its row less the hint before it (`cqi`: its row's own width, which it
+   sizes, would be none). */
+.bundle-compare-head:has(repository-revision-pick) { container-type: inline-size; }
+.bundle-compare-picker repository-revision-pick {
+  display: block; flex: 0 1 auto;
+  &[empty] { min-width: min(19.5rem, 100cqi - 5rem); }
+}
 .repository-code-path {
   display: inline-flex; align-items: center; gap: .3rem; min-width: 0; flex: none; max-width: 18rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; color: var(--muted);

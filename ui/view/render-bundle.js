@@ -52,6 +52,7 @@ import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
+import { repositoryCompareSource } from './repository-compare.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { withCompare } from './compare-load.js'
@@ -1998,7 +1999,7 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
 
 // The tabs a repository's directory shows (repository-code.js), `tab` the
 // one open: its Activity one, opening on the view of it last shown.
-const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], [activityTab(tab), 'Activity']]
+const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'], [activityTab(tab), 'Activity']]
 
 // The body of a tab of a repository's directory reading none of its files
 // (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents or
@@ -2105,8 +2106,8 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search, Treemap, Commits, Issues,
-  // Pull requests, Agents and Pulse alone.
+  // A repository's directory shows its Code, Search, Treemap, Compare, Commits,
+  // Issues, Pull requests, Agents and Pulse alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2197,7 +2198,7 @@ function renderBundleSlide(entry) {
           ['review', () => withCompare(() => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`)],
           ['compare', () => withCompare(() => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`)],
+            .source=${npm ? npmComparisonSource(entry) : repository ? repositoryCompareSource(entry) : null}></bundle-compare>`)],
           ['issues', () => repository ? repositoryFilelessTab(entry.repository, 'issues') : renderBundleIssuesList(details)],
           ['advisories', () => renderBundleAdvisoriesTab(details, render,
             canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

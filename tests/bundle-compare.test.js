@@ -504,6 +504,27 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(renderText(view._renderDiff(diffOf(view))), /\[added dep\]<span class="npm-dependency-kind">peer<\/span>/u, 'what the source tags one with, before its kind')
 })
 
+test('what a source reads may stand for what was picked, as a branch read stands as its head\'s commit, reported as each', async () => {
+  const { view, source, npm } = sourced()
+  const reported = []
+  view.addEventListener('bundle-compare-change', event => reported.push(event.detail.target))
+  view.source = { ...source('2.0.0'), load: id => Promise.resolve({ ...npm('sha512-c0ffee', id), compareId: 'c0ffee' }) }
+  view._pick('heads/next')
+  await Promise.resolve()
+  assert.equal(view._targetIntegrity, 'c0ffee')
+  assert.equal(view._status, 'ready')
+  assert.deepEqual(reported, ['heads/next', 'c0ffee'], 'as picked, then as read')
+})
+
+test('a source may pick each side its own way, listing none, Compare then asking for a pick', () => {
+  const { view, source } = sourced()
+  view.source = { ...source('2.0.0'), options: [], choices: [], select: (side, label) => `<pick ${label}: ${side.value}>` }
+  const markup = renderText(view.render())
+  assert.match(markup, /<pick Version to compare with: null>[^]*<pick Version to compare: 2\.0\.0>/u)
+  assert.doesNotMatch(markup, /<bundle-selector|No other versions/u)
+  assert.match(markup, /Pick a version above to compare/u)
+})
+
 test('a source\'s badges are given the one compared with, the open one, and the comparison\'s files', async () => {
   const { view, source } = sourced()
   view.source = { ...source('2.0.0'), badges: (base, other, files) => `<badges ${base.integrity} → ${other.integrity}: ${files.changed.map(row => row.path)}>` }

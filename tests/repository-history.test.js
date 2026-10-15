@@ -18,6 +18,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
+mock.module('../ui/view/repository-compare.js', { exports: { repositoryCompareSource: () => null } })
 mock.module('../ui/view/repository-code.js', { exports: {
   navigateToRepositoryCode(route) { navigations.push(route) },
   shownRevision: ({ revision, commit }) => revision?.name ? revision : { kind: 'commit', name: commit },

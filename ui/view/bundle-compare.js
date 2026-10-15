@@ -33,7 +33,11 @@
 // dateWarning? }`, its date flagged where it has a `dateWarning`, which its tooltip says
 // (bundle-selector.js bundleOptions); its ids stand where bundles' integrities do, `base` the open one's.
 // `options` are what the open one compares with, `choices` what may take
-// its place.
+// its place; or each side is picked as the source's `select(side, label)`
+// renders it (bundle-compare-picker.js), as a repository's directory picks
+// a revision (repository-compare.js). What `load` reads may name what it
+// read otherwise than it was picked by, as its `compareId`, as a branch
+// reads as its head's commit, which then stands for it.
 //
 // Both sides are pickers, the one picked to compare with first and the open
 // one second, the comparison reading from the first to the second: what the
@@ -387,6 +391,10 @@ class BundleCompare extends LitElement {
       if (this._targetIntegrity !== integrity) return
       this._otherDetails = details
       this._status = 'ready'
+      if (details?.compareId && details.compareId !== integrity) {
+        this._targetIntegrity = details.compareId
+        this._notify()
+      }
       return
     }
     const entry = bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
@@ -435,7 +443,7 @@ class BundleCompare extends LitElement {
   _fileRow(path, label, sizeTpl, tooltip = path, tagged = false, meta = undefined, basePath = path, base = undefined) {
     const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path, base) : nothing}${fileMetaTags(meta)}${sizeTpl}
+      ${files ? files.icon(path, [[this._otherDetails, basePath], [this.details, path]]) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${tagged ? files?.tag?.(this.details, path, base) ?? nothing : nothing}${fileMetaTags(meta)}${sizeTpl}
     </button></li>`
   }
 
@@ -756,7 +764,7 @@ class BundleCompare extends LitElement {
     let body
     if (!this._baseReady) {
       body = html`<div class="bundle-compare-empty">Loading bundle…</div>`
-    } else if (this.source && !hasTarget && (this.source.pending || this.source.error || others.length === 0)) {
+    } else if (this.source && !hasTarget && (this.source.pending || this.source.error || (!this.source.select && others.length === 0))) {
       body = html`<div class=${`bundle-compare-empty${this.source.error ? ' is-error' : ''}`}>${this.source.pending ? `Loading ${noun}s…`
         : this.source.error ?? html`No other ${noun}s to compare <strong>${this._nameFor(this.integrity)}</strong> with.`}</div>`
     } else if (others.length === 0 && !this.source) {
@@ -819,7 +827,7 @@ class BundleCompare extends LitElement {
     // The header and the group titles already say which bundle is which;
     // the shared root the file rows drop rides on the Files heading. Over
     // it, a source's warning on the files the open one adds or changes.
-    const warning = listsFiles ? this.source?.files?.warning(this.details, [...files.added, ...files.changed].map(r => r.path)) : nothing
+    const warning = listsFiles ? this.source?.files?.warning?.(this.details, [...files.added, ...files.changed].map(r => r.path)) : nothing
     return html`
       ${dependencies ? this._renderDependencies(dependencies, baseName, otherName, packageLanes)
         : this._renderPackages(diff.packageRows, baseName, otherName, packageLanes)}
@@ -827,7 +835,7 @@ class BundleCompare extends LitElement {
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
-          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'})${root.from ? html`, moved <span class="mono">${rootTemplate(root)}</span>` : ''}.</div>`
+          : html`<div class="bundle-compare-identical">These two ${this.source?.noun ?? 'bundle'}s carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'})${root.from ? html`, moved <span class="mono">${rootTemplate(root)}</span>` : ''}.</div>`
         : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
             ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
             ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}

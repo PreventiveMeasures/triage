@@ -26,7 +26,8 @@ export function comparePickerStyle(source) {
 export function renderComparisonPicker({ source, label = 'Compare', from, to, clear, swap, extras = nothing, comparison = null, disabled = false, openLine }) {
   const noun = source?.noun ?? 'bundle'
   const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
-  const select = (side, fallback) => html`<bundle-selector .bundles=${side.options} .value=${side.value} .noun=${noun} .versions=${Boolean(source)}
+  // A source may pick each side its own way (bundle-compare.js `source`).
+  const select = (side, fallback) => source?.select ? source.select(side, side.label ?? fallback) : html`<bundle-selector .bundles=${side.options} .value=${side.value} .noun=${noun} .versions=${Boolean(source)}
     label=${side.label ?? fallback} placeholder=${side.placeholder ?? `Choose a ${noun}…`} ?disabled=${disabled}
     @bundle-change=${event => { event.stopPropagation(); side.pick(event.detail.value) }}></bundle-selector>`
   return html`<div class=${source ? 'bundle-compare-picker is-versions' : 'bundle-compare-picker'} style=${comparePickerStyle(source)}
