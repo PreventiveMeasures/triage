@@ -130,14 +130,14 @@ function parseNpmRoute(path, hash) {
 }
 
 // The code viewer: a directory of a repository at a commit, on its Code,
-// Search or Treemap tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
+// Search, Treemap or History tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
 // the repository's root where it names no directory. Code, the tab a bare
 // link opens, names its file by number and its lines in the fragment, as a
 // bundle's Code does: `/code/<file>#L4`. Without a commit,
 // `/manage/code/<repo id>[?path=<directory>]`, it opens on the default
 // branch's head, or on the revision a route held in memory names (`ref`),
 // and its route then names the commit it opened.
-export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap'])
+export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'history'])
 const COMMIT = /^[a-f\d]{40}$/u
 const MAX_DIRECTORY = 500
 const isRepoId = value => Number.isSafeInteger(value) && value > 0
@@ -163,7 +163,7 @@ function repositoryCodePath(route) {
 }
 
 function parseRepositoryCodeRoute(url) {
-  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap)(?:\/([1-9]\d*))?)?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
+  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|history)(?:\/([1-9]\d*))?)?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
   if (!match) return undefined
   const repoId = Number(match[1])
   const path = url.searchParams.get('path') ?? ''

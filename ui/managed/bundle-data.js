@@ -142,6 +142,21 @@ export function fetchRepositoryContents(repoId, ref, path, { signal } = {}) {
   return requestRepository('contents', { repoId, ref, path }, signal)
 }
 
+const REPOSITORY_HISTORY_ERRORS = {
+  ...REPOSITORY_CODE_ERRORS,
+  'no-directory': 'This directory’s history is not available to you.',
+  'github-malformed': 'GitHub answered with a history that couldn’t be read.',
+  'github-token-required': 'Reading every branch needs your GitHub sign-in.',
+  400: 'Not a repository’s history.',
+}
+
+// The History tab's commits: from a revision, a page at a time (`page`), or
+// across the repository's most recently updated branches (`all`).
+export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, signal } = {}) {
+  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {} })}`,
+    REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }

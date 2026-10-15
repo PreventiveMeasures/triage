@@ -42,6 +42,7 @@ import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMet
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
 import { browsableRepositories, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
+import './repository-history.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -1934,7 +1935,7 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
   ['overview', 'Overview']]
 
 // The tabs a repository's directory shows (repository-code.js).
-const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search']]
+const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History']]
 
 // The bundle slide: its header, with the bundle's name, or an npm version's
 // with the package's versions to switch to, and its `tabs`, `tab` the one
@@ -2016,7 +2017,7 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search and Treemap alone.
+  // A repository's directory shows its Code, Search, Treemap and History alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2099,6 +2100,7 @@ function renderBundleSlide(entry) {
           ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
           ['code', () => renderBundleCodeView(details, entry)],
           ['search', () => renderBundleSearchView(details, entry)],
+          ['history', () => html`<repository-history .repository=${entry.repository} .refs=${repositoryRefs(entry.repository.repoId)}></repository-history>`],
           ['review', () => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`],
           ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}

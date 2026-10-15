@@ -67,20 +67,22 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 }
 
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
-// user token, App JWT, or installation token. Network / non-2xx / malformed
-// fold into a GithubApiError (401 passes through for the caller to handle).
-export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
+// user token, App JWT, or installation token, `body` sent as JSON (a GraphQL
+// query's, given longer to answer). Network / non-2xx / malformed fold into a
+// GithubApiError (401 passes through for the caller to handle).
+export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown): Promise<unknown> {
   let res: Response
   const started = Date.now()
   try {
     res = await fetchImpl(url, {
       method,
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(body === undefined ? 10_000 : 20_000),
       redirect: 'error',
       headers: {
         ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
-        'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
       },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   } catch (error) { throw githubUnreachable(error, started) }
   if (res.status === 401) discardInstallationToken(token, fetchImpl)

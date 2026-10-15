@@ -73,6 +73,10 @@ export async function fetchRepositoryContents(repoId, ref, path, options) {
   return (await loadManagedBundle()).fetchRepositoryContents(repoId, ref, path, options)
 }
 
+export async function fetchRepositoryHistory(repoId, ref, path, options) {
+  return (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options)
+}
+
 export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }

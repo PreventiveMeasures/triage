@@ -17,7 +17,7 @@ import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parse
 import { acceptsReportMetadata } from './report-response.ts'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
@@ -319,6 +319,63 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
   return false
 }
 
+// A repository's history for the History tab: main merging a feature and a
+// fix, develop merging main back, a branch still open, tags on main, and a
+// long line of older commits under them. main's head is the code fixture's
+// `a…`, develop's its `b…`.
+const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
+  ['main', 'Merge pull request #42 from org/feature/code-viewer', ['m9', 'cv3'], 2, 'Ada Lovelace'],
+  ['cv3', 'Code viewer: a History tab with the graph of branches', ['cv2'], 3, 'Grace Hopper'],
+  ['bp2', 'Bundle picker: remember the last repository picked', ['bp1'], 5, 'Linus Torvalds'],
+  ['develop', 'Experimental: read trees lazily', ['d2'], 9, 'Margaret Hamilton'],
+  ['m9', 'Fix a flaky upload test', ['m8'], 20, 'Ada Lovelace'],
+  ['cv2', 'Code viewer: the repository as a dropdown', ['cv1'], 26, 'Grace Hopper'],
+  ['bp1', 'Bundle picker: list the repositories connected', ['m8'], 30, 'Linus Torvalds'],
+  ['d2', 'Merge branch main into develop', ['d1', 'm8'], 34, 'Margaret Hamilton'],
+  ['cv1', 'Code viewer: open a directory at a revision', ['m7'], 50, 'Grace Hopper'],
+  ['m8', 'Merge pull request #41 from org/fix/ci-cache', ['m7', 'f1'], 70, 'Ada Lovelace'],
+  ['f1', 'CI: cache node_modules between runs', ['m6'], 80, 'Ken Thompson'],
+  ['m7', 'Release 1.0.0', ['m6'], 100, 'Ada Lovelace'],
+  ['d1', 'Experimental: a worker pool for scans', ['m5'], 130, 'Margaret Hamilton'],
+  ['m6', 'Bump dependencies', ['m5'], 160, 'Dependabot'],
+  ['m5', 'Merge pull request #40 from org/feature/treemap', ['m4', 't2'], 200, 'Ada Lovelace'],
+  ['t2', 'Treemap: label the largest files', ['t1'], 230, 'Barbara Liskov'],
+  ['m4', 'Docs: the managed mode', ['m3'], 260, 'Ada Lovelace'],
+  ['t1', 'Treemap: size files by their bytes', ['m3'], 300, 'Barbara Liskov'],
+  ['m3', 'Search: match case and whole words', ['m2'], 400, 'Edsger Dijkstra'],
+  ['m2', 'Release 0.19.0', ['m1'], 600, 'Ada Lovelace'],
+  ['m1', 'Code: open files by their number', ['o1'], 900, 'Edsger Dijkstra'],
+  ...Array.from({ length: 140 }, (_, index): [string, string, string[], number, string] =>
+    [`o${index + 1}`, `Older work, part ${140 - index}`, index === 139 ? [] : [`o${index + 2}`], 1000 + index * 40, index % 3 === 0 ? 'Ada Lovelace' : 'Alan Turing']),
+]
+const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
+const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3']]
+const HISTORY_TAGS = [['v1.0.0', 'm7'], ['v0.19.0', 'm2']]
+
+function historyFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const commits = HISTORY_FIXTURE.map(([label, subject, parents, hours, author]) => ({
+    sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
+  }))
+  const branches = HISTORY_BRANCHES.map(([name, label]) => ({ name, sha: historySha(label!) }))
+  const tags = HISTORY_TAGS.map(([name, label]) => ({ name, sha: historySha(label!) }))
+  if (url.searchParams.get('all') === 'true') { sendJson(res, 200, { all: true, commits, branches, tags, defaultBranch: 'main', more: false }); return }
+  const ref = url.searchParams.get('ref') ?? ''
+  const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
+  const bySha = new Map(commits.map(item => [item.sha, item]))
+  const reached = new Set<string>()
+  for (const queue = [commit]; queue.length > 0;) {
+    const sha = queue.pop()!
+    if (reached.has(sha) || !bySha.has(sha)) continue
+    reached.add(sha)
+    queue.push(...bySha.get(sha)!.parents)
+  }
+  const path = url.searchParams.get('path') ?? ''
+  const listed = commits.filter((item, index) => reached.has(item.sha) && (!path || index % 3 === 0))
+  const page = Number(url.searchParams.get('page') ?? '1')
+  sendJson(res, 200, { commit, path, page, commits: listed.slice((page - 1) * 100, page * 100), more: listed.length > page * 100, ...page === 1 ? { branches, tags } : {} })
+}
+
 function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
   if (url.pathname.endsWith('/browsable')) {
@@ -326,6 +383,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   }
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
+  if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
@@ -539,7 +597,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents', '/api/admin/repositories/code'].includes(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return
