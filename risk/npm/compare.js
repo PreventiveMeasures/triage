@@ -19,6 +19,16 @@ import { npmFilesDiff } from './diff.js'
 import { npmInstallScripts } from './install-scripts.js'
 import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from './release.js'
 
+// The files the open version (`other`) runs as scripts that the one compared
+// with (`base`) held alike but didn't run (npm/files.js npmLoadedScripts),
+// as its code now loads them, each a row as npmFilesDiff's `changed` holds
+// one: what node runs of them is new, as a changed file's is.
+function npmWokenFiles(base, other, files) {
+  const listed = new Set([...files.onlyOther, ...files.changed].map(row => row.path)), loaded = npmLoadedScripts(other), loadedBefore = npmLoadedScripts(base)
+  return [...files.changed.filter(row => row.renamedFrom != null && !row.modified && loaded.has(row.path) && !loadedBefore.has(row.renamedFrom)),
+    ...[...loaded].filter(path => !listed.has(path) && !loadedBefore.has(path)).map(path => ({ path }))]
+}
+
 // What the open version does to its files that calls for a look, as red
 // findings: code that runs beyond itself (runs-code.js), new to a file it
 // adds or changes, the kinds with their lines (`runs-code`), those reaching
@@ -39,13 +49,14 @@ import { npmInstallScriptsChange, npmProvenanceLost, npmPublisherChange } from '
 // where its source map was rebuilt with it (`rebuilt`, rebuiltWithMap), as a
 // build minifies a file and writes its map together, and in a `major`
 // release (npmMajorRelease): `now-unreadable` orange where every such file is
-// either, else red.
+// either, else red. A file it held alike that node now runs as a script
+// (npmWokenFiles) counts as one it changes.
 function npmFileFindings(base, other, files, major) {
   const added = new Set(files.onlyOther)
   const after = row => npmVersionFileRisk(other, row.path)
   const before = row => added.has(row) ? null : npmVersionFileRisk(base, row.renamedFrom ?? row.path)
   const changed = files.changed.filter(row => row.renamedFrom == null || row.modified)
-  const touched = [...files.onlyOther, ...changed]
+  const touched = [...files.onlyOther, ...changed, ...npmWokenFiles(base, other, files)]
   const sizes = bundleFileSizes(other)
   // The files that hold what they didn't before, each with that.
   const gained = key => touched.map(row => ({ path: row.path, added: npmFoundAdded(after(row)[key], before(row)?.[key] ?? null) })).filter(row => row.added)
@@ -150,7 +161,7 @@ const unreadableFinding = (major, files) => ({ severity: major || files.every(ro
 // adds or changes hold all it names anew.
 function npmNewHosts(base, other, files) {
   const found = new Map(), known = npmVersionHosts(base)
-  for (const { path } of [...files.onlyOther, ...files.changed]) {
+  for (const path of new Set([...files.onlyOther, ...files.changed, ...npmWokenFiles(base, other, files)].map(row => row.path))) {
     for (const [host, line] of npmVersionFileRisk(other, path).hosts ?? []) {
       if (known.has(host) || ALLOWED_HOSTS.has(host)) continue
       const place = { path, line }

