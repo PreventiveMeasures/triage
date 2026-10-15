@@ -3466,6 +3466,19 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
   & > button + button { border-left: 1px solid var(--border); }
 }
 .history-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Activity's views (repository-activity.js), first in each view's bar, an
+   icon each, picked as the graph's layouts are. */
+.activity-views {
+  display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+  & > button {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 1px 6px;
+    border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); cursor: default;
+    &:hover { color: var(--text); }
+    &[aria-pressed=true] { background: var(--surface-active); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    & svg { display: block; }
+  }
+}
 .history-scroll { flex: 1; min-height: 0; overflow: auto; padding: .3rem 0 .5rem; }
 .history-lines { position: relative; min-width: calc(var(--history-graph) + 24rem); }
 .history-graph {

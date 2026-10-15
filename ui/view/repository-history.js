@@ -17,6 +17,7 @@ import { firstParentLine, historyLayout, historyOrder } from './history-graph.js
 import { TAG_ICON_SVG } from './icons.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
+import { activityPicker } from './repository-activity.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
 // margin before the first lane and after the last.
@@ -349,6 +350,7 @@ class RepositoryHistory extends LitElement {
     const branches = ready && mode === 'all' ? entry.branches.length : 0
     const count = ready ? `${entry.commits.length}${entry.more || entry.cut ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
     return html`<div class="history-bar">
+        ${activityPicker('history')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
           : html`<div class="history-modes" role="group" aria-label="History">
             <button type="button" aria-pressed=${String(mode === 'revision')} @click=${() => this.pick('revision')}>This revision</button>

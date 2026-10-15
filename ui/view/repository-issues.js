@@ -16,6 +16,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
+import { activityPicker } from './repository-activity.js'
 
 export { issueState }
 
@@ -196,6 +197,7 @@ class RepositoryIssues extends LitElement {
     const counted = which => counts ? html` <span class="issues-count">${counts[which].toLocaleString('en-US')}</span>` : nothing
     const shown = ready ? filterIssues(entry.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
+        ${activityPicker(this.kind)}
         <div class="history-modes" role="group" aria-label=${this.kind === 'pulls' ? 'Pull requests' : 'Issues'}>
           <button type="button" aria-pressed=${String(listState === 'open')} @click=${() => this.pick('open')}>Open${counted('open')}</button>
           <button type="button" aria-pressed=${String(listState === 'closed')} @click=${() => this.pick('closed')}>Closed${counted('closed')}</button>

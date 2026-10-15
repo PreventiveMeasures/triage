@@ -577,7 +577,7 @@ view-mode-buttons {
    The inherited property also reaches the Findings chooser inside a graph. */
 :is(.revalidation-detail, .revalidation-upstream, .view-mode-btn) { position: relative; }
 :is(.revalidation-detail.on, .revalidation-upstream.on, .view-mode-btn.active,
-    .g2-layout-tabs button[aria-pressed='true'])::before {
+    .g2-layout-tabs button[aria-pressed='true'], .activity-views button[aria-pressed='true'])::before {
   content: var(--selected-icon-ring-content, none);
   position: absolute;
   left: 50%; top: 50%;
