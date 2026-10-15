@@ -21,8 +21,8 @@ function loads(entry) {
 const managed = loads('out/client-managed.js'), view = loads('out/view.js')
 const compare = loads('out/compare.js'), dialogs = loads('out/dialogs.js'), scan = loads('out/scan.js')
 const isDialog = path => path.startsWith('ui/view/dialogs/')
-// Two dialogs are held up front (view/lazy-dialogs.js says why), with what they import.
-const upFront = new Set(['ui/view/dialogs/proxy-auth-dialog.js', 'ui/view/dialogs/triage-conflict-dialog.js'])
+// A few dialogs are held up front (view/lazy-dialogs.js says why), with what they import.
+const upFront = new Set(['passkey-unlock', 'proxy-auth', 'sync-auth', 'triage-conflict'].map(name => `ui/view/dialogs/${name}-dialog.js`))
 for (const path of upFront) for (const { path: next, kind } of metafile.inputs[path].imports) if (kind === 'import-statement' && isDialog(next)) upFront.add(next)
 
 test('view.js loads no Scans, Compare or dialog but those held up front', () => {

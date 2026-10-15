@@ -2,12 +2,17 @@
 // opens: every dialog in dialogs/, with its styles and what only dialogs use.
 // Each opener here stands for the dialog's own, under its name: it takes the
 // same arguments and returns the same promise, of the dialog's result, once
-// the bundle is in. Outside dialogs/, dialogs open through here, but for two
-// that their callers import directly, held up front because a dialog that
-// can't load there costs more than its bytes: the proxy-auth notice, which
-// opens when this origin's requests are redirected to a login proxy (the
-// bundle's would be too), and the triage conflict dialog, whose callers keep
-// local values when it can't open, the user's choice lost.
+// the bundle is in. Outside dialogs/, dialogs open through here.
+//
+// A dialog a click opens can fail to load and leave nothing behind: the click
+// did nothing, and another tries again. A dialog the app opens on its own,
+// mid-flow, is held up front instead, imported by its callers directly, where
+// they can't recover from one that didn't open:
+// - the proxy-auth notice opens when this origin's requests are redirected to
+//   a login proxy, which the bundle's would be too;
+// - the triage conflict dialog's callers keep local values, the choice lost;
+// - the passkey unlock prompt is a step of opening a file of a locked vault;
+// - the sync password prompt's save is left pending, with nothing to retry it.
 import { lazyEntry } from './lazy-entry.js'
 
 const dialogs = lazyEntry('./dialogs.js')
@@ -37,12 +42,10 @@ export const openNewWorkspaceDialog = opener('openNewWorkspaceDialog')
 export const openNpmCompareAdvisoriesDialog = opener('openNpmCompareAdvisoriesDialog')
 export const openObjstoreRecoveryDialog = opener('openObjstoreRecoveryDialog')
 export const openPasskeySetupDialog = opener('openPasskeySetupDialog')
-export const openPasskeyUnlockDialog = opener('openPasskeyUnlockDialog')
 export const openPersistenceDegradedDialog = opener('openPersistenceDegradedDialog')
 export const openReportCompareDialog = opener('openReportCompareDialog')
 export const openRevalidationConflictsDialog = opener('openRevalidationConflictsDialog')
 export const openStoragePersistDialog = opener('openStoragePersistDialog')
-export const openSyncAuthDialog = opener('openSyncAuthDialog')
 export const openSyncDownloadDialog = opener('openSyncDownloadDialog')
 export const openSyncSuggestDialog = opener('openSyncSuggestDialog')
 export const openSyncUploadDialog = opener('openSyncUploadDialog')

@@ -3,13 +3,13 @@ import { readFile, readdir } from 'node:fs/promises'
 import { test } from 'node:test'
 
 // ui/dialogs.js, its own bundle, exports every dialog's opener; view/lazy-dialogs.js
-// stands one in for each, under its name, loading the bundle on first use. Two
-// are held up front, imported by their callers directly (lazy-dialogs.js says
-// why). Read as written: the dialogs want a browser.
+// stands one in for each, under its name, loading the bundle on first use. A
+// few are held up front, imported by their callers directly (lazy-dialogs.js
+// says why). Read as written: the dialogs want a browser.
 const root = new URL('../', import.meta.url)
 const read = path => readFile(new URL(path, root), 'utf8')
 const OPENER = /^export (?:(?:async )?function |const )((?:open|resolve)\w+)\b/gmu
-const UP_FRONT = new Set(['proxy-auth-dialog.js', 'triage-conflict-dialog.js'])
+const UP_FRONT = new Set(['passkey-unlock-dialog.js', 'proxy-auth-dialog.js', 'sync-auth-dialog.js', 'triage-conflict-dialog.js'])
 
 test('every dialog’s opener but those up front is in ui/dialogs.js, with a stand-in in lazy-dialogs.js', async () => {
   const files = (await readdir(new URL('ui/view/dialogs/', root))).filter(file => file.endsWith('-dialog.js') && file !== 'app-dialog.js')
