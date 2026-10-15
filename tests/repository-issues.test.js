@@ -13,6 +13,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryHistory: () => new Promise(() => {}),
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
+const opened = []
+mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 const watching = new Map()
 mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
@@ -60,6 +62,23 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   assert.match(reading, /Reading the issues…/u)
   assert.match(reading, /Open <span class="issues-count">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed <span class="issues-count">40<\/span>/u)
   view.pick('open')
+})
+
+test('a tile clicked opens its popup, what the tile knew shown as it reads the rest; held with a key, or another button, it opens on GitHub', () => {
+  const view = shown('pulls')
+  const click = more => ({ button: 0, prevented: false, preventDefault() { this.prevented = true }, ...more })
+  const item = pull(5)
+  opened.length = 0
+  const plain = click()
+  view.openTile(plain, item)
+  assert.equal(plain.prevented, true)
+  assert.deepEqual(opened, [{ repository: view.repository, target: { number: 5, preview: { ...item, kind: 'pulls' } } }])
+  for (const held of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+    const event = click(held)
+    view.openTile(event, item)
+    assert.equal(event.prevented, false, JSON.stringify(held))
+  }
+  assert.equal(opened.length, 1)
 })
 
 test('a tile\'s state: open, merged, closed or draft for a pull request; open, completed or not planned for an issue', () => {

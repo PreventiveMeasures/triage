@@ -412,9 +412,20 @@ const ISSUE_TITLES = ['Treemap labels overlap on narrow screens', 'History graph
 const ISSUES_FIXTURE_PAGE = 20
 
 function issuesFixture(url: URL, res: ServerResponse): void {
-  const now = Date.now()
   const kind = url.searchParams.get('kind') === 'pulls' ? 'pulls' : 'issues'
-  const all = Array.from({ length: kind === 'pulls' ? 46 : 63 }, (_, index) => {
+  const all = issueTiles(kind, Date.now())
+  const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open'
+  const listed = all.filter(item => (item.state === 'open') === (state === 'open'))
+  // Cursors with a `_`, as GitHub's base64url ones can have.
+  const from = Number(/^page_(\d+)$/u.exec(url.searchParams.get('after') ?? '')?.[1] ?? '0')
+  const end = from + ISSUES_FIXTURE_PAGE
+  sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
+    more: end < listed.length, after: end < listed.length ? `page_${end}` : null })
+}
+
+// The issues' or pull requests' tiles, as of `now`.
+function issueTiles(kind: 'issues' | 'pulls', now: number) {
+  return Array.from({ length: kind === 'pulls' ? 46 : 63 }, (_, index) => {
     const hours = index < 6 ? [1, 3, 9, 20, 30, 50][index]! : 60 + index * index * 2
     const labels = ISSUE_LABELS.flatMap(([name, color], at) => (index * 7 + at * 3) % 11 < (index % 4 === 0 ? 3 : 1) ? [{ name, color }] : [])
     const common = { number: (kind === 'pulls' ? 900 : 880) - index * 3, title: `${ISSUE_TITLES[index % ISSUE_TITLES.length]}${index >= ISSUE_TITLES.length ? ` (${Math.floor(index / ISSUE_TITLES.length) + 1})` : ''}`,
@@ -427,13 +438,39 @@ function issuesFixture(url: URL, res: ServerResponse): void {
       review: state === 'open' ? (['approved', 'changes', 'required', null] as const)[index % 4]! : null, checks: (['success', 'failure', 'pending', null] as const)[(index * 3) % 4]!,
       additions: (index * 37) % 400 + 2, deletions: (index * 19) % 150, head: `feature/${common.title.toLowerCase().replaceAll(/[^a-z\d]+/gu, '-').slice(0, 24).replace(/-$/u, '')}`, base: 'main' }
   })
-  const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open'
-  const listed = all.filter(item => (item.state === 'open') === (state === 'open'))
-  // Cursors with a `_`, as GitHub's base64url ones can have.
-  const from = Number(/^page_(\d+)$/u.exec(url.searchParams.get('after') ?? '')?.[1] ?? '0')
-  const end = from + ISSUES_FIXTURE_PAGE
-  sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
-    more: end < listed.length, after: end < listed.length ? `page_${end}` : null })
+}
+
+// One issue or pull request, as its popup shows it: an agent's, as the
+// Agents tab names it, else one the Issues or Pull requests tabs list.
+function itemFixture(url: URL, res: ServerResponse): void {
+  const now = Date.now()
+  const number = Number(url.searchParams.get('number'))
+  const agents = agentsData(now)
+  const pull = agents.pulls.find(item => item.number === number)
+  const issue = agents.issues.find(item => item.number === number)
+  const body = 'Reads each pull request\'s body and its commits\' messages for the session that made it, never a comment.\n\n'
+    + '- Tiles on a rail, a line each\n- The bar counts each agent\'s pull requests, branches and commits\n\nhttps://claude.ai/code/session_01MamW9SFrduHwBFipxyjRnn'
+  const shared = { comments: number % 6, labels: number % 2 ? [{ name: 'enhancement', color: 'a2eeef' }] : [], moreLabels: 0, body }
+  if (pull) {
+    sendJson(res, 200, { kind: 'pulls', ...pull, ...shared, closedAt: pull.state === 'open' ? null : pull.updatedAt, mergedAt: pull.state === 'merged' ? pull.updatedAt : null,
+      review: pull.state === 'open' ? 'required' : 'approved', checks: 'success', base: 'main', files: number % 9 + 1, mergedBy: pull.state === 'merged' ? 'ChristopherTuring' : null,
+      closes: pull.closes.flatMap(closed => agents.issues.filter(item => item.number === closed).map(item => ({ number: item.number, title: item.title, state: item.state, reason: 'completed' }))) })
+    return
+  }
+  if (issue) {
+    const closers = agents.pulls.filter(item => item.closes.includes(number)).map(item => ({ number: item.number, title: item.title, state: item.state, draft: item.draft }))
+    sendJson(res, 200, { kind: 'issues', ...issue, ...shared, closedAt: issue.state === 'closed' ? issue.updatedAt : null, reason: issue.state === 'closed' ? 'completed' : null, closedBy: closers })
+    return
+  }
+  for (const kind of ['pulls', 'issues'] as const) {
+    const tile = issueTiles(kind, now).find(item => item.number === number)
+    if (tile) {
+      sendJson(res, 200, kind === 'pulls' ? { kind, ...tile, ...shared, labels: tile.labels, closes: [], commits: number % 5 + 1, files: number % 9 + 1, mergedBy: tile.state === 'merged' ? 'ada' : null }
+        : { kind, ...tile, ...shared, labels: tile.labels, closedBy: [] })
+      return
+    }
+  }
+  sendJson(res, 404, { error: 'github-not-found' })
 }
 
 // What a repository's agents left, for its Agents tab: Claude Code sessions,
@@ -444,11 +481,30 @@ function issuesFixture(url: URL, res: ServerResponse): void {
 const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
 
 function agentsFixture(url: URL, res: ServerResponse): void {
-  const now = Date.now()
+  const { pulls, commits, issues, branches } = agentsData(Date.now())
+  // Cursors with a `_`, as GitHub's base64url ones can have.
+  const at = (name: string) => Number(/^page_(\d+)$/u.exec(url.searchParams.get(name) ?? '')?.[1] ?? '0')
+  const first = !url.searchParams.has('pulls') && !url.searchParams.has('commits')
+  const read = (list: object[], name: 'pulls' | 'commits') => {
+    if (!first && !url.searchParams.has(name)) return { items: [], after: null }
+    const from = at(name)
+    const end = from + AGENT_FIXTURE_PAGE[name]
+    return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
+  }
+  const [readPulls, readCommits] = [read(pulls, 'pulls'), read(commits, 'commits')]
+  sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches } : {},
+    more: readPulls.after !== null || readCommits.after !== null, after: { pulls: readPulls.after, commits: readCommits.after } })
+}
+
+type FixturePull = { number: number; title: string; state: string; draft: boolean; author: string; createdAt: number; updatedAt: number; head: string
+  additions: number; deletions: number; commits: number; closes: number[]; signals: object }
+
+// The agents' work, as of `now`.
+function agentsData(now: number) {
   const hours = (count: number) => now - count * 3_600_000
   const none = { sessions: [], tasks: [], claude: false }
   const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true })
-  const commits: object[] = [], pulls: object[] = []
+  const commits: object[] = [], pulls: FixturePull[] = []
   const pull = (number: number, title: string, head: string, at: number, signals: object, more: object = {}) => pulls.push({ number, title, state: 'merged', draft: false,
     author: 'ChristopherTuring', createdAt: hours(at + 1), updatedAt: hours(at), head, additions: (number * 37) % 900 + 4, deletions: (number * 13) % 200, commits: number % 4 + 1,
     closes: [], signals, ...more })
@@ -478,25 +534,14 @@ function agentsFixture(url: URL, res: ServerResponse): void {
   // Work no agent touched.
   pull(850, 'Bump dependencies', 'deps/bump', 40, none)
   pull(851, 'Docs: the managed mode', 'docs/managed', 44, none)
-  pulls.sort((a, b) => (b as { updatedAt: number }).updatedAt - (a as { updatedAt: number }).updatedAt)
+  pulls.sort((a, b) => b.updatedAt - a.updatedAt)
   commits.sort((a, b) => (b as { at: number }).at - (a as { at: number }).at)
   const issues = [{ number: 842, title: 'Dark mode: tag chips are hard to read', state: 'closed', author: 'ada', createdAt: hours(90), updatedAt: hours(70) },
     { number: 860, title: 'Code viewer: history of a directory', state: 'closed', author: 'ChristopherTuring', createdAt: hours(34), updatedAt: hours(17) },
     { number: 855, title: 'Slow first paint', state: 'open', author: 'grace', createdAt: hours(80), updatedAt: hours(60) }]
   const branches = [{ name: 'claude/magical-mayer-83oicz', at: hours(2), author: 'ChristopherTuring', signals: session('01MamW9SFrduHwBFipxyjRnn') },
     { name: 'codex/try-lazy-trees', at: hours(8), author: 'ChristopherTuring', signals: none }]
-  // Cursors with a `_`, as GitHub's base64url ones can have.
-  const at = (name: string) => Number(/^page_(\d+)$/u.exec(url.searchParams.get(name) ?? '')?.[1] ?? '0')
-  const first = !url.searchParams.has('pulls') && !url.searchParams.has('commits')
-  const read = (list: object[], name: 'pulls' | 'commits') => {
-    if (!first && !url.searchParams.has(name)) return { items: [], after: null }
-    const from = at(name)
-    const end = from + AGENT_FIXTURE_PAGE[name]
-    return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
-  }
-  const [readPulls, readCommits] = [read(pulls, 'pulls'), read(commits, 'commits')]
-  sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches } : {},
-    more: readPulls.after !== null || readCommits.after !== null, after: { pulls: readPulls.after, commits: readCommits.after } })
+  return { pulls, commits, issues, branches }
 }
 
 function historyFixture(url: URL, res: ServerResponse): void {
@@ -561,6 +606,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
+  if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
@@ -777,7 +823,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents|item)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

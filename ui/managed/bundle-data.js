@@ -195,6 +195,17 @@ export function fetchRepositoryAgents(repoId, { pulls = null, commits = null, si
     REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
 }
 
+const REPOSITORY_ITEM_ERRORS = {
+  ...REPOSITORY_ISSUES_ERRORS,
+  'github-not-found': 'GitHub has no issue or pull request of that number here.',
+  400: 'Not an issue or pull request of a repository.',
+}
+
+// An issue or pull request, as its popup shows it, with its description.
+export function fetchRepositoryItem(repoId, number, { signal } = {}) {
+  return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }

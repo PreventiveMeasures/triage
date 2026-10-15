@@ -1614,13 +1614,20 @@ red, draft and not planned muted); under it, its number, author and age, a
 pull request's review (approved, changes requested or review required) while
 open, its first three labels, each by a dot of its color, a pull request's
 checks (passed, failed or running) and how many comments it has; and a pull
-request's branch, the one it merges into, and its lines added and removed. A tile opens on GitHub. A
+request's branch, the one it merges into, and its lines added and removed. A
+tile clicked opens its popup over the tab, as a kanban card does
+(`dialogs/repository-item-dialog.js`): what the tile shows at once, then, as
+it is read, its description, what a pull request closes or what closed an
+issue, each opening in its place (**Back** returning), a pull request's
+commits, files changed and who merged it, and **Open on GitHub**. Held with
+a key, or with another button, a tile opens on GitHub as a link does. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
 **More** button nears the end of the scroll, as History's Older commits are,
 but not while a filter picks among them, nor after a page failed. Like
 History, neither tab reads the directory's files: at a commit, each opens
-alone. What they read is kept for the session five minutes.
+alone. What they read is kept in the page for the session five minutes, and
+on the server for every reader (below).
 
 `GET /api/admin/repositories/issues?repoId=…&kind=issues|pulls&state=open|closed[&after=…]`
 answers `{ kind, state, items, counts: { open, closed }, more, after }` from
@@ -1639,6 +1646,22 @@ github-status-403`, the tab saying so, where GitHub refuses them) and reads a
 pull request's checks only with **Checks: read** and **Commit statuses:
 read**, its tiles showing none where GitHub refuses those alone (see GitHub
 App setup). Access is checked again before they are sent.
+
+`GET /api/admin/repositories/item?repoId=…&number=…` answers one issue or
+pull request, as its popup shows it, read and checked as a page is: its
+tile's fields, `kind` (`issues` or `pulls`), its description's Markdown as
+written (`body`, never GitHub's HTML of it, shown as finding descriptions
+are), an issue's pull requests closing it (`closedBy`), a pull request's
+issues it closes (`closes`), its `commits`, `files` changed and `mergedBy`;
+`404 github-not-found` where the repository has none of that number.
+
+What a page or item read is kept in the database (`managed_upstream_cache`,
+under `repository/reads`, a day), for every reader, their access checked as
+each asks: for two minutes it is answered as kept, unread again; then, while
+kept, it is answered at once and read again behind the answer for the next
+to ask, once at a time. Serverless, where nothing outlives an answer, a
+read older than two minutes is read again before it is answered. The
+Agents tab's pages are kept so too.
 
 
 ## Agents
@@ -1667,11 +1690,15 @@ texts, and anyone may name one in a comment. An issue is shown with a
 session whose pull request closes it, or whose branch the Claude GitHub App
 named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
 mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
-wrapping: its title (its first task's, of two lines at most) opening where
-it ran, a Claude Code session or a Codex task, else on GitHub; its author,
+wrapping: its title (its first task's, of two lines at most); its author,
 age, how many tasks and lines it holds; its pull requests, commits and
-issues in their states' colors, each opening on GitHub, as many as fit and
-how many more; and its branch. One with a branch alone says it has no pull
+issues in their states' colors, as many as fit and how many more; and its
+branch. A tile clicked opens its session's popup, as an issue's does: who,
+when, its state, tasks and size, its pull requests and issues, each opening
+in its place, its commits and branches, on GitHub, and links to where it ran
+(a Claude Code session or a Codex task) and to GitHub. A pull request's or
+issue's chip opens its own popup, a commit's opens on GitHub; held with a
+key, the title opens where the session ran and a chip on GitHub. One with a branch alone says it has no pull
 request, shown once no pull request left to read can be its (where some
 are, only a branch newer than the oldest read). **All**, **Claude** and
 **Codex** pick whose, each with how many; a **Filter** picks by any word of

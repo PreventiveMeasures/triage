@@ -30,6 +30,7 @@ export { openObjstoreRecoveryDialog } from './view/dialogs/objstore-recovery-dia
 export { openPasskeySetupDialog } from './view/dialogs/passkey-setup-dialog.js'
 export { openPersistenceDegradedDialog } from './view/dialogs/persistence-degraded-dialog.js'
 export { openReportCompareDialog } from './view/dialogs/report-compare-dialog.js'
+export { openRepositoryItemDialog } from './view/dialogs/repository-item-dialog.js'
 export { openRevalidationConflictsDialog } from './view/dialogs/revalidation-conflicts-dialog.js'
 export { openStoragePersistDialog } from './view/dialogs/storage-persist-dialog.js'
 export { openSyncDownloadDialog } from './view/dialogs/sync-download-dialog.js'

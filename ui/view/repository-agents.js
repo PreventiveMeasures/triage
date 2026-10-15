@@ -8,13 +8,16 @@
 // pull requests it opened and the commits it pushed) and the issues it
 // worked on, each opening on GitHub, and its branch. What was read is kept a
 // while, for the session that read it.
-import { LitElement, html, nothing, svg } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import { state } from '#client/index.js'
 import { agentSessions } from '../../common/managed/agent-tasks.ts'
 import { fetchRepositoryAgents } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
-import { providerIcon } from './provider-icons.js'
 import { compactTime } from './repository-history.js'
+import { openRepositoryItemDialog } from './lazy-dialogs.js'
+import { AGENT_ICONS, AGENT_NAMES, BRANCH_ICON, COMMIT_ICON, PULL_ICON, plainClick, sessionLink } from './repository-tiles.js'
+
+export { sessionLink }
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -127,34 +130,13 @@ export function filterSessions(sessions, agent, filter) {
   })
 }
 
-// Where a session opens: where it ran, a Claude Code session or a Codex
-// task, else its latest pull request or commit, else its branch, on GitHub.
-export function sessionLink(session, repo) {
-  if (session.sessions[0]) return `https://claude.ai/code/${session.sessions[0]}`
-  if (session.tasks[0]) return `https://chatgpt.com/codex/tasks/${session.tasks[0]}`
-  if (!repo) return null
-  if (session.pulls[0]) return `https://github.com/${repo}/pull/${session.pulls[0].number}`
-  if (session.commits[0]) return `https://github.com/${repo}/commit/${session.commits[0].oid}`
-  return session.branches[0] ? `https://github.com/${repo}/tree/${session.branches[0].split('/').map(encodeURIComponent).join('/')}` : null
-}
-
-const icon = body => html`<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">${body}</svg>`
-// Claude a burst in its orange, Codex OpenAI's mark.
-const AGENT_ICONS = {
-  claude: icon(svg`<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>`),
-  codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
-}
-const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
 const TILE_STATES = { open: 'open', merged: 'merged', closed: 'closed', branch: 'draft' }
 // What an agent did, by icon: the pull requests it opened, the branches it
 // pushed, and its commits to the default branch no pull request merged.
 const STATS = [
-  ['pulls', icon(svg`<circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/>`),
-    'pull request', 'pull requests'],
-  ['branches', icon(svg`<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/>`),
-    'branch', 'branches'],
-  ['commits', icon(svg`<circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/>`), 'commit to the default branch without a pull request',
-    'commits to the default branch without a pull request'],
+  ['pulls', PULL_ICON, 'pull request', 'pull requests'],
+  ['branches', BRANCH_ICON, 'branch', 'branches'],
+  ['commits', COMMIT_ICON, 'commit to the default branch without a pull request', 'commits to the default branch without a pull request'],
 ]
 
 // How many pull requests, branches and commits to the default branch
@@ -256,7 +238,7 @@ class RepositoryAgents extends LitElement {
         ${STATS.map(([kind, glyph, one, many]) => {
           const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
-          return html`<span class="agent-stat" role="img" aria-label=${name} title=${name}>${glyph}${count}</span>`
+          return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
         })}
       </span>`
     })}</span>`
@@ -274,28 +256,46 @@ class RepositoryAgents extends LitElement {
     </div>`
   }
 
+  // A session clicked, its card or title, opens its popup; a pull request
+  // or issue of it, that one's (dialogs/repository-item-dialog.js). Held
+  // with a key, or another button, a link opens as one does; a click on a
+  // commit opens it on GitHub.
+  openSession(event, session) {
+    if (!plainClick(event) || event.target?.closest?.('.agent-chip.is-commit')) return
+    event.preventDefault()
+    openRepositoryItemDialog({ repository: this.repository, target: { session } })
+  }
+
+  openItem(event, number, preview) {
+    if (!plainClick(event)) return
+    event.preventDefault()
+    event.stopPropagation()
+    openRepositoryItemDialog({ repository: this.repository, target: { number, preview } })
+  }
+
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
-  // title, of two at most, opening where it ran; its author, age, how many
-  // tasks and lines; its pull requests, commits and issues, those that fit,
-  // each with how many follow it, seen only past the last of them shown
-  // (report.css); and its branch.
+  // title, of two at most, opening its popup (where it ran, as a link); its
+  // author, age, how many tasks and lines; its pull requests, commits and
+  // issues, those that fit, each with how many follow it, seen only past the
+  // last of them shown (report.css); and its branch.
   renderSession(session) {
     const repo = this.repository.repo
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const tasks = session.pulls.length + session.commits.length
     const chips = [
-      ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`]),
-      ...session.commits.map(commit => ['is-commit', `commit/${commit.oid}`, html`<code>${commit.oid.slice(0, 7)}</code>`]),
+      ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`,
+        { kind: 'pulls', ...pull }]),
+      ...session.commits.map(commit => ['is-commit', `commit/${commit.oid}`, html`<code>${commit.oid.slice(0, 7)}</code>`, null]),
       // An issue closed, purple, as GitHub's completed are.
       ...session.issues.map(issue => [`is-issue is-${issue.state === 'open' ? 'open' : 'merged'}`, `issues/${issue.number}`,
-        html`<span class="sr-only">Issue </span>#${issue.number}`]),
+        html`<span class="sr-only">Issue </span>#${issue.number}`, { kind: 'issues', reason: null, ...issue }]),
     ]
-    return html`<li class=${`issue-tile agent-tile is-${TILE_STATES[session.state]}`}><div class="issue-body">
+    return html`<li class=${`issue-tile agent-tile is-${TILE_STATES[session.state]}`}><div class="issue-body" @click=${event => this.openSession(event, session)}>
       <span class="issue-rail">${session.agents.map(agent => html`<span class=${`agent-mark is-${agent}`} role="img" aria-label=${AGENT_NAMES[agent]}>${AGENT_ICONS[agent]}</span>`)}</span>
       <span class="issue-lines">
         ${link ? html`<a class="issue-name" href=${link} target="_blank" rel="noopener noreferrer">${session.title || '(no title)'}</a>`
-          : html`<span class="issue-name">${session.title || '(no title)'}</span>`}
+          : html`<button type="button" class="issue-name">${session.title || '(no title)'}</button>`}
         <span class="issue-meta">
           ${session.authors[0] ? html`<span class="issue-author">${session.authors[0]}</span>` : nothing}
           ${time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing}
@@ -303,8 +303,9 @@ class RepositoryAgents extends LitElement {
           ${session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
             <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing}
         </span>
-        ${chips.length > 0 ? html`<span class="agent-chips">${chips.slice(0, MAX_CHIPS).map(([kind, path, label], index) => html`<a class=${`agent-chip ${kind}`}
+        ${chips.length > 0 ? html`<span class="agent-chips">${chips.slice(0, MAX_CHIPS).map(([kind, path, label, preview], index) => html`<a class=${`agent-chip ${kind}`}
           href=${repo ? `https://github.com/${repo}/${path}` : nothing} target="_blank" rel="noopener noreferrer"
+          @click=${preview ? event => this.openItem(event, preview.number, preview) : nothing}
           data-rest=${index < chips.length - 1 ? chips.length - 1 - index : nothing}>${label}</a>`)}</span>` : nothing}
         ${session.branches[0] ? html`<span class="issue-branch"><code>${session.branches[0]}</code>${session.branches.length > 1
           ? html`<span>+${session.branches.length - 1}</span>` : nothing}</span>` : nothing}

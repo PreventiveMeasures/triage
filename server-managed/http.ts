@@ -40,6 +40,8 @@
 //        or pull requests, the most recently updated first, with how many are open and closed | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what Claude and Codex left: pull requests and
 //        commits to the default branch no pull request merged, with issues and agents' branches first | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
+//        description's Markdown | 400/401/403/404/409/429/502
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -105,7 +107,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { npmVersionStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -175,7 +177,7 @@ import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { MAX_HISTORY_PAGE, historyStarts, repositoryAllHistory, repositoryAllHistoryFrom, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { repositoryAgents } from './repository-agents.ts'
-import { ISSUES_CURSOR, repositoryIssues } from './repository-issues.ts'
+import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -205,6 +207,7 @@ const REPO_CODE_PATH = '/api/admin/repositories/code'
 const REPO_HISTORY_PATH = '/api/admin/repositories/history'
 const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
 const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
+const REPO_ITEM_PATH = '/api/admin/repositories/item'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -1570,12 +1573,22 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   }
 }
 
+// How long what readWholeRepository read is answered as kept, unread again.
+const REPOSITORY_READ_FRESH_MS = 2 * 60_000
+// The repositories' reads being read again behind a kept answer, by key.
+const repositoryRereads = new Set<string>()
+
 // What the whole of repository `repoId` gives in GraphQL (`read`, with its
 // name and a token), read as browsing is, with the reader's own GitHub
 // access: only by a reader whose grants reach all of it, with a token, and
-// sent once access is checked again after it is read.
+// sent once access is checked again after it is read. What `key` names is
+// kept for every reader (repositoryReadStore), each one's access checked as
+// they ask: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
+// kept, answered at once and read again behind it for the next to ask, where
+// the instance outlives its answer (not serverless, where it is read again
+// before it is answered).
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  read: (fullName: string, token: string) => Promise<object>): Promise<void> {
+  read: (fullName: string, token: string) => Promise<object>, key: string | null = null): Promise<void> {
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, '')
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1587,7 +1600,24 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-    const body = await read(access.repo.fullName, token)
+    const kept = key === null ? null : { store: repositoryReadStore(deps.db, deps.config.debug), key: `${repoId}\0${key}` }
+    const held = kept ? await kept.store.read(kept.key) : null
+    const readKept = async () => {
+      const body = await read(access.repo.fullName, token)
+      if (kept) await kept.store.write(kept.key, body, Date.now())
+      return body
+    }
+    const age = held ? Date.now() - held.at : Infinity
+    if (held && kept && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
+      if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(kept.key)) {
+        repositoryRereads.add(kept.key)
+        deps.track(readKept().catch((err: unknown) => { if (deps.config.debug) console.warn('managed: repository read failed:', err) })
+          .finally(() => repositoryRereads.delete(kept.key)))
+      }
+      sendJson(res, 200, held.value)
+      return
+    }
+    const body = await readKept()
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
@@ -1610,7 +1640,8 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
   const after = query.get('after')
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }))
+  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }),
+    `issues\0${kind}\0${state}\0${after ?? ''}`)
 }
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
@@ -1624,7 +1655,19 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || Object.values(cursors).some(cursor => cursor !== null && !ISSUES_CURSOR.test(cursor))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors))
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors), `agents\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
+}
+
+// GET /api/admin/repositories/item: the issue or pull request numbered
+// `number`, as the code viewer's popup for it shows it (repository-issues.ts
+// repositoryItem). It is the whole repository's (readWholeRepository).
+async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const number = Number(query.get('number'))
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !/^[1-9]\d{0,9}$/u.test(query.get('number') ?? '') || number > 2 ** 31 - 1) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${number}`)
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
@@ -3639,6 +3682,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_AGENTS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryAgents(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_ITEM_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryItem(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
