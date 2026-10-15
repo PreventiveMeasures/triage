@@ -41,7 +41,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS } from '../../common/managed/routes.js'
-import { browsableRepositories, repositoryCodeListing, repositoryCodeName, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
+import { browsableRepositories, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -1942,7 +1942,12 @@ const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['se
 // shows the header it will have, its versions and tabs waiting for it.
 // Both render through here, so the header stays put as the version opens.
 function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = false } = {}) {
-  const { npm, repository } = entry
+  const { npm } = entry
+  // A repository's directory opening in place of the one shown names it in the
+  // header, its bar running, the one shown dimmed under it until it opens.
+  const pending = entry.repository && !opening ? repositoryCodePending(entry) : null
+  const repository = pending ?? entry.repository
+  const loading = Boolean(pending) || (opening && Boolean(repository) && !state.repositoryCodeOpening?.error)
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
       ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
@@ -1965,9 +1970,11 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
-      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening))}</div>
+      <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending)))}</div>
+      ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
     </header></bundle-slide-header>
-    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview })}>${body}</div>
+    <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview, 'is-pending': Boolean(pending) })}
+      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing}>${body}</div>
   </div>`
 }
 

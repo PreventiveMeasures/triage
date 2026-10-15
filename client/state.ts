@@ -145,7 +145,10 @@ export interface State {
   npmOpening: { name: string; spec: string | null; tab: string } | null
   // A repository's directory opening in the code viewer, or why it didn't
   // (ui/view/repository-code.js).
-  repositoryCodeOpening: { repoId: number; commit: string; path: string; tab: string; repo: string | null; error: string | null } | null
+  repositoryCodeOpening: { repoId: number; commit: string | null; path: string; tab: string; repo: string | null; error: string | null } | null
+  // Another directory, or revision, opening in place of the one shown, by its
+  // integrity, while the navigation that asked for it is current.
+  repositoryCodePending: { integrity: string; generation: number; repository: object } | null
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
@@ -666,6 +669,7 @@ export const state: State = store<State>({
   npmLookup: { input: '', error: null },
   npmOpening: null,
   repositoryCodeOpening: null,
+  repositoryCodePending: null,
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',
