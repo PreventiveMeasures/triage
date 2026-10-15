@@ -199,9 +199,13 @@ class DependencyMatrix extends LitElement {
     })
   }
 
+  // The cycles switch where there are cycles, or while it is on: another
+  // scope can leave it on over a graph with none, for it to be turned off.
   renderControls() {
+    const cycles = this.model.cycleCount > 0 || this.cyclesOnly
+    if (!cycles && this.expanded.size === 0 && !this.neighborhood) return null
     return html`<div class="g2-matrix-controls">
-        <mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>
+        ${cycles ? html`<mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>` : null}
         ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.dirty = true; this.requestUpdate() }}>Collapse all</button>` : null}
         ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.dirty = true; this.requestUpdate() }}>All dependencies</button>` : null}
       </div>`
