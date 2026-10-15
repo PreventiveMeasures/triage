@@ -262,7 +262,7 @@ class RepositoryHistory extends LitElement {
 
   render() {
     if (!this.repository) return nothing
-    const { mode, entry, more } = this.history(this.mode())
+    const { mode, key, entry, more } = this.history(this.mode())
     const ready = entry.status === 'ready'
     const branches = ready && mode === 'all' ? entry.branches.length : 0
     const count = ready ? `${entry.commits.length}${entry.more && mode !== 'all' ? '+' : ''} commit${entry.commits.length === 1 ? '' : 's'}` : ''
@@ -277,7 +277,7 @@ class RepositoryHistory extends LitElement {
       </div>
       ${ready ? this.renderCommits(mode, entry, more)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
-            <button type="button" @click=${() => { sessionHistories().delete(this.history(mode).key); repaint() }}>Retry</button></div>`
+            <button type="button" @click=${() => { sessionHistories().delete(key); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading the history…</div>`}`
   }
 

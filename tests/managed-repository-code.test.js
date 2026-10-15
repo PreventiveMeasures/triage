@@ -87,13 +87,15 @@ function tarball(tree) {
 }
 
 // GitHub, as the reader and upstream's client ask it; `asked` the paths asked
-// for, `truncate` cutting recursive listings short.
-function github(t, { truncate = false } = {}) {
+// for, `truncate` cutting recursive listings short, `reads` how many times
+// the repository answers before it is gone.
+function github(t, { truncate = false, reads = Infinity } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
     asked.push(url.pathname + url.search)
     const path = url.pathname
+    if (path === '/repos/org/repo' && asked.filter(entry => entry === '/repos/org/repo').length > reads) return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     if (path === '/repos/org/repo/commits/heads%2Fmain') return Promise.resolve(Response.json({ sha: commit }))
     if (path === `/repos/org/repo/git/commits/${commit}`) return Promise.resolve(Response.json({ sha: commit, tree: { sha: treeAt('') } }))
@@ -171,6 +173,13 @@ test('a directory too large to hold, or listed short, is refused before its tarb
   const asked = github(t, { truncate: true })
   assert.deepEqual((await request({ repoId: '1', ref: commit })).body, { error: 'directory-too-large', commit })
   assert.ok(!asked.some(path => path.includes('/tarball/')))
+  assert.equal(asked.filter(path => path === '/repos/org/repo').length, 2, 'access is checked again before the commit is named')
+  t.mock.restoreAll()
+  // Access gone meanwhile names nothing.
+  github(t, { truncate: true, reads: 1 })
+  const gone = await request({ repoId: '1', ref: commit })
+  assert.equal(gone.status, 404)
+  assert.equal(gone.body.commit, undefined)
   assert.equal(repositoryCodeFits({ files: 20_000, bytes: 64 * 1024 * 1024 }), true)
   assert.equal(repositoryCodeFits({ files: 20_001, bytes: 1 }), false)
   assert.equal(repositoryCodeFits({ files: 1, bytes: 64 * 1024 * 1024 + 1 }), false)

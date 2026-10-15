@@ -1404,17 +1404,24 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
       throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
     }))
+    // Access still held, and the same repository, before anything read is sent.
+    const fenced = async () => {
+      await reader.recheckAccess()
+      const current = await authorize()
+      if (!current) return false
+      if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return false }
+      return true
+    }
     // Too large names the commit it was read at, for History to read.
-    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) { sendJson(res, 413, { error: 'directory-too-large', commit }); return }
+    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) {
+      if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
+      return
+    }
     if (res.destroyed) return
     const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
     res.once('close', load.release)
     const bytes = await load.result
-    await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    if (res.destroyed) return
+    if (!(await fenced()) || res.destroyed) return
     res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
     res.writeHead(200, {
       'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
