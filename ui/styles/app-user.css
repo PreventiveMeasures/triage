@@ -11,7 +11,12 @@
   width: 1.6em; height: 1.6em; overflow: hidden; border-radius: 50%;
   background: var(--surface-active); color: var(--muted); font-size: .7em; font-weight: 600; line-height: 1;
   & img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  /* An agent by its mark: Claude in its orange, Codex in the text's. */
+}
+/* An agent by its bare mark, as the Agents tab's header draws it: Claude's
+   in its orange, Codex's OpenAI mark in the text's. */
+.app-user-mark {
+  display: inline-flex; flex: none; width: 1.15em; height: 1.15em;
+  & svg { width: 100%; height: 100%; fill: currentcolor; stroke: none; }
   &.is-claude { color: var(--claude, #d97757); }
   &.is-codex { color: var(--text); }
 }

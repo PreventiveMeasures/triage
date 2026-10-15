@@ -67,13 +67,14 @@ export function commitAgent(login, name = null) {
   return typeof name === 'string' ? AGENT_NAMES.get(name.trim().toLowerCase()) ?? null : null
 }
 
-// A commit's author as the app shows them: an agent by its mark and name, a
+// A commit's author as the app shows them: an agent by its bare mark, as the
+// Agents tab's header draws it, and its name; a
 // user of the app as githubUser does; else `fallback`, their name, else login.
 export function commitAuthor(login, name = null, fallback = name ?? login ?? '') {
   const agent = commitAgent(login, name)
   if (!agent) return githubUser(login, fallback)
   const [title, mark] = AGENTS[agent]
-  return html`<span class="app-user" data-tooltip=${login ? `@${login} on GitHub` : name}><span class=${`app-user-avatar is-${agent}`}
+  return html`<span class="app-user" data-tooltip=${login ? `@${login} on GitHub` : name}><span class=${`app-user-mark is-${agent}`}
     aria-hidden="true">${providerIcon(mark)}</span><span class="app-user-name">${title}</span></span>`
 }
 

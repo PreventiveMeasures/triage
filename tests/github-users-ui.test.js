@@ -31,7 +31,7 @@ test('commits by Claude or Codex show by their marks: by the identities GitHub n
     ['claudette', 'Claude'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]].map(([login, name]) => commitAgent(login, name)),
   ['claude', 'claude', 'codex', 'codex', 'claude', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
   const claude = templateText(commitAuthor('claude', 'Claude'))
-  assert.match(claude, /class=app-user-avatar is-claude/u)
+  assert.match(claude, /class=app-user-mark is-claude/u, 'its bare mark, no avatar\'s disc')
   assert.match(claude, /<svg[^>]*viewBox="4 5 8 8"/u, 'Claude\'s own mark, as Agents draws it')
   assert.match(claude, /app-user-name">Claude</u)
   assert.match(claude, /data-tooltip=@claude on GitHub/u)
