@@ -198,14 +198,17 @@ test('an agent the server knows by its app: picked after Claude and Codex, count
   const neo = { ...none, agents: ['neo'] }
   answer = () => Promise.resolve({ pulls: [pull(12, 'neo/links', { ...neo, claude: true }), pull(11, 'neo/bump', neo), pull(10, 'claude/one', claude('session_A'))],
     commits: [], issues: [], branches: [],
-    agents: [{ id: 'neo', name: ' Neo ', app: 3115942 }, { id: 'claude', name: 'Not Claude', app: 1 }, { id: 'odd one', name: 'Odd', app: 2 }, { id: 'nameless', app: 3 }],
+    agents: [{ id: 'neo', name: ' Neo ', avatar: 'app-3115942' }, { id: 'claude', name: 'Not Claude', avatar: 'app-1' }, { id: 'odd one', name: 'Odd', avatar: 'app-2' },
+      { id: 'nameless', avatar: 'app-3' }, { id: 'odd-avatar', name: 'Odd', avatar: '../x' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }],
     more: false, after: null })
   const view = shown('org/repo')
   view.render()
   await setImmediate()
-  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', app: 3115942 }], 'only well formed, never Claude or Codex')
+  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: 'user-198982749' }],
+    'only well formed, never Claude or Codex')
   const text = templateText(view.render())
   assert.match(text, />Claude <span class="issues-count">2<[^]*>Codex <span class="issues-count">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo <span class="issues-count">2</u)
+  assert.doesNotMatch(text, /agent-pick is-copilot/u, 'an agent the server knows with no session read is not picked among')
   assert.match(text, /class="agent-totals"><span class="agent-stats" role="group" aria-label=Neo>[^]*aria-label=Claude>/u)
   assert.doesNotMatch(text, /role="group" aria-label=Codex>/u, 'an agent with no session read is not counted')
   assert.match(text, /class="issue-rail"><span class=agent-mark is-neo role="img" aria-label=Neo><img class="agent-avatar" src=\/api\/avatar\/app-3115942 [^]*<span class=agent-mark is-claude role="img" aria-label=Claude>[^]*>Pull 12</u)

@@ -59,19 +59,21 @@ const AGENT_ICONS = {
   codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
 }
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
-// The agents known by their GitHub Apps, as the server named them (its
-// APP_AGENTS, repository-agents.ts), by id: each its name and app.
+// The agents known by their GitHub Apps or accounts, as the server named
+// them (its APP_AGENTS, repository-agents.ts), by id: each its name and
+// avatar.
 const appAgents = new Map()
 export function knowAgents(agents) {
   for (const agent of agents) appAgents.set(agent.id, agent)
 }
 // An agent's name and mark: Claude's or Codex's, else an app agent's, its
-// app's avatar, served by the server (/api/avatar/app-<app>).
+// GitHub App's or account's avatar, served by the server
+// (/api/avatar/<avatar>).
 export const agentName = agent => AGENT_NAMES[agent] ?? appAgents.get(agent)?.name ?? agent
 export function agentIcon(agent) {
   if (AGENT_ICONS[agent]) return AGENT_ICONS[agent]
-  const app = appAgents.get(agent)?.app
-  return app ? html`<img class="agent-avatar" src=${`/api/avatar/app-${app}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
+  const avatar = appAgents.get(agent)?.avatar
+  return avatar ? html`<img class="agent-avatar" src=${`/api/avatar/${avatar}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
 }
 
 // A click to open a tile's popup: the main button's, none held with it, which

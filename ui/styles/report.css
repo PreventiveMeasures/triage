@@ -3716,6 +3716,9 @@ repository-agents { --claude: #d97757; }
 /* Claude's mark filled in its orange, Codex's OpenAI mark in the text's. */
 :is(.agent-pick, .agent-mark):is(.is-claude, .is-codex) svg { fill: currentcolor; stroke: none; }
 :is(.agent-pick, .agent-mark).is-claude svg { color: var(--claude); }
+/* Codex's in the text's color, unmuted on an unpressed button too, as the
+   other agents' marks are. */
+.agent-pick.is-codex svg { color: var(--text); }
 .agent-mark.is-codex { color: var(--text); }
 /* What each agent did among the sessions read, at the bar's end: its mark,
    then its pull requests, branches and commits to the default branch

@@ -23,6 +23,8 @@ export { sessionLink }
 
 const KEEP_MS = 5 * 60_000
 const APP_AGENT = /^[a-z][a-z\d-]{0,31}$/u
+// An app agent's avatar, as the server serves it: a GitHub App's or account's.
+const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 const RETRY_MS = 30_000
 const MAX_CHIPS = 12
 
@@ -44,13 +46,13 @@ function sessionLists() {
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
 
 // A server's answer, its artifacts those it names by number, id or name, and
-// the agents it knows by their GitHub Apps (its first page's), each by id,
-// name and app; an artifact's those of them it names.
+// the agents it knows by their GitHub Apps or accounts (its first page's),
+// each by id, name and avatar; an artifact's those of them it names.
 function checked(answer) {
   if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new Error('The server answered with no pull requests or commits.')
   const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
-    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim() && Number.isSafeInteger(agent.app) && agent.app > 0)
-    .map(({ id, name, app }) => [id, { id, name: name.trim().slice(0, 64), app }])
+    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim() && typeof agent.avatar === 'string'
+    && AGENT_AVATAR.test(agent.avatar)).map(({ id, name, avatar }) => [id, { id, name: name.trim().slice(0, 64), avatar }])
   const signed = item => Array.isArray(item?.signals?.sessions) && Array.isArray(item.signals.tasks)
   // An artifact's app agents, by id.
   const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents)
@@ -145,10 +147,11 @@ export function filterSessions(sessions, agent, filter) {
 
 const TILE_STATES = { open: 'open', merged: 'merged', closed: 'closed', branch: 'draft' }
 // The agents an entry's sessions are picked among, Claude and Codex first,
-// then those the server knows by their apps; and counted by, at the bar's
-// end, those first and Claude and Codex last: either way, Claude's and
-// Codex's in their places whatever others there are.
-const appAgentsOf = entry => (entry.agents ?? []).map(agent => agent.id)
+// then those the server knows by their apps or accounts that have a session
+// among those read; and counted by, at the bar's end, those first and Claude
+// and Codex last: either way, Claude's and Codex's in their places whatever
+// others there are.
+const appAgentsOf = entry => (entry.agents ?? []).map(agent => agent.id).filter(agent => (entry.sessions ?? []).some(session => session.agents.includes(agent)))
 const agentsOf = entry => ['claude', 'codex', ...appAgentsOf(entry)]
 // What an agent did, by icon: the pull requests it opened, the branches it
 // pushed, and its commits to the default branch no pull request merged.
@@ -227,12 +230,14 @@ class RepositoryAgents extends LitElement {
     const ready = entry.status === 'ready'
     const sessions = ready ? entry.sessions : []
     const counted = agent => ready ? html` <span class="issues-count">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
-    const shown = filterSessions(sessions, shownAgent, this._filter)
+    // One picked whose sessions are none of those read now, all.
+    const picked = agentsOf(entry).includes(shownAgent) ? shownAgent : 'all'
+    const shown = filterSessions(sessions, picked, this._filter)
     return html`<div class="history-bar issues-bar">
         ${activityPicker('agents')}
         <div class="history-modes" role="group" aria-label="Agents">
-          <button type="button" aria-pressed=${String(shownAgent === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
-          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(shownAgent === agent)}
+          <button type="button" aria-pressed=${String(picked === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
+          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(picked === agent)}
             @click=${() => this.pick(agent)}>${agentIcon(agent)}${agentName(agent)}${counted(agent)}</button>`)}
         </div>
         <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
@@ -240,7 +245,7 @@ class RepositoryAgents extends LitElement {
         ${ready ? this.renderStats(entry) : nothing}
         ${ready ? html`<span class="history-summary">${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read</span>` : nothing}
       </div>
-      ${ready ? this.renderSessions(entry, shown, more)
+      ${ready ? this.renderSessions(entry, shown, more, picked)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionLists().delete(key); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading what the agents did…</div>`}`
@@ -267,8 +272,8 @@ class RepositoryAgents extends LitElement {
     })}</span>`
   }
 
-  renderSessions(entry, shown, more) {
-    const what = shownAgent === 'all' ? 'agents\' sessions' : `${agentName(shownAgent)} sessions`
+  renderSessions(entry, shown, more, picked) {
+    const what = picked === 'all' ? 'agents\' sessions' : `${agentName(picked)} sessions`
     return html`<div class="issues-scroll">
       ${shown.length > 0 ? html`<ol class="issues-grid" aria-label="Sessions">${shown.map(session => this.renderSession(session))}</ol>`
         : html`<p class="history-note">${entry.sessions.length > 0 && this._filter.trim() ? `None of the ${what} read match.` : `No ${what} among those read.`}</p>`}

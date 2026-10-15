@@ -23,7 +23,7 @@
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>[?own]  → cached avatar bytes by user id, of the account chosen on their profile (`own`: the
-//        sign-in account's), or by linked account id; `app-<id>`, an app agent's GitHub App's (APP_AGENTS) | 401/404
+//        sign-in account's), or by linked account id; `app-<id>` or `user-<id>`, an app agent's GitHub App's or account's (APP_AGENTS) | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -417,22 +417,20 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
   res.end(avatar.bytes)
 }
 
-// The GitHub Apps whose avatars `/api/avatar/app-<id>` serves, these alone:
-// the agents' known by their apps (APP_AGENTS), each its mark on the Agents
-// tab. Each is fetched from GitHub once and kept, under a key no user's, a
-// v4 UUID, can be.
-const AVATAR_APPS: ReadonlySet<number> = new Set(APP_AGENTS.map(agent => agent.app))
-const APP_AVATAR = /^app-([1-9]\d{0,11})$/u
-function avatarApp(id: string): number | null {
-  const app = Number(APP_AVATAR.exec(id)?.[1])
-  return AVATAR_APPS.has(app) ? app : null
-}
+// The avatars `/api/avatar/app-<id>` and `/api/avatar/user-<id>` serve, these
+// alone: the agents' known by their GitHub Apps or accounts (APP_AGENTS),
+// each its mark on the Agents tab. Each is fetched from GitHub once and
+// kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
+// an account's, `…-0001-<id>`.
+const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.map(agent => agent.avatar))
+const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
-async function serveAppAvatar(res: ServerResponse, avatarStore: AvatarStore, app: number): Promise<void> {
-  const key = `00000000-0000-0000-0000-${String(app).padStart(12, '0')}`
+async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
+  const [, kind, id] = AGENT_AVATAR.exec(avatar)!
+  const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
   if (await avatarStore.get(key) == null) {
-    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/in/${app}`, globalThis.fetch)
-      .catch((err) => { console.warn('managed: app avatar caching failed:', err) })
+    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
+      .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
   }
   await serveAvatar(res, avatarStore, key)
 }
@@ -3789,8 +3787,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       const id = path.slice(AVATAR_PREFIX.length)
-      const app = avatarApp(id)
-      if (app !== null) { await serveAppAvatar(res, avatarStore, app); return }
+      if (AGENT_AVATARS.has(id) && AGENT_AVATAR.test(id)) { await serveAgentAvatar(res, avatarStore, id); return }
       await serveAvatar(res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
       return
     }
