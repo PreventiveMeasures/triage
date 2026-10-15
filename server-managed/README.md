@@ -205,7 +205,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab, or a view of its Activity: `history` (Commits), `issues`, `pulls`, `agents` or `pulse` |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search or Treemap tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents` or `pulse` (`history`, its earlier name, opens Commits) |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
@@ -1553,8 +1553,8 @@ is checked again once it is read, before any of it is sent.
 ## Activity
 
 The **Activity** tab holds what happens around the code, in five views, each
-its own route's tab (`history`, `issues`, `pulls`, `agents`, `pulse`): its
-**Commits** (History, below), **Issues** and **Pull requests**, **Agents**
+its own route's tab (`commits`, `issues`, `pulls`, `agents`, `pulse`): its
+**Commits** (below), **Issues** and **Pull requests**, **Agents**
 and **Pulse**. It opens on the view last shown, Commits until one is
 (`ui/view/repository-activity.js`). Each view's bar starts with their
 picker, an icon each (a commit on its line, an issue's ring, a pull
@@ -1562,9 +1562,9 @@ request's branches, a robot's head, a pulse's beat), as the graph's layouts
 are picked, which switches the view as a tab does, Back returning to the
 one before.
 
-## History
+## Commits
 
-Activity's Commits view, History, lists commits as `git log --oneline --decorate --graph` does,
+Activity's Commits view lists commits as `git log --oneline --decorate --graph` does,
 one compact line each: its short id, the branches and tags naming it (the
 default branch's first, the revision shown marked), its subject, author and
 time, beside the graph of the lines its parents make
@@ -1585,9 +1585,9 @@ shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
 it, a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
-commit's code, named by the branch, else the tag, naming it. History reads
+commit's code, named by the branch, else the tag, naming it. The view reads
 none of the directory's files: its route at a commit opens it alone, its other
-tabs then reading them. A directory whose files fail to open shows its History
+tabs then reading them. A directory whose files fail to open shows its Commits
 all the same, where its commit is known (a `413 directory-too-large` names the
 commit it was read at, its route then naming it). What it read is kept in
 the page for the session five minutes, and on the server for every reader:
@@ -1664,9 +1664,9 @@ it, and **Open on GitHub**. Held with a key, or with another button, a tile
 opens on GitHub as a link does. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
-**More** button nears the end of the scroll, as History's Older commits are,
+**More** button nears the end of the scroll, as Commits' Older commits are,
 but not while a filter picks among them, nor after a page failed. Like
-History, neither tab reads the directory's files: at a commit, each opens
+Commits, neither tab reads the directory's files: at a commit, each opens
 alone. What they read is kept in the page for the session five minutes, and
 on the server for every reader (below).
 
@@ -1761,7 +1761,7 @@ picks by any word of a title, author, branch, number or session. The bar's
 end shows, beside the mark of each agent with sessions among those read
 (app agents first, Claude's and Codex's last, so theirs keep their places),
 by icon and count, the pull requests, branches and commits to the default
-branch without a pull request (where there are any) among its sessions. Pages read on as the end of the scroll nears, as History's
+branch without a pull request (where there are any) among its sessions. Pages read on as the end of the scroll nears, as Commits'
 do, the sessions made again of all read, but only while each adds a session:
 most pull requests and commits may be no agent's, so after a page adding
 none, the next waits for **More** to be clicked rather than read the whole

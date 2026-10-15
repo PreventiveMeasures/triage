@@ -29,11 +29,11 @@ beforeEach(() => {
 })
 
 test('a directory open shows its commits, issues, pull requests, agents and pulse in managed mode as one Activity tab, opening on the view last shown, a bundle\'s Issues tab not standing in', () => {
-  for (const tab of ['history', 'issues', 'pulls', 'pulse', 'agents']) {
+  for (const tab of ['commits', 'issues', 'pulls', 'pulse', 'agents']) {
     state.bundleDetailsTab = tab
     const text = templateText(renderBundlesList([entry]))
     assert.equal(state.bundleDetailsTab, tab)
-    assert.match(text, ['history', 'agents', 'pulse'].includes(tab) ? new RegExp(`<repository-${tab} `, 'u') : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
+    assert.match(text, ['commits', 'agents', 'pulse'].includes(tab) ? new RegExp(`<repository-${tab === 'commits' ? 'history' : tab} `, 'u') : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
     assert.match(text, new RegExp(`>Treemap<[^]*>Code<[^]*>Search<[^]*data-bundle-tab="${tab}" aria-selected=true [^>]*>Activity<`, 'u'), tab)
     assert.doesNotMatch(text, />(?:History|Issues|Pull requests|Agents|Pulse)<\/button>/u, 'no tab of their own')
   }
@@ -45,7 +45,7 @@ test('a directory open shows its commits, issues, pull requests, agents and puls
 test('Activity\'s picker: an icon each, its name to read, no tooltip, opening each view as its tab does, the one shown pressed', () => {
   const text = templateText(activityPicker('pulls'))
   assert.deepEqual([...text.matchAll(/data-bundle-tab=(\w+) aria-label=([^>]+?) aria-pressed=(\w+)>/gu)].map(match => match.slice(1)),
-    [['history', 'Commits', 'false'], ['issues', 'Issues', 'false'], ['pulls', 'Pull requests', 'true'], ['agents', 'Agents', 'false'], ['pulse', 'Pulse', 'false']])
+    [['commits', 'Commits', 'false'], ['issues', 'Issues', 'false'], ['pulls', 'Pull requests', 'true'], ['agents', 'Agents', 'false'], ['pulse', 'Pulse', 'false']])
   assert.equal(text.split('<svg ').length - 1, 5)
   assert.doesNotMatch(text, /tooltip|title=/u)
 })

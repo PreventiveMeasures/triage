@@ -1,6 +1,6 @@
 // The code viewer's Activity (render-bundle.js): what happens around a
 // repository's code, in five views, each a tab of its own in its route: its
-// commits (History, repository-history.js), its issues and pull requests
+// commits (repository-history.js), its issues and pull requests
 // (repository-issues.js), its agents' sessions (repository-agents.js) and
 // its pulse (repository-pulse.js). The strip shows them as one tab,
 // Activity, opening on the view last shown; each view's bar starts with
@@ -14,7 +14,7 @@ const icon = body => html`<svg viewBox="0 0 16 16" width="16" height="16" fill="
 // Each view, `[tab, name, icon]`: a commit on its line, an issue's ring, a
 // pull request's branches, an agent's robot head, a pulse's beat.
 export const ACTIVITY_VIEWS = [
-  ['history', 'Commits', icon(svg`<circle cx="8" cy="8" r="2.75"/><path d="M1 8h4.25M10.75 8H15"/>`)],
+  ['commits', 'Commits', icon(svg`<circle cx="8" cy="8" r="2.75"/><path d="M8 1v4.25M8 10.75V15"/>`)],
   ['issues', 'Issues', icon(svg`<circle cx="8" cy="8" r="6.25"/><circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none"/>`)],
   ['pulls', 'Pull requests', icon(svg`<circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/>
     <path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5M9 3 7.5 4.5 9 6"/>`)],
@@ -24,7 +24,7 @@ export const ACTIVITY_VIEWS = [
 ]
 export const ACTIVITY_TABS = new Set(ACTIVITY_VIEWS.map(([tab]) => tab))
 
-let lastShown = 'history'
+let lastShown = 'commits'
 
 // The view Activity opens on: `tab` where it is one, else the one last shown,
 // Commits until one is.

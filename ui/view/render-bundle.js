@@ -2001,10 +2001,10 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
 const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], [activityTab(tab), 'Activity']]
 
 // The body of a tab of a repository's directory reading none of its files
-// (REPOSITORY_FILELESS_TABS): its History, Issues, Pull requests, Agents or
+// (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents or
 // Pulse.
 function repositoryFilelessTab(repository, tab) {
-  return tab === 'history' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
+  return tab === 'commits' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository}></repository-pulse>`
     : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
@@ -2071,7 +2071,7 @@ export function renderNpmOpening({ name, spec, tab }) {
 // A repository's directory opening (repository-code.js
 // openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
 // body what opens, or why it didn't, with the directories it lists to open
-// instead where it has any. Its History, which reads none of its files,
+// instead where it has any. Its Commits, which read none of its files,
 // shows at its commit alone (`historyOnly`), or where its files failed to
 // open, its tabs then opening each.
 export function renderRepositoryCodeOpening(opening) {
@@ -2105,7 +2105,7 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search, Treemap, History, Issues,
+  // A repository's directory shows its Code, Search, Treemap, Commits, Issues,
   // Pull requests, Agents and Pulse alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
@@ -2190,7 +2190,7 @@ function renderBundleSlide(entry) {
           ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
           ['code', () => renderBundleCodeView(details, entry)],
           ['search', () => renderBundleSearchView(details, entry)],
-          ['history', () => repositoryFilelessTab(entry.repository, 'history')],
+          ['commits', () => repositoryFilelessTab(entry.repository, 'commits')],
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
           ['pulse', () => repositoryFilelessTab(entry.repository, 'pulse')],

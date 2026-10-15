@@ -36,11 +36,13 @@ beforeEach(() => {
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
 })
 
-test('the History tab has a route of its own beside the code viewer\'s others', () => {
-  const route = { view: 'repository-code', repoId: 7, commit: a, path: 'src', bundleTab: 'history' }
-  assert.equal(managedRoutePath(route), `/manage/code/7/${a}/history?path=src`)
+test('Commits have a route of their own beside the code viewer\'s others, which History\'s links still open', () => {
+  const route = { view: 'repository-code', repoId: 7, commit: a, path: 'src', bundleTab: 'commits' }
+  assert.equal(managedRoutePath(route), `/manage/code/7/${a}/commits?path=src`)
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
-  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/history/2`)), null, 'only Code names a file')
+  assert.deepEqual(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/history?path=src`)), route)
+  assert.equal(managedRoutePath({ ...route, bundleTab: 'history' }), null, 'no route names History')
+  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/commits/2`)), null, 'only Code names a file')
 })
 
 test('commits list newest first, but never a parent before a child of it, whatever its clock says', () => {
