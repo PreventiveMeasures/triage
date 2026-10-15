@@ -272,8 +272,7 @@ class RepositoryIssues extends LitElement {
     const marked = (kind, [name, glyph]) => html`<span class=${`issue-${kind} is-${item[kind]}`} role="img" aria-label=${name} data-tooltip=${name}>${glyph}</span>`
     return html`<span class="issue-rail">
         <span class="issue-state" role="img" aria-label=${stateName}>${STATE_ICONS[this.kind][stateClass]}</span>
-        ${review ? marked('review', review) : nothing}
-        ${checks ? marked('checks', checks) : nothing}
+        ${pulls ? html`<span class="issue-marks">${review ? marked('review', review) : nothing}${checks ? marked('checks', checks) : nothing}</span>` : nothing}
         ${comments ? html`<span class="issue-comments" role="img" aria-label=${comments} data-tooltip=${comments}>${COMMENT_ICON}<span>${commentCount(item.comments)}</span></span>` : nothing}
       </span>
       <span class="issue-lines">

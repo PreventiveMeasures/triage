@@ -3573,7 +3573,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
 .issue-rail {
-  display: flex; flex-direction: column; align-items: center; gap: .1875rem; flex: none; width: 1.5rem; color: var(--muted);
+  --rail-gap: .1875rem;
+  display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); flex: none; width: 1.5rem; color: var(--muted);
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }
 }
@@ -3620,6 +3621,12 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
     background: var(--label, var(--muted)); vertical-align: middle;
   }
   &.is-more { flex: none; min-width: 0; color: var(--muted); &::before { display: none; } }
+}
+/* A pull request's review and checks, as tall as the two are where it has
+   one, that one centered, or none: its comments level with its neighbors'. */
+.issue-marks {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--rail-gap);
+  min-height: calc(2 * 12px + var(--rail-gap));
 }
 .issue-review, .issue-checks, .issue-comments { display: inline-flex; & svg { width: 12px; height: 12px; } }
 .issue-review {
