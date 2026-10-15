@@ -142,19 +142,22 @@ test('a file node runs as JavaScript though its name says otherwise, read as a s
 
 // A path a script writes out whole is read wherever it is in its text, as
 // code can be written to have its tokens read wrong (a regular expression, a
-// comment, a template's text taken for another).
+// comment, a template's text taken for another); and as Windows and macOS
+// find a file by it, telling neither case nor Unicode's normalization apart.
 test('a path a script writes out whole read wherever it is: whatever takes it, in a template, a comment or a string, or by the package\'s own name', () => {
   const index = [
     "require('./extra.txt', 0)", "require(/* a */ './commented.txt')", "module.require('./module.txt')", "require?.('./optional.txt')", "require(('./paren.txt'))",
     "`${require('./template.txt')}`", "`${/* } */ require('./brace.txt')}`", "`a ${`b` + require('./nested.txt')} c`", "x = a++ / require('./regex.txt') / 1",
     "from\n'./split.txt'.split(',').forEach(require)", "require('@s/where/own.txt')", "require('../../@s/where/back.txt')", "require.resolve('./resolved.txt')",
     "// require('./comment.txt')", "\"require('./quoted.txt')\"", "`docs: require('./prose.txt') ${kind}`",
+    "require('./cased.txt')", "require('./caf\\u00e9.txt')",
     "require('../../@s/other/out.txt')", "import('./imported.txt')", "require(`./built${''}.txt`)",
   ].join('\n')
   const names = ['extra', 'commented', 'module', 'optional', 'paren', 'template', 'brace', 'nested', 'regex', 'split', 'own', 'back', 'resolved', 'comment', 'quoted', 'prose', 'out', 'imported', 'built']
-  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries(names.map(name => [`${name}.txt`, 'x'])) }
-  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), names.slice(0, -3).map(name => `${name}.txt`).toSorted(),
-    'not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
+  const cased = ['Cased.TXT', 'cafe\u0301.txt']
+  const files = { 'package.json': '{"name":"@s/where"}', 'index.js': index, ...Object.fromEntries([...names.map(name => `${name}.txt`), ...cased].map(name => [name, 'x'])) }
+  assert.deepEqual([...npmLoadedScripts(holding(files))].toSorted(), [...names.slice(0, -3).map(name => `${name}.txt`), ...cased].toSorted(),
+    'as a filesystem telling neither case nor Unicode\'s normalization apart finds it too; not one leading out of the package, one `import` takes by an extension it doesn\'t know, nor one built')
 })
 
 test('a package naming more `exports` patterns than any does has every file read as one it may load', () => {

@@ -114,12 +114,20 @@ function urlJoined(root, dir, spec) {
 const NAME = /^(?:@[^/]+\/)?[^/@.][^/]*$/u
 const rootOf = name => typeof name === 'string' && NAME.test(name) && name.split('/').every(part => part !== '.' && part !== '..') ? ['node_modules', ...name.split('/')] : []
 
-// The file a path is once installed: its own, or for a .npmignore, the
-// .gitignore beside it where it has none, as npm installs it so.
-function installedAs(files, path) {
-  if (path === null || files.has(path)) return path
-  const gitignore = path.replace(/(?<=^|\/)\.npmignore$/u, '.gitignore')
-  return gitignore !== path && files.has(gitignore) ? gitignore : null
+// A path as a filesystem telling neither case nor Unicode's normalization
+// apart takes it, as Windows' and macOS's do by default: `Payload.txt` for
+// `payload.txt`.
+const folded = path => path.normalize('NFC').toUpperCase().toLowerCase()
+// The files a path names once installed, as a filesystem tells them
+// (folded): its own, and for a .npmignore, a .gitignore npm installs as that.
+function installedOf(files) {
+  const index = new Map()
+  const put = (key, path) => index.has(key) ? index.get(key).push(path) : index.set(key, [path])
+  for (const path of files.keys()) {
+    put(folded(path), path)
+    if (/(?:^|\/)\.gitignore$/u.test(path)) put(folded(path.replace(/\.gitignore$/u, '.npmignore')), path)
+  }
+  return path => path === null ? [] : index.get(folded(path)) ?? []
 }
 
 // A package.json's `name`, `main`, and the paths its `exports` and `imports`
@@ -136,18 +144,20 @@ function entriesOf(text) {
   }
 }
 
-// The files an `exports` or `imports` target names, from the directory of the
-// package.json naming it, read as a URL (urlJoined): its own, or each a
-// pattern's `*` matches where the pattern names what follows it
+// The paths an `exports` or `imports` target names, from the directory of the
+// package.json naming it, read as a URL (urlJoined): its own, or each file a
+// pattern's `*` matches, as a filesystem tells them (folded), where the
+// pattern names what follows it
 // (`./lib/*.txt`), as a consumer asking for a module (`pkg/x`) runs that;
 // where it names nothing (`./*`), only one with no extension that isn't prose
 // by its name (not `LICENSE`), the rest a consumer reaches only asking for
 // them by their names.
 function exported(files, root, dir, target) {
   const path = urlJoined(root, dir, target)
-  if (path === null || !path.includes('*')) return [installedAs(files, path)]
-  const [first, ...rest] = path.split('*'), last = rest.pop()
-  return [...files.keys()].filter(file => {
+  if (path === null || !path.includes('*')) return [path]
+  const [first, ...rest] = folded(path).split('*'), last = rest.pop()
+  return [...files.keys()].filter(name => {
+    const file = folded(name)
     if (!file.startsWith(first) || !file.endsWith(last) || file.length < first.length + last.length || (last === '' && (EXTENSION.test(file) || NPM_PROSE.test(file)))) return false
     let index = first.length
     for (const part of rest) {
@@ -180,30 +190,44 @@ const MAX_PATTERNS = 64
 // too, which a `require` reaching them runs whatever their names. A path a
 // script builds is not followed (`'./x' + '.txt'`, a template with something
 // put in it), nor one written in a string run as code, which runs-code.js
-// tells.
+// tells. Each path names the files a filesystem telling neither case nor
+// Unicode's normalization apart finds by it (folded), as Windows' and
+// macOS's do, a loader running one where its name or theirs says it does.
 const loadedByVersion = new WeakMap()
 export function npmLoadedScripts(version) {
   let loaded = loadedByVersion.get(keyOf(version))
   if (loaded) return loaded
   loaded = new Set()
-  const files = bundleFilesAsMap(version), queue = []
-  const top = entriesOf(files.get('package.json'))
+  const files = bundleFilesAsMap(version), installed = installedOf(files), queue = []
+  const top = entriesOf(files.get(files.has('package.json') ? 'package.json' : installed('package.json')[0]))
   const root = rootOf(top.name)
+  // What a loader takes (`by`) runs, as the name it is asked by tells, or
+  // the name of the file it finds.
+  const runs = (path, by) => !(by === 'require' ? NOT_RUN : EXTENSION).test(path)
+  // Each path once a loader and whether its name runs: the files it names
+  // are the same however else it is cased.
+  const tried = new Set()
   const add = (path, by) => {
-    const text = path === null ? null : files.get(path)
-    if (typeof text !== 'string' || loaded.has(path) || npmIsScript(path, text) || (by === 'require' ? NOT_RUN.test(path) : EXTENSION.test(path))) return
-    loaded.add(path)
-    queue.push(path)
+    const key = path === null ? null : `${by}\0${runs(path, by)}\0${folded(path)}`
+    if (key === null || tried.has(key)) return
+    tried.add(key)
+    for (const file of installed(path)) {
+      const text = files.get(file)
+      if (typeof text !== 'string' || loaded.has(file) || npmIsScript(file, text) || (!runs(path, by) && !runs(file, by))) continue
+      loaded.add(file)
+      queue.push(file)
+    }
   }
   // A path `require` takes: its file, else a directory's package.json `main`.
   const requires = path => {
-    const file = installedAs(files, path)
-    if (file !== null || path === null) return add(file, 'require')
-    const { main } = entriesOf(files.get(path === '' ? 'package.json' : `${path}/package.json`))
-    if (main !== null) add(installedAs(files, joined(root, path, main)), 'require')
+    if (path === null || installed(path).length > 0) return add(path, 'require')
+    for (const manifest of installed(path === '' ? 'package.json' : `${path}/package.json`)) {
+      const { main } = entriesOf(files.get(manifest))
+      if (main !== null) add(joined(root, path, main), 'require')
+    }
   }
   requires('')
-  const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/u.test(path))
+  const targets = [...files].filter(([path]) => /(?:^|\/)package\.json$/iu.test(path))
     .flatMap(([path, text]) => entriesOf(text).targets.map(target => [path.slice(0, -'package.json'.length - 1), target]))
   if (targets.filter(([, target]) => target.includes('*')).length > MAX_PATTERNS) for (const path of files.keys()) add(path, 'require')
   else for (const [dir, target] of targets) for (const file of exported(files, root, dir, target)) add(file, 'require')
