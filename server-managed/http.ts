@@ -1799,9 +1799,9 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
 // (yearCommits): kept by the head it was read from (repositoryReadStore),
 // that head kept as an issue's page is. A year not read whole yet is how
 // many of its commits are (`reading`); one past YEAR_COMMITS is GitHub's
-// statistics' (repositoryStats, repositoryLines), each kept as an issue's
-// page is and through GitHub computing them again, `pending` while it first
-// computes them.
+// statistics' (repositoryStats, repositoryLines), kept together as an
+// issue's page is and through GitHub computing them again, `pending` while
+// it first computes them.
 async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
   const first = pulseSince(52, Date.now())
   const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
@@ -1820,12 +1820,14 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     if (!year.tooMany) return { stats: null, reading: year.read, pending: false, kept: false }
     await store.write(key, { tooMany: true }, Date.now())
   }
+  // Its commits and lines read together, kept as one: never the one GitHub
+  // has counted since a push beside the other kept from before it.
   const computing = (err: unknown) => err instanceof StatsPending
-  const [stats, lines] = await Promise.all([
-    keptAnswer(deps, `${repoId}\0pulse-stats`, () => repositoryStats(fullName, token), computing).catch((err: unknown) => { if (computing(err)) return null; throw err }),
-    keptAnswer(deps, `${repoId}\0pulse-lines`, () => repositoryLines(fullName, token, first), computing).catch((err: unknown) => { if (computing(err)) return null; throw err }),
-  ])
-  return { stats: stats && withLines(stats.value, lines?.value ?? null), reading: null, pending: !stats || !lines, kept: Boolean(stats?.kept && lines?.kept) }
+  const counted = await keptAnswer(deps, `${repoId}\0pulse-stats`, async () => {
+    const [stats, lines] = await Promise.all([repositoryStats(fullName, token), repositoryLines(fullName, token, first)])
+    return withLines(stats, lines)
+  }, computing).catch((err: unknown) => { if (computing(err)) return null; throw err })
+  return { stats: counted?.value ?? null, reading: null, pending: !counted, kept: counted?.kept === true }
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {

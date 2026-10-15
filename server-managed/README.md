@@ -1842,7 +1842,8 @@ none, **Read on** is left to the reader). A year of more than 10,000
 commits is counted by GitHub's statistics instead (`stats/commit_activity`,
 `contributors`, `punch_card`, and `code_frequency` for lines), which GitHub
 computes when first asked, and again once the branch moves, answering `202`
-till they are: kept, they are answered through that; never computed yet,
+till they are: kept (commits and lines together, as one), they are
+answered through that; never computed yet,
 the tab says GitHub is still counting and asks again five seconds apart, a
 dozen times, then leaves **Ask again** to the reader. GitHub counts no lines
 of one of 10,000 commits or more there, and it shows none.
@@ -1861,7 +1862,7 @@ closed of them listed: all of them where the period holds fifty or fewer.
 in all and its lines added and removed; `contributors`, by login, else
 name, as many as a hundred, the most commits that year first, each their
 weeks of it with any; `punch`, commits by day of the week and hour; and
-`lines`, false where GitHub counts none, null while it is counting them.
+`lines`, false where GitHub counts none.
 Merges are left out, as GitHub's statistics leave them. A year counted is
 kept by the head it was counted from (`repository/reads`, a day), the head
 as Issues' pages are (two minutes, then answered while read again); one not
