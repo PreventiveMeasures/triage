@@ -1615,10 +1615,11 @@ green, merged and completed purple, closed red, draft and not planned
 muted); under it, a pull request's review (approved, changes requested or
 review required) while open and its checks (passed, failed or running),
 each an icon, room held for both; then how many comments it has. Its
-labels, up to twenty, each by a dot of its color, show whole while they
-fit, then the last is shortened first, to its dot alone, then the one
-before it; each tells its name on hover where it is shortened. A tile opens
-on GitHub. A
+labels, each by a dot of its color, show whole while they fit, then the
+last is shortened first, to its dot alone, then the one before it; each
+tells its name on hover where it is shortened. As many show as the
+narrowest tile has room for as dots, eight, else seven and how many more;
+up to twenty are read, which the filter searches. A tile opens on GitHub. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
 **More** button nears the end of the scroll, as History's Older commits are,
