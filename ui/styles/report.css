@@ -3492,8 +3492,10 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
   &.is-more { color: var(--muted); }
 }
 .history-subject { flex: 1 1 0; min-width: 4rem; overflow: hidden; text-overflow: ellipsis; }
-.history-author { flex: 0 0 9rem; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
-.history-time { flex: 0 0 3.6rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.history-author { flex: none; width: 9rem; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+/* As wide as the widest time, a day of another year ("Nov 23, 2025"), so
+   every line's author and time line up whatever its own. */
+.history-time { flex: none; width: 5.75rem; overflow: hidden; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
 @container history (width < 40rem) {
   .history-author { display: none; }
 }
