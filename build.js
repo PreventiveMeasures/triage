@@ -11,6 +11,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
+import { escapedControls } from './build-controls.js'
 import { minifyLitSource } from './build-lit-minify.js'
 import { litSvgAsHtml } from './build-lit-svg.js'
 import { parseManagedRoute } from './common/managed/routes.js'
@@ -114,6 +115,11 @@ if (mode === 'build') {
     chunkNames: 'chunk-[hash]',
     metafile: true,
   })
+  // Control characters esbuild prints raw, escaped again (build-controls.js).
+  await Promise.all(Object.keys(metafile.outputs).filter(path => path.endsWith('.js')).map(async path => {
+    const text = await readFile(path, 'utf8'), escaped = escapedControls(text)
+    if (escaped !== text) await writeFile(path, escaped)
+  }))
   // view.js imports its chunks itself, but the browser only sees those
   // imports once view.js has arrived. Preload them beside it so they
   // download in parallel (the static server lifts these into a Link header).
