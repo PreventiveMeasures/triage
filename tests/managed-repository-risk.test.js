@@ -183,8 +183,9 @@ test('a package’s risk is its most severe finding', () => {
 // what a test holds: `repos` by id, each `{ fullName, lockfiles, files }`,
 // or `{ fullName, error }` where it can't be opened, `{ fullName,
 // lockfilesError }` where its lockfiles can't be listed and `revoked: true`
-// where access to it is gone once they are read, and `paths` where a team's
-// directories in it are; `assess` answering a version's document, npm's
+// where access to it is gone once they are read, `paths` where a team's
+// directories in it are, and `dependabot` where its Dependabot alerts are
+// asked, as they are had or an error why not; `assess` answering a version's document, npm's
 // integrity of each package its own name's sri, but those npm has no
 // document of (`gone`, by name and version, each risk's assessment of one
 // npm removed, or null for none); and npm's `advisories` by package name,
@@ -210,7 +211,8 @@ function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false, gone
           return repo.lockfilesError ? Promise.reject(new GithubApiError(429, repo.lockfilesError))
             : Promise.resolve(repo.lockfiles.map(lockfile => ({ sha: `${repoId}:${lockfile.path}`, ...lockfile })))
         },
-        recheck: () => repo.revoked ? Promise.reject(repo.revoked instanceof Error ? repo.revoked : new GithubApiError(404, 'no-repository')) : Promise.resolve() }
+        recheck: () => repo.revoked ? Promise.reject(repo.revoked instanceof Error ? repo.revoked : new GithubApiError(404, 'no-repository')) : Promise.resolve(),
+        ...'dependabot' in repo && { dependabot: () => repo.dependabot instanceof Error ? Promise.reject(repo.dependabot) : Promise.resolve(repo.dependabot) } }
     },
     teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
@@ -763,6 +765,47 @@ test('a lockfile whose advisories npm doesn’t answer is told so, and the scan 
   const lines = await Array.fromAsync(scan(source))
   assert.deepEqual(lines.find(line => line.type === 'advisories'), { type: 'advisories', repo: 1, path: 'pnpm-lock.yaml', error: 'upstream-unavailable' })
   assert.deepEqual(lines.at(-1), { type: 'done' })
+})
+
+// A Dependabot alert, as dependabot-alerts.ts reads one, of `name` in
+// `manifest`, its advisory `ghsa`.
+const alertOf = (number, name, ghsa, manifest, more = {}) => ({ number, url: `https://github.com/org/one/security/dependabot/${number}`, manifest, name, ghsa,
+  aliases: [], title: `${name}'s`, severity: 'high', cwe: [], ...more })
+
+test('a repository\'s Dependabot alerts are told once its lockfiles\' advisories are, each with the versions its lockfile locks that it covers, malware\'s flagged', async () => {
+  const source = sourceOf({ 1: { ...onePnpmRepo[1], dependabot: [
+    alertOf(1, 'is-number', 'GHSA-is-number', 'pnpm-lock.yaml', { range: '>= 7.0.0, < 7.0.1' }),
+    alertOf(2, 'left-pad', 'GHSA-left-pad', 'pnpm-lock.yaml', { range: '< 1.3.0' }),
+    alertOf(3, 'left-pad', 'GHSA-malware', 'web/package.json', { range: '>= 0', cwe: ['CWE-506'], dev: true }),
+  ] } }, () => Promise.resolve(noneFound), { advisories: { 'is-number': [{ id: 'GHSA-is-number', severity: 'high', title: 'ReDoS', versions: ['7.0.0'] }] } })
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(lines.filter(line => line.type !== 'risk').map(line => line.type), ['repos', 'repo', 'lockfile', 'advisories', 'dependabot', 'done'])
+  const { alerts, ...told } = lines.find(line => line.type === 'dependabot')
+  assert.deepEqual(told, { type: 'dependabot', repo: 1 })
+  assert.deepEqual(alerts.map(({ number, versions, malware }) => [number, versions, malware]), [[1, ['7.0.0'], false], [2, [], false], [3, [], true]],
+    'none where its range covers none locked, or it is of no lockfile read')
+})
+
+test('a repository\'s Dependabot alerts that couldn\'t be had are told so, the rest of it told and the scan going on', async () => {
+  const source = sourceOf({
+    1: { ...onePnpmRepo[1], dependabot: new GithubApiError(403, 'dependabot-forbidden') },
+    2: { ...onePnpmRepo[1], fullName: 'org/two', dependabot: githubUnreachable(new TypeError('fetch failed'), Date.now()) },
+    3: { ...onePnpmRepo[1], fullName: 'org/three' },
+  }, () => Promise.resolve(noneFound))
+  const lines = await Array.fromAsync(scan(source))
+  const [forbidden, unreachable, ...more] = lines.filter(line => line.type === 'dependabot')
+  assert.deepEqual([forbidden, more], [{ type: 'dependabot', repo: 1, error: 'dependabot-forbidden' }, []])
+  assert.deepEqual([unreachable.repo, unreachable.error], [2, 'github-unreachable'])
+  assert.match(unreachable.detail, /^asking its Dependabot alerts: TypeError: fetch failed, after/u, 'while doing what, as a repository\'s failure says')
+  assert.equal(lines.filter(line => line.type === 'lockfile').length, 3)
+  assert.deepEqual(lines.at(-1), { type: 'done' }, 'none told of the one not asked')
+})
+
+test('a team\'s repository tells the Dependabot alerts of its directories, or above them, as its lockfiles', async () => {
+  const source = sourceOf({ 1: { ...onePnpmRepo[1], paths: ['packages/app'], dependabot: ['pnpm-lock.yaml', 'packages/app/package.json', 'packages/other/package.json']
+    .map((manifest, at) => alertOf(at + 1, 'left-pad', 'GHSA-left-pad', manifest)) } }, () => Promise.resolve(noneFound))
+  const { alerts } = (await Array.fromAsync(scan(source))).find(line => line.type === 'dependabot')
+  assert.deepEqual(alerts.map(alert => alert.manifest), ['pnpm-lock.yaml', 'packages/app/package.json'])
 })
 
 test('a scan that fails as a whole throws once its lines are read', async () => {

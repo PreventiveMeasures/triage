@@ -7,7 +7,11 @@
 // kind shown alone as toggled, as are advisories of the versions production
 // takes or of those, malware's either way. A mirror's copy differing from
 // npm's is flagged critical, listed first but for malware. Each lockfile used
-// links to it on GitHub, at the commit read.
+// links to it on GitHub, at the commit read. Each repository's open
+// Dependabot alerts are blended into the advisories: one of an advisory npm
+// tells too, by its GHSA and package, links where it is used to the alert,
+// adding where npm didn't tell it, and one npm tells none of is listed as its
+// own; whose alerts couldn't be had is said beside, the rest shown all the same.
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -22,7 +26,7 @@ import { ManagedPage } from './page.js'
 import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
-import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
+import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
@@ -72,6 +76,8 @@ const ERRORS = {
   'upstream-unavailable': 'npm unavailable',
   'upstream-too-large': 'npm answered too much',
   'upstream-invalid': 'npm answered unexpectedly',
+  'dependabot-disabled': 'Dependabot alerts off',
+  'dependabot-forbidden': 'No access to Dependabot alerts',
 }
 const errorText = code => ERRORS[code] ?? code
 const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
@@ -211,9 +217,15 @@ const tally = rows => ({ total: rows.length, told: rows.filter(row => row.risk).
 const icon = svg => html`<span class="risk-icon" aria-hidden="true">${unsafeHTML(svg)}</span>`
 
 // A lockfile (`used`, a repository's name and its path), cut short: a link
-// to it on GitHub, after GitHub's mark, where it is listed (`links`,
-// _lockfileLinks).
-function lockfileLink(used, links) {
+// to its Dependabot alert, after Dependabot's mark, where an advisory's
+// alert of it is (`alerts`, by where it is used), else to it on GitHub, after
+// GitHub's mark, where it is listed (`links`, _lockfileLinks).
+function lockfileLink(used, links, alerts) {
+  const alert = alerts?.get(used)
+  if (alert && isHttpUrl(alert.url)) {
+    return html`<a class="risk-name risk-used" href=${alert.url} target="_blank" rel="noopener noreferrer">${icon(DEPENDABOT_ICON_SVG)}<span
+      class="risk-clip risk-used-in" data-tooltip=${`${used}\nDependabot alert #${alert.number}`}>${used}</span></a>`
+  }
   const href = links.get(used)
   const path = html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${used}>${used}</span>`
   return href ? html`<a class="risk-name risk-used" href=${href} target="_blank" rel="noopener noreferrer">${icon(GITHUB_ICON_SVG)}${path}</a>` : path
@@ -221,12 +233,15 @@ function lockfileLink(used, links) {
 
 // Where a package or an advisory is locked: its lockfile, or how many,
 // opening into each one's.
-function usedInCell(lockfiles, links) {
+function usedInCell(lockfiles, links, alerts) {
   const used = [...lockfiles]
-  if (used.length === 1) return lockfileLink(used[0], links)
+  if (used.length === 1) return lockfileLink(used[0], links, alerts)
   return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} lockfiles</summary>
-    <ul>${used.map(each => html`<li>${lockfileLink(each, links)}</li>`)}</ul></details>`
+    <ul>${used.map(each => html`<li>${lockfileLink(each, links, alerts)}</li>`)}</ul></details>`
 }
+
+// Whether an id is a GHSA, as an advisory and a Dependabot alert share it.
+const isGhsa = id => typeof id === 'string' && /^GHSA(?:-[\da-z]{4}){3}$/iu.test(id)
 
 // The lines of a scan of `params` (`team` or `repo`, or neither),
 // repository-risk.ts RepositoryRiskLine, each as it comes.
@@ -301,8 +316,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _reset() {
-    // By id: { id, fullName, commit, lockfiles, error, detail }; lockfiles by path,
-    // each { path, format, packages, error, detail }.
+    // By id: { id, fullName, commit, lockfiles, error, detail, dependabot:
+    // its alerts as told ({ alerts }), why they couldn't be had ({ error,
+    // detail }), or null }; lockfiles by path, each { path, format,
+    // packages, error, detail }.
     this._repos = new Map()
     // By packageKey: { name, version, source, from, integrity, usedIn: Set,
     // neededIn: Set of those of usedIn that lock it as more than
@@ -310,7 +327,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // told stale this scan, malware: Set of advisory ids where npm's
     // advisories name it }.
     this._packages = new Map()
-    // By id and package: an advisory, its versions locked and where (Sets).
+    // By id and package: an advisory, its versions locked and where (Sets),
+    // and Dependabot's alerts of it by where (_alert).
     this._advisories = new Map()
   }
 
@@ -384,12 +402,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // How much of the scan is told: repositories and lockfiles read or failed,
-  // lockfiles' advisories told or failed, and packages' risks told other
-  // than stale.
+  // lockfiles' advisories and repositories' Dependabot alerts told or failed,
+  // and packages' risks told other than stale.
   _told() {
     let told = 0
     for (const repo of this._repos.values()) {
       if (repo.lockfiles || repo.error) told++
+      if (repo.dependabot) told++
       for (const lockfile of repo.lockfiles?.values() ?? []) told += Number(lockfile.packages !== null || Boolean(lockfile.error)) + Number(Boolean(lockfile.advisories || lockfile.advisoriesError))
     }
     for (const row of this._packages.values()) if (row.risk && !row.risk.stale) told++
@@ -405,17 +424,19 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       const listed = new Map(line.repos.map(({ id, fullName }) => [id, fullName]))
       const gone = [...this._repos.values()].filter(repo => listed.get(repo.id) !== repo.fullName)
       for (const repo of gone) this._repos.delete(repo.id)
-      this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)))
-      for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null })
+      this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)), gone.some(repo => repo.dependabot?.alerts))
+      for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null, dependabot: null })
     } else if (line.type === 'repo') {
       const repo = this._repos.get(line.id)
       if (!repo) return
       // One that fails where a part before read it, as its access is
-      // withdrawn: what its lockfiles told forgotten.
+      // withdrawn: what its lockfiles and its Dependabot alerts told
+      // forgotten.
       if (line.error) {
         const told = [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
-        Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null })
-        this._forget(told)
+        const alerted = Boolean(repo.dependabot?.alerts)
+        Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null, dependabot: null })
+        this._forget(told, alerted)
         return
       }
       // Its lockfiles told again as they were, but where its default branch
@@ -449,14 +470,20 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       if (row) { row.risk = riskOf(line, row.risk); row.wasStale ||= Boolean(row.risk.stale) }
     } else if (line.type === 'advisories') {
       this._applyAdvisories(line)
+    } else if (line.type === 'dependabot') {
+      this._applyDependabot(line)
     }
   }
 
   // What lockfiles no longer listed told (`usedIn`, a repository's name and
   // a path) forgotten: the packages no other lockfile tells, and the
-  // advisories as those listed tell them.
-  _forget(usedIn) {
-    if (usedIn.length === 0) return
+  // advisories as those listed tell them, as they are told again too where
+  // a repository's Dependabot alerts are forgotten (`alerted`).
+  _forget(usedIn, alerted = false) {
+    if (usedIn.length === 0) {
+      if (alerted) this._readvise()
+      return
+    }
     for (const [key, row] of this._packages) {
       for (const used of usedIn) { row.usedIn.delete(used); row.neededIn.delete(used) }
       if (row.usedIn.size === 0) this._packages.delete(key)
@@ -465,18 +492,28 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._readvise()
   }
 
-  // Each listed lockfile's advisories, as it told them last, told anew.
+  // Each listed lockfile's advisories, as it told them last, told anew, and
+  // each repository's Dependabot alerts blended into them.
   _readvise() {
     this._advisories = new Map()
     for (const row of this._packages.values()) row.malware = undefined
     for (const repo of this._repos.values()) {
       for (const [path, lockfile] of repo.lockfiles ?? []) if (lockfile.advisories) this._advise(`${repo.fullName}/${path}`, lockfile.advisories)
     }
+    this._alert()
+  }
+
+  // Whether any repository told Dependabot alerts, blended into the
+  // advisories, so that another's are told anew with them.
+  _alerted() {
+    return [...this._repos.values()].some(repo => repo.dependabot?.alerts?.length > 0)
   }
 
   // A lockfile's advisories, kept as it told them: told again otherwise, as
   // a scan over an hour long audits it again (repository-risk.ts
-  // RISK_KEPT_MS), they replace those it told before.
+  // RISK_KEPT_MS), they replace those it told before. Where Dependabot's
+  // alerts are blended in, all are told anew, as an alert listed as its own
+  // may be of the advisory these tell.
   _applyAdvisories(line) {
     const repo = this._repos.get(line.repo)
     const lockfile = repo?.lockfiles?.get(line.path)
@@ -484,8 +521,56 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     if (line.error) { lockfile.advisoriesError = line.error; return }
     const before = lockfile.advisories
     Object.assign(lockfile, { advisories: line.advisories, advisoriesError: null })
-    if (!before) this._advise(`${repo.fullName}/${line.path}`, line.advisories)
+    if (!before && !this._alerted()) this._advise(`${repo.fullName}/${line.path}`, line.advisories)
     else if (JSON.stringify(before) !== JSON.stringify(line.advisories)) this._readvise()
+  }
+
+  // A repository's Dependabot alerts, or why they couldn't be had, kept as
+  // told: told again otherwise, as a later part asks them again, they replace
+  // those told before; where a later part couldn't have them, those told
+  // before are kept, beside why, as a lockfile's advisories are.
+  _applyDependabot(line) {
+    const repo = this._repos.get(line.repo)
+    if (!repo) return
+    const before = repo.dependabot
+    repo.dependabot = line.error ? { ...before?.alerts && { alerts: before.alerts }, error: line.error, detail: line.detail ?? null } : { alerts: line.alerts }
+    if (JSON.stringify(before?.alerts ?? null) !== JSON.stringify(repo.dependabot.alerts ?? null)) this._readvise()
+  }
+
+  // Each repository's Dependabot alerts blended into the advisories npm's
+  // told: an alert of an advisory told, by its GHSA (its id, or one of its
+  // aliases) and package, is kept with it, by where it is used, its versions
+  // and malware with the rest; one of none is listed as its own, as GitHub
+  // tells it, its range its own. Where it is used, as its manifest's path,
+  // adds to where the advisory is, linked to the alert (lockfileLink).
+  _alert() {
+    const byGhsa = new Map()
+    const keyOf = (ghsa, name) => `${ghsa.toUpperCase()}\0${name}`
+    for (const row of this._advisories.values()) {
+      for (const id of [row.id, row.ghsa, ...row.aliases ?? []]) if (isGhsa(id) && !byGhsa.has(keyOf(id, row.name))) byGhsa.set(keyOf(id, row.name), row)
+    }
+    for (const repo of this._repos.values()) {
+      for (const alert of repo.dependabot?.alerts ?? []) {
+        const usedIn = `${repo.fullName}/${alert.manifest}`
+        let row = byGhsa.get(keyOf(alert.ghsa, alert.name))
+        if (!row) {
+          row = { id: alert.ghsa, ghsa: alert.ghsa, name: alert.name, title: alert.title, severity: alert.severity, url: `https://github.com/advisories/${alert.ghsa}`,
+            aliases: alert.aliases, cwe: alert.cwe, malware: false, dependabot: true, ranges: new Set(), versions: new Set(), usedIn: new Set(), versionsIn: new Map() }
+          this._advisories.set(`${alert.ghsa}\0${alert.name}`, row)
+          byGhsa.set(keyOf(alert.ghsa, alert.name), row)
+        }
+        if (row.dependabot && alert.range) row.ranges.add(alert.range)
+        row.alerts ??= new Map()
+        row.alerts.set(usedIn, alert)
+        row.usedIn.add(usedIn)
+        if (alert.versions.length > 0) {
+          const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
+          for (const version of alert.versions) { told.add(version); row.versions.add(version) }
+        }
+        row.malware ||= alert.malware
+        this._markMalware(row)
+      }
+    }
   }
 
   // Advisories a lockfile (`usedIn`) tells, each kept once by its id and
@@ -505,10 +590,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       // to name only their lockfiles (_advisoryKinds).
       const told = row.versionsIn.get(usedIn) ?? row.versionsIn.set(usedIn, new Set()).get(usedIn)
       for (const version of versions) told.add(version)
-      if (!row.malware) continue
-      for (const pkg of this._packages.values()) {
-        if (assessable(pkg.source) && pkg.name === row.name && row.versions.has(pkg.version)) (pkg.malware ??= new Set()).add(row.id)
-      }
+      this._markMalware(row)
+    }
+  }
+
+  // An advisory of malware marked on the packages of the versions it names.
+  _markMalware(row) {
+    if (!row.malware) return
+    for (const pkg of this._packages.values()) {
+      if (assessable(pkg.source) && pkg.name === row.name && row.versions.has(pkg.version)) (pkg.malware ??= new Set()).add(row.id)
     }
   }
 
@@ -549,7 +639,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // Each of KINDS' advisories, by their package: each with the versions of
   // that kind it affects and the lockfiles that told it of them, `dev` where
   // only devDependencies need them; a version is development's where every
-  // package locked of it is `dev`.
+  // package locked of it is `dev`. Where only a Dependabot alert tells of
+  // it, of no version a lockfile read locks (a package.json, bun's
+  // lockfile), it is of the kind the alert's scope tells.
   // Malware's are of both, with all their versions, `dev` where all are.
   _advisoryKinds() {
     const devOnly = new Map()
@@ -562,17 +654,21 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       const versions = [...row.versions]
       const dev = versions.filter(version => devOnly.get(`${row.name}@${version}`) === true)
       const needed = versions.filter(version => devOnly.get(`${row.name}@${version}`) !== true)
+      // Where alerts alone tell it, of no version: by their scope.
+      const unversioned = [...row.alerts ?? []].filter(([usedIn]) => !row.versionsIn.get(usedIn)?.size)
+      const devIn = unversioned.filter(([, alert]) => alert.dev).map(([usedIn]) => usedIn)
+      const neededIn = unversioned.filter(([, alert]) => !alert.dev).map(([usedIn]) => usedIn)
       if (row.malware) {
-        const all = { ...row, dev: needed.length === 0 }
+        const all = { ...row, dev: needed.length === 0 && neededIn.length === 0 }
         kinds.production.push(all)
         kinds.development.push(all)
         continue
       }
-      // Each kind's versions, and the lockfiles that told it of them.
-      const of = shown => ({ ...row, versions: new Set(shown),
-        usedIn: new Set([...row.versionsIn].filter(([, told]) => shown.some(version => told.has(version))).map(([usedIn]) => usedIn)) })
-      if (needed.length > 0) kinds.production.push({ ...of(needed), dev: false })
-      if (dev.length > 0) kinds.development.push({ ...of(dev), dev: true })
+      // Each kind's versions, and where it is used of them.
+      const of = (shown, also) => ({ ...row, versions: new Set(shown),
+        usedIn: new Set([...row.usedIn].filter(usedIn => also.includes(usedIn) || shown.some(version => row.versionsIn.get(usedIn)?.has(version)))) })
+      if (needed.length > 0 || neededIn.length > 0) kinds.production.push({ ...of(needed, neededIn), dev: false })
+      if (dev.length > 0 || devIn.length > 0) kinds.development.push({ ...of(dev, devIn), dev: true })
     }
     return kinds
   }
@@ -829,9 +925,11 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const rows = this._advisoryRows(kinds)
     const failed = [...this._repos.values()].flatMap(repo => [...repo.lockfiles?.values() ?? []]
       .filter(lockfile => lockfile.advisoriesError).map(lockfile => `${repo.fullName}/${lockfile.path}`))
-    const none = this._kind === 'production' ? 'npm has no advisories of the versions an install for production takes.' : 'npm has no advisories of the versions only devDependencies need.'
+    const versions = this._kind === 'production' ? 'the versions an install for production takes' : 'the versions only devDependencies need'
+    const none = this._alerted() ? `Neither npm nor Dependabot tells of advisories of ${versions}.` : `npm has no advisories of ${versions}.`
     return html`<section class="risk-section" aria-label="Advisories">
       ${this._resultsHead(html`${this._kindToggle('Which advisories', KINDS, { production: kinds.production.length, development: kinds.development.length }, this._kind, kind => { this._kind = kind })}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
+      ${this._dependabotStatus()}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
       ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : none}</p>` : html`<div class="link-table"><table>
         <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
@@ -852,8 +950,25 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       <td class="mono">${isHttpUrl(row.url) ? html`<a href=${row.url} target="_blank" rel="noopener noreferrer">${row.id}</a>` : row.id}</td>
       <td><span class="risk-clip" data-tooltip-truncated data-tooltip=${row.title ?? nothing}>${row.title ?? ''}</span></td>
       <td class="mono">${[...row.ranges].join(' || ')}</td>
-      <td>${usedInCell(row.usedIn, links)}</td>
+      <td>${usedInCell(row.usedIn, links, row.alerts)}</td>
     </tr>`
+  }
+
+  // What Dependabot told, small, beside the advisories: how many open alerts
+  // of how many repositories, and of how many they couldn't be had, each
+  // saying why in its tooltip; nothing where none told any.
+  _dependabotStatus() {
+    const repos = [...this._repos.values()].filter(repo => repo.dependabot)
+    if (repos.length === 0) return nothing
+    const had = repos.filter(repo => repo.dependabot.alerts)
+    const failed = repos.filter(repo => repo.dependabot.error)
+    const alerts = had.reduce((sum, repo) => sum + repo.dependabot.alerts.length, 0)
+    const count = (value, one, many = `${one}s`) => `${formatCount.format(value)} ${value === 1 ? one : many}`
+    const why = failed.map(({ fullName, dependabot: { error, detail } }) => `${fullName}: ${errorText(error)}${detail ? ` (${detail})` : ''}`).join('\n')
+    return html`<p class="risk-dependabot" role="status">${icon(DEPENDABOT_ICON_SVG)}<span>Dependabot</span>
+      ${had.length > 0 ? html`<span data-tooltip=${had.map(repo => `${repo.fullName}: ${count(repo.dependabot.alerts.length, 'open alert')}`).join('\n')}>${count(alerts, 'open alert')} of ${count(had.length, 'repository', 'repositories')}</span>` : nothing}
+      ${failed.length > 0 ? html`<span class="risk-dependabot-failed" data-tooltip=${why}>${had.length > 0 ? 'unavailable for ' : 'alerts unavailable for '}${failed.length === 1 ? failed[0].fullName : count(failed.length, 'repository', 'repositories')}${failed.length === 1 ? html`: ${errorText(failed[0].dependabot.error)}` : nothing}</span>` : nothing}
+    </p>`
   }
 }
 customElements.define('managed-admin-repo-risk', ManagedAdminRepositoryRisk)

@@ -513,3 +513,111 @@ test('the packages\' Source column is left out where every one is from npm\'s re
   assert.match(text, /<th>Source<\/th>/u, 'one from elsewhere')
   assert.match(text, />npm<\/span><\/td>[^]*>Git<\/span><\/td>/u, 'each row\'s')
 })
+
+// A Dependabot alert of lodash's GHSA-35jh-r3h4-6jhm, as a scan tells it, in
+// `repo`'s `manifest`, of the `versions` its lockfile locks.
+const lodashAlert = (repo, number, manifest, versions, more = {}) => ({ number, url: `https://github.com/${repo}/security/dependabot/${number}`, manifest, name: 'lodash',
+  ghsa: 'GHSA-35jh-r3h4-6jhm', aliases: ['CVE-2021-23337'], title: 'Command Injection in lodash', severity: 'high', range: '< 4.17.21', cwe: ['CWE-77'], versions, malware: false, ...more })
+const lodashAdvisory = { ecosystem: 'npm', source: 'registry', id: 'GHSA-35jh-r3h4-6jhm', ghsa: 'GHSA-35jh-r3h4-6jhm', name: 'lodash', title: 'Command Injection in lodash',
+  severity: 'high', url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm', aliases: [], cwe: ['CWE-77'], range: '<4.17.21', versions: ['4.17.20'], malware: false }
+const lockfileOf = (repo, path, packages, format = 'npm') => [{ type: 'repo', id: repo, commit: 'a'.repeat(40), lockfiles: [{ path, format }] },
+  { type: 'lockfile', repo, path, format, ...Array.isArray(packages) ? { packages } : { error: packages } }]
+
+test('a Dependabot alert of an advisory npm tells links where it is used to the alert, adding where npm didn\'t tell it, the rest to their lockfiles', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  // npm tells the advisory in A and B, Dependabot in B and C, whose bun lockfile isn't read.
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/a' }, { id: 2, fullName: 'org/b' }, { id: 3, fullName: 'org/c' }] },
+    ...lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')]), advised('package-lock.json', [lodashAdvisory]),
+    ...lockfileOf(2, 'package-lock.json', [locked('lodash', '4.17.20')]), { type: 'advisories', repo: 2, path: 'package-lock.json', advisories: [lodashAdvisory] },
+    { type: 'dependabot', repo: 2, alerts: [lodashAlert('org/b', 4, 'package-lock.json', ['4.17.20'])] },
+    ...lockfileOf(3, 'bun.lock', 'unsupported-format', 'bun'), { type: 'dependabot', repo: 3, alerts: [lodashAlert('org/c', 7, 'bun.lock', [])] },
+  ]) page._apply(line)
+  assert.equal(page._advisories.size, 1, 'one advisory')
+  const [row] = page._advisoryRows()
+  assert.deepEqual([...row.usedIn], ['org/a/package-lock.json', 'org/b/package-lock.json', 'org/c/bun.lock'], 'all three')
+  page._tab = 'advisories'
+  const text = templateText(page.render())
+  assert.ok(text.includes(`href=https://github.com/org/a/blob/${'a'.repeat(40)}/package-lock.json`), 'A to its lockfile')
+  assert.doesNotMatch(text, /org\/b\/blob\//u, 'B not to its lockfile')
+  assert.match(text, /href=https:\/\/github\.com\/org\/b\/security\/dependabot\/4 [^]*?data-tooltip=org\/b\/package-lock\.json\nDependabot alert #4>org\/b\/package-lock\.json/u, 'B to its alert')
+  assert.match(text, /href=https:\/\/github\.com\/org\/c\/security\/dependabot\/7 [^]*?data-tooltip=org\/c\/bun\.lock\nDependabot alert #7>/u, 'C to its alert')
+  assert.match(text, /<td class="mono">4\.17\.20<\/td>[^]*?<td class="mono"><4\.17\.21<\/td>/u, 'npm\'s range alone, not GitHub\'s beside it')
+  page._tab = 'packages'
+  assert.ok(templateText(page.render()).includes(`href=https://github.com/org/b/blob/${'a'.repeat(40)}/package-lock.json`), 'packages still link lockfiles')
+})
+
+test('a Dependabot alert npm tells no advisory of is listed as its own, of the kind its scope tells where no lockfile read locks a version of it', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const minimist = { ghsa: 'GHSA-xvch-5gv4-984h', name: 'minimist', title: 'Prototype Pollution in minimist', severity: 'moderate', range: '>= 1.0.0, < 1.2.6' }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/a' }] },
+    ...lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20'), { name: 'minimist', version: '1.2.5', source: 'registry', dev: true }]),
+    advised('package-lock.json', []),
+    { type: 'dependabot', repo: 1, alerts: [lodashAlert('org/a', 1, 'package-lock.json', ['4.17.20']), lodashAlert('org/a', 2, 'web/package.json', [], { dev: true }),
+      lodashAlert('org/a', 3, 'package-lock.json', ['1.2.5'], { ...minimist, number: 3 }), lodashAlert('org/a', 4, 'docs/package.json', [], { ...minimist, number: 4, dev: true })] },
+  ]) page._apply(line)
+  const shown = () => page._advisoryRows().map(row => [row.id, [...row.versions], [...row.ranges], row.dev, [...row.usedIn]])
+  assert.deepEqual(shown(), [['GHSA-35jh-r3h4-6jhm', ['4.17.20'], ['< 4.17.21'], false, ['org/a/package-lock.json']]], 'production\'s: lodash\'s version locked')
+  page._kind = 'development'
+  assert.deepEqual(shown(), [
+    ['GHSA-35jh-r3h4-6jhm', [], ['< 4.17.21'], true, ['org/a/web/package.json']],
+    ['GHSA-xvch-5gv4-984h', ['1.2.5'], ['>= 1.0.0, < 1.2.6'], true, ['org/a/package-lock.json', 'org/a/docs/package.json']],
+  ], 'development\'s: by its versions where locked, else its scope')
+  page._tab = 'advisories'
+  const text = templateText(page.render())
+  assert.match(text, /href=https:\/\/github\.com\/advisories\/GHSA-xvch-5gv4-984h [^>]*>GHSA-xvch-5gv4-984h<\/a>/u, 'its advisory on GitHub')
+  assert.match(text, />Prototype Pollution in minimist<\/span>/u)
+})
+
+test('a Dependabot alert told before npm tells its advisory, by an alias of it, is kept with that advisory, not listed apart', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  const osv = { ...lodashAdvisory, source: 'osv', id: 'MAL-2025-1', ghsa: undefined, aliases: ['GHSA-35jh-r3h4-6jhm'], url: 'https://osv.dev/vulnerability/MAL-2025-1', malware: true }
+  for (const line of [
+    { type: 'repos', repos: [{ id: 1, fullName: 'org/a' }, { id: 2, fullName: 'org/b' }] },
+    ...lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')]),
+    { type: 'dependabot', repo: 1, alerts: [lodashAlert('org/a', 1, 'package-lock.json', ['4.17.20'])] },
+    ...lockfileOf(2, 'package-lock.json', [locked('lodash', '4.17.20')]),
+  ]) page._apply(line)
+  assert.deepEqual([...page._advisories.keys()], ['GHSA-35jh-r3h4-6jhm\0lodash'], 'Dependabot\'s alone so far')
+  page._apply({ type: 'advisories', repo: 2, path: 'package-lock.json', advisories: [osv] })
+  assert.deepEqual([...page._advisories.values()].map(row => [row.id, row.malware, [...row.usedIn], [...row.alerts.keys()]]),
+    [['MAL-2025-1', true, ['org/b/package-lock.json', 'org/a/package-lock.json'], ['org/a/package-lock.json']]])
+  assert.deepEqual(page._packages.get('lodash@4.17.20\0').malware, new Set(['MAL-2025-1']), 'its malware marked on the package')
+})
+
+test('Dependabot alerts that couldn\'t be had are said small beside the advisories, which are shown all the same; a repository failing later forgets its alerts', () => {
+  const page = new (customElements.get('managed-admin-repo-risk'))()
+  page._state = 'done'
+  page._tab = 'advisories'
+  page._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/a' }, { id: 2, fullName: 'org/b' }, { id: 3, fullName: 'org/c' }] })
+  for (const line of lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')])) page._apply(line)
+  page._apply(advised('package-lock.json', [lodashAdvisory]))
+  page._apply({ type: 'dependabot', repo: 1, error: 'dependabot-forbidden' })
+  const status = () => /<p class="risk-dependabot" role="status">([^]*?)<\/p>/u.exec(templateText(page.render()))?.[1].replaceAll(/>\s+</gu, '> <') ?? null
+  assert.match(status(), /<span>Dependabot<\/span> <span class="risk-dependabot-failed" data-tooltip=org\/a: No access to Dependabot alerts>alerts unavailable for org\/a: No access to Dependabot alerts<\/span>/u)
+  assert.match(templateText(page.render()), />GHSA-35jh-r3h4-6jhm<\/a>/u, 'npm\'s advisories shown')
+  for (const line of lockfileOf(2, 'package-lock.json', [locked('lodash', '4.17.20')])) page._apply(line)
+  page._apply({ type: 'dependabot', repo: 2, alerts: [lodashAlert('org/b', 4, 'package-lock.json', ['4.17.20'])] })
+  page._apply({ type: 'dependabot', repo: 3, error: 'github-rate-limited' })
+  assert.match(status(), /data-tooltip=org\/b: 1 open alert>1 open alert of 1 repository<\/span> <span class="risk-dependabot-failed" data-tooltip=org\/a: No access to Dependabot alerts\norg\/c: GitHub rate limit reached>unavailable for 2 repositories<\/span>/u)
+  // A later part that couldn't have them again keeps those told, saying why.
+  page._apply({ type: 'dependabot', repo: 2, error: 'github-unreachable', detail: 'TimeoutError, after 20.0s' })
+  assert.deepEqual([...page._advisoryRows()[0].alerts.keys()], ['org/b/package-lock.json'])
+  assert.match(status(), />1 open alert of 1 repository<\/span> <span class="risk-dependabot-failed" data-tooltip=[^>]*org\/b: GitHub unreachable \(TimeoutError, after 20\.0s\)[^>]*>unavailable for 3 repositories</u)
+  // Its access withdrawn in a later part: its alert forgotten, where npm didn't tell it.
+  page._apply({ type: 'repo', id: 2, error: 'no-repository' })
+  assert.deepEqual([...page._advisoryRows()[0].usedIn], ['org/a/package-lock.json'])
+  assert.equal(page._advisoryRows()[0].alerts, undefined)
+  // A scan that told no repository's alerts says nothing of them.
+  const quiet = new (customElements.get('managed-admin-repo-risk'))()
+  quiet._state = 'done'
+  quiet._tab = 'advisories'
+  quiet._apply({ type: 'repos', repos: [{ id: 1, fullName: 'org/a' }] })
+  for (const line of lockfileOf(1, 'package-lock.json', [locked('lodash', '4.17.20')])) quiet._apply(line)
+  quiet._apply(advised('package-lock.json', [lodashAdvisory]))
+  assert.doesNotMatch(templateText(quiet.render()), /risk-dependabot/u)
+})

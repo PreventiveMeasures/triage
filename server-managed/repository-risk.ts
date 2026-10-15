@@ -20,9 +20,12 @@
 // registry or a mirror are asked of npm's advisories all at once, as `npm
 // audit` asks, each advisory told with whether it is of malware (risk's
 // npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
-// vulnerabilities, told beside.
+// vulnerabilities, told beside. A repository's open Dependabot alerts of npm's
+// are told once its lockfiles' advisories are, each with the versions its
+// lockfile locks that it covers, for the page to blend them into npm's; one
+// whose alerts couldn't be had tells why, and the scan goes on.
 import type { LockfileFormat } from '@preventive/upstream/github.js'
-import type { Severity } from '../risk/index.js'
+import { type Severity, npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import type { NpmVersionDocument } from './npm-packages.ts'
 import { type Lru, lru } from './lru.ts'
@@ -33,8 +36,9 @@ import { type Queue, queue } from './queue.ts'
 import { type DownloadsSource, readyingDownloads } from './scan-downloads.ts'
 import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
 import { type AdvisoryRow, type Audit, type AuditSource, auditLockfile } from './repository-risk-audit.ts'
-import { type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
+import { type DependabotRead, type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
   readRepository } from './repository-risk-read.ts'
+import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
@@ -78,6 +82,12 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends Audi
 
 
 
+// A Dependabot alert as a scan tells it: with the versions of its package
+// the lockfile it is of locks that it covers, none where it is of none read
+// (a package.json, bun's lockfile), and whether it is of malware, as an
+// advisory's is told.
+export type DependabotAlertRow = DependabotAlert & { versions: string[]; malware: boolean }
+
 // A risk line is of npm's package of its name and version, or, with an
 // `integrity`, of a mirror's that its lockfiles hold to it; its `score` risk's
 // of it, out of 100 (assessNpm `score`, risk/npm/score.js).
@@ -88,6 +98,7 @@ export type RepositoryRiskLine =
   | ({ type: 'risk'; name: string; version: string; integrity?: string; stale?: { assessedAt: number } }
     & ({ published: string | null; severity: Severity | null; score: number; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
+  | ({ type: 'dependabot'; repo: number } & ({ alerts: DependabotAlertRow[] } | RiskFailure))
   | { type: 'done' }
   // The scan stopped for its part's time (repositoryRiskLines `partMs`), what
   // it told kept: to be asked again, from where it stopped.
@@ -264,9 +275,22 @@ async function readAdvisories(scan: Scan, { repo, path, format, packages }: Lock
   return audit === null ? null : Array.isArray(audit) ? { ...at, advisories: audit } : { ...at, ...audit }
 }
 
+type DependabotLine = Extract<RepositoryRiskLine, { type: 'dependabot' }>
+
+// A repository's Dependabot alerts' line, each alert with the versions the
+// lockfile it is of locks that it covers (`lockfiles`, a repository read's),
+// or why they couldn't be had.
+function dependabotLine(repo: number, read: DependabotRead, lockfiles: RepositoryRead['lockfiles']): DependabotLine {
+  if ('error' in read) return { type: 'dependabot', repo, ...read }
+  const locked = new Map(lockfiles.flatMap(({ line }) => 'packages' in line ? [[line.path, line.packages] as const] : []))
+  return { type: 'dependabot', repo, alerts: read.alerts.map(alert => ({ ...alert, versions: alertVersions(alert, locked.get(alert.manifest)),
+    malware: npmMalwareAdvisory({ id: alert.ghsa, aliases: alert.aliases, cwe: alert.cwe, title: alert.title }) })) }
+}
+
 // A repository read (repository-risk-read.ts readRepository) told: its
 // line, or why it couldn't be read, then its lockfiles', and their
-// advisories, its packages assessed meanwhile. Access to it is checked again
+// advisories, its packages assessed meanwhile, then its Dependabot alerts.
+// Access to it is checked again
 // just before, however long ago it was read, as GitHub may have withdrawn it.
 async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: RepositoryRead | RepositoryFailure | null) {
   if (!read || scan.signal.aborted) return
@@ -288,6 +312,7 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
     if (advisories) scan.lines.add(advisories)
   }
   if (scan.signal.aborted) return
+  if (read.dependabot) scan.lines.add(dependabotLine(repo.repoId, read.dependabot, lockfiles))
   scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
     lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []) })
 }

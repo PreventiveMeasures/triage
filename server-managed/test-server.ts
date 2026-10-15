@@ -867,6 +867,11 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     ecosystem: 'npm', name, source: 'registry', id, ghsa: id, url: `https://github.com/advisories/${id}`, aliases: [], title, severity, cwe, range, versions,
     malware: cwe.includes('CWE-506'),
   })
+  // A Dependabot alert, as a scan tells it (repository-risk.ts DependabotAlertRow).
+  const alert = (repo: string, number: number, manifest: string, name: string, ghsa: string, title: string, severity: string, range: string, versions: string[], dev = false) => ({
+    number, url: `https://github.com/${repo}/security/dependabot/${number}`, manifest, name, ghsa, aliases: [], title, severity, range, cwe: [], versions, malware: false,
+    ...dev ? { dev: true } : {},
+  })
   const risk = (name: string, version: string, findings: [string, string][]) => ({ type: 'risk', name, version, published: '2024-05-01T00:00:00.000Z',
     severity: findings[0]?.[1] ?? null, findings: findings.map(([id, severity]) => ({ id, severity })) })
   const lines: RiskFixtureLine[] = [
@@ -887,6 +892,12 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
       advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '<0.2.4', ['0.0.8']),
       advisory('minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', ['CWE-1321'], '>=1.0.0 <1.2.6', ['1.2.5']),
     ].filter(row => row.versions.length > 0) },
+    // minimist's alert is of the advisory npm tells, lodash's of one it doesn't,
+    // in a lockfile not read.
+    { type: 'dependabot', repo: first!.id, alerts: [
+      alert(first!.fullName, 12, 'package-lock.json', 'minimist', 'GHSA-xvch-5gv4-984h', 'Prototype Pollution in minimist', 'critical', '>= 1.0.0, < 1.2.6', ['1.2.5']),
+      alert(first!.fullName, 14, 'docs/bun.lock', 'lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', '< 4.17.21', [], true),
+    ] },
     risk('minimist', '0.0.8', []),
     { type: 'risk', name: 'minimist', version: '1.2.5', error: 'upstream-unavailable', detail: 'npm couldn\'t be asked for minimist\'s downloads: The operation was aborted due to timeout' },
     risk('left-pad', '1.3.0', [['deprecated', 'critical'], ['popularity', 'high']]),
@@ -898,6 +909,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     { type: 'advisories', repo: second!.id, path: 'pnpm-lock.yaml', advisories: [
       advisory('lodash', 'GHSA-xxjr-mmjv-4gpg', 'Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit`', 'moderate', ['CWE-1321'], '>=4.0.0 <=4.17.22', ['4.17.21']),
     ] },
+    { type: 'dependabot', repo: second!.id, error: 'dependabot-forbidden' },
     risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
     ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
     { type: 'risk', ...chalk, error: 'integrity-mismatch' },
@@ -905,7 +917,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
   ]
   // Those of the repositories scanned, and of the packages their lockfiles lock.
   const names = new Set(lines.flatMap(line => line.type === 'lockfile' && scanned.has(line.repo!) ? (line.packages ?? []).map(pkg => pkg.name) : []))
-  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : ['lockfile', 'advisories'].includes(line.type) ? scanned.has(line.repo!)
+  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : ['lockfile', 'advisories', 'dependabot'].includes(line.type) ? scanned.has(line.repo!)
     : line.type !== 'risk' || names.has(line.name!))
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
   let at = 0

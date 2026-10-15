@@ -1059,7 +1059,32 @@ no document of is asked of risk as one npm removed (`npmRiskRemoved`): its
 package taken down by npm is risk's `malware`, critical, whatever version is
 locked, as is an advisory of malware naming it, npm's or, where anyone can
 read its package, OSV's (nx's malicious versions have OSV's alone), and the
-page says so in its tooltip; one nothing tells of is told as not on npm. Assessments are `spare` ones (`npm-risk.ts`): two at most across
+page says so in its tooltip; one nothing tells of is told as not on npm.
+Each repository's open Dependabot alerts of npm's are asked of GitHub too
+(`dependabot-alerts.ts`, `GET /repos/:repo/dependabot/alerts`, a page of 100
+at a time by the cursor each page's Link header names, 2,000 at most), while
+its lockfiles are read, never kept, those of a team's directories alone as its
+lockfiles are, and told in a `dependabot` line once its lockfiles' advisories
+are: each alert with the versions of its package that the lockfile it is of
+locks and its range covers (none where it is of no lockfile read, as a
+`package.json` or bun's lockfile), and whether it is of malware, as an
+advisory is told. They are asked with the admin's own GitHub token alone,
+never the App's installation's, as GitHub shows a repository's alerts only to
+those it lets see them: the App needs **Dependabot alerts: read**, and the
+admin GitHub's leave to see them. Where they can't be had, as the App or the
+admin may not see them (`dependabot-forbidden`), the repository has them off
+(`dependabot-disabled`), or GitHub isn't reached, the line tells why, and the
+scan goes on. The page blends them into its Advisories tab: an alert of an
+advisory npm tells, by its GHSA (its id or one of its aliases) and package, is
+kept with it, where it is used linked to the alert rather than the lockfile,
+and where npm didn't tell it, as a lockfile not read, added among where it is
+used; an advisory used in lockfiles A and B whose alerts are in B and C links
+A to its lockfile and B and C to their alerts. An alert npm tells none of is
+listed as its own, its range GitHub's, of the kind its versions tell, or,
+where no lockfile read locks one, its scope (development's or production's).
+Above the table, a line says how many open alerts of how many repositories
+were had, and of which they couldn't be, each with why in its tooltip.
+Assessments are `spare` ones (`npm-risk.ts`): two at most across
 the server, leaving the rest to readers, and without asking npm of each
 dependency's package, nor of the version's advisories, which a lockfile's are
 asked at once. A package's downloads, which risk asks of npm's downloads API
@@ -2588,7 +2613,9 @@ Keep **Account permissions** unset/minimal so login requests no elevated account
 access. Repository **Contents: read**, **Issues: read and write** and **Pull
 requests: read** are approved when connecting repositories, not added as login
 OAuth scopes; **Checks: read** and **Commit statuses: read** let the Pull
-requests tab show a pull request's checks. Existing installations must have
+requests tab show a pull request's checks, and **Dependabot alerts: read** lets
+a repository risk scan blend a repository's alerts into npm's advisories, for
+an admin GitHub lets see them. Existing installations must have
 their owner approve each permission update; the issue dialog offers the
 installation flow when approval is missing. GitHub App
 permissions are configured on the app, rather than requested as incremental
