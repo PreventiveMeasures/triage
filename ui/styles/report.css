@@ -3559,38 +3559,52 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
 }
-/* Two lines a tile, a pull request's three: its title beside its state, then
-   its number, author, age, review, labels, checks and comments, wrapping as
-   they must, then a pull request's branches and size, each under the title. */
+/* A tile's rail: its state's icon, and under it a pull request's review and
+   checks, then how many comments, the icon over the count, as wide as a
+   compact count is ("999", "1.2K"). Beside it, a line each: the title, of
+   two at most, its number, author and age, its labels, and a pull request's
+   branches and size, none wrapping to another, so that a tile is as tall as
+   its title makes it and a row of them as tall as its tallest title. Where a
+   row is taller than a tile's own lines, the room is under its title, its
+   other lines level with its neighbors'. */
 .issue-body {
-  --indent: calc(14px + .35rem);
-  display: flex; flex-direction: column; gap: .15rem; flex: 1; min-width: 0; padding: .3rem .5rem .35rem;
+  display: flex; gap: .3rem; flex: 1; min-width: 0; padding: .3rem .5rem .35rem .3rem;
   color: var(--text); text-decoration: none; border-radius: inherit;
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
-.issue-title { display: flex; align-items: flex-start; gap: .35rem; min-width: 0; }
-.issue-name {
-  display: -webkit-box; min-width: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
-  font-weight: 500; line-height: 1.3; overflow-wrap: anywhere;
-}
-.issue-state {
-  display: inline-flex; flex: none; margin-top: .1rem; color: var(--state);
+.issue-rail {
+  display: flex; flex-direction: column; align-items: center; gap: .25rem; flex: none; width: 1.5rem; color: var(--muted);
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }
+}
+.issue-lines { display: flex; flex-direction: column; gap: .15rem; flex: 1; min-width: 0; }
+.issue-name {
+  display: -webkit-box; min-width: 0; margin-bottom: auto; overflow: hidden;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere;
+}
+.issue-state {
+  display: inline-flex; margin-top: .1rem; color: var(--state);
   & .dotted { stroke-dasharray: 1 2.2; }
 }
-.issue-meta, .issue-branch {
-  display: flex; align-items: center; min-width: 0; padding-left: var(--indent); color: var(--muted); font-size: .72rem;
-}
-.issue-meta { flex-wrap: wrap; gap: .15rem .4rem; }
+.issue-meta, .issue-labels, .issue-branch { display: flex; align-items: center; min-width: 0; white-space: nowrap; }
+.issue-meta, .issue-branch { color: var(--muted); font-size: .72rem; }
+.issue-meta { gap: .4rem; }
 .issue-meta time { flex: none; font-variant-numeric: tabular-nums; }
 .issue-number { flex: none; font-variant-numeric: tabular-nums; }
-.issue-author { min-width: 0; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.issue-tail { display: inline-flex; align-items: center; gap: .4rem; margin-left: auto; }
+.issue-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Labels in one line, whole while they fit, then shortened, the last first:
+   each shrinks a hundred thousand times as readily as the one before it, so
+   that one before it shrinks by less than a pixel can show, and is never cut
+   short while another can still give way. */
+.issue-labels {
+  gap: .3rem; overflow: hidden;
+  & .issue-label:nth-child(2) { flex-shrink: 100000; }
+  & .issue-label:nth-child(3) { flex-shrink: 10000000000; }
+}
 .issue-branch {
   gap: .3rem;
   & code {
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
     color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   & code:last-of-type { flex: none; max-width: 40%; }
@@ -3598,32 +3612,29 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 .issue-diff { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
-.issue-label, .issue-review {
-  max-width: 9rem; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 999px;
-  overflow: hidden; font-size: .68rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap;
-}
 .issue-label {
-  display: inline-flex; align-items: center; gap: .25rem; color: var(--text);
-  &::before { content: ''; flex: none; width: .45rem; height: .45rem; border-radius: 50%; background: var(--label, var(--muted)); }
-  &.is-more { color: var(--muted); &::before { display: none; } }
+  min-width: 2.5rem; max-width: 9rem; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 999px;
+  overflow: hidden; color: var(--text); font-size: .68rem; line-height: 1.35; text-overflow: ellipsis;
+  &::before {
+    content: ''; display: inline-block; width: .45rem; height: .45rem; margin-right: .25rem; border-radius: 50%;
+    background: var(--label, var(--muted)); vertical-align: middle;
+  }
+  &.is-more { flex: none; min-width: 0; color: var(--muted); &::before { display: none; } }
 }
+.issue-review, .issue-checks, .issue-comments { display: inline-flex; & svg { width: 12px; height: 12px; } }
 .issue-review {
-  max-width: none; border-color: currentcolor;
   &.is-approved { color: var(--green); }
   &.is-changes { color: var(--critical); }
-  &.is-required { color: var(--muted); }
 }
 .issue-checks {
-  display: inline-flex;
-  & svg { width: 12px; height: 12px; fill: none; stroke: currentcolor; stroke-width: 2; stroke-linecap: round; }
-  & .fill { fill: currentcolor; stroke: none; }
+  & svg { stroke-width: 2; }
   &.is-success { color: var(--green); }
   &.is-failure { color: var(--critical); }
   &.is-pending { color: var(--medium); }
 }
 .issue-comments {
-  display: inline-flex; align-items: center; gap: .2rem; font-variant-numeric: tabular-nums;
-  & svg { width: 12px; height: 12px; fill: none; stroke: currentcolor; stroke-width: 1.4; stroke-linejoin: round; }
+  flex-direction: column; align-items: center; gap: .05rem; font-size: .65rem; line-height: 1; font-variant-numeric: tabular-nums;
+  & svg { stroke-width: 1.4; }
 }
 
 /* A repository's agents (repository-agents.js): a session a tile, as an

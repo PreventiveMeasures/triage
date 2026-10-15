@@ -18,7 +18,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
-const { filterIssues, issueState } = await import('../ui/view/repository-issues.js')
+const { commentCount, filterIssues, issueState } = await import('../ui/view/repository-issues.js')
 const Issues = customElements.get('repository-issues')
 
 let session = 0
@@ -36,7 +36,7 @@ const shown = (kind = 'issues', repo = 'org/repo') => Object.assign(new Issues()
 
 test('the issues open read first, as tiles opening on GitHub, each its state, number, author, age, title, labels and comments, with how many are open and closed', async () => {
   answer = () => Promise.resolve({ items: [issue(12, { comments: 4, labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'ui', color: null }, { name: 'docs', color: null },
-    { name: 'perf', color: null }], moreLabels: 2 }), issue(9, { title: '' }), { number: 'x' }], counts: { open: 1234, closed: 40 }, more: false })
+    { name: 'perf', color: null }], moreLabels: 2 }), issue(9, { title: '', comments: 1234 }), { number: 'x' }], counts: { open: 1234, closed: 40 }, more: false })
   const view = shown()
   assert.match(templateText(view.render()), /Reading the issues…/u)
   await setImmediate()
@@ -47,7 +47,9 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/12 target="_blank" rel="noopener noreferrer"/u)
   assert.match(text, /aria-label=Open[^]*Issue 12[^]*#12[^]*octo[^]*3h<\/time>/u)
   assert.match(text, />bug<[^]*>ui<[^]*>docs<\/span><span class="issue-label is-more">\+3</u, 'three labels, then how many more')
-  assert.match(text, /4<span class="sr-only"> comments<\/span>/u)
+  assert.equal(text.split('class="issue-labels"').length - 1, 1, 'a line of labels only where there are any')
+  assert.match(text, /class="issue-comments" role="img" aria-label=4 comments title=4 comments><svg[^]*<\/svg><span>4<\/span>/u)
+  assert.match(text, /aria-label=1,234 comments [^]*<span>1\.2K<\/span>/u, 'a count of thousands as compact as its rail')
   assert.match(text, /\(no title\)/u)
   assert.equal(text.split('<li ').length - 1, 2, 'one GitHub names no number for left out')
   // Closed reads its own list, the counts read kept while it does.
@@ -75,11 +77,15 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   const text = templateText(view.render())
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5/u)
   assert.match(text, /<code>feature\/x<\/code>[^]*<code>main<\/code>[^]*\+1,200[^]*−3/u)
-  assert.match(text, /issue-review is-changes>Changes requested<[^]*aria-label=Checks failed>/u)
+  assert.match(text, /issue-review is-changes role="img" aria-label=Changes requested [^]*issue-checks is-failure role="img" aria-label=Checks failed /u, 'the review, then the checks, under the state')
   assert.doesNotMatch(text, /Approved/u, 'a merged one\'s review is done with')
-  assert.match(text, /aria-label=Checks passed>/u)
+  assert.match(text, /aria-label=Checks passed /u)
   const unnamed = shown('pulls', null)
   assert.doesNotMatch(templateText(unnamed.render()), /href=/u)
+})
+
+test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {
+  assert.deepEqual([1, 999, 1000, 1234, 12_345, 1_234_567].map(commentCount), ['1', '999', '1K', '1.2K', '12K', '1.2M'])
 })
 
 test('the filter picks among those read by every word, in a number, title, author, label or branch', async () => {
