@@ -209,7 +209,11 @@ class RepositoryIssues extends LitElement {
     const { key, entry, more } = this.list(listState)
     const ready = entry.status === 'ready'
     const noun = this.kind === 'pulls' ? 'pull requests' : 'issues'
-    const counted = which => ready ? html` <span class="issues-count">${entry.counts[which].toLocaleString('en-US')}</span>` : nothing
+    // How many are open and closed, as the list shown read them, else as the
+    // other did, the same repository's: switching keeps them while it reads.
+    const other = sessionLists().get(`${this.repository.repoId}\0${this.kind}\0${listState === 'open' ? 'closed' : 'open'}`)
+    const counts = ready ? entry.counts : other?.status === 'ready' ? other.counts : null
+    const counted = which => counts ? html` <span class="issues-count">${counts[which].toLocaleString('en-US')}</span>` : nothing
     const shown = ready ? filterIssues(entry.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
         <div class="history-modes" role="group" aria-label=${this.kind === 'pulls' ? 'Pull requests' : 'Issues'}>
