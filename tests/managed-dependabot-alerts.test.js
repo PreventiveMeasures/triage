@@ -87,6 +87,29 @@ test('alerts that can\'t be had are thrown as why, never GitHub\'s text: off, no
   assert.equal(asked.length, 0, 'none asked without a token')
 })
 
+test('alerts more than a listing holds have the open ones listed again on their own, newer dismissed ones leaving none of them out', async () => {
+  const asked = []
+  // 20 full pages of dismissed alerts, newest first, and more past them; the
+  // open ones, older, only on a listing of their own.
+  const fetchImpl = url => {
+    const query = new URL(url).searchParams
+    asked.push(query.get('state'))
+    const page = Number(query.get('after') ?? 0)
+    const open = query.get('state') === 'open'
+    const body = open ? [raw(9001, 'lodash', 'GHSA-35jh-r3h4-6jhm'), raw(9002, 'debug', 'GHSA-gxpj-cx7g-858c')]
+      : Array.from({ length: 100 }, (_, at) => raw(page * 100 + at + 1, 'minimist', 'GHSA-xvch-5gv4-984h', { state: 'dismissed', dismissed_reason: 'tolerable_risk' }))
+    const link = open ? {} : { link: `<https://api.github.com/repositories/1/dependabot/alerts?after=${page + 1}>; rel="next"` }
+    return Promise.resolve(Response.json(body, { headers: link }))
+  }
+  const alerts = await dependabotAlerts('org/one', 'token', fetchImpl)
+  assert.deepEqual(asked, [...Array.from({ length: 20 }, () => 'open,dismissed,auto_dismissed'), 'open'], 'the open ones asked again once the cap is hit')
+  assert.deepEqual(alerts.slice(0, 2).map(alert => [alert.number, 'dismissed' in alert]), [[9001, false], [9002, false]], 'the open ones first')
+  assert.equal(alerts.length, 2002, 'the dismissed ones had kept after them')
+  const { asked: once, fetchImpl: few } = github([{ body: [raw(1, 'lodash', 'GHSA-35jh-r3h4-6jhm')] }])
+  await dependabotAlerts('org/one', 'token', few)
+  assert.equal(once.length, 1, 'asked once where a listing holds them all')
+})
+
 test('a next page another host names, or of no cursor, isn\'t asked', async () => {
   for (const link of ['<https://evil.example/repos/org/one/dependabot/alerts?after=x>; rel="next"', '<https://api.github.com/repos/org/one/dependabot/alerts>; rel="next"']) {
     const { asked, fetchImpl } = github([{ body: [raw(1, 'lodash', 'GHSA-35jh-r3h4-6jhm')], headers: { link } }, { body: [raw(2, 'debug', 'GHSA-gxpj-cx7g-858c')] }])

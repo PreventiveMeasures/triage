@@ -1091,7 +1091,9 @@ page says so in its tooltip; one nothing tells of is told as not on npm.
 Each repository's Dependabot alerts of npm's, open or dismissed (a fixed one's
 dependency is no longer what it was), are asked of GitHub too
 (`dependabot-alerts.ts`, `GET /repos/:repo/dependabot/alerts`, a page of 100
-at a time by the cursor each page's Link header names, 2,000 at most), a
+at a time by the cursor each page's Link header names, 2,000 at most, and
+where open and dismissed ones are more, the open ones listed again on their
+own, for newer dismissed ones to leave none of them out), a
 dismissed one with who dismissed it, when, why and what they said, or that
 one of the repository's rules did, while
 its lockfiles are read, never kept, those of a team's directories alone as its

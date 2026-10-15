@@ -46,8 +46,9 @@ const API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
-// Up to how many pages are asked: 2,000 alerts of npm's in a repository, open
-// or dismissed, past which the rest are left out.
+// Up to how many pages a listing asks: 2,000 alerts of npm's in a repository,
+// past which the rest are left out; where open and dismissed ones are more,
+// the open ones are listed again on their own (dependabotAlerts).
 const MAX_PAGES = 20
 // A page holds each advisory's whole text: given longer than githubJson's.
 const PAGE_TIMEOUT_MS = 20_000
@@ -138,25 +139,38 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
   return { alerts: body, link: res.headers.get('link') }
 }
 
-// `fullName`'s Dependabot alerts of npm's ecosystem, open or dismissed, as
-// `token` may see them, in GitHub's order; none asked without a token.
-export async function dependabotAlerts(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
-  if (!token) throw new GithubApiError(403, 'dependabot-forbidden')
+// `fullName`'s alerts in `states`, MAX_PAGES at most, in GitHub's order (the
+// newest first), and whether that is all of them.
+async function listAlerts(fullName: string, states: readonly string[], token: string, fetchImpl: typeof fetch) {
   const base = `${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/dependabot/alerts`
   const alerts: DependabotAlert[] = []
   const seen = new Set<number>()
   let cursor: [string, string] | null = null
   for (let pages = 0; pages < MAX_PAGES; pages++) {
-    const query = new URLSearchParams({ state: STATES.join(','), ecosystem: 'npm', per_page: String(PER_PAGE), ...cursor ? { [cursor[0]]: cursor[1] } : {} })
+    const query = new URLSearchParams({ state: states.join(','), ecosystem: 'npm', per_page: String(PER_PAGE), ...cursor ? { [cursor[0]]: cursor[1] } : {} })
     const answer = await askPage(`${base}?${query}`, token, fetchImpl)
     for (const raw of answer.alerts) {
       const alert = alertOf(fullName, raw)
       if (alert && !seen.has(alert.number)) { seen.add(alert.number); alerts.push(alert) }
     }
     cursor = answer.alerts.length === 0 ? null : nextPage(answer.link)
-    if (!cursor) break
+    if (!cursor) return { alerts, whole: true }
   }
-  return alerts
+  return { alerts, whole: false }
+}
+
+// `fullName`'s Dependabot alerts of npm's ecosystem, open or dismissed, as
+// `token` may see them, in GitHub's order; none asked without a token. Asked
+// at once, but where they are more than a listing holds, as newer dismissed
+// ones would leave older open ones out, the open ones are listed again on
+// their own, and the dismissed ones had kept after them.
+export async function dependabotAlerts(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
+  if (!token) throw new GithubApiError(403, 'dependabot-forbidden')
+  const all = await listAlerts(fullName, STATES, token, fetchImpl)
+  if (all.whole) return all.alerts
+  const open = await listAlerts(fullName, ['open'], token, fetchImpl)
+  const told = new Set(open.alerts.map(alert => alert.number))
+  return [...open.alerts, ...all.alerts.filter(alert => alert.dismissed && !told.has(alert.number))]
 }
 
 // The versions of an alert's package that a lockfile it is of locks
