@@ -388,6 +388,30 @@ function sourceLinks(code, language, resolve) {
     .map(([, target, content]) => [content.replaceAll(/<[^>]+>/gu, ''), target])
 }
 
+test('quoted C includes resolve beside the including file; other strings and include forms do not', () => {
+  const resolve = bundleSourceLinkResolver(sourcemap([
+    'c/dec/decode.c', 'c/dec/bit_reader.h', 'c/dec/state.h', 'c/common/constants.h', 'c/include/brotli/decode.h',
+  ]), 'c/dec/decode.c')
+  const code = `#include <brotli/decode.h>
+#include "../common/constants.h"
+#include "bit_reader.h"
+#  include  "state.h" // "huffman.h"
+#include "brotli/decode.h"
+#include "missing.h"
+#include_next "state.h"
+#define HEADER "state.h"
+const char *name = "bit_reader.h";`
+  for (const language of ['c', 'cpp']) {
+    assert.deepEqual(sourceLinks(code, language, resolve), [
+      ['"../common/constants.h"', 'c/common/constants.h'],
+      ['"bit_reader.h"', 'c/dec/bit_reader.h'],
+      ['"state.h"', 'c/dec/state.h'],
+    ], language)
+  }
+  assert.deepEqual(sourceLinks('#import "bit_reader.h"\n', 'objectivec', resolve), [['"bit_reader.h"', 'c/dec/bit_reader.h']])
+  assert.deepEqual(sourceLinks('#include "bit_reader.h"\n', 'javascript', resolve), [], 'other grammars keep the shared rule')
+})
+
 test('PHP links recorded names across syntax tokens and accepts a leading namespace separator', () => {
   const parent = 'vendor/brick/math/src/BigRational.php'
   const decimal = 'vendor/brick/math/src/BigDecimal.php'
