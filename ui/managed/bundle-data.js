@@ -180,6 +180,21 @@ export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = nu
     REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
 }
 
+const REPOSITORY_AGENTS_ERRORS = {
+  ...REPOSITORY_ISSUES_ERRORS,
+  'no-directory': 'Agents show only with access to the whole repository.',
+  'github-token-required': 'Reading what Claude and Codex did needs your GitHub sign-in.',
+  400: 'Not a repository’s agents.',
+}
+
+// The Agents tab's artifacts: a page of pull requests and of the default
+// branch's commits, on from the cursors `pulls` and `commits` (the first
+// page, naming neither, with issues and branches).
+export function fetchRepositoryAgents(repoId, { pulls = null, commits = null, signal } = {}) {
+  return request(`/api/admin/repositories/agents?${new URLSearchParams({ repoId, ...pulls ? { pulls } : {}, ...commits ? { commits } : {} })}`,
+    REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }

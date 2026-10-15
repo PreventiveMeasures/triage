@@ -27,12 +27,12 @@ beforeEach(() => {
     bundleDetails: { integrity: entry.integrity, json: { sources: {} }, repository: entry.repository }, bundleSourceFile: null, triage: new Map() })
 })
 
-test('a directory open shows its Issues and Pull requests in managed mode, a bundle\'s Issues tab, which managed hides, not standing in for them', () => {
-  for (const tab of ['issues', 'pulls', 'history']) {
+test('a directory open shows its Issues, Pull requests and Agents in managed mode, a bundle\'s Issues tab, which managed hides, not standing in for them', () => {
+  for (const tab of ['issues', 'pulls', 'agents', 'history']) {
     state.bundleDetailsTab = tab
     const text = templateText(renderBundlesList([entry]))
     assert.equal(state.bundleDetailsTab, tab)
-    assert.match(text, tab === 'history' ? /<repository-history /u : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
-    assert.match(text, /data-bundle-tab="issues"[^]*>Issues<[^]*data-bundle-tab="pulls"[^]*>Pull requests</u)
+    assert.match(text, tab === 'history' ? /<repository-history /u : tab === 'agents' ? /<repository-agents /u : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
+    assert.match(text, /data-bundle-tab="issues"[^]*>Issues<[^]*data-bundle-tab="pulls"[^]*>Pull requests<[^]*data-bundle-tab="agents"[^]*>Agents</u)
   }
 })
