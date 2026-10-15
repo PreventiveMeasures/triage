@@ -245,15 +245,17 @@ class RepositoryAgents extends LitElement {
   }
 
   // Each agent's mark, and beside it what it did among the sessions read,
-  // each by its icon and count, more to come where pages are left to read.
+  // each by its icon and count, more to come where its pages are left to
+  // read: pull requests', which a branch alone may wait for, or commits'.
   renderStats(entry) {
+    const left = { pulls: Boolean(entry.after?.pulls), branches: Boolean(entry.after?.pulls), commits: Boolean(entry.after?.commits) }
     return html`<span class="agent-totals">${['claude', 'codex'].map(agent => {
       const stats = agentStats(entry.sessions, agent)
       return html`<span class="agent-stats" role="group" aria-label=${AGENT_NAMES[agent]}>
         <span class=${`agent-mark is-${agent}`}>${AGENT_ICONS[agent]}</span>
         ${STATS.map(([kind, glyph, one, many]) => {
-          const count = `${stats[kind].toLocaleString('en-US')}${entry.more ? '+' : ''}`
-          const name = `${count} ${stats[kind] === 1 && !entry.more ? one : many}`
+          const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
+          const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
           return html`<span class="agent-stat" role="img" aria-label=${name} title=${name}>${glyph}${count}</span>`
         })}
       </span>`

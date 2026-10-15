@@ -3678,9 +3678,14 @@ repository-agents { --claude: #d97757; }
    sight, and room kept at its end for how many are not seen: each chip's
    count of those after it sits past its end, where the next chip, drawn
    over it, hides it wherever that one fits beside it, so that only the
-   count past the last chip seen shows. */
+   count past the last chip seen shows. While one has the keyboard's focus,
+   all are seen, none clipped, and only the last's count. */
 .agent-chips {
   display: flex; flex-wrap: wrap; gap: .25rem; height: calc(.68rem * 1.35 + 2px); padding-right: 2.5rem; overflow: hidden;
+  &:focus-within {
+    height: auto;
+    & .agent-chip:not(:last-child)::after { display: none; }
+  }
 }
 .agent-chip {
   --chip: var(--issue-open);

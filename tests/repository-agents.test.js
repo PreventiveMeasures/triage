@@ -55,9 +55,10 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, />Claude <span class="issues-count">1\+</u)
   assert.match(text, />Codex <span class="issues-count">2\+</u)
   assert.match(text, /4 pull requests read/u)
-  // Each agent's pull requests, branches and commits to main without one, by icon, more to come.
-  assert.match(text, /role="group" aria-label=Claude>[^]*aria-label=2\+ pull requests[^]*aria-label=1\+ branches[^]*aria-label=1\+ commits to the default branch without a pull request/u)
-  assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*aria-label=0\+ commits/u)
+  // Each agent's pull requests, branches and commits to main without one, by icon, more to come
+  // where its pages are left: pull requests', and the branches waiting on them, not commits'.
+  assert.match(text, /role="group" aria-label=Claude>[^]*aria-label=2\+ pull requests[^]*aria-label=1\+ branches[^]*aria-label=1 commit to the default branch without a pull request/u)
+  assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*aria-label=0 commits/u)
   // The session: its two pull requests and its commit to main, the issue it names.
   assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*3 tasks[^]*\+2,001[^]*−11/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^>]*>#9<[^]*pull\/8[^>]*>#8<[^]*commit\/c{40}[^>]*><code>ccccccc<\/code>[^]*issues\/3[^>]*><span class="sr-only">Issue <\/span>#3</u)
