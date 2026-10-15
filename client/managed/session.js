@@ -65,9 +65,11 @@ function sessionFrom(body) {
 }
 
 // The server's App classification of a team's published workspace: App teams
-// open collapsed to their findings. An unknown one is left out (expanded).
+// open collapsed to their findings. A team none of whose reports open in App
+// mode alone (`appReports: 0`) collapses too; a mixed one stays expanded. An
+// unknown one is left out (expanded).
 function teamApp(app) {
-  if (app?.appMode === false) return { appMode: false }
+  if (app?.appMode === false) return Number.isSafeInteger(app.appReports) && app.appReports >= 0 ? { appMode: false, appReports: app.appReports } : { appMode: false }
   return app?.appMode === true && Number.isSafeInteger(app.appFindings) && app.appFindings >= 0
     ? { appMode: true, appFindings: app.appFindings } : null
 }

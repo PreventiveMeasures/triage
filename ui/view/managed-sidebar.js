@@ -28,6 +28,13 @@ export function filterManagedTeams(teams, query = '') {
   })
 }
 
+// Collapse a team whose reports are all one kind: an App team, or one none of
+// whose reports open in App mode alone (the catalog's `appReports`). A team
+// mixing the two lists its reports. Local workspaces keep their own rule.
+export function managedTeamCollapses(app, reportCount) {
+  return app?.appMode === true || (app?.appReports === 0 && reportCount > 0)
+}
+
 // Match local workspace section behavior: reveal selection on navigation,
 // preserve manual collapse on repaint, and reveal search results temporarily.
 export class ManagedTeamSections {

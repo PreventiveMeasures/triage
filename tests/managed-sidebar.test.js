@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filterManagedTeams } from '../ui/view/managed-sidebar.js'
+import { filterManagedTeams, managedTeamCollapses } from '../ui/view/managed-sidebar.js'
 
 const shared = Object.freeze({ id: 'shared', filename: 'Web-App.map' })
 const teams = Object.freeze([
@@ -70,4 +70,12 @@ test('App team sections match workspace navigation, search and manual collapse b
   assert.equal(sections.shown('a', 'reports', true, false), false)
   sections.sync({ ...state, managedSession: { id: 'other', role: 'manage' } })
   assert.equal(sections.shown('a', 'bundles', true, false), false, 'account changes reset choices')
+})
+
+test('managed teams collapse when their reports are all App or none are, and list a mixed team\'s reports', () => {
+  assert.equal(managedTeamCollapses({ appMode: true, appFindings: 3 }, 2), true)
+  assert.equal(managedTeamCollapses({ appMode: false, appReports: 0 }, 2), true, 'no report opens as App alone')
+  assert.equal(managedTeamCollapses({ appMode: false, appReports: 1 }, 2), false, 'App and non-App reports mixed')
+  assert.equal(managedTeamCollapses({ appMode: false, appReports: 0 }, 0), false, 'nothing to collapse')
+  for (const app of [{ appMode: false }, null, undefined]) assert.equal(managedTeamCollapses(app, 2), false, 'unknown stays expanded')
 })
