@@ -22,7 +22,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { ensureHostAria } from './host-aria.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { GRAPH_ICON_SVG } from './icons.js'
 
 const VIEW_ICONS = {
@@ -75,7 +75,7 @@ const VIEW_ICONS = {
     <rect x="11.2" y="8.9" width="3.3" height="2.5" rx=".4" fill="currentColor" opacity=".22"/>
   </svg>`,
   // graph   — three nodes connected by edges
-  graph: html`${unsafeHTML(GRAPH_ICON_SVG)}`,
+  graph: html`${appMarkup(GRAPH_ICON_SVG)}`,
 }
 
 const VIEW_TITLES = {

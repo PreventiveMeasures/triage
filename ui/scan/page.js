@@ -1,5 +1,5 @@
 import { LitElement, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { BUNDLE_ICON_SVG, CODE_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.js'
@@ -18,8 +18,8 @@ import { codeScanFiles, formatBytes, sourceMetrics, sourceStats } from './metric
 import '../view/bundle-scope-selector.js'
 
 const SCAN_MODE_ICONS = {
-  code: unsafeHTML(CODE_ICON_SVG),
-  report: unsafeHTML(REPORT_ICON_SVG),
+  code: appMarkup(CODE_ICON_SVG),
+  report: appMarkup(REPORT_ICON_SVG),
 }
 
 export class ScanPage extends LitElement {
@@ -232,7 +232,7 @@ export class ScanPage extends LitElement {
     const reserveScope = ['code', 'agentic', 'dependencies'].includes(this._mode) && bundle != null
       && (!bundle.filename.toLowerCase().endsWith('.map') || bundle.reasons?.some(reason => reason.id !== 'all'))
     const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
-    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>${this.scopeLabel}</span>${this.scopeLabel === 'Workspace' ? html`<workspace-selector .options=${repositories} .value=${this._selectedRepoId} @workspace-change=${e => this._selectRepoById(e.detail.value)}></workspace-selector>` : html`<repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${e => this._selectRepoById(e.detail.value)}></repository-selector>`}</div>` : nothing}<div class="field">${showRepositoryPicker || this.createBundleHref ? this._bundleLabel() : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : this._emptyBundles()}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${stats.files ?? '—'}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${stats.lines == null ? '—' : stats.lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${stats.packages ?? '—'}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
+    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>${this.scopeLabel}</span>${this.scopeLabel === 'Workspace' ? html`<workspace-selector .options=${repositories} .value=${this._selectedRepoId} @workspace-change=${e => this._selectRepoById(e.detail.value)}></workspace-selector>` : html`<repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${e => this._selectRepoById(e.detail.value)}></repository-selector>`}</div>` : nothing}<div class="field">${showRepositoryPicker || this.createBundleHref ? this._bundleLabel() : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : this._emptyBundles()}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${stats.files ?? '—'}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${stats.lines == null ? '—' : stats.lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${appMarkup(BUNDLE_ICON_SVG)}<strong>${stats.packages ?? '—'}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
   }
 
   _bundleLabel() {

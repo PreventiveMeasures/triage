@@ -21,6 +21,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   unwatchNearViewport(target) { watching.delete(target) },
 } })
 const { agentStats, filterSessions, sessionLink } = await import('../ui/view/repository-agents.js')
+const { agentIcon } = await import('../ui/view/repository-tiles.js')
 const Agents = customElements.get('repository-agents')
 
 let session = 0
@@ -53,9 +54,9 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, {}]])
-  assert.match(text, /aria-pressed=true [^\n]*>All <span class="issues-count">3\+<\/span>/u)
-  assert.match(text, />Claude <span class="issues-count">1\+</u)
-  assert.match(text, />Codex <span class="issues-count">2\+</u)
+  assert.match(text, /aria-pressed=true [^\n]*>All<span class="n">3\+<\/span>/u)
+  assert.match(text, />Claude<span class="n">1\+</u)
+  assert.match(text, />Codex<span class="n">2\+</u)
   assert.match(text, /4 pull requests read/u)
   // Each agent's pull requests, branches and commits to main without one, by icon, more to come
   // where its pages are left: pull requests', and the branches waiting on them, not commits'.
@@ -70,10 +71,31 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^]*?data-rest=>/u)
   // A Codex branch's pull request, one left without any; work no agent did is none.
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
+  // A tile's tasks counted only where its chips don't: one, or as many as its pull requests' or its commits' alone, not.
+  assert.doesNotMatch(text, /\b1 task\b/u)
+  assert.equal(text.match(/\d+ tasks?\b/gu)?.length, 1, 'the session of pull requests and a commit alone')
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
   assert.doesNotMatch(text, /Pull 4/u)
   assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
+})
+
+test('a tile says how many tasks only where its chips don\'t: not as many as its pull requests\' or its commits\' alone', async () => {
+  const pushed = (char, id) => ({ oid: char.repeat(40), title: `Pushed ${char}`, at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude(id) })
+  // And a Codex task's commit, more pull requests to read.
+  answer = () => Promise.resolve({ pulls: [pull(9, 'claude/one', claude('session_P')), pull(8, 'claude/one', claude('session_P'))],
+    commits: [pushed('d', 'session_C'), pushed('e', 'session_C'), { ...pushed('f', null), signals: { sessions: [], tasks: ['task_e_123456'], claude: false, agents: [] } }],
+    issues: [], branches: [], more: true, after: { pulls: 'p_1', commits: null } })
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  const text = templateText(view.render())
+  assert.match(text, />Pull 8</u)
+  assert.match(text, />Pushed [de]</u)
+  assert.doesNotMatch(text, /\d+ tasks?\b/u)
+  // The bar's counts none of none, more to read or not: Codex's commit alone.
+  assert.match(text, /role="group" aria-label=Codex>[^]*?aria-label=1 commit to the default branch without a pull request[^]*?<\/span>\s*<\/span>/u)
+  assert.doesNotMatch(text, /aria-label=0\+? /u)
 })
 
 test('more read on from the cursors a page ended at, each pull request and commit once, the sessions made again of all read', async () => {
@@ -198,14 +220,18 @@ test('an agent the server knows by its app: picked after Claude and Codex, count
   const neo = { ...none, agents: ['neo'] }
   answer = () => Promise.resolve({ pulls: [pull(12, 'neo/links', { ...neo, claude: true }), pull(11, 'neo/bump', neo), pull(10, 'claude/one', claude('session_A'))],
     commits: [], issues: [], branches: [],
-    agents: [{ id: 'neo', name: ' Neo ', app: 3115942 }, { id: 'claude', name: 'Not Claude', app: 1 }, { id: 'odd one', name: 'Odd', app: 2 }, { id: 'nameless', app: 3 }],
+    agents: [{ id: 'neo', name: ' Neo ', avatar: 'app-3115942' }, { id: 'claude', name: 'Not Claude', avatar: 'app-1' }, { id: 'odd one', name: 'Odd', avatar: 'app-2' },
+      { id: 'nameless', avatar: 'app-3' }, { id: 'odd-avatar', name: 'Odd', avatar: '../x' }, { id: 'copilot', name: 'Copilot' }],
     more: false, after: null })
   const view = shown('org/repo')
   view.render()
   await setImmediate()
-  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', app: 3115942 }], 'only well formed, never Claude or Codex')
+  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot', avatar: null }],
+    'only well formed, never Claude or Codex; one the app draws its mark for, without an avatar')
+  assert.match(templateText(agentIcon('copilot')), /^<span class="agent-logo" aria-hidden="true"><svg [^>]*viewBox="0 0 24 24"/u, 'Copilot\'s mark, drawn, not fetched')
   const text = templateText(view.render())
-  assert.match(text, />Claude <span class="issues-count">2<[^]*>Codex <span class="issues-count">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo <span class="issues-count">2</u)
+  assert.match(text, />Claude<span class="n">2<[^]*>Codex<span class="n">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo<span class="n">2</u)
+  assert.doesNotMatch(text, /agent-pick is-copilot/u, 'an agent the server knows with no session read is not picked among')
   assert.match(text, /class="agent-totals"><span class="agent-stats" role="group" aria-label=Neo>[^]*aria-label=Claude>/u)
   assert.doesNotMatch(text, /role="group" aria-label=Codex>/u, 'an agent with no session read is not counted')
   assert.match(text, /class="issue-rail"><span class=agent-mark is-neo role="img" aria-label=Neo><img class="agent-avatar" src=\/api\/avatar\/app-3115942 [^]*<span class=agent-mark is-claude role="img" aria-label=Claude>[^]*>Pull 12</u)

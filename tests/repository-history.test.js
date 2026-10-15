@@ -18,11 +18,12 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   watchNearViewport(target, cb) { watching.set(target, cb) },
   unwatchNearViewport(target) { watching.delete(target) },
 } })
+mock.module('../ui/view/repository-compare.js', { exports: { repositoryCompareSource: () => null } })
 mock.module('../ui/view/repository-code.js', { exports: {
   navigateToRepositoryCode(route) { navigations.push(route) },
   shownRevision: ({ revision, commit }) => revision?.name ? revision : { kind: 'commit', name: commit },
 } })
-const { compactTime, historyRefs, revisionFromAll } = await import('../ui/view/repository-history.js')
+const { compactTime, historyRefs, plantedCommits, revisionFromAll } = await import('../ui/view/repository-history.js')
 const History = customElements.get('repository-history')
 
 const [a, b, c, d, e, x] = ['a', 'b', 'c', 'd', 'e', 'f'].map(char => char.repeat(40))
@@ -36,11 +37,13 @@ beforeEach(() => {
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
 })
 
-test('the History tab has a route of its own beside the code viewer\'s others', () => {
-  const route = { view: 'repository-code', repoId: 7, commit: a, path: 'src', bundleTab: 'history' }
-  assert.equal(managedRoutePath(route), `/manage/code/7/${a}/history?path=src`)
+test('Commits have a route of their own beside the code viewer\'s others, which History\'s links still open', () => {
+  const route = { view: 'repository-code', repoId: 7, commit: a, path: 'src', bundleTab: 'commits' }
+  assert.equal(managedRoutePath(route), `/manage/code/7/${a}/commits?path=src`)
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
-  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/history/2`)), null, 'only Code names a file')
+  assert.deepEqual(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/history?path=src`)), route)
+  assert.equal(managedRoutePath({ ...route, bundleTab: 'history' }), null, 'no route names History')
+  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/commits/2`)), null, 'only Code names a file')
 })
 
 test('commits list newest first, but never a parent before a child of it, whatever its clock says', () => {
@@ -90,6 +93,39 @@ test('a line\'s time is how long ago, within a week, else its day; branches name
   const named = historyRefs({ branches: [{ name: 'feature', sha: a }, { name: 'main', sha: a }], tags: [{ name: 'v1', sha: a }, { name: 'v0', sha: b }] }, 'main')
   assert.deepEqual(named.get(a), [{ kind: 'branch', name: 'main', main: true }, { kind: 'branch', name: 'feature', main: false }, { kind: 'tag', name: 'v1' }])
   assert.deepEqual(named.get(b), [{ kind: 'tag', name: 'v0' }])
+})
+
+test('a squash merge is drawn as the merge it was, its pull request\'s own commits on a lane of their own, those a reused branch shares once', () => {
+  const [squash, squash2, p1, p2, p3, base] = ['1', '2', '3', '4', '5', '6'].map(char => char.repeat(40))
+  // main: #4 squashed, then #2; #4's branch was #2's, reused, its commits on from #2's.
+  const commits = [commit(squash2, [squash], 50, 'Again (#4)'), commit(squash, [base], 40, 'Feature (#2)'), commit(base, [], 10, 'Base')]
+  const pulls = [{ merge: squash, number: 2, head: p2, commits: [commit(p1, [base], 20), commit(p2, [p1], 30)] },
+    { merge: squash2, number: 4, head: p3, commits: [commit(p1, [base], 20), commit(p2, [p1], 30), commit(p3, [p2], 45)] }]
+  const planted = plantedCommits(commits, pulls)
+  assert.deepEqual(planted.map(item => [item.sha[0], item.parents.map(parent => parent[0]), item.pull ?? null]),
+    [['2', ['1', '5'], null], ['1', ['6', '4'], null], ['6', [], null], ['3', ['6'], 2], ['4', ['3'], 2], ['5', ['4'], 4]])
+  const layout = historyLayout(historyOrder(planted), { trunk: firstParentLine(planted, squash2) })
+  assert.deepEqual(layout.rows.map(row => [row.commit.sha[0], row.col]), [['2', 0], ['5', 1], ['1', 0], ['4', 1], ['3', 1], ['6', 0]], 'the pull requests\' lane beside the default branch\'s')
+  assert.equal(layout.width, 2)
+  assert.equal(plantedCommits(commits, []), commits, 'none squashed, as listed')
+})
+
+test('a pull request\'s head is named by its number, beside the branch still at it; an open one\'s too, each number once', () => {
+  const named = historyRefs({ branches: [{ name: 'claude/feature', sha: a }], tags: [], pulls: [{ merge: c, number: 2, head: a, commits: [] }],
+    openPulls: [{ number: 4, sha: b }, { number: 2, sha: b }] }, 'main')
+  assert.deepEqual([named.get(a), named.get(b)], [[{ kind: 'branch', name: 'claude/feature', main: false }, { kind: 'pull', name: '#2' }], [{ kind: 'pull', name: '#4' }]])
+})
+
+test('the tab draws the pull requests squashed into the history it reads, their heads named by number', async () => {
+  const [squash, p1] = ['1', '2'].map(char => char.repeat(40))
+  answer = () => Promise.resolve({ all: true, commits: [commit(squash, [b], 30, 'Feature (#2)'), commit(b, [], 10, 'First')], branches: [{ name: 'main', sha: squash }],
+    tags: [], defaultBranch: 'main', more: false, pulls: [{ merge: squash, number: 2, head: p1, commits: [commit(p1, [b], 20, 'Started the feature')] }, { merge: 'bad' }] })
+  const view = shownAt(squash)
+  view.render()
+  await setImmediate()
+  const text = templateText(view.render())
+  assert.match(text, /2 commits on 1 branch</u, 'those of the branches read counted')
+  assert.match(text, /2222222<\/code>[^]*<span>#2<\/span>[^]*Started the feature/u)
 })
 
 const allAnswer = { all: true, commits: [commit(a, [b], 20, 'Merge work'), commit(b, [], 10, 'First')], branches: [{ name: 'main', sha: a }], tags: [{ name: 'v1', sha: b }],
@@ -220,7 +256,7 @@ test('every branch\'s older commits read on from where those listed stop and fro
   assert.deepEqual(requests.at(-1), [7, '', '', { page: 3, all: true, from: [x] }])
   assert.match(text, /5 commits on 2 branches</u)
   assert.doesNotMatch(text, /Older commits/u)
-  assert.doesNotMatch(text, /first 1,000 branches/u)
+  assert.doesNotMatch(text, /first 5,000 branches/u)
 })
 
 test('every branch\'s history, where branches past those GitHub listed are left out, says so, however far it reads', async () => {
@@ -231,7 +267,7 @@ test('every branch\'s history, where branches past those GitHub listed are left 
   await setImmediate()
   const text = templateText(view.render())
   assert.match(text, /2\+ commits on 1 branch</u, 'nothing left to read, but some never read')
-  assert.match(text, /Only the first 1,000 branches by name are read\./u)
+  assert.match(text, /Only the first 5,000 branches by name are read\./u)
   assert.doesNotMatch(text, /Older commits/u)
 })
 

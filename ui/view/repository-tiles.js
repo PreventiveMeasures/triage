@@ -52,25 +52,29 @@ export function issueState(kind, item) {
     : ['completed', 'Closed']
 }
 
-// Claude a burst in its orange, Codex OpenAI's mark.
+// Claude's mark in its orange, Codex OpenAI's, Copilot GitHub Copilot's, as
+// the app draws them elsewhere (provider-icons.js).
 const AGENT_ICONS = {
-  claude: icon(svg`<path d="M8 1.8v12.4M1.8 8h12.4M3.6 3.6l8.8 8.8M12.4 3.6l-8.8 8.8"/>`),
+  claude: html`<span class="agent-logo" aria-hidden="true">${providerIcon('anthropic')}</span>`,
   codex: html`<span class="agent-logo" aria-hidden="true">${providerIcon('openai')}</span>`,
+  copilot: html`<span class="agent-logo" aria-hidden="true">${providerIcon('github-copilot')}</span>`,
 }
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
-// The agents known by their GitHub Apps, as the server named them (its
-// APP_AGENTS, repository-agents.ts), by id: each its name and app.
+// The agents known by their GitHub Apps or accounts, as the server named
+// them (its APP_AGENTS, repository-agents.ts), by id: each its name and
+// avatar.
 const appAgents = new Map()
 export function knowAgents(agents) {
   for (const agent of agents) appAgents.set(agent.id, agent)
 }
-// An agent's name and mark: Claude's or Codex's, else an app agent's, its
-// app's avatar, served by the server (/api/avatar/app-<app>).
+// An agent's name and mark: Claude's, Codex's or Copilot's, else an app
+// agent's, its GitHub App's or account's avatar, served by the server
+// (/api/avatar/<avatar>).
 export const agentName = agent => AGENT_NAMES[agent] ?? appAgents.get(agent)?.name ?? agent
 export function agentIcon(agent) {
   if (AGENT_ICONS[agent]) return AGENT_ICONS[agent]
-  const app = appAgents.get(agent)?.app
-  return app ? html`<img class="agent-avatar" src=${`/api/avatar/app-${app}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
+  const avatar = appAgents.get(agent)?.avatar
+  return avatar ? html`<img class="agent-avatar" src=${`/api/avatar/${avatar}`} alt="" width="14" height="14" loading="lazy" decoding="async">` : nothing
 }
 
 // A click to open a tile's popup: the main button's, none held with it, which

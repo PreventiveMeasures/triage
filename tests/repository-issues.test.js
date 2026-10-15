@@ -21,6 +21,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
   unwatchNearViewport(target) { watching.delete(target) },
 } })
 const { commentCount, filterIssues, issueState } = await import('../ui/view/repository-issues.js')
+const { knowGithubUsers } = await import('../ui/view/github-users.js')
 const Issues = customElements.get('repository-issues')
 
 let session = 0
@@ -44,8 +45,8 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, 'issues', { state: 'open', after: null }]])
-  assert.match(text, /aria-pressed=true [^\n]*>Open <span class="issues-count">1,234<\/span>/u)
-  assert.match(text, /Closed <span class="issues-count">40<\/span>/u)
+  assert.match(text, /aria-pressed=true [^\n]*>Open<span class="n">1,234<\/span>/u)
+  assert.match(text, /Closed<span class="n">40<\/span>/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/12 target="_blank" rel="noopener noreferrer"/u)
   assert.match(text, /aria-label=Open[^]*Issue 12[^]*#12[^]*octo[^]*3h<\/time>/u)
   assert.match(text, /data-tooltip=bug>bug<\/span><span class="issue-labels-rest" style=[^>]*>[^]*>ui<[^]*>docs<[^]*>perf<\/span>(?:<\/span>){3}<span class="issue-label is-more">\+2</u,
@@ -61,7 +62,7 @@ test('the issues open read first, as tiles opening on GitHub, each its state, nu
   const reading = templateText(view.render())
   assert.deepEqual(requests.at(-1), [7, 'issues', { state: 'closed', after: null }])
   assert.match(reading, /Reading the issues…/u)
-  assert.match(reading, /Open <span class="issues-count">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed <span class="issues-count">40<\/span>/u)
+  assert.match(reading, /Open<span class="n">1,234<\/span>[^]*aria-pressed=true [^\n]*>Closed<span class="n">40<\/span>/u)
   view.pick('open')
 })
 
@@ -128,6 +129,8 @@ test('the filter picks among those read by every word, in a number, title, autho
   assert.deepEqual(filterIssues(items, 'UI treemap').map(item => item.number), [12])
   assert.deepEqual(filterIssues(items, 'grace perf/').map(item => item.number), [9])
   assert.deepEqual(filterIssues(items, 'treemap grace'), [])
+  knowGithubUsers({ users: { grace: { id: 'grace-id', login: 'grace-h', name: 'Grace Hopper' } } })
+  assert.deepEqual(filterIssues(items, 'hopper').map(item => item.number), [9], 'by the name its author\'s user chose')
   answer = () => Promise.resolve({ items, counts: { open: 2, closed: 0 }, more: false })
   const view = shown('pulls')
   view.render()

@@ -17,11 +17,15 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
+import { activityPicker } from './repository-activity.js'
+import { githubUser, githubUserName } from './github-users.js'
 
 export { sessionLink }
 
 const KEEP_MS = 5 * 60_000
 const APP_AGENT = /^[a-z][a-z\d-]{0,31}$/u
+// An app agent's avatar, as the server serves it: a GitHub App's or account's.
+const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 const RETRY_MS = 30_000
 const MAX_CHIPS = 12
 
@@ -43,13 +47,14 @@ function sessionLists() {
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
 
 // A server's answer, its artifacts those it names by number, id or name, and
-// the agents it knows by their GitHub Apps (its first page's), each by id,
-// name and app; an artifact's those of them it names.
+// the agents it knows by their GitHub Apps or accounts (its first page's),
+// each by id, name and avatar; an artifact's those of them it names.
 function checked(answer) {
   if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new Error('The server answered with no pull requests or commits.')
   const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
-    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim() && Number.isSafeInteger(agent.app) && agent.app > 0)
-    .map(({ id, name, app }) => [id, { id, name: name.trim().slice(0, 64), app }])
+    && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim()
+    && (agent.avatar === undefined || (typeof agent.avatar === 'string' && AGENT_AVATAR.test(agent.avatar))))
+    .map(({ id, name, avatar }) => [id, { id, name: name.trim().slice(0, 64), avatar: avatar ?? null }])
   const signed = item => Array.isArray(item?.signals?.sessions) && Array.isArray(item.signals.tasks)
   // An artifact's app agents, by id.
   const marked = item => ({ ...item, signals: { ...item.signals, agents: Array.isArray(item.signals.agents)
@@ -128,14 +133,14 @@ function readMore(key, entry, ask) {
 }
 
 // Those of `sessions` of `agent` ('all' for every one's), and matching every
-// word of `filter`: in a title, author, branch, pull request, commit, issue
-// or session id.
+// word of `filter`: in a title, author (a login, or its user's name),
+// branch, pull request, commit, issue or session id.
 export function filterSessions(sessions, agent, filter) {
   const words = filter.trim().toLowerCase().split(/\s+/u).filter(Boolean)
   return sessions.filter(session => {
     if (agent !== 'all' && !session.agents.includes(agent)) return false
     if (words.length === 0) return true
-    const text = [session.title, ...session.authors, ...session.branches, ...session.sessions, ...session.tasks,
+    const text = [session.title, ...session.authors, ...session.authors.map(githubUserName), ...session.branches, ...session.sessions, ...session.tasks,
       ...session.pulls.flatMap(pull => [`#${pull.number}`, pull.title]), ...session.commits.flatMap(commit => [commit.oid.slice(0, 7), commit.title]),
       ...session.issues.flatMap(issue => [`#${issue.number}`, issue.title])].join('\n').toLowerCase()
     return words.every(word => text.includes(word))
@@ -144,10 +149,11 @@ export function filterSessions(sessions, agent, filter) {
 
 const TILE_STATES = { open: 'open', merged: 'merged', closed: 'closed', branch: 'draft' }
 // The agents an entry's sessions are picked among, Claude and Codex first,
-// then those the server knows by their apps; and counted by, at the bar's
-// end, those first and Claude and Codex last: either way, Claude's and
-// Codex's in their places whatever others there are.
-const appAgentsOf = entry => (entry.agents ?? []).map(agent => agent.id)
+// then those the server knows by their apps or accounts that have a session
+// among those read; and counted by, at the bar's end, those first and Claude
+// and Codex last: either way, Claude's and Codex's in their places whatever
+// others there are.
+const appAgentsOf = entry => (entry.agents ?? []).map(agent => agent.id).filter(agent => (entry.sessions ?? []).some(session => session.agents.includes(agent)))
 const agentsOf = entry => ['claude', 'codex', ...appAgentsOf(entry)]
 // What an agent did, by icon: the pull requests it opened, the branches it
 // pushed, and its commits to the default branch no pull request merged.
@@ -225,12 +231,15 @@ class RepositoryAgents extends LitElement {
     const { key, entry, more } = this.list()
     const ready = entry.status === 'ready'
     const sessions = ready ? entry.sessions : []
-    const counted = agent => ready ? html` <span class="issues-count">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
-    const shown = filterSessions(sessions, shownAgent, this._filter)
+    const counted = agent => ready ? html`<span class="n">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
+    // One picked whose sessions are none of those read now, all.
+    const picked = agentsOf(entry).includes(shownAgent) ? shownAgent : 'all'
+    const shown = filterSessions(sessions, picked, this._filter)
     return html`<div class="history-bar issues-bar">
+        ${activityPicker('agents')}
         <div class="history-modes" role="group" aria-label="Agents">
-          <button type="button" aria-pressed=${String(shownAgent === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
-          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(shownAgent === agent)}
+          <button type="button" aria-pressed=${String(picked === 'all')} @click=${() => this.pick('all')}>All${counted('all')}</button>
+          ${agentsOf(entry).map(agent => html`<button type="button" class=${`agent-pick is-${agent}`} aria-pressed=${String(picked === agent)}
             @click=${() => this.pick(agent)}>${agentIcon(agent)}${agentName(agent)}${counted(agent)}</button>`)}
         </div>
         <input class="issues-filter" type="search" placeholder="Filter" aria-label="Filter the sessions read" .value=${this._filter}
@@ -238,7 +247,7 @@ class RepositoryAgents extends LitElement {
         ${ready ? this.renderStats(entry) : nothing}
         ${ready ? html`<span class="history-summary">${entry.pulls.length} pull request${entry.pulls.length === 1 ? '' : 's'} read</span>` : nothing}
       </div>
-      ${ready ? this.renderSessions(entry, shown, more)
+      ${ready ? this.renderSessions(entry, shown, more, picked)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionLists().delete(key); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading what the agents did…</div>`}`
@@ -256,7 +265,7 @@ class RepositoryAgents extends LitElement {
       const stats = agentStats(entry.sessions, agent)
       return html`<span class="agent-stats" role="group" aria-label=${agentName(agent)}>
         <span class=${`agent-mark is-${agent}`}>${agentIcon(agent)}</span>
-        ${STATS.filter(([kind]) => kind !== 'commits' || stats.commits > 0).map(([kind, glyph, one, many]) => {
+        ${STATS.filter(([kind]) => stats[kind] > 0).map(([kind, glyph, one, many]) => {
           const count = `${stats[kind].toLocaleString('en-US')}${left[kind] ? '+' : ''}`
           const name = `${count} ${stats[kind] === 1 && !left[kind] ? one : many}`
           return html`<span class="agent-stat" role="img" aria-label=${name} data-tooltip=${name}>${glyph}${count}</span>`
@@ -265,8 +274,8 @@ class RepositoryAgents extends LitElement {
     })}</span>`
   }
 
-  renderSessions(entry, shown, more) {
-    const what = shownAgent === 'all' ? 'agents\' sessions' : `${agentName(shownAgent)} sessions`
+  renderSessions(entry, shown, more, picked) {
+    const what = picked === 'all' ? 'agents\' sessions' : `${agentName(picked)} sessions`
     return html`<div class="issues-scroll">
       ${shown.length > 0 ? html`<ol class="issues-grid" aria-label="Sessions">${shown.map(session => this.renderSession(session))}</ol>`
         : html`<p class="history-note">${entry.sessions.length > 0 && this._filter.trim() ? `None of the ${what} read match.` : `No ${what} among those read.`}</p>`}
@@ -296,7 +305,9 @@ class RepositoryAgents extends LitElement {
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
   // title, of two at most, opening its popup (where it ran, as a link); its
-  // author, age, how many tasks and lines; its pull requests, commits and
+  // author, age, how many tasks (where more than one, and not as many as its
+  // pull requests' or commits' alone, which their chips count) and lines;
+  // its pull requests, commits and
   // issues, those that fit, each with how many follow it, seen only past the
   // last of them shown (report.css); and its branch.
   renderSession(session) {
@@ -304,6 +315,9 @@ class RepositoryAgents extends LitElement {
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const tasks = session.pulls.length + session.commits.length
+    // How many tasks, said where its chips don't: more than one, and not as
+    // many as its pull requests' or its commits' alone.
+    const counted = tasks !== 1 && tasks !== session.pulls.length && tasks !== session.commits.length
     const chips = [
       ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`,
         { kind: 'pulls', ...pull }]),
@@ -318,9 +332,9 @@ class RepositoryAgents extends LitElement {
         ${link ? html`<a class="issue-name" href=${link} target="_blank" rel="noopener noreferrer">${session.title || '(no title)'}</a>`
           : html`<button type="button" class="issue-name">${session.title || '(no title)'}</button>`}
         <span class="issue-meta">
-          ${session.authors[0] ? html`<span class="issue-author">${session.authors[0]}</span>` : nothing}
+          ${session.authors[0] ? html`<span class="issue-author">${githubUser(session.authors[0])}</span>` : nothing}
           ${time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing}
-          <span>${tasks > 0 ? `${tasks} task${tasks === 1 ? '' : 's'}` : 'no pull request'}</span>
+          ${tasks === 0 ? html`<span>no pull request</span>` : counted ? html`<span>${tasks} tasks</span>` : nothing}
           ${session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
             <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing}
         </span>

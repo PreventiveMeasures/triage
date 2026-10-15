@@ -131,18 +131,20 @@ function parseNpmRoute(path, hash) {
 }
 
 // The code viewer: a directory of a repository at a commit, on its Code,
-// Search, Treemap, History, Issues, Pull requests, Agents or Pulse tab,
-// `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
+// Search, Treemap, Compare, Commits, Issues, Pull requests, Agents or Pulse
+// tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
 // the repository's root where it names no directory. Code, the tab a bare
 // link opens, names its file by number and its lines in the fragment, as a
-// bundle's Code does: `/code/<file>#L4`. Without a commit,
+// bundle's Code does: `/code/<file>#L4`. Compare names the commit compared
+// with, then its mode past the Overview, as an npm version's does:
+// `/compare/<commit>/code`. Without a commit,
 // `/manage/code/<repo id>[?path=<directory>]`, it opens on the default
 // branch's head, or on the revision a route held in memory names (`ref`),
 // and its route then names the commit it opened.
-export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'history', 'issues', 'pulls', 'agents', 'pulse'])
+export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'compare', 'commits', 'issues', 'pulls', 'agents', 'pulse'])
 // The tabs reading none of the directory's files, which a directory at a
 // commit shows alone.
-export const REPOSITORY_FILELESS_TABS = new Set(['history', 'issues', 'pulls', 'agents', 'pulse'])
+export const REPOSITORY_FILELESS_TABS = new Set(['commits', 'issues', 'pulls', 'agents', 'pulse'])
 const COMMIT = /^[a-f\d]{40}$/u
 const MAX_DIRECTORY = 500
 const isRepoId = value => Number.isSafeInteger(value) && value > 0
@@ -158,25 +160,33 @@ export function isRepositoryDirectory(path) {
 function repositoryCodePath(route) {
   const tab = route.bundleTab ?? 'code'
   const path = route.path ?? ''
-  if (!isRepoId(route.repoId) || (route.commit != null && !COMMIT.test(route.commit)) || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)) return null
+  if (!isRepoId(route.repoId) || (route.commit != null && !COMMIT.test(route.commit)) || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)
+      || (route.compareCommit != null && !COMMIT.test(route.compareCommit))) return null
   const directory = path ? `?path=${path.split('/').map(encodeURIComponent).join('/')}` : ''
   if (route.commit == null) return `/manage/code/${route.repoId}${directory}`
   const file = tab === 'code' && isLineNumber(route.file) ? `/code/${route.file}` : tab === 'code' ? '' : `/${tab}`
+  const compare = tab === 'compare' && route.compareCommit != null ? `/${route.compareCommit}${compareModeSuffix(route.compareMode)}` : ''
   const lines = tab === 'code' && isLineNumber(route.file) && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-  return `/manage/code/${route.repoId}/${route.commit}${file}${directory}${lines}`
+  return `/manage/code/${route.repoId}/${route.commit}${file}${compare}${directory}${lines}`
 }
 
 function parseRepositoryCodeRoute(url) {
-  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|history|issues|pulls|agents|pulse)(?:\/([1-9]\d*))?)?)?$/u.exec(url.pathname.replace(/\/$/u, ''))
+  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|compare|commits|history|issues|pulls|agents|pulse)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u
+    .exec(url.pathname.replace(/\/$/u, ''))
   if (!match) return undefined
   const repoId = Number(match[1])
   const path = url.searchParams.get('path') ?? ''
-  const tab = match[3] ?? 'code'
-  if (!isRepoId(repoId) || !isRepositoryDirectory(path) || (match[4] != null && tab !== 'code')) return null
+  // Commits' tab was History's, `/history`, which links still name.
+  const tab = match[3] === 'history' ? 'commits' : match[3] ?? 'code'
+  if (!isRepoId(repoId) || !isRepositoryDirectory(path)) return null
   const route = { view: 'repository-code', repoId, commit: match[2] ?? null, path, bundleTab: tab }
+  if (match[4] == null) return route
+  if (tab === 'compare') {
+    return COMMIT.test(match[4]) && (match[5] == null || COMPARE_MODES.has(match[5])) ? { ...route, compareCommit: match[4], ...compareModeField(match[5]) } : null
+  }
   const file = Number(match[4])
-  return match[4] != null && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(url.hash) } : route
+  return tab === 'code' && match[5] == null && /^[1-9]\d*$/u.test(match[4]) && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(url.hash) } : null
 }
 
 function isLineNumber(value) {

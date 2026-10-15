@@ -24,7 +24,7 @@ import { live } from 'lit/directives/live.js'
 import { ref } from 'lit/directives/ref.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { fileIconFormat, sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
 import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
@@ -43,6 +43,7 @@ import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageInput, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
+import { activityTab } from './repository-activity.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
 import './repository-history.js'
 import './repository-agents.js'
@@ -51,6 +52,7 @@ import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
+import { repositoryCompareSource } from './repository-compare.js'
 import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { withCompare } from './compare-load.js'
@@ -577,7 +579,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       const count = reportCounts.get(name) ?? 0
       return html`<li>
         <button type="button" class="report-chip bundles-report-chip" data-bundle-issue-report=${name}>
-          ${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span>
+          ${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span>
           <span class="bundles-report-count">${count} ${count === 1 ? 'issue' : 'issues'}</span>
         </button>
       </li>`
@@ -682,7 +684,7 @@ function renderLockfileToggle(read) {
   const status = read?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-lockfile-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
     data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
-    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>`
+    aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${appMarkup(DEPENDENCIES_ICON_SVG)}</button>`
 }
 
 // Auto-pick bookkeeping for the Code slide. When the pick ran
@@ -766,7 +768,7 @@ function plainSource(content) {
 // full source. Two columns rather than per-line interleaving so
 // prism's highlighted output (where tokens may span newlines)
 // stays valid HTML — the pre takes the highlighted string as-is
-// via unsafeHTML, the gutter walks lines by index. line-height
+// via appMarkup, the gutter walks lines by index. line-height
 // matches across both columns so the rows align with their lines.
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
@@ -785,19 +787,19 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
   // resolves we set it (string for success, null for "no highlight
-  // available") and re-render so the unsafeHTML branch picks it up.
+  // available") and re-render so the appMarkup branch picks it up.
   if (lang && !_bundleHighlightCache.has(cacheKey) && !_bundleHighlightPending.has(cacheKey)) {
     _bundleHighlightPending.add(cacheKey)
     // Fire-and-forget: the highlight runs in the background and
     // the next render() call (kicked from inside) injects the
-    // result via unsafeHTML. Async IIFE rather than `.then` so
+    // result via appMarkup. Async IIFE rather than `.then` so
     // the empty `.then` body doesn't trip promise/always-return.
     ;(async () => {
       const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
       _bundleHighlightCache.set(cacheKey, typeof highlightedHtml === 'string' ? controlMarkup(highlightedHtml) : null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
-      // is just the highlighted string injected via unsafeHTML.
+      // is just the highlighted string injected via appMarkup.
       if (state.bundleSourceFile === path) render()
     })()
   }
@@ -825,7 +827,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
       })}
     </aside>
     <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
-      ? unsafeHTML(highlighted)
+      ? appMarkup(highlighted)
       : plainSource(content)}</code></pre>
   </div>`
 }
@@ -878,7 +880,7 @@ function renderBundleSourceFindingPanel(findings) {
             type="button"
             class="report-chip bundle-source-panel-report"
             data-bundle-issue-report=${name}
-          >${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
+          >${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
         })}
       </div>` : nothing}
     </div>
@@ -1995,15 +1997,15 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
   ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
   ['overview', 'Overview']]
 
-// The tabs a repository's directory shows (repository-code.js).
-const repositoryCodeTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['history', 'History'], ['issues', 'Issues'],
-  ['pulls', 'Pull requests'], ['agents', 'Agents'], ['pulse', 'Pulse']]
+// The tabs a repository's directory shows (repository-code.js), `tab` the
+// one open: its Activity one, opening on the view of it last shown.
+const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'], [activityTab(tab), 'Activity']]
 
 // The body of a tab of a repository's directory reading none of its files
-// (REPOSITORY_FILELESS_TABS): its History, Issues, Pull requests, Agents or
+// (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents or
 // Pulse.
 function repositoryFilelessTab(repository, tab) {
-  return tab === 'history' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
+  return tab === 'commits' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository}></repository-pulse>`
     : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
@@ -2021,6 +2023,14 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
   const pending = entry.repository && !opening ? repositoryCodePending(entry) : null
   const repository = pending ?? entry.repository
   const loading = Boolean(pending) || (opening && Boolean(repository) && !state.repositoryCodeOpening?.error)
+  // Where tabs open by `onTab`, a tab picked in the body (an Activity view's
+  // picker, repository-activity.js) opens by it too, not as a bundle's.
+  const pickInBody = onTab ? event => {
+    const picked = event.target.closest?.('[data-bundle-tab]')?.dataset.bundleTab
+    if (!picked) return
+    event.stopPropagation()
+    if (picked !== tab) onTab(picked)
+  } : nothing
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
       ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
@@ -2035,19 +2045,19 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
         <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repos' }, bubbles: true, composed: true }))}>Repositories</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
           <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`
           : repository ? html`<repository-code-source .repository=${repository} .tab=${tab} .repos=${browsableRepositories()} .refs=${repositoryRefs(repository.repoId)}></repository-code-source>`
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
-      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
+      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${appMarkup(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">${tabs.map(([key, label]) => bundleTab(key, label, tab, opening || Boolean(pending), onTab))}</div>
       ${loading ? html`<span class="bundles-slide-progress" role="progressbar" aria-label=${`Opening ${repository.repo ? repositoryCodeName(repository) : 'the repository'}`}></span>` : nothing}
     </header></bundle-slide-header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overview, 'is-pending': Boolean(pending) })}
-      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing}>${body}</div>
+      ?inert=${Boolean(pending)} aria-busy=${pending ? 'true' : nothing} @click=${pickInBody}>${body}</div>
   </div>`
 }
 
@@ -2062,7 +2072,7 @@ export function renderNpmOpening({ name, spec, tab }) {
 // A repository's directory opening (repository-code.js
 // openRepositoryCodeRoute), `tab` the tab it opens on: its header, and in its
 // body what opens, or why it didn't, with the directories it lists to open
-// instead where it has any. Its History, which reads none of its files,
+// instead where it has any. Its Commits, which read none of its files,
 // shows at its commit alone (`historyOnly`), or where its files failed to
 // open, its tabs then opening each.
 export function renderRepositoryCodeOpening(opening) {
@@ -2071,7 +2081,7 @@ export function renderRepositoryCodeOpening(opening) {
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
   const repository = { repoId, repo, commit, path, revision }
   const tabsOpen = Boolean(commit && (historyOnly || error))
-  return bundleSlideView({ repository }, tab, repositoryCodeTabs(), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
+  return bundleSlideView({ repository }, tab, repositoryCodeTabs(tab), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
     ? repositoryFilelessTab(repository, tab)
     : error
       ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
@@ -2096,8 +2106,8 @@ function renderBundleSlide(entry) {
   // Compare, which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
   if (npm && !NPM_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
-  // A repository's directory shows its Code, Search, Treemap, History, Issues,
-  // Pull requests, Agents and Pulse alone.
+  // A repository's directory shows its Code, Search, Treemap, Compare, Commits,
+  // Issues, Pull requests, Agents and Pulse alone.
   const repository = Boolean(entry.repository)
   if (repository && !REPOSITORY_CODE_TABS.has(state.bundleDetailsTab)) state.bundleDetailsTab = 'code'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
@@ -2165,7 +2175,7 @@ function renderBundleSlide(entry) {
   // (2) an orphan tab state where a persisted `b:<integrity> issues`
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
-  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs() : [
+  const tabs = npm ? npmTabs() : repository ? repositoryCodeTabs(state.bundleDetailsTab) : [
     ...showAdvisories ? [['advisories', 'Advisories']] : [],
     ...showIssues ? [['issues', 'Issues']] : [],
     ['terminal', 'Terminal'], ['treemap', 'Treemap'], ['graph', 'Graph'], ['code', 'Code'], ['search', 'Search'],
@@ -2181,14 +2191,14 @@ function renderBundleSlide(entry) {
           ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
           ['code', () => renderBundleCodeView(details, entry)],
           ['search', () => renderBundleSearchView(details, entry)],
-          ['history', () => repositoryFilelessTab(entry.repository, 'history')],
+          ['commits', () => repositoryFilelessTab(entry.repository, 'commits')],
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
           ['pulse', () => repositoryFilelessTab(entry.repository, 'pulse')],
           ['review', () => withCompare(() => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`)],
           ['compare', () => withCompare(() => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
-            .source=${npm ? npmComparisonSource(entry) : null}></bundle-compare>`)],
+            .source=${npm ? npmComparisonSource(entry) : repository ? repositoryCompareSource(entry) : null}></bundle-compare>`)],
           ['issues', () => repository ? repositoryFilelessTab(entry.repository, 'issues') : renderBundleIssuesList(details)],
           ['advisories', () => renderBundleAdvisoriesTab(details, render,
             canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
@@ -2235,7 +2245,7 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   return html`<div class="bundle-issue-reports">
     ${visible.map((name) => {
       const iconHtml = REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default
-      return html`<button type="button" class="report-chip" data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
+      return html`<button type="button" class="report-chip" data-bundle-issue-report=${name}>${appMarkup(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
     })}
     ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}
   </div>`
@@ -2646,9 +2656,9 @@ function renderBundleDetails(entry, details) {
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
     ${bundleOriginLinks(origin, prefix, entry.commitInfo).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
-      <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
-      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-icon="commit" data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
-      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
+      <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? appMarkup(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
+      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-icon="commit" data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${appMarkup(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${appMarkup(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

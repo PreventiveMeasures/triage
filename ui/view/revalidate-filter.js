@@ -18,7 +18,7 @@
 // select, the browser drops what it can't match, and the options
 // arriving after leave it on the first one. `state.filterRevalidate`
 // outlives the element (the findings chrome is rebuilt from
-// `report.innerHTML` on cross-view entry), so without the attribute a
+// `report.replaceChildren` on cross-view entry), so without the attribute a
 // return trip painted an empty arrow slot over findings the outcome
 // filter was still narrowing. Only the BLANK twin below takes the
 // attribute for the empty value — see the note there.

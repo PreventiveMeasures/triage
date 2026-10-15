@@ -7,6 +7,7 @@ import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
+import { forgetGithubUsers, knowingGithubUsers } from './github-users.js'
 
 let loadPromise = null
 let managedModule = null
@@ -14,8 +15,15 @@ let managedModule = null
 // Synchronous reads/reset never load the chunk on an E2E or standalone visit.
 export function getPreviewRole() { return managedModule?.getPreviewRole() ?? null }
 export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
-export function resetManagedAppState() { managedModule?.resetManagedAppState() }
-export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
+export function resetManagedAppState() { forgetGithubUsers(); githubUsersSession = null; managedModule?.resetManagedAppState() }
+// The session the GitHub users kept came to: another user's, or another
+// role's, forgets them.
+let githubUsersSession = null
+export function setManagedAppSession(session) {
+  const key = session ? `${session.id}\0${session.role}` : null
+  if (key !== githubUsersSession) { forgetGithubUsers(); githubUsersSession = key }
+  managedModule?.setManagedAppSession(session)
+}
 export function setManagedReportCatalog(teams) { return managedModule?.setManagedReportCatalog(teams) ?? new Set() }
 export function readReportSources(id, teamId = state.currentManagedTeam) { return managedModule?.readReportSources(id, teamId) }
 export function clearReportSources() {
@@ -73,24 +81,24 @@ export async function fetchRepositoryContents(repoId, ref, path, options) {
   return (await loadManagedBundle()).fetchRepositoryContents(repoId, ref, path, options)
 }
 
-export async function fetchRepositoryHistory(repoId, ref, path, options) {
-  return (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options)
+export function fetchRepositoryHistory(repoId, ref, path, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryHistory(repoId, ref, path, options))
 }
 
-export async function fetchRepositoryAgents(repoId, options) {
-  return (await loadManagedBundle()).fetchRepositoryAgents(repoId, options)
+export function fetchRepositoryAgents(repoId, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
 }
 
-export async function fetchRepositoryIssues(repoId, kind, options) {
-  return (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options)
+export function fetchRepositoryIssues(repoId, kind, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryIssues(repoId, kind, options))
 }
 
-export async function fetchRepositoryItem(repoId, number, options) {
-  return (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options)
+export function fetchRepositoryItem(repoId, number, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
 }
 
-export async function fetchRepositoryPulse(repoId, weeks, options) {
-  return (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options)
+export function fetchRepositoryPulse(repoId, weeks, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }
 
 export async function fetchNpmVersions(name, options) {

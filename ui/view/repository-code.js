@@ -7,9 +7,9 @@
 // (GET /api/admin/repositories/code). What it answered is kept in memory only
 // while it is shown.
 import { LitElement, html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { isManagedUiMode, state } from '#client/index.js'
-import { REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
+import { REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchBrowsableRepositories, fetchRepositoryCode, fetchRepositoryContents, fetchRepositoryRefs } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { fileRowDetails } from './bundle-sources.js'
@@ -76,6 +76,14 @@ function headerRead(key, ask) {
 export const browsableRepositories = () => headerRead('repositories', () => fetchBrowsableRepositories())
 export const repositoryRefs = repoId => headerRead(`refs\0${repoId}`, () => fetchRepositoryRefs(repoId))
 
+// The revision a commit of a repository was read by, where it was read by
+// one, to name it so again; and a commit read by `revision`.
+export const revisionNamed = (repoId, commit) => revisionNames.get(`${repoId}\0${commit}`) ?? null
+export function rememberRevision(repoId, commit, revision) {
+  sessionData()
+  if (revision) revisionNames.set(`${repoId}\0${commit}`, revision)
+}
+
 // The bundle view's entry for a directory at a commit. It has no managed id,
 // so nothing reads it through the bundle routes; `repository` names it, and
 // the revision it was opened by, where that was a name.
@@ -113,11 +121,15 @@ export function repositoryCodeRoute(entry, tab = 'code', location = null) {
 // `commit`, else at `ref` (`heads/<branch>`, `tags/<tag>`, a commit, or
 // the default branch's head without one), `revision` naming it so in the
 // header, `file` a path in it for Code to open on, `repo` its repository's
-// name for its header while it opens.
-export function navigateToRepositoryCode({ repoId, commit = null, ref = null, revision = undefined, path = '', repo = null, file = null, bundleTab = 'code' }) {
+// name for its header while it opens, `compare` what Compare compares it
+// with, `{ target, mode }` (repository-compare.js), its route naming a
+// commit, else holding the name until it is read.
+export function navigateToRepositoryCode({ repoId, commit = null, ref = null, revision = undefined, path = '', repo = null, file = null, bundleTab = 'code', compare = null }) {
   if (!isManagedUiMode() || !managedHistory?.active) return
+  const compared = compare?.target ? { ...COMMIT.test(compare.target) ? { compareCommit: compare.target.toLowerCase() } : { compareTarget: compare.target },
+    ...compareModeField(compare.mode) } : {}
   void managedHistory.navigate({ view: 'repository-code', repoId, commit, path, bundleTab,
-    ...ref == null ? {} : { ref }, ...revision === undefined ? {} : { revision }, ...repo ? { repo } : {}, ...file ? { filePath: file } : {} })
+    ...ref == null ? {} : { ref }, ...revision === undefined ? {} : { revision }, ...repo ? { repo } : {}, ...file ? { filePath: file } : {}, ...compared })
 }
 
 // The revision a route asks for: its commit, else what it names, else the
@@ -125,7 +137,7 @@ export function navigateToRepositoryCode({ repoId, commit = null, ref = null, re
 const routeRef = route => route.commit ?? route.ref ?? ''
 
 // The ref a revision (`{ kind, name }`) names, '' the default branch's head.
-const revisionRef = revision => revision?.name
+export const revisionRef = revision => revision?.name
   ? revision.kind === 'commit' ? revision.name.toLowerCase() : `${revision.kind === 'branch' ? 'heads' : 'tags'}/${revision.name}` : ''
 
 // The same directory at another revision, on `tab`: a full commit by its
@@ -281,8 +293,15 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     details = repositoryCodeDetails(entry, data)
   }
   cleanupGraph2()
+  // What Compare compared the directory with stays while another of its tabs
+  // is open, as Back gives, for Compare to open with again; Compare compares
+  // with what its route names, none on a bare one, as one cleared was left.
+  const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
+  const target = route.compareCommit ?? route.compareTarget ?? null
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)
+  if (tab === 'compare' && target) state.bundleCompare = { bundle: entry.integrity, target, mode: compareModeOf(route.compareMode) }
+  else if (compared && tab !== 'compare') state.bundleCompare = compared
   if (tab === 'code' && route.file != null) {
     state.bundleCodeFileRequest = { bundle: entry.integrity, file: route.file,
       ...(route.line == null ? {} : { line: route.line }), ...(route.endLine == null ? {} : { endLine: route.endLine }) }
@@ -307,6 +326,15 @@ export function shownRevision({ revision, commit }, refs) {
   if (revision?.name) return revision
   if (revision) return { kind: 'branch', name: refs?.status === 'ready' ? refs.value.defaultBranch ?? '' : '' }
   return { kind: 'commit', name: commit ?? '' }
+}
+
+// The revision a revision-select's change (`detail`) picks: a name picked or
+// entered, or a commit entered whole or as 7 hex digits at least; none while
+// one is typed, or its kind switched.
+export function revisionPicked({ how, kind, name }) {
+  const typed = name.trim()
+  if (how === 'kind' || how === 'input' || !typed || (kind === 'commit' && !/^[a-f\d]{7,40}$/iu.test(typed))) return null
+  return { kind, name: typed }
 }
 
 // The header of a repository's directory, or of one opening
@@ -345,14 +373,10 @@ class RepositoryCodeSource extends LitElement {
     }
   }
 
-  revisionChanged({ detail: { how, kind, name } }) {
-    const typed = name.trim()
-    if (how === 'kind' || how === 'input' || !typed || (kind === 'commit' && !/^[a-f\d]{7,40}$/iu.test(typed))) {
-      this._edit = { kind, name }
-      return
-    }
-    this._edit = { kind, name: typed }
-    openRevision(this.repository, { kind, name: typed }, this.tab)
+  revisionChanged({ detail }) {
+    const picked = revisionPicked(detail)
+    this._edit = picked ?? { kind: detail.kind, name: detail.name }
+    if (picked) openRevision(this.repository, picked, this.tab)
   }
 
   render() {
@@ -376,7 +400,7 @@ class RepositoryCodeSource extends LitElement {
       <revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null} .kind=${revision.kind} .name=${revision.name}
         .installTooltips=${root => installShadowTooltipListener(root)} @revision-change=${this.revisionChanged}></revision-select>
       ${tree ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
-        aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${unsafeHTML(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
+        aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${appMarkup(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
   }
 }
 if (!customElements.get('repository-code-source')) customElements.define('repository-code-source', RepositoryCodeSource)

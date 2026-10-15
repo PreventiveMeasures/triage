@@ -115,6 +115,34 @@ account's ID, or null for the sign-in account); `DELETE
 /api/auth/profile/accounts/<id>` unlinks one. Changes need same-origin access
 and CSRF. Database upgrades keep existing names as the sign-in accounts' own.
 
+A repository's activity in the code viewer (its commits, issues, pull requests,
+agents and pulse) shows a GitHub account that an approved user signs in with,
+or linked to theirs, as that user: their chosen avatar and name, the login
+itself in the tooltip. A linked account shows as its user, and Pulse counts a
+user's accounts as one contributor. The server resolves the accounts each
+answer names as it sends the answer, in a `users` map by login, never kept
+with what is cached of the repository; readers are never sent a list of users.
+An account is matched by its numeric GitHub ID wherever GitHub names one, so
+an account renamed since its user signed in with it or linked it still shows as
+theirs, and its old login, taken by another account, does not; else by its
+login, regardless of case. A login two users claim, which happens once one of
+them renames on GitHub, shows as the login alone. Commits GitHub's GraphQL API
+names no user for, as a GitHub App's bot's, are matched by the account their
+noreply address (`<id>+<login>@users.noreply.github.com`) names, as GitHub's
+REST API matches them. Commits read before IDs were kept show by login.
+
+Agents show as the Agents tab draws them, the server naming them in `users`
+as `{ "agent": <id> }`: Claude, Codex and Copilot by their marks, which the
+app draws itself, Dependabot by its avatar. Each is matched by its accounts' logins, the account's ID
+confirming it wherever both are known, as the Agents tab tells them: Claude's
+`claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
+and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
+agent's `Copilot` and Dependabot's `dependabot[bot]`
+(`common/managed/github-agents.ts`). Commits GitHub names no account for are
+matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
+Codex otherwise commits as whoever ran it, and those commits show as theirs.
+Pulse counts each agent as one contributor.
+
 # Managed browser navigation
 
 ## Public workspace links
@@ -205,8 +233,9 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap, History, Issues, Pull requests, Agents or Pulse tab |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents` or `pulse` (`history`, its earlier name, opens Commits) |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
+| `/manage/code/:repoId/:commit/compare[/:otherCommit[/code\|/diff]][?path=:directory]` | Its Compare tab, with the directory at another commit, in its Code or Diff mode |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
@@ -1548,8 +1577,8 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # Repository code viewer
 
 Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Code, Search, Treemap, History, Issues,
-Pull requests, Agents and Pulse tabs: from the
+as an npm version shows, with the Treemap, Code, Search, Compare and Activity tabs:
+from the
 `</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
@@ -1582,9 +1611,38 @@ disk cache with them. Readers asking for the same directory meanwhile share
 one load, among the npm viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
 
-## History
+## Compare
 
-The History tab lists commits as `git log --oneline --decorate --graph` does,
+The **Compare** tab compares the directory with itself at another revision,
+as an npm version's compares it with another version
+(`ui/view/repository-compare.js`): its Overview lists the files each adds,
+removes and changes, each with its type's icon, and its Code reviews them as
+a diff. It shows none of a package's risk, alerts or dependencies, nor a
+bundle's Packages. Both sides pick a revision as the header does, a branch, a
+tag or a commit, the one compared with first: picking the first compares
+with it, picking the second opens the directory there, compared with the
+same first, and **Swap** opens the first, compared with the second. The one
+compared with is read as the directory is
+(`GET /api/admin/repositories/code`), its route then naming the commit read,
+`/compare/<commit>`, and `/code` past its Overview; for the session, its
+picker names it as it was picked. Another tab of the directory keeps it, for
+Compare to open with again.
+
+## Activity
+
+The **Activity** tab holds what happens around the code, in five views, each
+its own route's tab (`commits`, `issues`, `pulls`, `agents`, `pulse`): its
+**Commits** (below), **Issues** and **Pull requests**, **Agents**
+and **Pulse**. It opens on the view last shown, Commits until one is
+(`ui/view/repository-activity.js`). Each view's bar starts with their
+picker, an icon each (a commit on its line, an issue's ring, a pull
+request's branches, a robot's head, a pulse's beat), as the graph's layouts
+are picked, which switches the view as a tab does, Back returning to the
+one before.
+
+## Commits
+
+Activity's Commits view lists commits as `git log --oneline --decorate --graph` does,
 one compact line each: its short id, the branches and tags naming it (the
 default branch's first, the revision shown marked), its subject, author and
 time, beside the graph of the lines its parents make
@@ -1598,16 +1656,23 @@ commit shown first. Either's **Older commits** reads on from where those
 listed stop, their parents not listed (and, for All branches, the branches
 not read yet), the newest 25 first (a parent by its child's time), a hundred
 commits from each, each commit once; a branch not read joins those named
-once a commit listed is its tip. A directory's reads a hundred at a time,
-**Older commits** reading the next hundred. Older
+once a commit listed is its tip. A pull request squashed into a commit
+listed is drawn as the merge it was: the squash commit's other parent its
+head as merged, and its own commits on a lane of their own from where it
+began, as GitHub keeps them (`refs/pull/<n>/head`), however its branch was
+reused or pushed over since; a branch reused for another pull request shares
+the commits both had, drawn once. A pull request's head is named by its
+number, `#123`, beside the branch still at it, an open one's too. A
+directory's reads a hundred at a time, **Older commits** reading the next
+hundred. Older
 commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
 it, a link shows its own history. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
-commit's code, named by the branch, else the tag, naming it. History reads
+commit's code, named by the branch, else the tag, naming it. The view reads
 none of the directory's files: its route at a commit opens it alone, its other
-tabs then reading them. A directory whose files fail to open shows its History
+tabs then reading them. A directory whose files fail to open shows its Commits
 all the same, where its commit is known (a `413 directory-too-large` names the
 commit it was read at, its route then naming it). What it read is kept in
 the page for the session five minutes, and on the server for every reader:
@@ -1618,6 +1683,8 @@ the page for the session five minutes, and on the server for every reader:
   `repository/history`, a month) by the commit it starts at, its top. A
   commit's history never changes, so a page kept is never read again, and a
   branch moving on doesn't miss: only the page from its new tip is read.
+  Read with a token, a page tells each commit's lines added and removed and
+  its author's own time too, which Pulse counts (and the tab is not sent).
 - Pages glue on: where a commit listed, or a parent of one not listed, is
   the top of a page kept, that page joins those listed, and so on, till two
   thousand commits are listed. The pages from where it starts are listed
@@ -1629,29 +1696,49 @@ the page for the session five minutes, and on the server for every reader:
   pages are: two minutes as read, then answered while they are read again.
 - A directory's history, whose commits a page from a commit doesn't list
   alone, is read from GitHub each time.
+- The pull requests squashed into a whole repository's commits are kept by
+  each commit (`repository/squashes`, a month, as its pages are): a merged
+  pull request's commits never change, and a commit no pull request merged,
+  or one merged by a rebase, is kept as none. The open pull requests' heads
+  move, and are kept as the branches are.
 
 `GET /api/admin/repositories/history?repoId=…&ref=…&path=…&page=…` answers a
 page of a revision's history, `{ commit, path, page, commits, more }`, each
 commit `{ sha, parents, subject, authorName, authorLogin, committedAt }`, as
 GitHub's list of commits gives them (`repository-history.ts`), with, on the
-first page, the `branches` and `tags` naming commits, `{ name, sha }` each, as
-GitHub's first page of each lists them. A whole repository's is the history
+first page, the `branches` and `tags` naming commits, `{ name, sha }` each:
+with a token, every branch All branches reads (below, kept for both) and the
+latest hundred tags; without, GitHub's first page of each, a hundred by
+name, to spare an unsigned reader's rate limit. A whole repository's is the history
 from its commit, glued on (above), `more` where a parent is not listed; a
 later page names the commits to read on from, `from=<sha>,<sha>…`, as All
 branches' do (a later page naming none reads GitHub's page of that
 number). A directory's is GitHub's page of that number. With `all=true`, at the root and first
 page, it answers `{ all, commits, branches, tags, defaultBranch, unread, more }`
 from GraphQL: the branches' tips with their commits' times, a hundred a page
-for up to ten pages (GitHub orders heads by name alone), then, in one query,
+for up to fifty pages (GitHub orders heads by name alone), then, in one query,
 the latest hundred commits of the default branch and the 24 others most
 recently committed to, each commit once; every branch naming a commit listed;
 the branches not read whose tips aren't listed, `{ name, sha, at }` each,
-newest first; `cut` where branches past the thousand listed are left out,
+newest first; `cut` where branches past the five thousand listed are left out,
 never to be read, the tab then saying so; and the latest hundred tags, an
 annotated one by the commit it tags. `more` where a branch or a branch's commits are left out. A later page
 names up to 25 commits to read on from, `from=<sha>,<sha>…`, and answers
 `{ all, page, commits, more }`, the latest hundred commits of each, each
-once, `more` but for the deepest page. GraphQL needs a token: a public repository read without one is `403
+once, `more` but for the deepest page. With a token, a whole repository's
+answers, with `commits`, the pull requests squashed into them, `pulls`, each
+`{ merge, number, head, commits, more }`: a merged pull request whose merge
+commit, of one parent, a commit listed is, unless it was rebased (its
+commits, more than one, copied onto the branch: the merge and those below it
+on their first parents are theirs, by subject, one whose copies go on past
+the commits listed told, and kept, once they are listed; one commit squashed
+is titled as that commit by default, and is drawn as it was either way), its head when
+merged and its latest hundred commits, `more` where it had more; and, on a first page, the open
+ones' heads, `openPulls`, `{ number, sha }` each, the latest hundred updated.
+GraphQL looks up, of each answer's commits of one parent not yet kept, five
+hundred at most, a hundred commits or twenty pull requests a query, four at
+once; where GitHub refuses them (an App without Pull requests: read), the
+history is sent without them. GraphQL needs a token: a public repository read without one is `403
 github-token-required`, and the tab then shows the revision's history. It is
 read as the code is, with the reader's own GitHub access, only where the
 reader's grants reach the whole directory, and access is checked again before
@@ -1684,9 +1771,9 @@ it, and **Open on GitHub**. Held with a key, or with another button, a tile
 opens on GitHub as a link does. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
-**More** button nears the end of the scroll, as History's Older commits are,
+**More** button nears the end of the scroll, as Commits' Older commits are,
 but not while a filter picks among them, nor after a page failed. Like
-History, neither tab reads the directory's files: at a commit, each opens
+Commits, neither tab reads the directory's files: at a commit, each opens
 alone. What they read is kept in the page for the session five minutes, and
 on the server for every reader (below).
 
@@ -1748,12 +1835,21 @@ pull request merged. It is told by the links and marks the agents leave:
   session a branch, its pull requests together; and by Claude's marks
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
   authored), a pull request or commit its own session;
-- an agent known by its GitHub App (`APP_AGENTS` in `repository-agents.ts`,
-  each its id, name, app, fingerprint and branches' prefix: now Neo, by
-  `🤖 Generated with [Neo](` and `neo/…`), by its fingerprint in the same
-  texts or its branch's prefix. It names no session, so a pull request of its
-  is a session alone, with its branch (the newest of the pull requests from
-  it), joining none by what it links. Claude's or Codex's marks on its work
+- an agent known by its GitHub App or account (`APP_AGENTS` in
+  `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
+  its fingerprint or the account its work is authored by: now Neo, by
+  `🤖 Generated with [Neo](` and `neo/…`; Copilot, by its account, 198982749,
+  `Copilot` or `copilot-swe-agent`, and `copilot/…`; and Dependabot, by its
+  account, 49699333, `dependabot` or `dependabot[bot]`, and `dependabot/…`),
+  by its fingerprint beginning a line of the same texts (one quoting it, as a
+  review does, isn't its), its account authoring the pull request, commit or
+  branch's tip, told by its id and login both (a commit's by its GitHub
+  no-reply address, `<id>+<login>@users.noreply.github.com`, where GitHub
+  names no user for it, as for a bot's), or its branch's prefix. It names no
+  session, so a pull request of its is a session
+  alone, joining none by what it links, and its branch only if it is the
+  newest of the pull requests read from it (by its number, as GitHub numbers
+  them as they are opened), any agent's or none. Claude's or Codex's marks on its work
   show their marks after its own, as its tools.
 
 Everything naming one session is that session, whatever branch each is on; a
@@ -1765,10 +1861,13 @@ session whose pull request closes it, or whose branch the Claude GitHub App
 named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
 mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
 wrapping: its title (its first task's, of two lines at most); its author,
-age, how many tasks and lines it holds; its pull requests, commits and
+age, how many tasks it holds (only where more than one, and not as many as
+its pull requests' or its commits' alone, which their chips count; its popup
+always says) and its lines; its pull requests, commits and
 issues in their states' colors, as many as fit and how many more; and its
-branch. An app agent's mark is its app's avatar, which the server fetches
-from GitHub once and keeps (`/api/avatar/app-<id>`, for those apps alone). A tile clicked opens its session's popup, as an issue's does: who,
+branch. An app agent's mark is its GitHub App's or account's avatar, which the
+server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
+`/api/avatar/user-<id>`, for those agents alone). A tile clicked opens its session's popup, as an issue's does: who,
 when, its state, tasks and size, its pull requests and issues, each opening
 in its place, its commits and branches, on GitHub, and links to where it ran
 (a Claude Code session or a Codex task) and to GitHub. A pull request's or
@@ -1776,12 +1875,14 @@ issue's chip opens its own popup, a commit's opens on GitHub; held with a
 key, the title opens where the session ran and a chip on GitHub. One with a branch alone says it has no pull
 request, shown once no pull request left to read can be its (where some
 are, only a branch newer than the oldest read). **All**, **Claude**,
-**Codex** and each app agent pick whose, each with how many; a **Filter**
+**Codex** and each app agent with sessions among those read pick whose, each
+with how many; a **Filter**
 picks by any word of a title, author, branch, number or session. The bar's
 end shows, beside the mark of each agent with sessions among those read
 (app agents first, Claude's and Codex's last, so theirs keep their places),
 by icon and count, the pull requests, branches and commits to the default
-branch without a pull request (where there are any) among its sessions. Pages read on as the end of the scroll nears, as History's
+branch without a pull request among its sessions, each only where there are
+any, more to read or not. Pages read on as the end of the scroll nears, as Commits'
 do, the sessions made again of all read, but only while each adds a session:
 most pull requests and commits may be no agent's, so after a page adding
 none, the next waits for **More** to be clicked rather than read the whole
@@ -1793,15 +1894,19 @@ GraphQL (`repository-agents.ts`): fifty pull requests, the most recently
 updated first, and a hundred of the default branch's commits, the newest
 first, each on from its own cursor; and, on the first page alone, naming
 neither, the hundred most recently updated issues, the app agents (each its
-id, name and app, never how it is told), and the hundred newest of each
-agent's branches: GitHub lists branches by name alone, so every branch
-an agent's prefix names is read, as many as ten pages of a hundred of each,
+id, name and avatar, never how it is told), the hundred newest of the
+default branch's commits the app agents' accounts authored, by their
+no-reply addresses, however far back (a bot's commits, pushed with no pull
+request here, as before a repository moved, may lie deeper than the pages
+read on to), and the five hundred newest of each agent's branches: GitHub lists branches by name alone, so every branch
+an agent's prefix names is read, as many as fifty pages of a hundred of each,
 named in full whatever prefix GitHub splits off, and the newest kept by
 their tips' times. Each pull request's body and head and merge commits'
 messages, each commit's message, and each branch's tip commit (never a
 comment, nor an issue's body) are read for the sessions and tasks
 they link, Claude's marks and the app agents' fingerprints, a pull
-request's and branch's name for their prefixes too (`signals`), and those
+request's and branch's name for their prefixes and their and commits'
+authors' logins too (`signals`), and those
 alone are answered,
 never the texts; of the default branch's commits, only those no pull request
 merged and an agent marked. They are read as Issues are: with the reader's
@@ -1822,7 +1927,7 @@ last of them. Its dates are named in the bar, beside **Charts** and
   issues are each set beside the same days of the week a period earlier
   ("↑ from 110 the month before"): this week's Sunday to Thursday beside
   last week's, not the days just before, whose days of the week differ. The
-  year's commits are set beside none, GitHub counting only the last year's.
+  year's commits are set beside none, only the last year's being counted.
 - **Commits**, a column a week over the last year, the period's in blue, the
   rest gray, over a scale of round counts; under them **Lines**, added above
   a line in blue and removed below it in red, one scale for both, the weeks
@@ -1830,47 +1935,65 @@ last of them. Its dates are named in the bar, beside **Charts** and
   January starts.
 - **Contributors**, those who made commits in the period, as many as eight,
   ranked by their commits in bars, each with the lines they added and
-  removed, and how many more there were; each name opens their GitHub page.
+  removed, and how many more there were; each name opens their GitHub page
+  (one whose commits name no GitHub account by the name they carry, unlinked).
 - **When commits are made**, a cell an hour of each day of the week, Monday
   first, the more commits the deeper its blue, as the scale under it shows;
-  in each commit's own time zone, and not only the period's, as GitHub
-  counts them.
+  in each author's own time zone, and not only the period's.
 - **Merged** and **opened pull requests**, **closed** and **opened issues**,
   the ten latest of each, with how many there were and, where there were
   more, a link to all of them on GitHub; each opens its popup as an Issues
   tile does.
 
 Each column, bar and cell names its figures on hover. A period read anew
-shows the last one read, faded, till it is. GitHub computes a repository's
-statistics when first asked, answering that it is till they are: the tab
-shows what else it read, says GitHub is still counting, and asks again five
-seconds apart, six times, then leaves **Ask again** to the reader. A
-repository of 10,000 commits or more has no lines counted, by GitHub, and
-shows none.
+shows the last one read, faded, till it is.
+
+The year is counted from the default branch's commits themselves, as the
+Commits tab reads and keeps them: each page of a hundred commits, kept by
+the commit it starts at, tells each commit's lines added and removed and
+when its author made it in their own time zone (GitHub's GraphQL API tells
+both). So a year whose commits are kept is counted from them at once, and
+once the branch moves, only the commits new since are read of GitHub. It is
+read on from as far as thirty days before the year, a commit's clock not
+always later than its parents'. A year not kept yet is read five queries an
+answer: the tab shows what else
+it read and how many of the year's commits are read so far, and asks again
+a second apart as long as each answer reads more (after five that read
+none, **Read on** is left to the reader). A year of more than 10,000
+commits is counted by GitHub's statistics instead (`stats/commit_activity`,
+`contributors`, `punch_card`, and `code_frequency` for lines), which GitHub
+computes when first asked, and again once the branch moves, answering `202`
+till they are: kept (commits and lines together, as one), they are
+answered through that; never computed yet,
+the tab says GitHub is still counting and asks again five seconds apart, a
+dozen times, then leaves **Ask again** to the reader. GitHub counts no lines
+of one of 10,000 commits or more there, and it shows none.
 
 `GET /api/admin/repositories/pulse?repoId=…&weeks=1|4|13|52` answers
 `{ weeks, since, previousSince, merged, opened, closed, created, stats,
-pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed` and
-`created` are each `{ count, previous, items }`: how many GitHub's search
-finds in the period (`since`, its first day, to today) and in the same days
-of the week a period earlier (`previousSince` on), and the ten latest, from
-one GraphQL query of eight searches, searched by the day. GitHub sorts no
-search by when a pull request was merged or an issue closed, so the fifty
-most recently updated are read and the ten latest merged or closed of them
-listed: all of them where the period holds fifty or fewer. `stats` is the default
-branch's statistics, from GitHub's `stats/commit_activity`,
-`code_frequency`, `contributors` and `punch_card`: `weeks`, a row a week of
-the last year, its commits each day and in all and its lines added and
-removed (null where GitHub counts none, `lines` false); `contributors`, as
-many as a hundred, the most commits that year first, each their weeks of it
-with any; and `punch`, commits by day of the week and hour. GitHub answering
-`202` while it computes them, each is asked again, a second and a half, then
-three, later; still computing, `stats` is null and `pending` true. The
-statistics are kept for every period, apart from the period's searches, each
-as Issues' pages are (two minutes, then answered while read again); those
-GitHub is still computing are not kept. They are read as Issues are: with
-the reader's own GitHub access, only where their grants reach the whole
-repository, a token needed, and access checked again before they are sent.
+reading, pending }` (`repository-pulse.ts`). `merged`, `opened`, `closed`
+and `created` are each `{ count, previous, items }`: how many GitHub's
+search finds in the period (`since`, its first day, to today) and in the
+same days of the week a period earlier (`previousSince` on), and the ten
+latest, from one GraphQL query of eight searches, searched by the day.
+GitHub sorts no search by when a pull request was merged or an issue closed,
+so the fifty most recently updated are read and the ten latest merged or
+closed of them listed: all of them where the period holds fifty or fewer.
+`stats` is the year: `weeks`, a row a week, its commits each day (UTC) and
+in all and its lines added and removed; `contributors`, by login, else
+name, as many as a hundred, the most commits that year first, each their
+weeks of it with any; `punch`, commits by day of the week and hour; and
+`lines`, false where GitHub counts none.
+Merges are left out, as GitHub's statistics leave them. A year counted is
+kept by the head it was counted from (`repository/reads`, a day), the head
+as Issues' pages are (two minutes, then answered while read again); one not
+read whole yet is null, `reading` how many of its commits are read; one
+GitHub is still counting, null, `pending` true. A page of commits kept
+without lines (as GitHub's REST API lists them, for a reader without a
+token) is read again for the year, with them. They are read as Issues are:
+with the reader's own GitHub access, only where their grants reach the
+whole repository, a token needed, and access checked again before they are
+sent.
 
 # npm package viewer
 

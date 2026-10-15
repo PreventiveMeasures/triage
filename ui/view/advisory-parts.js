@@ -2,7 +2,7 @@
 // an npm package's (npm-overview.js) list them: the severity rail, the title
 // with its source and GHSA reference, and what it covers with CWE links.
 import { html, nothing } from 'lit'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 import { sourceNpmIcon } from './source-file-icon.js'
 // OSV symbol from https://github.com/google/osv.dev/blob/master/docs/images/osv_logo_light-full.svg
@@ -10,7 +10,7 @@ import osvIcon from './osv-icon.svg'
 
 const ADVISORY_SOURCES = new Map([
   ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
-  ['repository', { label: 'Source: GitHub repository', icon: unsafeHTML(GITHUB_ICON_SVG) }],
+  ['repository', { label: 'Source: GitHub repository', icon: appMarkup(GITHUB_ICON_SVG) }],
   ['osv', { label: 'Source: OSV', icon: osvIcon }],
 ])
 

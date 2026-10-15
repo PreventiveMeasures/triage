@@ -43,6 +43,7 @@ import { AppDialog } from './app-dialog.js'
 import { highlight, splitHighlightedLines } from '../prism-highlight.js'
 import { unwatchNearViewport, watchNearViewport } from '../lazy-render.js'
 import { chunkLines, escapeHtml, tableLead } from '../export-view-chunks.js'
+import { trustedHTML } from '../trusted-types.js'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import exportViewCSS from './dialog-export-view.css'
 
@@ -255,7 +256,7 @@ class ExportViewDialog extends AppDialog {
     const painted = await highlight(text, 'markdown')
     if (!this.isConnected) return
     const rows = painted === null ? null : splitHighlightedLines(painted).slice(lead ? lead[1] - lead[0] : 0)
-    el.innerHTML = rowsHtml(this._lines, chunk.start, chunk.end, rows?.length === chunk.end - chunk.start ? rows : null)
+    el.innerHTML = trustedHTML(rowsHtml(this._lines, chunk.start, chunk.end, rows?.length === chunk.end - chunk.start ? rows : null))
     el.classList.remove('evd-pending')
   }
 }

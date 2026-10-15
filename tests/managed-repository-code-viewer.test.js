@@ -25,6 +25,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
 } })
 const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
+const { repositoryCompareSource } = await import('../ui/view/repository-compare.js')
+const { managedTabLocation } = await import('../ui/view/managed-bundle-navigation.js')
 
 const commit = 'c'.repeat(40)
 const data = {
@@ -61,11 +63,18 @@ test('a directory\'s route names its repository by id, the commit, its path and 
   assert.equal(managedRoutePath({ view: 'repository-code', repoId: 7 }), '/manage/code/7')
   assert.equal(managedRoutePath({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', path: 'src', bundleTab: 'search' }), '/manage/code/7?path=src')
   assert.deepEqual(parseManagedRoute(new URL('https://triage.test/manage/code/7')), { view: 'repository-code', repoId: 7, commit: null, path: '', bundleTab: 'code' })
-  for (const bad of [{ commit: 'abc' }, { repoId: 0 }, { path: '../x' }, { path: 'a//b' }, { path: ' a' }, { bundleTab: 'compare' }]) {
+  for (const bad of [{ commit: 'abc' }, { repoId: 0 }, { path: '../x' }, { path: 'a//b' }, { path: ' a' }, { bundleTab: 'review' }, { bundleTab: 'compare', compareCommit: 'main' }]) {
     assert.equal(managedRoutePath({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'code', ...bad }), null, JSON.stringify(bad))
   }
+  // Compare names the commit compared with, then its mode past the Overview.
+  const compared = { view: 'repository-code', repoId: 7, commit, path: 'src', bundleTab: 'compare', compareCommit: 'd'.repeat(40), compareMode: 'code' }
+  assert.equal(managedRoutePath(compared), `/manage/code/7/${commit}/compare/${'d'.repeat(40)}/code?path=src`)
+  assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(compared), 'https://triage.test')), compared)
+  assert.equal(managedRoutePath({ ...compared, compareMode: undefined }), `/manage/code/7/${commit}/compare/${'d'.repeat(40)}?path=src`)
+  assert.equal(managedRoutePath({ ...compared, bundleTab: 'search' }), `/manage/code/7/${commit}/search?path=src`, 'only Compare names one')
   for (const bad of ['/manage/code', `/manage/code/7/${commit}/search/2`, `/manage/code/7/${commit.toUpperCase()}`, `/manage/code/7/${commit}?path=a/./b`,
-    `/manage/code/x/${commit}`, '/manage/code/7/search']) {
+    `/manage/code/x/${commit}`, '/manage/code/7/search', `/manage/code/7/${commit}/compare/main`, `/manage/code/7/${commit}/compare/${commit}/x`,
+    `/manage/code/7/${commit}/code/${commit}`]) {
     assert.equal(parseManagedRoute(new URL(bad, 'https://triage.test')), null, bad)
   }
 })
@@ -187,10 +196,10 @@ test('a directory that fails to open says why at its route, and lists its direct
   await setImmediate()
   assert.deepEqual(contentsRequests, [[7, commit, '']])
   assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
-  // Another of its tabs fails as it did, its History showing, nothing read again.
-  assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' }, () => true, () => {}),
-    { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'history' })
-  assert.equal(state.repositoryCodeOpening.tab, 'history')
+  // Another of its tabs fails as it did, its Commits showing, nothing read again.
+  assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {}),
+    { view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' })
+  assert.equal(state.repositoryCodeOpening.tab, 'commits')
   assert.equal(requests.length, 1)
 
   // Any other failure lists none.
@@ -214,8 +223,8 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   repositoryRefs(7)
   await setImmediate()
   const read = refsReads
-  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
-  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'history' })
+  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
+  assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' })
   assert.deepEqual(requests, [], 'no files read')
   assert.equal(state.currentView, 'repository-code')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
@@ -234,15 +243,15 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   const develop = 'd'.repeat(40)
   contents = () => Promise.resolve({ commit: develop, entries: [] })
   const named = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
-    path: 'packages/app', bundleTab: 'history' }, () => true, () => {})
-  assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'history' })
+    path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
+  assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'commits' })
   assert.deepEqual(requests, [], 'no files read')
   assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
   // One its listing can't read says why.
   contents = () => Promise.reject(Object.assign(new Error('This repository is not available to you.'), { code: 'no-repository' }))
-  assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'history' }, () => true, () => {})).commit, null)
+  assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'commits' }, () => true, () => {})).commit, null)
   assert.equal(state.repositoryCodeOpening.error, 'This repository is not available to you.')
 })
 
@@ -278,4 +287,77 @@ test('the header opens another repository at its default branch, another revisio
     { view: 'repository-code', repoId: 7, commit: null, path: 'packages/app', bundleTab: 'search', ref: 'abcdef1', revision: { kind: 'commit', name: 'ABCDEF1' }, repo: 'org/repo' },
     { view: 'repository-code', repoId: 7, commit: 'f'.repeat(40), path: 'packages/app', bundleTab: 'search', repo: 'org/repo' },
   ], 'a commit that is not hex opens nothing; a full one opens by its own route')
+})
+
+test('Compare compares the directory with another revision of it, read as the directory is, named by the commit read, without packages or dependencies', async () => {
+  const develop = 'd'.repeat(40)
+  repositoryRefs(7)
+  await setImmediate()
+  const entry = repositoryCodeEntry(data, { kind: 'branch', name: null })
+  const source = repositoryCompareSource(entry)
+  assert.equal(source.noun, 'revision')
+  assert.equal(source.base, commit)
+  assert.equal(source.name(entry.integrity), 'main', 'the default branch, by its name once known')
+  assert.deepEqual(source.dependencies(), { removed: [], added: [], changed: [] })
+  // A branch reads as its head's commit, which stands for it, by its name.
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, commit: develop, path })
+  const other = await source.load('heads/develop')
+  assert.deepEqual(requests.at(-1), [7, 'heads/develop', 'packages/app'])
+  assert.equal(other.compareId, develop)
+  assert.equal(other.integrity, `repository:7:${develop}:packages/app`)
+  assert.deepEqual(other.json.sources, ['README.md', 'logo.png', 'src/index.js'])
+  assert.equal(source.name(develop), 'develop')
+  assert.equal(source.name('e'.repeat(40)), 'eeeeeee', 'a commit by its first digits')
+  await assert.rejects(source.load('e'.repeat(40)), /another directory/u, 'a commit answered as another')
+  // A swap, or a pick on the second side, opens that one compared with the first.
+  source.open(develop, commit, 'code')
+  source.open('tags/v1', 'heads/develop', 'overview')
+  assert.deepEqual(navigations, [
+    { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'compare', repo: 'org/repo', compareCommit: commit, compareMode: 'code' },
+    { view: 'repository-code', repoId: 7, commit: null, path: 'packages/app', bundleTab: 'compare', repo: 'org/repo', ref: 'tags/v1', revision: { kind: 'tag', name: 'v1' },
+      compareTarget: 'heads/develop' },
+  ])
+})
+
+test('each side of Compare picks a revision as the header does, a typed one on Enter alone, and shows the one it stands for', () => {
+  const entry = repositoryCodeEntry(data, { kind: 'branch', name: 'main' })
+  const picked = []
+  const side = { value: null, pick: id => picked.push(id) }
+  const template = repositoryCompareSource(entry).select(side, 'Revision to compare with')
+  assert.equal(template.values.find(value => value === true), true, 'empty, before one is picked')
+  const Pick = customElements.get('repository-revision-pick')
+  const pick = new Pick()
+  const ids = []
+  pick.dispatchEvent = event => { ids.push(event.detail); return true }
+  const change = (how, kind, name) => pick.changed({ detail: { how, kind, name } })
+  change('input', 'branch', 'dev')
+  assert.deepEqual(pick._edit, { kind: 'branch', name: 'dev' })
+  change('pick', 'branch', 'develop')
+  change('submit', 'commit', 'xyz')
+  change('submit', 'commit', 'ABCDEF1')
+  assert.deepEqual(ids, [{ kind: 'branch', name: 'develop' }, { kind: 'commit', name: 'ABCDEF1' }])
+  // What each names, picked by: a commit whole, else the ref the server reads.
+  const handler = template.values.find(value => typeof value === 'function')
+  for (const detail of [{ kind: 'branch', name: 'develop' }, { kind: 'tag', name: 'v1' }, { kind: 'commit', name: 'ABCDEF1' }, { kind: 'commit', name: 'F'.repeat(40) }]) handler({ detail })
+  assert.deepEqual(picked, ['heads/develop', 'tags/v1', 'abcdef1', 'f'.repeat(40)])
+})
+
+test('Compare\'s route opens the directory compared with the commit it names, a bare one with none; another tab keeps it; one picked by a name names none until read', async () => {
+  const develop = 'd'.repeat(40), integrity = `repository:7:${commit}:packages/app`
+  const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'compare', compareCommit: develop, compareMode: 'code' },
+    () => true, () => {})
+  assert.deepEqual(state.bundleCompare, { bundle: integrity, target: develop, mode: 'code' })
+  assert.equal(managedRoutePath(route), `/manage/code/7/${commit}/compare/${develop}/code?path=packages/app`)
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'code' }, () => true, () => {})
+  assert.deepEqual(state.bundleCompare, { bundle: integrity, target: develop, mode: 'code' }, 'kept for Compare to open with again')
+  assert.deepEqual(managedTabLocation(state, 'compare'), { compareCommit: develop, compareMode: 'code' })
+  // A bare Compare route, as Back gives to one cleared, compares with none.
+  const bare = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'compare' }, () => true, () => {})
+  assert.equal(state.bundleCompare, null)
+  assert.equal(managedRoutePath(bare), `/manage/code/7/${commit}/compare?path=packages/app`)
+  state.bundleCompare = { bundle: integrity, target: 'heads/develop', mode: 'overview' }
+  assert.equal(managedTabLocation(state, 'compare'), null)
+  // A swap's target picked by a name, held as the route opens.
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'compare', compareTarget: 'tags/v1' }, () => true, () => {})
+  assert.deepEqual(state.bundleCompare, { bundle: integrity, target: 'tags/v1', mode: 'overview' })
 })

@@ -21,7 +21,7 @@ export async function checkGithubLinks(db) {
   assert.equal(await db.upsertUser(work, 3), null, 'a linked account cannot register')
   assert.equal((await db.listUsers()).length, 3)
   assert.deepEqual(await db.getProfile(alice), { login: 'alice', name: 'Alice', githubName: 'Alice', nameAccount: null, avatarAccount: null,
-    accounts: [{ id: first.id, login: 'alice-work', name: 'Alice at Work', linkedAt: 2 }] })
+    accounts: [{ id: first.id, githubId: 7010, login: 'alice-work', name: 'Alice at Work', linkedAt: 2 }] })
 
   await assert.rejects(db.linkGithubAccount('alice-session', identity(1, 'alice'), 3), /github-account-own/u)
   await assert.rejects(db.linkGithubAccount('alice-session', identity(2, 'bob'), 3), /github-account-registered/u)
@@ -52,7 +52,7 @@ export async function checkGithubLinks(db) {
   // Linking it again refreshes its snapshot, and the name it gives.
   assert.deepEqual(await db.linkGithubAccount('alice-session', { ...work, login: 'alice-job', name: 'A. Work' }, 6), { id: first.id, created: false })
   assert.equal((await userOf('alice-session')).name, 'A. Work')
-  assert.deepEqual((await db.getProfile(alice)).accounts, [{ id: first.id, login: 'alice-job', name: 'A. Work', linkedAt: 2 }])
+  assert.deepEqual((await db.getProfile(alice)).accounts, [{ id: first.id, githubId: 7010, login: 'alice-job', name: 'A. Work', linkedAt: 2 }])
 
   const nameless = await db.linkGithubAccount('alice-session', identity(12, 'alice-anon'), 7)
   await db.setProfileChoice('alice-session', { name: nameless.id }, 7)
@@ -65,13 +65,56 @@ export async function checkGithubLinks(db) {
   // Unlinking returns what it gave to the sign-in account; the account may
   // then sign in on its own.
   assert.equal(await db.unlinkGithubAccount('bob-session', first.id, 8), null)
-  assert.deepEqual(await db.unlinkGithubAccount('alice-session', first.id, 8), { id: first.id, login: 'alice-job', name: 'A. Work', linkedAt: 2 })
+  assert.deepEqual(await db.unlinkGithubAccount('alice-session', first.id, 8), { id: first.id, githubId: 7010, login: 'alice-job', name: 'A. Work', linkedAt: 2 })
   assert.equal(await db.unlinkGithubAccount('alice-session', first.id, 8), null)
   assert.deepEqual(await db.getProfile(alice), { login: 'alice-renamed', name: 'Alice R', githubName: 'Alice R', nameAccount: null, avatarAccount: null,
-    accounts: [{ id: nameless.id, login: 'alice-anon', name: null, linkedAt: 7 }] })
+    accounts: [{ id: nameless.id, githubId: 7012, login: 'alice-anon', name: null, linkedAt: 7 }] })
   assert.equal(await db.getAvatarKey(alice), alice)
   const registered = await db.upsertUser(work, 9)
   assert.ok(registered && registered !== alice)
   await assert.rejects(db.linkGithubAccount('alice-session', work, 9), /github-account-registered/u)
   assert.equal(await db.getProfile('00000000-0000-4000-8000-000000000000'), null)
+}
+
+// Shared SQLite/Postgres semantics of the app's users a repository's
+// activity names by GitHub account, by its id where known, else its login
+// (server-managed/github-users.ts).
+export async function checkUsersByAccount(db) {
+  const alice = await db.upsertUser(identity(1, 'alice', 'Alice'), 1)
+  const bob = await db.upsertUser(identity(2, 'Bob'), 1)
+  const pending = await db.upsertUser(identity(3, 'pending', 'Pending'), 1)
+  const carol = await db.upsertUser(identity(4, 'carol'), 1)
+  const dave = await db.upsertUser(identity(5, 'renamed'), 1)
+  for (const [user, role] of [[alice, 'view'], [bob, 'admin'], [carol, 'triage'], [dave, 'view']]) await db.setUserRole(user, role)
+  for (const [id, userId] of [['alice-session', alice], ['carol-session', carol]]) {
+    await db.createSession({ id, userId, csrfToken: `${id}-csrf`, expiresAt: 1000 }, 1)
+  }
+  const work = await db.linkGithubAccount('alice-session', identity(10, 'alice-work', 'Alice at Work'), 2)
+  // Carol linked an account by the login Dave signs in with: one of them
+  // renamed on GitHub since, but which is unknown.
+  await db.linkGithubAccount('carol-session', identity(11, 'renamed'), 2)
+  const byLogin = (...logins) => logins.map(login => ({ login, githubId: null }))
+  assert.deepEqual(await db.listUsersByAccount([]), {})
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice', 'ALICE-WORK', 'bob', 'pending', 'renamed', 'nobody', 'carol')), {
+    alice: { id: alice, login: 'alice', name: 'Alice' },
+    'ALICE-WORK': { id: alice, login: 'alice', name: 'Alice' },
+    bob: { id: bob, login: 'Bob', name: null },
+    carol: { id: carol, login: 'carol', name: null },
+  }, 'by the login as asked, matched as GitHub matches logins; a linked account as its user; none of No access, unknown or claimed twice')
+  // By the account's id, which GitHub never gives another, whatever login it
+  // is named by now.
+  assert.deepEqual(await db.listUsersByAccount([{ login: 'renamed', githubId: 7005 }, { login: 'Renamed', githubId: 7011 }, { login: 'alice-new', githubId: 7010 },
+    { login: 'alice', githubId: 7999 }, { login: 'pending', githubId: 7003 }, { login: 'bob', githubId: null }]), {
+    renamed: { id: dave, login: 'renamed', name: null },
+    Renamed: { id: carol, login: 'carol', name: null },
+    'alice-new': { id: alice, login: 'alice', name: 'Alice' },
+    bob: { id: bob, login: 'Bob', name: null },
+  }, 'a login two users claim, by its account; a linked account renamed since, as its user; a login another account holds now, no one\'s; none of No access')
+  await db.setProfileChoice('alice-session', { name: work.id }, 3)
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice-work')), { 'alice-work': { id: alice, login: 'alice', name: 'Alice at Work' } }, 'the name they chose')
+  await db.setUserRole(pending, 'view')
+  assert.deepEqual(Object.keys(await db.listUsersByAccount(byLogin('pending'))), ['pending'], 'once approved')
+  await db.unlinkGithubAccount('alice-session', work.id, 4)
+  assert.deepEqual(await db.listUsersByAccount(byLogin('alice-work')), {}, 'an unlinked account is no one\'s')
+  assert.deepEqual(await db.listUsersByAccount([{ login: 'alice-work', githubId: 7010 }]), {}, 'by its id neither')
 }

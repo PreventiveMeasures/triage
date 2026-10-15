@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { summarizeReview } from '../../common/dependency-reviews.js'
 import { npmComparisonSource } from './npm-compare-source.js'
 import { NEXT_ICON } from './lit-icons.js'
@@ -146,7 +146,7 @@ export function renderReviewEntry(page, review) {
         @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button>` : nothing}
       <review-audit-copy .review=${review}></review-audit-copy>
       ${!published && own && page._writable ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${busy(page)}
-        @click=${() => void page._discard(review)}>${unsafeHTML(DELETE_ICON_SVG)}</button>` : nothing}
+        @click=${() => void page._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
     </div>
     ${published && own && page._writable && review.revokedAt === null && remaining.length > 0 ? html`
       <details class="npm-review-share"><summary>Publish to more teams</summary>${teamOptions(page, 'Teams', remaining, selected,

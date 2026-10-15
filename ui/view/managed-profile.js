@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { chooseProfileAccounts, fetchProfile, getPreviewRole, unlinkGithubAccount } from './client-managed.js'
+import { knowProfile } from './github-users.js'
 
 // Where linking another GitHub account starts (server-managed/github-link-oauth.ts):
 // a top-level navigation to GitHub and back to this page.
@@ -38,7 +39,8 @@ export class ManagedProfile extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) this._busy = false }
   }
-  async _change(work) {
+  // `unlinked`, the account the change unlinks, by its login and GitHub id.
+  async _change(work, unlinked = null) {
     if (this._busy || this._readOnly) return
     const key = this._key
     this._busy = true
@@ -49,7 +51,9 @@ export class ManagedProfile extends LitElement {
       const avatarChanged = profile.avatarAccount !== this._profile?.avatarAccount
       if (avatarChanged) this._avatarRevision++
       this._profile = profile
-      // The account control shows the displayed name and avatar too.
+      // The account control shows the displayed name and avatar too, as
+      // does a repository's activity read before (github-users.js).
+      knowProfile(this.session.id, profile, avatarChanged, unlinked)
       document.dispatchEvent(new CustomEvent('managed-profile-change', { detail: { userId: this.session.id, name: profile.name, avatarChanged } }))
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) { this._busy = false; this._pending = null } }
@@ -61,7 +65,7 @@ export class ManagedProfile extends LitElement {
     return this._change((csrfToken, options) => chooseProfileAccounts({ [kind]: id }, csrfToken, options))
   }
   _unlink(account) {
-    return this._change((csrfToken, options) => unlinkGithubAccount(account.id, csrfToken, options))
+    return this._change((csrfToken, options) => unlinkGithubAccount(account.id, csrfToken, options), { login: account.login, githubId: account.githubId })
   }
   // The avatar a user id serves is the chosen one; `own` asks for the sign-in
   // account's. The revision refetches the chosen one once it changes.
@@ -71,7 +75,7 @@ export class ManagedProfile extends LitElement {
       <span>${(initial[0] ?? '?').toUpperCase()}</span>
       ${getPreviewRole() ? nothing : html`<img alt="" src=${src} @error=${e => e.currentTarget.classList.add('broken')}>`}</span>`
   }
-  _account({ id, login, name, linkedAt }, profile) {
+  _account({ id, githubId, login, name, linkedAt }, profile) {
     const own = id === null
     const disabled = this._busy || this._readOnly
     return html`<tr>
@@ -84,7 +88,7 @@ export class ManagedProfile extends LitElement {
       <td><label class="managed-profile-choice"><input type="radio" name="managed-profile-avatar" .checked=${live(profile.avatarAccount === id)} ?disabled=${disabled}
           aria-label=${`Use @${login}'s avatar`} @change=${() => this._choose('avatar', id)}><span class="managed-profile-muted">Avatar</span></label></td>
       <td>${own ? nothing : html`<button type="button" class="npm-review-button" ?disabled=${disabled}
-        aria-label=${`Unlink @${login}`} @click=${() => this._unlink({ id, login })}>Unlink</button>`}</td>
+        aria-label=${`Unlink @${login}`} @click=${() => this._unlink({ id, githubId, login })}>Unlink</button>`}</td>
     </tr>`
   }
   render() {

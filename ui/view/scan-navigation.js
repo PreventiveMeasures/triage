@@ -3,6 +3,7 @@ import { currentViewGeneration, goHome } from './ingest.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { render } from './render.js'
 import { SCAN_ICON_SVG } from './icons.js'
+import { trustedHTML } from './trusted-types.js'
 import { availableScanServer } from '../scan/availability.js'
 import { loadScanPage } from './scan-load.js'
 import { showToast } from './toast.js'
@@ -59,7 +60,7 @@ export function refreshScanNavigation() {
     button = document.createElement('button')
     button.type = 'button'
     button.className = 'local-scan-button'
-    button.innerHTML = `${SCAN_ICON_SVG}<span>Scan</span>`
+    button.innerHTML = trustedHTML(`${SCAN_ICON_SVG}<span>Scan</span>`)
     button.addEventListener('click', () => void openScan())
     landing.append(button)
   }

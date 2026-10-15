@@ -105,3 +105,6 @@ export const repositoryReadStore = (db: UpstreamCacheStore, debug = false): Kept
 // they were last read from GitHub.
 export const HISTORY_PAGE_KEPT_MS = 30 * 24 * 60 * 60_000
 export const historyPageStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/history', HISTORY_PAGE_KEPT_MS, debug)
+// The pull requests squashed into a repository's commits, by the commit
+// (repository-history.ts squashedPulls): kept as its history's pages are.
+export const historySquashStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/squashes', HISTORY_PAGE_KEPT_MS, debug)

@@ -2,9 +2,11 @@
 // than one surface. Stored as raw SVG strings so callers can pick
 // the binding that fits:
 //   - Sidebar rows (shadow DOM, Lit templates) wrap with
-//     `unsafeHTML(...)` to land the markup inside the row template.
+//     `appMarkup(...)` (view/markup.js) to land the markup inside the
+//     row template.
 //   - Drop-zone supported-formats list (light DOM, static HTML)
-//     has the boot path inject these strings via `.innerHTML` into
+//     has the boot path inject these strings via `.innerHTML`
+//     (through `trustedHTML`) into
 //     `<span data-icon="…">` placeholders so the same source
 //     paints both surfaces without duplicating the path data.
 //
@@ -13,9 +15,18 @@
 // bucket-detection helpers that consume them; they're imported by
 // name from the same drop-zone boot path.
 
-// Claude mark shared by report stickers and the Claude Code action.
-// Coordinates match the existing sticker; standalone icons crop to the mark.
+// Claude mark shared by report stickers, the Claude Code action, the
+// Anthropic provider icon and Claude's agent mark. Coordinates match the
+// existing sticker; standalone icons crop to the mark (`4 5 8 8`).
 export const CLAUDE_MARK_PATH = 'm5.875 10.154 1.376-.772.023-.067-.023-.037h-.067l-.23-.015-.787-.02-.681-.03-.661-.035-.166-.035-.156-.205.016-.103.14-.094.2.018.442.03.665.046.481.028.714.075h.113l.016-.047-.039-.028-.03-.028-.687-.466-.744-.492-.39-.284-.21-.143-.106-.135-.046-.294.19-.21.258.017.065.018.26.2.557.43.726.535.106.089.042-.03.006-.022-.048-.08-.395-.713-.422-.726-.187-.301-.05-.18a1 1 0 0 1-.03-.213l.218-.296.12-.039.29.039.123.106.18.413.293.65.453.884.133.262.07.242.027.075h.046v-.043l.038-.497.069-.611.067-.787.023-.221.11-.266.218-.143.17.081.14.2-.02.13-.083.54-.163.846-.106.567h.062l.07-.07.287-.382.482-.602.213-.239.248-.264.159-.125h.301l.221.329-.099.34-.31.393-.256.333-.369.496-.23.397.021.032.055-.006.832-.177.45-.081.537-.092.243.113.026.115-.096.236-.573.141-.673.135-1.003.237-.012.01.014.017.452.042.193.01h.473l.88.066.23.153.138.186-.023.141-.354.181-.478-.113-1.116-.266-.383-.096h-.053v.032l.32.312.584.528.731.68.037.168-.094.133-.099-.014-.643-.484-.248-.218-.561-.472H9.08v.05l.129.189.684 1.027.035.315-.05.103-.177.062-.194-.036-.4-.561-.413-.632-.333-.567-.041.023-.197 2.116-.092.108-.212.082-.177-.135-.094-.218.094-.43.113-.561.092-.447.083-.554.05-.184-.004-.013-.04.006-.418.574-.636.858-.503.539-.12.048-.21-.108.02-.193.117-.172.696-.886.42-.549.27-.317-.001-.046h-.016l-1.85 1.201-.328.042-.142-.132.018-.218.067-.071.556-.383Z'
+
+// OpenAI mark shared by codex-security stickers, the OpenAI provider icon
+// and Codex's agent mark, in the same coordinates as Claude's.
+export const OPENAI_MARK_PATH = 'M11.04 8.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V8.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0L5.63 9.587a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125L8.327 7.94l.596-.34a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436V9.122a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zM6.908 9.252l-.597-.34a.02.02 0 0 1-.012-.016V7.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z'
+
+// GitHub Copilot's mark (Simple Icons), Copilot's agent mark, in its own
+// 24×24 box.
+export const COPILOT_MARK_PATH = 'M23.922 16.997C23.061 18.492 18.063 22.02 12 22.02 5.937 22.02.939 18.492.078 16.997A.641.641 0 0 1 0 16.741v-2.869a.883.883 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.098 10.098 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952C7.255 2.937 9.248 1.98 11.978 1.98c2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.841.841 0 0 1 .053.22v2.869a.641.641 0 0 1-.078.256Zm-11.75-5.992h-.344a4.359 4.359 0 0 1-.355.508c-.77.947-1.918 1.492-3.508 1.492-1.725 0-2.989-.359-3.782-1.259a2.137 2.137 0 0 1-.085-.104L4 11.746v6.585c1.435.779 4.514 2.179 8 2.179 3.486 0 6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259-1.59 0-2.738-.545-3.508-1.492a4.359 4.359 0 0 1-.355-.508Zm2.328 3.25c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm-5 0c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm3.313-6.185c.136 1.057.403 1.913.878 2.497.442.544 1.134.938 2.344.938 1.573 0 2.292-.337 2.657-.751.384-.435.558-1.15.558-2.361 0-1.14-.243-1.847-.705-2.319-.477-.488-1.319-.862-2.824-1.025-1.487-.161-2.192.138-2.533.529-.269.307-.437.808-.438 1.578v.021c0 .265.021.562.063.893Zm-1.626 0c.042-.331.063-.628.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578-.341-.391-1.046-.69-2.533-.529-1.505.163-2.347.537-2.824 1.025-.462.472-.705 1.179-.705 2.319 0 1.211.175 1.926.558 2.361.365.414 1.084.751 2.657.751 1.21 0 1.902-.394 2.344-.938.475-.584.742-1.44.878-2.497Z'
 
 // Node.js mark, monochrome, from Simple Icons (nodedotjs, CC0-1.0), on a
 // 24×24 viewBox. Fill with `currentColor`.
@@ -72,6 +83,7 @@ export const GITHUB_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" 
 export const DEPENDABOT_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v2"/><rect x="2" y="3.5" width="12" height="10" rx="2.5"/><path d="M6 7.5v2m4-2v2"/></svg>'
 
 export const COMMIT_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M1 8h3.5m7 0H15"/><circle cx="8" cy="8" r="3.5"/></svg>'
+export const PULL_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/></svg>'
 export const TAG_ICON_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>'
 
 export const EDIT_ICON_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 2 4 4-8 8H2v-4l8-8Zm-1 1 4 4"/></svg>'

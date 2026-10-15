@@ -13,22 +13,27 @@
 // requests are one session, and a commit its own.
 //
 // The agents are Claude and Codex, and those the server knows by their GitHub
-// Apps (repository-agents.ts APP_AGENTS): each told by its fingerprint in
-// its texts or its branches' prefix, the server's to read, and named to the
-// client by its id, name and app (AppAgent). Such an agent names no session:
+// Apps or accounts (repository-agents.ts APP_AGENTS): each told by its
+// fingerprint, a line of its texts, by the account its work is authored by,
+// or by its branches' prefix, the server's to read, and named to the client
+// by its id, name and avatar (AppAgent). Such an agent names no session:
 // a pull request of its is a session alone, with its branch; Claude's or
 // Codex's marks on its work show those as its tools.
 
 // 'claude', 'codex', or an app agent's id.
 export type Agent = string
 
-// An agent known by its GitHub App, as the server names it to the client:
-// its id, its name, and its app, whose avatar is its mark
-// (/api/avatar/app-<app>).
-export interface AppAgent { id: string; name: string; app: number }
-// How the server tells one: its fingerprint in an artifact's texts, its
-// branches' prefix.
-export interface AppAgentMarks { id: string; fingerprint: string; prefix: string }
+// An agent known by its GitHub App or account, as the server names it to the
+// client: its id, its name, and its avatar, its mark (/api/avatar/<avatar>:
+// `app-<id>` a GitHub App's, `user-<id>` a GitHub account's), where the app
+// draws no mark of its own for it (Copilot's, ui/view/repository-tiles.js).
+export interface AppAgent { id: string; name: string; avatar?: string }
+// How the server tells one: its fingerprint, a line of an artifact's texts
+// starting with it; the GitHub account its work is authored by, its id and
+// the logins GitHub names it by; its branches' prefix.
+export interface AppAgentMarks { id: string; fingerprint?: string; account?: { id: number; logins: readonly string[] }; prefix: string }
+// An artifact's author, as GitHub names its account: its login and id.
+export interface AgentAuthor { login: string; id: number }
 
 // What an artifact's texts say of the agents that made it: the Claude Code
 // sessions and Codex tasks they link, whether they carry Claude's marks,
@@ -36,15 +41,17 @@ export interface AppAgentMarks { id: string; fingerprint: string; prefix: string
 // whose fingerprints they carry, or whose branch it is.
 export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean; agents: string[] }
 
-export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null
+// Each by its author's login, and their account's numeric id (`authorId`)
+// where GitHub names it.
+export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null; authorId?: number | null
   // Its branch, and the owner of the fork it is in, null where it is in the
   // repository itself.
   createdAt: number | null; updatedAt: number | null; head: string | null; fork: string | null; additions: number; deletions: number; commits: number
   closes: number[]; signals: AgentSignals }
-export interface AgentIssue { number: number; title: string; state: 'open' | 'closed'; author: string | null; createdAt: number | null; updatedAt: number | null }
-export interface AgentBranch { name: string; at: number | null; author: string | null; signals: AgentSignals }
+export interface AgentIssue { number: number; title: string; state: 'open' | 'closed'; author: string | null; authorId?: number | null; createdAt: number | null; updatedAt: number | null }
+export interface AgentBranch { name: string; at: number | null; author: string | null; authorId?: number | null; signals: AgentSignals }
 // A commit to the default branch no pull request merged.
-export interface AgentCommit { oid: string; title: string; at: number | null; author: string | null; additions: number; deletions: number
+export interface AgentCommit { oid: string; title: string; at: number | null; author: string | null; authorId?: number | null; additions: number; deletions: number
   signals: AgentSignals }
 
 export interface AgentSession {
@@ -78,13 +85,20 @@ const CLAUDE_MARK = /^co-authored-by: claude\b|generated with \[claude code\]|^c
 const MAX_LINKS = 8
 
 // The sessions and tasks `texts` link, whether they carry Claude's marks, and
-// the agents of `apps` whose fingerprints they carry, or whose prefix the
-// branch `branch` is under.
-export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null): AgentSignals {
+// the agents of `apps` whose fingerprints start a line of them (not one a
+// text quotes, as one describing it may), whose account `author` is, by its
+// id and login both, or whose prefix the branch `branch` is under.
+export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
+  author: AgentAuthor | null = null): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
   const found = (pattern: RegExp) => [...new Set(strings.flatMap(text => [...text.matchAll(pattern)].map(match => match[1]!)))].slice(0, MAX_LINKS)
+  const lines = strings.flatMap(text => text.split('\n').map(line => line.trimStart()))
+  const login = author?.login.toLowerCase()
+  const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
+    && account.logins.some(name => name.toLowerCase() === login)
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
-    agents: apps.filter(app => strings.some(text => text.includes(app.fingerprint)) || branch?.startsWith(app.prefix)).map(app => app.id) }
+    agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
+      || authored(app) || branch?.startsWith(app.prefix)).map(app => app.id) }
 }
 
 // The agent a branch's name says made it, and the issue or pull request the
@@ -110,8 +124,8 @@ type Group = { agents: Set<Agent>; keys: string[] }
 // `session:<id>`, `task:<id>`), each set with the agents whose marks are on
 // them: by the sessions and tasks they link and the branches pull requests
 // are from. An app agent's join none by what they link, and a pull request
-// of its its branch alone, where no pull request newer took it: one a
-// session.
+// of its its branch alone, where no pull request newer is from it, an app
+// agent's or another's: one a session.
 function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts): Group[] {
   const parent = new Map<string, string>()
   const find = (key: string): string => {
@@ -139,7 +153,13 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     const { agent } = agentBranch(branch.name)
     if (agent) mark(key, [agent])
   }
-  const appBranches = new Set<string>()
+  // The newest pull request read from each branch, by its number, as GitHub
+  // numbers them as they are opened: they are read as they were updated.
+  const newest = new Map<string, number>()
+  for (const pull of pulls) {
+    const head = headName(pull)
+    if (head !== null && pull.number > (newest.get(head) ?? 0)) newest.set(head, pull.number)
+  }
   for (const pull of pulls) {
     const key = `pull:${pull.number}`
     linked(key, pull.signals)
@@ -148,8 +168,7 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     // Its branch, an agent's or its own, read or not; a fork's its own.
     const head = headName(pull)
     if (pull.signals.agents.length > 0) {
-      if (head && !appBranches.has(head)) join(key, `branch:${head}`)
-      if (head) appBranches.add(head)
+      if (head !== null && newest.get(head) === pull.number) join(key, `branch:${head}`)
       continue
     }
     if (head && (agent || signalAgents(pull.signals).length > 0 || branchNames.has(head))) join(key, `branch:${head}`)

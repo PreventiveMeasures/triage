@@ -5,7 +5,7 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 import { html, nothing, unsafeCSS } from 'lit'
 import { reportRepoGithub } from '@preventive/report'
 import { ManagedPage, loadingRows } from './page.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from '../view/markup.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { normalizeNpmScope } from '../../common/managed/npm-packages.js'
@@ -54,8 +54,8 @@ function adminAvatar(id, login) {
   </span>`
 }
 
-const ADMIN_EDIT_ICON = unsafeHTML(EDIT_ICON_SVG)
-const ADMIN_DELETE_ICON = unsafeHTML(DELETE_ICON_SVG)
+const ADMIN_EDIT_ICON = appMarkup(EDIT_ICON_SVG)
+const ADMIN_DELETE_ICON = appMarkup(DELETE_ICON_SVG)
 const ADMIN_REMOVE_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg>`
 const ADMIN_PLUS_ICON = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>`
 const ADMIN_ROLE_LABELS = { admin: 'Admin', manage: 'Manager', triage: 'Triage', view: 'Viewer', none: 'No access' }
@@ -925,7 +925,7 @@ class ManagedAdminReports extends ManagedPage {
     const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
       <div class="report-main">
-        <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
+        <span class="report-mark" aria-hidden="true">${appMarkup(logo)}</span>
         <span class="report-name" data-tooltip-truncated data-tooltip=${name}>${name}</span>
         <span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
         <span class="report-meta report-uploader" data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? 'Uploader removed'}>${report.uploadedByLogin ?? 'Uploader removed'}</span>

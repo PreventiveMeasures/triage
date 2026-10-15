@@ -3376,6 +3376,15 @@ repository-code-source {
   /* The revision grows into room left, as wide as a full one it names. */
   & > .repository-code-revision { flex: 1 1 16rem; min-width: 10rem; max-width: max-content; }
 }
+/* A side of a directory's Compare (repository-compare.js): as wide as the
+   revision it names, and before one is picked, as what it asks for, within
+   its row less the hint before it (`cqi`: its row's own width, which it
+   sizes, would be none). */
+.bundle-compare-head:has(repository-revision-pick) { container-type: inline-size; }
+.bundle-compare-picker repository-revision-pick {
+  display: block; flex: 0 1 auto;
+  &[empty] { min-width: min(19.5rem, 100cqi - 5rem); }
+}
 .repository-code-path {
   display: inline-flex; align-items: center; gap: .3rem; min-width: 0; flex: none; max-width: 18rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; color: var(--muted);
@@ -3457,6 +3466,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
 .history-modes {
   display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
   & > button {
+    display: inline-flex; align-items: center; gap: .3rem;
     padding: .2rem .65rem; border: 0; background: none; color: var(--muted); font: inherit; cursor: default;
     &:hover:not(:disabled) { color: var(--text); }
     &[aria-pressed=true] { background: var(--surface-active); color: var(--text); }
@@ -3464,8 +3474,33 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   }
   & > button + button { border-left: 1px solid var(--border); }
+  /* A mode's count: the bubble the severity and triage filters count their
+     chips in (toolbar.css .sev-chip .n), lifted to the button's top edge and
+     pulled tight to its label, in the text's color where pressed. */
+  & .n {
+    align-self: flex-start; margin: calc(1px - .2rem) -5px 0;
+    color: var(--muted); font-variant-numeric: tabular-nums; font-size: 8.5px; font-weight: 600;
+    background: var(--bg); border-radius: 999px; padding: 0 3px; min-width: 11px; text-align: center; line-height: 11px;
+  }
+  & > button[aria-pressed=true] .n { color: var(--text); }
 }
 .history-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Activity's views (repository-activity.js), first in each view's bar, an
+   icon each, picked as the graph's layouts are. As tall as the buttons and
+   filter beside them, a line of their text with their padding and border,
+   alone on a line of the bar too. */
+.activity-views {
+  display: inline-flex; flex-shrink: 0; align-self: stretch; min-height: calc(1lh + .4rem + 2px); gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+  & > button {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 1px 6px;
+    border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); cursor: default;
+    &:hover { color: var(--text); }
+    &[aria-pressed=true] { background: var(--surface-active); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    & svg { display: block; }
+  }
+}
 .history-scroll { flex: 1; min-height: 0; overflow: auto; padding: .3rem 0 .5rem; }
 .history-lines { position: relative; min-width: calc(var(--history-graph) + 24rem); }
 .history-graph {
@@ -3675,8 +3710,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
 }
 
 /* A repository's agents (repository-agents.js): a session a tile, as an
-   issue is, its agents' marks a rail beside its lines, Claude's a burst in
-   its orange, Codex's a prompt, an app agent's its GitHub App's avatar: its
+   issue is, its agents' marks a rail beside its lines, Claude's in its
+   orange, Codex's OpenAI's, an app agent's its GitHub App's avatar: its
    title, opening where it ran, then a line each, none wrapping, its author,
    age, tasks and size, its tasks and issues as chips in their states'
    colors, and its branch. */
@@ -3688,12 +3723,14 @@ repository-agents { --claude: #d97757; }
 .agent-mark, .agent-logo { display: inline-flex; }
 .agent-mark :is(svg, img) { width: 14px; height: 14px; }
 .agent-avatar { border-radius: 3px; }
-/* Claude's burst drawn in its orange, Codex's OpenAI mark filled. */
-:is(.agent-pick, .agent-mark).is-claude svg {
-  color: var(--claude); fill: none; stroke: currentcolor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
-}
-:is(.agent-pick, .agent-mark).is-codex svg { fill: currentcolor; stroke: none; }
-.agent-mark.is-codex { color: var(--text); }
+/* Claude's mark filled in its orange, Codex's OpenAI mark and Copilot's in
+   the text's. */
+:is(.agent-pick, .agent-mark):is(.is-claude, .is-codex, .is-copilot) svg { fill: currentcolor; stroke: none; }
+:is(.agent-pick, .agent-mark).is-claude svg { color: var(--claude); }
+/* Codex's and Copilot's in the text's color, unmuted on an unpressed button
+   too, as the other agents' marks are. */
+.agent-pick:is(.is-codex, .is-copilot) svg { color: var(--text); }
+.agent-mark:is(.is-codex, .is-copilot) { color: var(--text); }
 /* What each agent did among the sessions read, at the bar's end: its mark,
    then its pull requests, branches and commits to the default branch
    without one, each its icon and count, the two agents and how many were
@@ -3704,7 +3741,7 @@ repository-agents { --claude: #d97757; }
 }
 .agent-stats {
   display: inline-flex; align-items: center; gap: .55rem; font-variant-numeric: tabular-nums;
-  & .agent-mark :is(svg, img) { width: 12px; height: 12px; }
+  & .agent-mark :is(svg, img) { width: 16px; height: 16px; }
 }
 .agent-stat {
   display: inline-flex; align-items: center; gap: .2rem;
@@ -3744,7 +3781,8 @@ repository-agents { --claude: #d97757; }
   &.is-merged { --chip: var(--issue-merged); }
   &.is-closed { --chip: var(--issue-closed); }
   &.is-draft { --chip: var(--issue-quiet); }
-  &.is-commit { --chip: var(--text); & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } }
+  /* Its id the chip's cursor, as the others' are, not code's text one. */
+  &.is-commit { --chip: var(--text); & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: inherit; } }
   &.is-issue { border-style: dashed; }
 }
 

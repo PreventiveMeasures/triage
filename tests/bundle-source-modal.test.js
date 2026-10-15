@@ -127,7 +127,7 @@ test('an npm version opening shows its header at once, its version and tabs wait
   assert.deepEqual(tabsOf(opening).map(tab => [at(tab, 'data-bundle-tab="'), at(tab, 'aria-selected='), at(tab, '?disabled=')]),
     [['treemap', 'false', true], ['code', 'true', true], ['search', 'false', true], ['compare', 'false', true], ['review', 'false', true], ['overview', 'false', true]],
     'the tabs it will have, the one its route names open')
-  assert.match(text, /<div class=\s*\?inert= aria-busy=><div class="bundles-slide-placeholder" role="status">Opening lodash@4\.18\.1…<\/div><\/div>\s*<\/div>$/u)
+  assert.match(text, /<div class=\s*\?inert= aria-busy= @click=><div class="bundles-slide-placeholder" role="status">Opening lodash@4\.18\.1…<\/div><\/div>\s*<\/div>$/u)
   const latest = renderNpmOpening({ name: 'lodash', spec: null, tab: 'overview' })
   assert.equal(at(selectOf(latest), '.version='), 'latest')
   assert.match(renderText(latest), /Opening lodash…/u)

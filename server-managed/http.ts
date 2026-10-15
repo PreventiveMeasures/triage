@@ -23,7 +23,7 @@
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>[?own]  → cached avatar bytes by user id, of the account chosen on their profile (`own`: the
-//        sign-in account's), or by linked account id; `app-<id>`, an app agent's GitHub App's (APP_AGENTS) | 401/404
+//        sign-in account's), or by linked account id; `app-<id>` or `user-<id>`, an app agent's GitHub App's or account's (APP_AGENTS) | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -43,8 +43,11 @@
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week over the last
-//        year, its contributors and when in the week they commit (pending while GitHub computes them), and the pull requests
+//        year, its contributors and when in the week they commit, counted from its commits as Commits keeps them (how many are
+//        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
+//        History, issues, item, agents and pulse each carry `users`: the app's users and agents the GitHub accounts they
+//        name are (github-users.ts), by login
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/repositories/risk[?team=|?repo=] → admin: each connected repo's npm lockfiles, or a team's or one repo's,
 //        their packages and what risk tells of each, Brotli-encoded ndjson as each is found; the reader leaving stops it | 400/401/403/404
@@ -110,7 +113,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyPageStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyPageStore, historySquashStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -165,6 +168,7 @@ import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext,
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
 import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallback } from './github-link-oauth.ts'
 import type { ProfileChoice } from './github-links.ts'
+import { withAppUsers } from './github-users.ts'
 import { isBlobId } from './object-storage.ts'
 import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -178,10 +182,12 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
-import { APP_AGENTS, repositoryAgents } from './repository-agents.ts'
+import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
+  repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
+import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { PULSE_WEEKS, StatsPending, repositoryActivity, repositoryStats } from './repository-pulse.ts'
+import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
+  yearCommits } from './repository-pulse.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -415,22 +421,20 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
   res.end(avatar.bytes)
 }
 
-// The GitHub Apps whose avatars `/api/avatar/app-<id>` serves, these alone:
-// the agents' known by their apps (APP_AGENTS), each its mark on the Agents
-// tab. Each is fetched from GitHub once and kept, under a key no user's, a
-// v4 UUID, can be.
-const AVATAR_APPS: ReadonlySet<number> = new Set(APP_AGENTS.map(agent => agent.app))
-const APP_AVATAR = /^app-([1-9]\d{0,11})$/u
-function avatarApp(id: string): number | null {
-  const app = Number(APP_AVATAR.exec(id)?.[1])
-  return AVATAR_APPS.has(app) ? app : null
-}
+// The avatars `/api/avatar/app-<id>` and `/api/avatar/user-<id>` serve, these
+// alone: the agents' known by their GitHub Apps or accounts (APP_AGENTS),
+// each its mark on the Agents tab. Each is fetched from GitHub once and
+// kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
+// an account's, `…-0001-<id>`.
+const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.flatMap(agent => agent.avatar ?? []))
+const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
-async function serveAppAvatar(res: ServerResponse, avatarStore: AvatarStore, app: number): Promise<void> {
-  const key = `00000000-0000-0000-0000-${String(app).padStart(12, '0')}`
+async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
+  const [, kind, id] = AGENT_AVATAR.exec(avatar)!
+  const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
   if (await avatarStore.get(key) == null) {
-    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/in/${app}`, globalThis.fetch)
-      .catch((err) => { console.warn('managed: app avatar caching failed:', err) })
+    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
+      .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
   }
   await serveAvatar(res, avatarStore, key)
 }
@@ -1555,7 +1559,8 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
 // at, and those kept glued on (historyFrom); a later page reads on from the
 // commits `from` names. The branches and tags naming commits are kept as an
 // issue's page is (keptAnswer). Access is checked again once it is read,
-// before any of it is sent.
+// before any of it is sent, with the app's users its authors are
+// (github-users.ts).
 async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
@@ -1589,7 +1594,14 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
         : { all: true, ...await repositoryAllHistory(repo, token, (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token))).value, pages) }
     } else {
       const commit = await reader.commit(ref)
-      const tips = page === 1 ? keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value) : null
+      // The branches and tags naming commits: with a token, every branch All
+      // branches reads and the latest tags, kept for both; without, GitHub's
+      // first page of each.
+      const naming = () => token
+        ? keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token)).then(({ value }) => ({
+          branches: value.heads.map(({ name, sha }) => ({ name, sha })), tags: value.tags }))
+        : keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value)
+      const tips = page === 1 ? naming() : null
       // A whole repository's from its commit, or on from those `from` names
       // (a page by its number where none are, as GitHub lists them); a
       // directory's by its number.
@@ -1598,11 +1610,29 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       const [read, named] = await Promise.all([history, tips])
       body = { commit, path, page, ...read, ...named }
     }
+    // The pull requests squashed into a whole repository's commits, drawn as
+    // the merges they were, and on its first page the open ones' heads,
+    // naming commits: with a token, as far as GitHub answers them, the
+    // history sent all the same where it doesn't.
+    const listed = (body as { commits: HistoryCommit[] }).commits
+    const quiet = <T>(fallback: T) => (err: unknown) => {
+      if (deps.config.debug) console.warn('managed: history pull requests read failed:', err)
+      return fallback
+    }
+    const [pulls, openPulls] = token && path === '' ? await Promise.all([
+      squashedPulls(repo, token, listed, historySquashes(deps, repoId)).catch(quiet<SquashedPull[]>([])),
+      page === 1 ? keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token)).then(answer => answer.value.pulls, quiet(null)) : null,
+    ]) : [[], null]
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, body)
+    // Each commit as the tab draws it: what Pulse counts of it (its lines, its
+    // author's time) not sent.
+    const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, committedAt }: HistoryCommit) =>
+      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, committedAt })
+    sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits: listed.map(shown),
+      ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1624,9 +1654,11 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // this: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
 // kept, answered at once and read again behind it for the next to ask, where
 // the instance outlives its answer (not serverless, where it is read again
-// before it is answered); `kept` where it was. One GitHub refuses to read
-// again is no longer kept: the next to ask is refused as GitHub refused it.
-async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>): Promise<{ value: T; kept: boolean }> {
+// before it is answered); `kept` where it was, or where reading it again
+// failed as `keepThrough` lets it. One GitHub refuses to read again is no
+// longer kept: the next to ask is refused as GitHub refused it.
+async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
+  keepThrough: (err: unknown) => boolean = () => false): Promise<{ value: T; kept: boolean }> {
   const store = repositoryReadStore(deps.db, deps.config.debug)
   // One kept longer than a day, not yet removed (pruneKept removes them as
   // others are written), is none.
@@ -1646,17 +1678,25 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   if (held && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
       repositoryRereads.add(key)
-      deps.track(readKept().catch((err: unknown) => { if (deps.config.debug) console.warn('managed: repository read failed:', err) })
+      // Its failure leaves the kept answer sent until it is a day old, so it is said.
+      deps.track(readKept().catch((err: unknown) => { console.warn('managed: repository read failed:', err) })
         .finally(() => repositoryRereads.delete(key)))
     }
     return { value: held.value as T, kept: true }
   }
-  return { value: await readKept(), kept: false }
+  try {
+    return { value: await readKept(), kept: false }
+  } catch (err) {
+    if (held && keepThrough(err)) return { value: held.value as T, kept: true }
+    throw err
+  }
 }
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
-// the commit it starts at (repository-history.ts historyFrom).
-function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
+// the commit it starts at (repository-history.ts historyFrom); with `lines`,
+// only those telling each commit's lines (read with GraphQL since it reads
+// them), the rest read again.
+function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${top}`
   return {
@@ -1664,10 +1704,27 @@ function historyPages(deps: ManagedHttpDeps, repoId: number): HistoryPages {
       const kept = await store.readMany(tops.map(keyOf))
       return new Map(tops.flatMap(top => {
         const page = kept.get(keyOf(top))?.value
-        return Array.isArray(page) ? [[top, page] as const] : []
+        return Array.isArray(page) && (!lines || page.every(commit => commit.additions != null)) ? [[top, page] as const] : []
       }))
     },
     write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
+  }
+}
+
+// The pull requests squashed into repository `repoId`'s commits, kept by
+// each commit, null for one none was (repository-history.ts squashedPulls).
+function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
+  const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
+  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  return {
+    async read(shas) {
+      const kept = await store.readMany(shas.map(keyOf))
+      return new Map(shas.flatMap(sha => {
+        const entry = kept.get(keyOf(sha))
+        return entry && (entry.value === null || Array.isArray(entry.value.commits)) ? [[sha, entry.value] as const] : []
+      }))
+    },
+    write: (sha, pull) => store.write(keyOf(sha), pull, Date.now()),
   }
 }
 
@@ -1684,7 +1741,8 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
 
 // What `answer` gives of the whole of repository `repoId` (with its name and
 // a token), as readWholeRepository reads it: sent at once where it was kept,
-// else once access is checked again.
+// else once access is checked again, with the app's users it names
+// (github-users.ts), never kept with it.
 async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   answer: (fullName: string, token: string) => Promise<{ value: object; kept: boolean }>): Promise<void> {
   const authorize = async () => {
@@ -1699,12 +1757,12 @@ async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps,
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
     const answered = await answer(access.repo.fullName, token)
-    if (answered.kept) { sendJson(res, 200, answered.value); return }
+    if (answered.kept) { sendJson(res, 200, await withAppUsers(deps.db, answered.value)); return }
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, answered.value)
+    sendJson(res, 200, await withAppUsers(deps.db, answered.value))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1734,10 +1792,12 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
 async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || Object.values(cursors).some(cursor => cursor !== null && !ISSUES_CURSOR.test(cursor))) {
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
+    || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors), `agents\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors),
+    `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 
 // GET /api/admin/repositories/item: the issue or pull request numbered
@@ -1753,25 +1813,59 @@ async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, 
 }
 
 // GET /api/admin/repositories/pulse: what the code viewer's Pulse tab shows
-// (repository-pulse.ts): the default branch's statistics over the last year,
-// kept apart from the pull requests and issues of the last `weeks` weeks for
-// every period to share; `stats` null, `pending`, while GitHub is still
-// computing them, unkept, for the client to ask again. They are the whole
+// (repository-pulse.ts): the default branch's year, counted from its commits
+// (pulseCommits), and the pull requests and issues of the last `weeks`
+// weeks, each kept apart. A year not read whole yet answers how many of its
+// commits are (`reading`); one GitHub's statistics count, while it is still
+// computing them, `pending`, for the client to ask again. They are the whole
 // repository's (readWholeRepository).
 async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const weeks = Number(query.get('weeks') ?? '4')
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const [period, stats] = await Promise.all([
+    const [period, year] = await Promise.all([
       keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => repositoryActivity(fullName, token, weeks)),
-      keptAnswer(deps, `${repoId}\0pulse-stats`, () => repositoryStats(fullName, token)).catch((err: unknown) => {
-        if (err instanceof StatsPending) return null
-        throw err
-      }),
+      pulseCommits(deps, repoId, fullName, token),
     ])
-    return { value: { weeks, ...period.value, stats: stats?.value ?? null, pending: stats === null }, kept: period.kept && stats?.kept === true }
+    return { value: { weeks, ...period.value, stats: year.stats, reading: year.reading, pending: year.pending }, kept: period.kept && year.kept }
   })
+}
+
+// The default branch's year (repository-pulse.ts commitStats), counted from
+// its commits as the Commits tab keeps them, with their lines
+// (yearCommits): kept by the head it was read from (repositoryReadStore),
+// that head kept as an issue's page is. A year not read whole yet is how
+// many of its commits are (`reading`); one past YEAR_COMMITS is GitHub's
+// statistics' (repositoryStats, repositoryLines), kept together as an
+// issue's page is and through GitHub computing them again, `pending` while
+// it first computes them.
+async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
+  const first = pulseSince(52, Date.now())
+  const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+  if (!head.value.sha) return { stats: commitStats([], first), reading: null, pending: false, kept: head.kept }
+  const store = repositoryReadStore(deps.db, deps.config.debug)
+  const key = `${repoId}\0pulse-year\0${head.value.sha}\0${first}`
+  const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
+  if (held && !('tooMany' in held)) return { stats: held, reading: null, pending: false, kept: head.kept }
+  if (!held) {
+    const year = await yearCommits(fullName, token, head.value.sha, first, historyPages(deps, repoId, true))
+    if (year.complete) {
+      const stats = commitStats(year.commits, first)
+      await store.write(key, stats, Date.now())
+      return { stats, reading: null, pending: false, kept: false }
+    }
+    if (!year.tooMany) return { stats: null, reading: year.read, pending: false, kept: false }
+    await store.write(key, { tooMany: true }, Date.now())
+  }
+  // Its commits and lines read together, kept as one: never the one GitHub
+  // has counted since a push beside the other kept from before it.
+  const computing = (err: unknown) => err instanceof StatsPending
+  const counted = await keptAnswer(deps, `${repoId}\0pulse-stats`, async () => {
+    const [stats, lines] = await Promise.all([repositoryStats(fullName, token), repositoryLines(fullName, token, first)])
+    return withLines(stats, lines)
+  }, computing).catch((err: unknown) => { if (computing(err)) return null; throw err })
+  return { stats: counted?.value ?? null, reading: null, pending: !counted, kept: counted?.kept === true }
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
@@ -3733,8 +3827,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readSession(config, db, cookie, Date.now())
       if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
       const id = path.slice(AVATAR_PREFIX.length)
-      const app = avatarApp(id)
-      if (app !== null) { await serveAppAvatar(res, avatarStore, app); return }
+      if (AGENT_AVATARS.has(id) && AGENT_AVATAR.test(id)) { await serveAgentAvatar(res, avatarStore, id); return }
       await serveAvatar(res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
       return
     }

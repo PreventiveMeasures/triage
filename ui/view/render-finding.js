@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { appMarkup } from './markup.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
 import { reportRepoGithub } from '@preventive/report'
@@ -23,7 +23,7 @@ import { COPY_ICON } from './lit-icons.js'
 export { renderCommentText } from './comment-text.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
-// here as Lit `html` template results (no `unsafeHTML`). Lit
+// here as Lit `html` template results (no `appMarkup`). Lit
 // auto-escapes interpolated text + attribute values, so only
 // structural HTML lives in the templates — no manual `esc()`.
 // render.js's light-DOM surfaces (e.g. the flat list location headers)
@@ -182,7 +182,7 @@ function renderInline(text) {
 // the first pass and repaints coloured when the highlight settles:
 // `highlightedCode` returns null until then, and the `codeBlockTick`
 // read below is what subscribes this card's autorun to that settle.
-// Prism escapes the source, so its HTML goes in via `unsafeHTML`;
+// Prism escapes the source, so its HTML goes in via `appMarkup`;
 // everything else — an unlisted language, an empty block, the first
 // pass — renders `code` as the text it is.
 //
@@ -193,7 +193,7 @@ function renderInline(text) {
 function codeBlockTemplate({ lang, code }) {
   void state.codeBlockTick
   const coloured = highlightedCode(code, lang)
-  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? unsafeHTML(coloured) : code}</code></pre></div>`
+  return html`<div class="code-block" data-lang=${lang || nothing}>${lang ? html`<div class="code-block-lang">${lang}</div>` : nothing}<pre><code>${coloured ? appMarkup(coloured) : code}</code></pre></div>`
 }
 
 // One run of prose, split at its blank lines into real paragraphs.
@@ -367,7 +367,7 @@ function duplicatesTemplate(f, tabIds) {
         data-links-preview=${preview ? other : nothing} data-preview-report=${preview?.report ?? nothing}
         data-preview-row=${preview?.index ?? nothing} data-preview-managed-report=${preview?.managedReportId ?? nothing}
         data-tooltip=${`${displayId}${where}`}
-      >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
+      >${distinctGroups(reports).map((g) => appMarkup(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"
       >${shortFindingId(other) ?? displayId}</span></a>`
     })
@@ -620,7 +620,7 @@ const CODE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidd
 // this says WHERE it goes, which the text can't — `src/proxy.ts:42`
 // is the same string whichever repo it is in, and a card can carry
 // rows from several. The tooltip spells the target out.
-const GITHUB_ICON = unsafeHTML(GITHUB_ICON_SVG)
+const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
 
 // Just the mark. The reference it spells out rides on `data-tooltip`
 // and is drawn by the shared tooltip (view/tooltip.js) — one fixed
@@ -737,7 +737,7 @@ function codeSnippetTemplate(content, range, path) {
       const cited = Boolean(range) && ln >= range.start && ln <= range.end
       return html`<div class=${classMap({ 'code-preview-lineno': true, cited })}>${ln}</div>`
     })}</aside>
-    <pre class="code-preview-source"><code>${coloured ? unsafeHTML(coloured) : text}</code></pre>
+    <pre class="code-preview-source"><code>${coloured ? appMarkup(coloured) : text}</code></pre>
   </div>`
 }
 
@@ -900,7 +900,7 @@ function reportChipTemplate(finding) {
   if (!reportName) return nothing
   if (isManagedUiMode() && !finding._managedReportId) return nothing
   const logo = REPORT_LOGOS[groupOf(reportName)] ?? REPORT_LOGOS.default
-  const label = html`${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span>`
+  const label = html`${appMarkup(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span>`
   if (isManagedUiMode()) {
     const href = findingLinkFor(finding, { reportId: finding._managedReportId })
     if (href) return html`<a class="report-chip report-button comment-self-ref" href=${publicSharePath(href)}>${label}</a>`
@@ -1182,7 +1182,7 @@ function tabTemplate(f, isActive, groupSt) {
   if (logo) classes.push('tab-with-analyzer')
   else if (hasConfidence) classes.push('tab-with-confidence')
   const detail = logo
-    ? html`<span class="tab-analyzer" role="img" aria-label=${PRODUCER_LABELS[analyzer]}>${unsafeHTML(logo)}</span>`
+    ? html`<span class="tab-analyzer" role="img" aria-label=${PRODUCER_LABELS[analyzer]}>${appMarkup(logo)}</span>`
     : hasConfidence ? html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>` : nothing
   return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span><span class="tab-indicators">${tabMarksTemplate(entry, f)}</span></span>${detail}</button>`
 }

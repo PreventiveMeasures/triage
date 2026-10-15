@@ -1,3 +1,5 @@
+import { html, nothing, render as litRender } from 'lit'
+
 const dropZone = document.getElementById('drop-zone')
 const dropError = document.getElementById('drop-error')
 const viewer = document.getElementById('viewer')
@@ -66,12 +68,6 @@ function detectFormat(data) {
   }
   // All empty arrays — still a valid (degenerate) deepfix log
   return 'deepfix-log'
-}
-
-const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-function esc(str) {
-  if (str == null) return ''
-  return String(str).replace(/[&<>"']/gu, (c) => ESC_MAP[c])
 }
 
 function formatTime(ts) {
@@ -184,28 +180,44 @@ function entryVisible(entry, blocks) {
 }
 
 function renderBlock(block) {
-  if (block.kind === 'text') return `<div class="text-block">${esc(block.text)}</div>`
-  if (block.kind === 'summary') return `<div class="text-block summary-text">${esc(block.text)}</div>`
-  if (block.kind === 'system') return `<div class="text-block" style="color:var(--muted); font-size:.825rem;">${esc(block.text)}</div>`
+  if (block.kind === 'text') return html`<div class="text-block">${block.text}</div>`
+  if (block.kind === 'summary') return html`<div class="text-block summary-text">${block.text}</div>`
+  if (block.kind === 'system') return html`<div class="text-block" style="color:var(--muted); font-size:.825rem;">${block.text}</div>`
   if (block.kind === 'thinking') {
-    if (!showThinking) return ''
-    return `<div class="thinking-block">${esc(block.text)}</div>`
+    if (!showThinking) return nothing
+    return html`<div class="thinking-block">${block.text}</div>`
   }
   if (block.kind === 'tool_use') {
-    if (!showTools) return ''
+    if (!showTools) return nothing
     const preview = toolInputPreview(block.input)
-    return `<details class="tool"><summary><span class="tool-name">🔧 ${esc(block.name)}</span><span class="tool-preview">${esc(preview)}</span></summary><pre>${esc(stringifyJSON(block.input))}</pre></details>`
+    return html`<details class="tool"><summary><span class="tool-name">🔧 ${block.name}</span><span class="tool-preview">${preview}</span></summary><pre>${stringifyJSON(block.input)}</pre></details>`
   }
   if (block.kind === 'tool_result') {
-    if (!showTools) return ''
+    if (!showTools) return nothing
     const preview = toolResultPreview(block.content)
     const cls = block.isError ? 'tool error' : 'tool'
     const label = block.isError ? '✗ error' : '✓ result'
-    return `<details class="${cls}"><summary><span class="tool-name">${label}</span><span class="tool-preview">${esc(preview)}</span></summary><pre>${esc(toolResultText(block.content))}</pre></details>`
+    return html`<details class=${cls}><summary><span class="tool-name">${label}</span><span class="tool-preview">${preview}</span></summary><pre>${toolResultText(block.content)}</pre></details>`
   }
-  return `<div class="text-block" style="color:var(--muted);">${esc(block.text || '')}</div>`
+  return html`<div class="text-block" style="color:var(--muted);">${block.text || ''}</div>`
 }
 
+function entryTemplate(entry, blocks) {
+  const badge = entryBadge(entry, blocks)
+  const time = formatTime(entry.timestamp)
+  return html`<div class=${`entry type-${badge}`}>
+    <div class="entry-meta">
+      <span class=${`badge ${badge}`}>${badge}</span>
+      ${entry.uuid ? html`<span class="mono" style="font-size:.7rem;">#${String(entry.uuid).slice(0, 8)}</span>` : nothing}
+      ${time ? html`<span class="time">${time}</span>` : nothing}
+    </div>
+    <div class="entry-body">${blocks.length === 0
+      ? html`<div class="text-block" style="color:var(--muted);">(no content)</div>`
+      : blocks.map(renderBlock)}</div>
+  </div>`
+}
+
+// Lit draws the log, so everything the file says goes in as text.
 function render() {
   if (!currentData) return
   const files = Object.keys(currentData)
@@ -213,70 +225,33 @@ function render() {
 
   const totalEntries = files.reduce((n, f) => n + currentData[f].length, 0)
   const needle = filterText.trim().toLowerCase()
-
-  let html = '<header>'
-  html += `<h1>deepfix logs</h1>`
-  html += `<div class="meta">${esc(currentFileName)} &mdash; ${files.length} file${files.length === 1 ? '' : 's'}, ${totalEntries} entr${totalEntries === 1 ? 'y' : 'ies'}</div>`
-  html += '</header>'
-
-  // Toolbar
-  html += '<div class="toolbar">'
-  html += `<input type="text" id="filter-text" value="${esc(filterText)}" placeholder="search text, tool names, arguments...">`
-  html += `<div class="sep"></div>`
-  html += `<label><input type="checkbox" id="toggle-tools"${showTools ? ' checked' : ''}> tools</label>`
-  html += `<label><input type="checkbox" id="toggle-thinking"${showThinking ? ' checked' : ''}> thinking</label>`
-  html += `<label><input type="checkbox" id="toggle-system"${showSystem ? ' checked' : ''}> system</label>`
-  html += `<span class="result-count" id="result-count"></span>`
-  html += '</div>'
-
-  // Tabs
-  if (files.length > 1) {
-    html += '<div class="tabs">'
-    for (const f of files) {
-      const active = f === currentTab ? ' active' : ''
-      const count = currentData[f].length
-      html += `<button class="tab${active}" data-tab="${esc(f)}">${esc(f)}<span class="count">${count}</span></button>`
-    }
-    html += '</div>'
-  }
-
-  // Entries
-  html += '<div class="entries" id="entries">'
   const entries = currentTab ? currentData[currentTab] : []
-  let visible = 0
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]
+  const shown = []
+  for (const entry of entries) {
     const blocks = blocksOf(entry)
-    const matches = entryMatchesFilter(entry, blocks, needle)
-    const visibleByType = entryVisible(entry, blocks)
-    if (!matches || !visibleByType) continue
-    visible++
-    const badge = entryBadge(entry, blocks)
-    const time = formatTime(entry.timestamp)
-    html += `<div class="entry type-${esc(badge)}">`
-    html += '<div class="entry-meta">'
-    html += `<span class="badge ${esc(badge)}">${esc(badge)}</span>`
-    if (entry.uuid) html += `<span class="mono" style="font-size:.7rem;">#${esc(String(entry.uuid).slice(0, 8))}</span>`
-    if (time) html += `<span class="time">${esc(time)}</span>`
-    html += '</div>'
-    html += '<div class="entry-body">'
-    if (blocks.length === 0) {
-      html += `<div class="text-block" style="color:var(--muted);">(no content)</div>`
-    } else {
-      for (const b of blocks) html += renderBlock(b)
-    }
-    html += '</div></div>'
+    if (entryMatchesFilter(entry, blocks, needle) && entryVisible(entry, blocks)) shown.push([entry, blocks])
   }
-  html += '</div>'
-  html += `<button class="reset-btn" id="reset-btn">Load another file</button>`
 
-  viewer.innerHTML = html
+  litRender(html`
+    <header>
+      <h1>deepfix logs</h1>
+      <div class="meta">${currentFileName} &mdash; ${files.length} file${files.length === 1 ? '' : 's'}, ${totalEntries} entr${totalEntries === 1 ? 'y' : 'ies'}</div>
+    </header>
+    <div class="toolbar">
+      <input type="text" id="filter-text" .value=${filterText} placeholder="search text, tool names, arguments...">
+      <div class="sep"></div>
+      <label><input type="checkbox" id="toggle-tools" .checked=${showTools}> tools</label>
+      <label><input type="checkbox" id="toggle-thinking" .checked=${showThinking}> thinking</label>
+      <label><input type="checkbox" id="toggle-system" .checked=${showSystem}> system</label>
+      <span class="result-count" id="result-count">${shown.length} of ${entries.length}</span>
+    </div>
+    ${files.length > 1 ? html`<div class="tabs">${files.map(f => html`<button class=${f === currentTab ? 'tab active' : 'tab'} data-tab=${f}>${f}<span class="count">${currentData[f].length}</span></button>`)}</div>` : nothing}
+    <div class="entries" id="entries">${shown.map(([entry, blocks]) => entryTemplate(entry, blocks))}</div>
+    <button class="reset-btn" id="reset-btn">Load another file</button>
+  `, viewer)
   viewer.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `deepfix logs - ${currentFileName}`
-
-  const rc = document.getElementById('result-count')
-  if (rc) rc.textContent = `${visible} of ${entries.length}`
 }
 
 function renderKeepFocus(inputId) {
@@ -292,7 +267,7 @@ function resetView() {
   currentFileName = ''
   currentTab = null
   viewer.classList.remove('active')
-  viewer.innerHTML = ''
+  litRender(nothing, viewer)
   dropZone.classList.remove('hidden')
   dropError.textContent = ''
   document.title = 'deepview logs'
