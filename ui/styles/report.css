@@ -3294,6 +3294,20 @@ body.report-fullscreen {
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
 /* As wide as the version it shows, with its tags. */
 npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16rem; }
+/* A repository directory's header: its name, then the commit it shows
+   (render-bundle.js repositoryCodeTitle). */
+.bundles-slide-title.bundles-slide-repository {
+  display: flex; align-items: center; gap: .55rem;
+  & > .bundles-slide-name { min-width: 0; }
+}
+.bundles-slide-commit {
+  display: inline-flex; flex: none; align-items: center; gap: .3rem;
+  color: var(--muted); text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem;
+  & > svg { flex: none; }
+  &:is(a):hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 4px); }
+}
 
 /* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
    laid out by the Overview's own width: the package's facts, its build's

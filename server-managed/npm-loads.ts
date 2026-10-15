@@ -43,9 +43,16 @@ const refused = <T>(status: number, code: string): NpmLoad<T> => {
 function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>): NpmLoad<T> {
   const { unpackedSize, fileCount } = doc.dist
   if ((unpackedSize ?? 0) > MAX_NPM_PACKAGE_BYTES || (fileCount ?? 0) > MAX_NPM_PACKAGE_FILES) return refused(413, 'package-too-large')
+  return sharedLoad(key, work, 'npm-busy')
+}
+
+// A load among the active ones, by `key`, refused as `busy` past them: a
+// repository directory's (repository-code.ts) as a package's, each holding
+// alike a tarball, its tar, its files and their encoded JSON.
+export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string): NpmLoad<T> {
   let load = loads.get(key)
   if (!load) {
-    if (loads.size >= MAX_ACTIVE_LOADS) return refused(429, 'npm-busy')
+    if (loads.size >= MAX_ACTIVE_LOADS) return refused(429, busy)
     const created: Load = { job: work(), readers: 0, settled: false }
     const settle = () => {
       created.settled = true
@@ -125,7 +132,9 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
   return bytes
 }
 
-async function readFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
+// A gzipped tarball's files, its top directory left out, as npm extracts
+// a package's: a repository tree's as GitHub archives it, too.
+export async function readTarballFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
   let tar: Buffer
   try { tar = await gunzipAsync(tarball, { maxOutputLength: MAX_TAR_BYTES }) }
   catch (err) {
@@ -142,7 +151,7 @@ export function loadNpmTarball(doc: NpmVersionDocument): NpmLoad<Uint8Array> {
 
 // The version's files, for one of them to be pretty-printed (pretty-print.ts).
 export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]> {
-  return shared(`files ${doc.dist.integrity} ${doc.dist.tarball}`, doc, async () => readFiles(await readTarball(doc)))
+  return shared(`files ${doc.dist.integrity} ${doc.dist.tarball}`, doc, async () => readTarballFiles(await readTarball(doc)))
 }
 
 // The version as the viewer reads it, as brotli-encoded JSON: `{ name,
@@ -158,7 +167,7 @@ export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]>
 export function loadNpmPackageBody(doc: NpmVersionDocument, known: () => object = () => ({})): NpmLoad<Buffer> {
   return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
     const tarball = await readTarball(doc)
-    const files = await readFiles(tarball)
+    const files = await readTarballFiles(tarball)
     return encodeBrotli(Buffer.from(JSON.stringify({
       name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
       published: npmPublishTime(doc.name, doc.version), manifest: doc.manifest, files: npmFileRows(files), known: known(),

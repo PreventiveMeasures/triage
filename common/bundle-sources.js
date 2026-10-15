@@ -111,11 +111,30 @@ export function bundleSourceOrder(sources) {
 // Directory captures stay out. They are the one entry that is not a
 // file in any encoding, and mounting one puts a second `lib` beside
 // the directory it names.
+// Files as the managed server reads a tarball's (server-managed/npm-packages.ts
+// npmFileRows), `[path, bytes, text]` or `[path, bytes, null, digest]`, as
+// details of `entry` in the shape of a sourcemap carrying its sources: one
+// source per file, text inline, and every file's size from its bytes, so a
+// file that is not text still lists with its size. Those carry a digest of
+// their bytes instead (`npmBinaries`), which Compare compares them by. An npm
+// version's files come so (view/npm-package.js), and a repository
+// directory's (view/repository-code.js).
+export function fileRowDetails(entry, rows) {
+  const files = Array.isArray(rows) ? rows : []
+  return {
+    integrity: entry.integrity, kind: 'sourcemap', size: entry.size,
+    json: { version: 3, sources: files.map(([path]) => path), sourcesContent: files.map(([, , text]) => typeof text === 'string' ? text : null) },
+    fileSizes: new Map(files.map(([path, size]) => [path, size])),
+    npmBinaries: new Map(files.filter(([, , text, digest]) => typeof text !== 'string' && typeof digest === 'string')
+      .map(([path, size, , digest]) => [path, { size, digest }])),
+  }
+}
+
 export function bundleFilesAsMap(details) {
   const key = details?.bundle ?? details?.json
   if (key && filesCache.has(key)) return filesCache.get(key)
   const files = new Map(bundleSourcesAsMap(details))
-  // An npm package's files that are not text (view/npm-package.js) carry
+  // An npm package's files that are not text (fileRowDetails) carry
   // their size and digest alone: enough for Compare to tell a changed one
   // from an unchanged one, as `{ format: 'digest', size, digest }`.
   for (const [path, file] of details?.npmBinaries ?? []) files.set(path, { format: 'digest', ...file })

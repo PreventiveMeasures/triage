@@ -31,6 +31,7 @@ import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
+import './repository-code.js'
 import '../view/mode-switch.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
@@ -74,6 +75,7 @@ class ManagedAdminHome extends ManagedPage {
   render() {
     const content = [
       ['manage-bundles', 'Bundles', 'Keep source archives ready for review.', 'bundle'],
+      ['manage-code', 'Code', 'Read a repository’s files at any revision.', 'code'],
       ['manage-scans', 'Scans', 'Run and monitor scans from stored bundles.', 'scan'],
       ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
     ]

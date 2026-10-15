@@ -98,6 +98,31 @@ export async function request(url, errors, read, signal) {
 // registry, on every one.
 const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, response => response.json(), signal)
 
+const REPOSITORY_CODE_ERRORS = {
+  'no-repository': 'This repository is not available to you.',
+  'no-directory': 'This directory is not at that commit, or not available to you.',
+  'directory-too-large': 'This directory is too large to open here. Open one of its directories instead.',
+  'repository-busy': 'Too many directories and packages are loading. Try again shortly.',
+  'repository-changed': 'The repository changed while it was read. Try again.',
+  'github-rate-limited': 'GitHub’s API rate limit has been reached. Try again later.',
+  'github-unauthorized': 'GitHub authentication has expired or was revoked. Sign in again.',
+  'github-status-403': 'GitHub denied this request. Check repository access and the GitHub App’s read permissions.',
+  'github-malformed': 'GitHub’s archive of this directory could not be verified against its commit.',
+  'github-unreachable': 'Could not connect to GitHub. Try again shortly.',
+  400: 'Not a repository directory and commit.',
+  403: 'Repository access is required to read its files.',
+  404: 'This repository, commit or directory is unavailable.',
+  413: 'This directory is too large to open here.',
+  429: 'Too many directories and packages are loading. Try again shortly.',
+  502: 'GitHub couldn’t be reached.',
+}
+
+// A repository's directory at a commit, for the code viewer: never kept, as
+// the server checks access, against GitHub, on every read.
+export function fetchRepositoryCode(repoId, commit, path, { signal } = {}) {
+  return request(`/api/admin/repositories/code?${new URLSearchParams({ repoId, ref: commit, path })}`, REPOSITORY_CODE_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }

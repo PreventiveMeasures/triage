@@ -162,6 +162,7 @@
     "server-managed/report-sources.ts",
     "server-managed/revisions.ts",
     "server-managed/repository-browser.ts",
+    "server-managed/repository-code.ts",
     "server-managed/repository-aliases.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
