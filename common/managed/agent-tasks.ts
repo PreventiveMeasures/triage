@@ -1,4 +1,4 @@
-// Claude and Codex sessions and their tasks, reconstructed from what each
+// Agents' sessions and their tasks, reconstructed from what each
 // leaves on GitHub (the code viewer's Agents tab, repository-agents.js): a
 // task is a pull request it opened, or a commit it pushed to the default
 // branch without one; a session holds as many as name it, with the branches
@@ -11,13 +11,30 @@
 // the session its commits name, an issue with the pull requests closing it
 // or a branch named for it. Without a session named, a branch's pull
 // requests are one session, and a commit its own.
+//
+// The agents are Claude and Codex, and those the server knows by their GitHub
+// Apps (repository-agents.ts APP_AGENTS): each told by its fingerprint in
+// its texts or its branches' prefix, the server's to read, and named to the
+// client by its id, name and app (AppAgent). Such an agent names no session:
+// a pull request of its is a session alone, with its branch; Claude's or
+// Codex's marks on its work show those as its tools.
 
-export type Agent = 'claude' | 'codex'
+// 'claude', 'codex', or an app agent's id.
+export type Agent = string
+
+// An agent known by its GitHub App, as the server names it to the client:
+// its id, its name, and its app, whose avatar is its mark
+// (/api/avatar/app-<app>).
+export interface AppAgent { id: string; name: string; app: number }
+// How the server tells one: its fingerprint in an artifact's texts, its
+// branches' prefix.
+export interface AppAgentMarks { id: string; fingerprint: string; prefix: string }
 
 // What an artifact's texts say of the agents that made it: the Claude Code
-// sessions and Codex tasks they link, and whether they carry Claude's
-// marks, its co-author trailer or its "Generated with" line.
-export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean }
+// sessions and Codex tasks they link, whether they carry Claude's marks,
+// its co-author trailer or its "Generated with" line, and the app agents
+// whose fingerprints they carry, or whose branch it is.
+export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean; agents: string[] }
 
 export interface AgentPull { number: number; title: string; state: 'open' | 'merged' | 'closed'; draft: boolean; author: string | null
   // Its branch, and the owner of the fork it is in, null where it is in the
@@ -60,11 +77,14 @@ const CODEX_TASK = /https:\/\/chatgpt\.com\/codex\/tasks\/(task_[a-z]_[A-Za-z\d]
 const CLAUDE_MARK = /^co-authored-by: claude\b|generated with \[claude code\]|^claude-session:/imu
 const MAX_LINKS = 8
 
-// The sessions and tasks `texts` link, and whether they carry Claude's marks.
-export function agentSignals(texts: unknown[]): AgentSignals {
+// The sessions and tasks `texts` link, whether they carry Claude's marks, and
+// the agents of `apps` whose fingerprints they carry, or whose prefix the
+// branch `branch` is under.
+export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
   const found = (pattern: RegExp) => [...new Set(strings.flatMap(text => [...text.matchAll(pattern)].map(match => match[1]!)))].slice(0, MAX_LINKS)
-  return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)) }
+  return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
+    agents: apps.filter(app => strings.some(text => text.includes(app.fingerprint)) || branch?.startsWith(app.prefix)).map(app => app.id) }
 }
 
 // The agent a branch's name says made it, and the issue or pull request the
@@ -79,8 +99,9 @@ export function agentBranch(name: string | null): { agent: Agent | null; issue: 
 // two forks' of one name, or a fork's and the repository's, are two.
 const headName = (pull: AgentPull) => pull.head && pull.fork ? `${pull.fork}:${pull.head}` : pull.head
 
-const signalAgents = (signals: AgentSignals): Agent[] => [...signals.sessions.length > 0 || signals.claude ? ['claude' as const] : [],
-  ...signals.tasks.length > 0 ? ['codex' as const] : []]
+const signalAgents = (signals: AgentSignals): Agent[] => [...signals.agents, ...signals.sessions.length > 0 || signals.claude ? ['claude'] : [],
+  ...signals.tasks.length > 0 ? ['codex'] : []]
+const TOOLS = new Set(['claude', 'codex'])
 
 type Artifacts = { pulls?: AgentPull[]; commits?: AgentCommit[]; issues?: AgentIssue[]; branches?: AgentBranch[] }
 type Group = { agents: Set<Agent>; keys: string[] }
@@ -88,7 +109,9 @@ type Group = { agents: Set<Agent>; keys: string[] }
 // The artifacts joined (`pull:<n>`, `commit:<oid>`, `branch:<name>`,
 // `session:<id>`, `task:<id>`), each set with the agents whose marks are on
 // them: by the sessions and tasks they link and the branches pull requests
-// are from.
+// are from. An app agent's join none by what they link, and a pull request
+// of its its branch alone, where no pull request newer took it: one a
+// session.
 function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts): Group[] {
   const parent = new Map<string, string>()
   const find = (key: string): string => {
@@ -105,8 +128,8 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
   const mark = (key: string, agents: Agent[]) => { for (const agent of agents) agentsOf.set(key, new Set([...agentsOf.get(key) ?? [], agent])) }
   const linked = (key: string, signals: AgentSignals) => {
     find(key)
-    for (const session of signals.sessions) join(key, `session:${session}`)
-    for (const task of signals.tasks) join(key, `task:${task}`)
+    if (signals.agents.length === 0) for (const session of signals.sessions) join(key, `session:${session}`)
+    if (signals.agents.length === 0) for (const task of signals.tasks) join(key, `task:${task}`)
     mark(key, signalAgents(signals))
   }
   const branchNames = new Set(branches.map(branch => branch.name))
@@ -116,6 +139,7 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     const { agent } = agentBranch(branch.name)
     if (agent) mark(key, [agent])
   }
+  const appBranches = new Set<string>()
   for (const pull of pulls) {
     const key = `pull:${pull.number}`
     linked(key, pull.signals)
@@ -123,6 +147,11 @@ function artifactGroups({ pulls = [], commits = [], branches = [] }: Artifacts):
     if (agent) mark(key, [agent])
     // Its branch, an agent's or its own, read or not; a fork's its own.
     const head = headName(pull)
+    if (pull.signals.agents.length > 0) {
+      if (head && !appBranches.has(head)) join(key, `branch:${head}`)
+      if (head) appBranches.add(head)
+      continue
+    }
     if (head && (agent || signalAgents(pull.signals).length > 0 || branchNames.has(head))) join(key, `branch:${head}`)
     if (named) join(key, `pull:${named}`)
   }
@@ -168,7 +197,9 @@ function sessionOf({ agents, keys }: Group, { pulls, commits, issues, branches }
   const landed = [...taskPulls, ...taskCommits]
   return {
     id: sessions[0] ?? codexTasks[0] ?? (taskPulls[0] ? `pull-${taskPulls[0].number}` : taskCommits[0]?.oid ?? names[0] ?? ''),
-    agents: (['claude', 'codex'] as const).filter(agent => agents.has(agent)),
+    // An app agent's first, the one whose session it is, then the tools it
+    // used, Claude's or Codex's.
+    agents: [...[...agents].filter(agent => !TOOLS.has(agent)), ...['claude', 'codex'].filter(agent => agents.has(agent))],
     sessions, tasks: codexTasks,
     title: first?.title ?? taskIssues[0]?.title ?? names[0] ?? '',
     authors: [...new Set(items.flatMap(item => item.author ?? []))],

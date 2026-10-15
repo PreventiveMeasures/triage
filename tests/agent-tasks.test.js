@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { agentBranch, agentSessions, agentSignals } from '../common/managed/agent-tasks.ts'
 
-const none = { sessions: [], tasks: [], claude: false }
-const session = id => ({ sessions: [id], tasks: [], claude: true })
+const none = { sessions: [], tasks: [], claude: false, agents: [] }
+const session = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
+// An agent the server knows by its app, as it tells one, and its marks.
+const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }]
+const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
   updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })
 const commit = (oid, signals, at) => ({ oid: oid.repeat(40), title: `Commit ${oid}`, at, author: 'ada', additions: 3, deletions: 1, signals })
@@ -13,9 +16,15 @@ const branch = (name, signals = none, at = 1) => ({ name, at, author: 'ada', sig
 test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s marks', () => {
   const body = 'Fixes it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01MamW9SFrduHwBFipxyjRnn'
   const merge = 'Title (#9)\n\n* Work\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01MamW9SFrduHwBFipxyjRnn'
-  assert.deepEqual(agentSignals([body, merge, null]), { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true })
+  assert.deepEqual(agentSignals([body, merge, null], apps), { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, agents: [] })
   assert.deepEqual(agentSignals(['Codex ran it: https://chatgpt.com/codex/tasks/task_e_68a1b2c3d4e5f6']),
-    { sessions: [], tasks: ['task_e_68a1b2c3d4e5f6'], claude: false })
+    { sessions: [], tasks: ['task_e_68a1b2c3d4e5f6'], claude: false, agents: [] })
+  // An app agent's fingerprint, Claude Code's line with it or not, or its branch's prefix.
+  assert.deepEqual(agentSignals(['Links.\n\n🤖 Generated with [Neo](https://neo.example)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)'], apps),
+    { ...neo, claude: true })
+  assert.deepEqual([agentSignals(['🤖 Generated with [Neo](https://neo.example)'], apps), agentSignals(['Work'], apps, 'neo/fix-links')], [neo, neo])
+  assert.deepEqual(agentSignals(['Neo, the film', '🤖 Generated with [Neon](x)', 'Generated with [Neo](x)'], apps, 'feature/neo'), none)
+  assert.deepEqual(agentSignals(['🤖 Generated with [Neo](x)']), none, 'none known, none told')
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
@@ -28,7 +37,7 @@ test('one session holds every pull request and commit to the default branch that
   const sessions = agentSessions({
     pulls: [pull(1, 'claude/magical-mayer', session('session_A')), pull(2, 'claude/magical-mayer', session('session_A'), { state: 'open' }),
       pull(3, 'claude/magical-mayer-history', session('session_A'), { additions: 5 }), pull(4, 'feature/by-hand')],
-    commits: [commit('a', session('session_A'), 100), commit('b', { sessions: [], tasks: [], claude: true }, 7)],
+    commits: [commit('a', session('session_A'), 100), commit('b', { ...none, claude: true }, 7)],
     branches: [branch('claude/magical-mayer', session('session_A'), 50)],
   })
   assert.equal(sessions.length, 2, 'a pull request without marks is none of them')
@@ -77,6 +86,25 @@ test('pull requests from forks, of one branch name, are a session each, apart fr
 })
 
 test('a Claude session a Codex task pushed to is both agents\'', () => {
-  const [both] = agentSessions({ pulls: [pull(8, 'claude/shared', session('session_C')), pull(9, 'claude/shared', { sessions: [], tasks: ['task_e_123456'], claude: false })] })
+  const [both] = agentSessions({ pulls: [pull(8, 'claude/shared', session('session_C')), pull(9, 'claude/shared', { ...none, tasks: ['task_e_123456'] })] })
   assert.deepEqual([both.agents, both.sessions, both.tasks], [['claude', 'codex'], ['session_C'], ['task_e_123456']])
+})
+
+test('an agent known by its app names no session: a pull request of its is one alone, its branch with the newest; it first, Claude or Codex beside it where their marks are on it', () => {
+  const sessions = agentSessions({
+    pulls: [pull(12, 'neo/retry', neo, { state: 'open' }), pull(11, 'neo/retry', neo, { state: 'closed' }), pull(10, 'neo/links', { ...neo, claude: true }),
+      pull(9, 'feature/by-neo', { ...neo, tasks: ['task_e_123456'] }), pull(8, 'neo/linked', { ...session('session_A'), agents: ['neo'] }),
+      pull(7, 'claude/other', session('session_A'))],
+    commits: [commit('n', neo, 5)],
+    branches: [branch('neo/retry', neo, 120), branch('neo/alone', neo, 90)],
+  })
+  const byId = new Map(sessions.map(item => [item.id, item]))
+  assert.deepEqual([...byId.keys()].toSorted(), ['neo/alone', 'n'.repeat(40), 'pull-10', 'pull-11', 'pull-12', 'pull-8', 'pull-9', 'session_A'])
+  assert.deepEqual(['pull-12', 'pull-11', 'pull-10', 'pull-9', 'pull-8'].map(id => [byId.get(id).pulls.map(item => item.number), byId.get(id).agents]),
+    [[[12], ['neo']], [[11], ['neo']], [[10], ['neo', 'claude']], [[9], ['neo', 'codex']], [[8], ['neo', 'claude']]], 'one pull request a session, never joined by what it links')
+  assert.deepEqual([byId.get('pull-12').branches, byId.get('pull-11').branches], [['neo/retry'], ['neo/retry']])
+  assert.deepEqual([byId.get('pull-12').startedAt, byId.get('pull-11').startedAt], [120, 110], 'the branch read with the newest of its pull requests alone')
+  assert.deepEqual([byId.get('pull-8').sessions, byId.get('session_A').pulls.map(item => item.number)], [[], [7]])
+  assert.deepEqual([byId.get('neo/alone').agents, byId.get('neo/alone').state], [['neo'], 'branch'])
+  assert.deepEqual([byId.get('n'.repeat(40)).agents, byId.get('n'.repeat(40)).state], [['neo'], 'merged'])
 })

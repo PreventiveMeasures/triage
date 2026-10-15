@@ -183,7 +183,7 @@ export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = nu
 const REPOSITORY_AGENTS_ERRORS = {
   ...REPOSITORY_ISSUES_ERRORS,
   'no-directory': 'Agents show only with access to the whole repository.',
-  'github-token-required': 'Reading what Claude and Codex did needs your GitHub sign-in.',
+  'github-token-required': 'Reading what the agents did needs your GitHub sign-in.',
   400: 'Not a repository’s agents.',
 }
 

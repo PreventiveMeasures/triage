@@ -57,6 +57,8 @@ const firstPage = () => ({ data: { repository: {
       closingIssuesReferences: { nodes: [{ number: 12 }] } }),
     // Its merge commit alone names its session.
     pullNode(901, { mergeCommit: { message: `History (#901)\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: ${session}` } }),
+    // Neo's, with Claude Code's line too.
+    pullNode(830, { headRefName: 'neo/fix-links', body: 'Links.\n\n🤖 Generated with [Neo](https://neo.example)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)' }),
     // Codex's task linked in its body; its settings link names none.
     pullNode(845, { headRefName: 'codex/review-defaults', isCrossRepository: true, headRepositoryOwner: { login: 'ada' },
       body: 'Defaults.\n\n[Settings](https://chatgpt.com/codex/cloud/settings/general)\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68ecb1f0a2c88191' }),
@@ -68,6 +70,8 @@ const firstPage = () => ({ data: { repository: {
     commitNode(b, 'Fix a flaky test', { author: { email: 'noreply@anthropic.com', user: null } }),
     commitNode(c, `History (#901)\n\nClaude-Session: ${session}`, { associatedPullRequests: { totalCount: 1 } }),
     commitNode('d'.repeat(40), 'By hand'),
+    // One Neo pushed, by its line.
+    commitNode('e'.repeat(40), 'Bump esbuild\n\n🤖 Generated with [Neo](https://neo.example)'),
   ] } } },
   issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada' } },
     { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
@@ -80,6 +84,7 @@ const refPages = {
     ref('refs/heads/', 'claude/magical-mayer-83oicz', '2026-10-15T02:00:00Z', `Tabs\n\nClaude-Session: ${session}`)] },
   b_2: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/', 'claude/zzz-newest', '2026-10-15T04:00:00Z')] } },
   'refs/heads/codex/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/codex/', 'try-lazy-trees', '2026-10-15T03:00:00Z'), null] } },
+  'refs/heads/neo/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/neo/', 'try-pnpm', '2026-10-15T05:00:00Z')] } },
 }
 const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
@@ -90,21 +95,25 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   const asked = github(t, graphql)
   const { status, body } = await request({ repoId: '1' })
   assert.equal(status, 200)
-  const sessionSignals = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true }
+  const sessionSignals = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, agents: [] }
   assert.deepEqual(body.pulls.map(pull => [pull.number, pull.state, pull.head, pull.fork, pull.closes, pull.signals]), [
     [904, 'open', 'claude/magical-mayer-83oicz', null, [12], sessionSignals],
     [901, 'merged', 'feature/x', null, [], sessionSignals],
-    [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false }],
+    [830, 'merged', 'neo/fix-links', null, [], { sessions: [], tasks: [], claude: true, agents: ['neo'] }],
+    [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false, agents: [] }],
   ])
   assert.deepEqual(body.pulls[0], { ...body.pulls[0], title: 'Pull 904', draft: false, author: 'ChristopherTuring', additions: 7, deletions: 2, commits: 3,
     createdAt: Date.parse('2026-10-14T00:00:00Z'), updatedAt: Date.parse('2026-10-15T00:00:00Z') })
   assert.deepEqual(body.commits.map(commit => [commit.oid, commit.title, commit.signals]), [[a, 'Fix it', sessionSignals],
-    [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true }]], 'those no agent marked, or a pull request merged, are not')
+    [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, agents: [] }], ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, agents: ['neo'] }]],
+  'those no agent marked, or a pull request merged, are not')
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', createdAt: null, updatedAt: null },
     { number: 13, title: 'History', state: 'closed', author: null, createdAt: null, updatedAt: null }])
   // Every page of each agent's branches read, the newest first, named in full.
-  assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions]), [['claude/zzz-newest', []],
-    ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn']], ['claude/aaa-old', []], ['codex/try-lazy-trees', []]])
+  assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],
+    ['claude/magical-mayer-83oicz', ['session_01MamW9SFrduHwBFipxyjRnn'], []], ['claude/aaa-old', [], []], ['codex/try-lazy-trees', [], []], ['neo/try-pnpm', [], ['neo']]])
+  // The agents it knows by their apps, each by id, name and app, never how it tells them.
+  assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', app: 3115942 }])
   assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: null }])
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')
   const page = asked.find(query => query.query.includes('pullRequests('))
@@ -112,7 +121,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body/u)
   assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
-    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null]])
+    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/neo/', null]])
   assert.ok(asked.every(query => query.auth === 'Bearer login-token'))
   // Asked again, kept: nothing read of GitHub's GraphQL again, branches neither.
   const reads = asked.length

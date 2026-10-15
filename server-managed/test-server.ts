@@ -25,6 +25,7 @@ import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
+import { APP_AGENTS } from './repository-agents.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -476,7 +477,8 @@ function itemFixture(url: URL, res: ServerResponse): void {
 // What a repository's agents left, for its Agents tab: Claude Code sessions,
 // one holding several pull requests and commits pushed to main, one the
 // Claude GitHub App ran for an issue; Codex tasks on branches of their own, one
-// a Codex cloud task linked; work no agent touched; read ten pull requests
+// a Codex cloud task linked; Neo's pull requests, a session each, one of them
+// Claude Code's too, and a branch of its; work no agent touched; read ten pull requests
 // and twenty commits at a time, as the server answers, its texts read.
 const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
 
@@ -492,7 +494,8 @@ function agentsFixture(url: URL, res: ServerResponse): void {
     return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
   }
   const [readPulls, readCommits] = [read(pulls, 'pulls'), read(commits, 'commits')]
-  sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches } : {},
+  const agents = APP_AGENTS.map(({ id, name, app }) => ({ id, name, app }))
+  sendJson(res, 200, { pulls: readPulls.items, commits: readCommits.items, ...first ? { issues, branches, agents } : {},
     more: readPulls.after !== null || readCommits.after !== null, after: { pulls: readPulls.after, commits: readCommits.after } })
 }
 
@@ -502,8 +505,9 @@ type FixturePull = { number: number; title: string; state: string; draft: boolea
 // The agents' work, as of `now`.
 function agentsData(now: number) {
   const hours = (count: number) => now - count * 3_600_000
-  const none = { sessions: [], tasks: [], claude: false }
-  const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true })
+  const none = { sessions: [], tasks: [], claude: false, agents: [] }
+  const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true, agents: [] })
+  const neo = { ...none, agents: ['neo'] }
   const commits: object[] = [], pulls: FixturePull[] = []
   const pull = (number: number, title: string, head: string, at: number, signals: object, more: object = {}) => pulls.push({ number, title, state: 'merged', draft: false,
     author: 'ChristopherTuring', createdAt: hours(at + 1), updatedAt: hours(at), head, additions: (number * 37) % 900 + 4, deletions: (number * 13) % 200, commits: number % 4 + 1,
@@ -522,15 +526,20 @@ function agentsData(now: number) {
   pull(870, 'Repository risk: packages toggled All/Production/Development', 'claude/practical-ride-7Qx2', 52, session('01Practical7Qx2Ride'))
   pull(874, 'Repository risk: the progress line counts dev', 'claude/practical-ride-7Qx2', 48, session('01Practical7Qx2Ride'), { state: 'closed' })
   // The Claude GitHub App, asked on an issue.
-  pull(861, 'Dark mode: tag chips are readable', 'claude/issue-842-20261013-0912', 70, { sessions: [], tasks: [], claude: true }, { closes: [842] })
+  pull(861, 'Dark mode: tag chips are readable', 'claude/issue-842-20261013-0912', 70, { ...none, claude: true }, { closes: [842] })
   // Codex: a branch a task, one a cloud task linked, one still open, one left without a pull request.
   const codex = ['Use Compare directory expansion defaults in Review', 'Preserve Markdown in copied audit notes', 'Fix My reviews empty-state alignment and spacing',
     'Advisories: show the fixed version beside the range', 'Align the popup header', 'Workspace import: keep unattributed comments']
   codex.forEach((title, index) => pull(845 - index * 4, title, `codex/${title.toLowerCase().replaceAll(/[^a-z\d]+/gu, '-').slice(0, 30).replace(/-$/u, '')}`,
-    12 + index * 11, index === 1 ? { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false } : none, index === 0 ? { state: 'open', draft: true } : index === 4 ? { state: 'closed' } : {}))
+    12 + index * 11, index === 1 ? { ...none, tasks: ['task_e_68ecb1f0a2c88191'] } : none, index === 0 ? { state: 'open', draft: true } : index === 4 ? { state: 'closed' } : {}))
+  // Neo: a pull request a session, one with Claude Code's marks too, two on one branch.
+  pull(836, 'Docs: fix the README\'s broken links', 'neo/fix-readme-links', 9, { ...neo, claude: true }, { state: 'open' })
+  pull(832, 'Upgrade esbuild to 0.28', 'neo/upgrade-esbuild', 22, neo)
+  pull(828, 'Retry the flaky upload test once', 'neo/retry-flaky-upload', 35, neo, { state: 'closed' })
+  pull(827, 'Retry the flaky upload test, with a backoff', 'neo/retry-flaky-upload', 33, neo)
   // A commit Claude authored straight to main, naming no session.
   commits.push({ oid: createHash('sha1').update('direct').digest('hex'), title: 'Fix a flaky upload test', at: hours(26), author: null, additions: 3, deletions: 1,
-    signals: { sessions: [], tasks: [], claude: true } })
+    signals: { ...none, claude: true } })
   // Work no agent touched.
   pull(850, 'Bump dependencies', 'deps/bump', 40, none)
   pull(851, 'Docs: the managed mode', 'docs/managed', 44, none)
@@ -540,7 +549,8 @@ function agentsData(now: number) {
     { number: 860, title: 'Code viewer: history of a directory', state: 'closed', author: 'ChristopherTuring', createdAt: hours(34), updatedAt: hours(17) },
     { number: 855, title: 'Slow first paint', state: 'open', author: 'grace', createdAt: hours(80), updatedAt: hours(60) }]
   const branches = [{ name: 'claude/magical-mayer-83oicz', at: hours(2), author: 'ChristopherTuring', signals: session('01MamW9SFrduHwBFipxyjRnn') },
-    { name: 'codex/try-lazy-trees', at: hours(8), author: 'ChristopherTuring', signals: none }]
+    { name: 'codex/try-lazy-trees', at: hours(8), author: 'ChristopherTuring', signals: none },
+    { name: 'neo/try-pnpm-11', at: hours(6), author: 'ChristopherTuring', signals: neo }]
   return { pulls, commits, issues, branches }
 }
 
@@ -1070,6 +1080,20 @@ function serveFixtureFeed(path: string, res: ServerResponse): boolean {
   return true
 }
 
+// A GitHub App's avatar (`/api/avatar/app-<id>`), an agent's mark: GitHub's
+// own, as the server serves it; whether `url` names one.
+function appAvatarFixture(url: URL, method: string, res: ServerResponse): boolean {
+  const app = method === 'GET' ? /^\/api\/avatar\/app-(\d{1,12})$/u.exec(url.pathname)?.[1] : null
+  if (!app) return false
+  void (async () => {
+    const avatar = await fetch(`https://avatars.githubusercontent.com/in/${app}`).catch(() => null)
+    if (!avatar?.ok) { sendJson(res, 404, { error: 'no-avatar' }); return }
+    res.writeHead(200, { 'content-type': avatar.headers.get('content-type') ?? 'image/png', 'cache-control': 'no-store' })
+    res.end(Buffer.from(await avatar.arrayBuffer()))
+  })()
+  return true
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const method = req.method ?? 'GET', url = new URL(req.url ?? '/', `http://${host}`)
 
@@ -1098,7 +1122,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const teams = currentTeams()
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
-  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })

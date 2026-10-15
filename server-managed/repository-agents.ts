@@ -1,4 +1,4 @@
-// What the code viewer's Agents tab reconstructs Claude and Codex sessions
+// What the code viewer's Agents tab reconstructs agents' sessions
 // from (GET /api/admin/repositories/agents, common/managed/agent-tasks.ts):
 // a page of the repository's pull requests, the most recently updated first,
 // and of its default branch's commits, the newest first, those no pull
@@ -9,7 +9,8 @@
 // session in a pull request's body and its commits' messages) are read here
 // for the marks an agent leaves, and those alone are answered, never the
 // texts. GraphQL alone gives them, so it needs a token.
-import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, agentSignals } from '../common/managed/agent-tasks.ts'
+import { type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, type AppAgentMarks, agentSignals }
+  from '../common/managed/agent-tasks.ts'
 import { GithubApiError } from './github-app.ts'
 import { githubGraphql } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
@@ -26,6 +27,17 @@ const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const SHA = /^[a-f\d]{40}$/u
 // The address Claude's own commits are authored with.
 const CLAUDE_EMAIL = 'noreply@anthropic.com'
+
+// The agents known by their GitHub Apps, beside Claude and Codex: each its
+// id and name, its app (whose avatar is its mark, served by /api/avatar/app-<id>,
+// for these apps alone), the fingerprint it leaves in its pull requests'
+// bodies and its commits' messages, and its branches' prefix. Their work may
+// carry Claude's or Codex's marks too, those its tools.
+export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
+  { id: 'neo', name: 'Neo', app: 3115942, fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' },
+]
+// Whose branches are read, by their prefixes.
+const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
 
 // An agent's branches, a page at a time, as GitHub lists them, by name;
 // each its tip commit's time, message and author.
@@ -90,16 +102,16 @@ function pull(node: PullNode | null): AgentPull | null {
     fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
-    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message]) }
+    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName)) }
 }
 
 // A commit to the default branch no pull request merged, where an agent left
 // its marks on it, or Claude authored it.
 function directCommit(node: CommitNode | null): AgentCommit | null {
   if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
-  const signals = agentSignals([node.message])
+  const signals = agentSignals([node.message], APP_AGENTS)
   if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
-  if (!signals.claude && signals.sessions.length === 0 && signals.tasks.length === 0) return null
+  if (!signals.claude && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate), author: loginOf(node.author?.user),
     additions: count(node.additions), deletions: count(node.deletions), signals }
 }
@@ -111,24 +123,24 @@ function issue(node: IssueNode | null): AgentIssue | null {
     createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt) }
 }
 
-// A branch of `agent`'s, named in full however GitHub splits its name from
-// the prefix it was listed under.
-const branch = (agent: string) => (node: RefNode | null): AgentBranch | null => {
+// A branch under `prefix`, an agent's, named in full however GitHub splits
+// its name from the prefix it was listed under.
+const branch = (prefix: string) => (node: RefNode | null): AgentBranch | null => {
   const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
   const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
-  return name?.startsWith(`${agent}/`) ? { name, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
-    signals: agentSignals([node?.target?.message]) } : null
+  return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: loginOf(node?.target?.author?.user),
+    signals: agentSignals([node?.target?.message], APP_AGENTS, name) } : null
 }
 
-// The newest of `agent`'s branches: every one its prefix names, as many as
-// MAX_BRANCH_PAGES of them list, kept by their tips' times.
-async function agentBranches(owner: string, name: string, agent: string, token: string, fetchImpl: typeof fetch) {
+// The newest of an agent's branches, those under `prefix`: every one, as many
+// as MAX_BRANCH_PAGES of them list, kept by their tips' times.
+async function agentBranches(owner: string, name: string, prefix: string, token: string, fetchImpl: typeof fetch) {
   const found: AgentBranch[] = []
   let after: string | null = null
   for (let page = 0; page < MAX_BRANCH_PAGES; page++) {
-    const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${agent}/`, after }, token, fetchImpl) as RefsPage)
+    const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${prefix}`, after }, token, fetchImpl) as RefsPage)
       ?.repository?.refs
-    found.push(...(refs?.nodes ?? []).flatMap(node => branch(agent)(node) ?? []))
+    found.push(...(refs?.nodes ?? []).flatMap(node => branch(prefix)(node) ?? []))
     const next: Connection<RefNode>['pageInfo'] = refs?.pageInfo
     if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') break
     after = next.endCursor
@@ -144,16 +156,16 @@ const nextCursor = (connection: Connection<unknown> | undefined) => {
 // A page of what the repository's agents left: its pull requests on from
 // the cursor `pulls` ends at, its default branch's commits on from
 // `commits` (the first page where neither is named, with its issues and its
-// agents' branches), and the cursors reading on from each, null where
-// either is read whole.
+// agents' branches, and the app agents it may name), and the cursors reading
+// on from each, null where either is read whole.
 export async function repositoryAgents(fullName: string, token: string, cursors: { pulls: string | null; commits: string | null },
   fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const first = cursors.pulls === null && cursors.commits === null
-  const [data, claude, codex] = await Promise.all([
+  const [data, branches] = await Promise.all([
     githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
       readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Promise<Page>,
-    first ? agentBranches(owner, name, 'claude', token, fetchImpl) : [], first ? agentBranches(owner, name, 'codex', token, fetchImpl) : [],
+    first ? Promise.all(BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
   ])
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
@@ -164,7 +176,8 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     commits: (history?.nodes ?? []).flatMap(node => directCommit(node) ?? []),
     ...first ? {
       issues: (repository.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),
-      branches: [...claude, ...codex],
+      branches: branches.flat(),
+      agents: APP_AGENTS.map(({ id, name: agent, app }): AppAgent => ({ id, name: agent, app })),
     } : {},
     more: after.pulls !== null || after.commits !== null, after,
   }

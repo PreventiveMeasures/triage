@@ -30,8 +30,8 @@ beforeEach(() => {
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
 })
 
-const none = { sessions: [], tasks: [], claude: false }
-const claude = id => ({ sessions: [id], tasks: [], claude: true })
+const none = { sessions: [], tasks: [], claude: false, agents: [] }
+const claude = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
 const pull = (number, head, signals, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number, updatedAt: Date.now() - 3 * 3_600_000 + number,
   head, additions: 1000, deletions: 5, commits: 2, closes: [], signals, ...more })
 const shown = repo => Object.assign(new Agents(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
@@ -49,7 +49,7 @@ const firstPage = () => ({
 test('the tab reads the first page and shows a session a tile: its agent, title opening where it ran, author, age, tasks, size, pull requests, commits and issues, and branch', async () => {
   answer = () => Promise.resolve(firstPage())
   const view = shown('org/repo')
-  assert.match(templateText(view.render()), /Reading what Claude and Codex did…/u)
+  assert.match(templateText(view.render()), /Reading what the agents did…/u)
   await setImmediate()
   const text = templateText(view.render())
   assert.deepEqual(requests, [[7, {}]])
@@ -60,7 +60,8 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   // Each agent's pull requests, branches and commits to main without one, by icon, more to come
   // where its pages are left: pull requests', and the branches waiting on them, not commits'.
   assert.match(text, /role="group" aria-label=Claude>[^]*aria-label=2\+ pull requests[^]*aria-label=1\+ branches[^]*aria-label=1 commit to the default branch without a pull request/u)
-  assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*aria-label=0 commits/u)
+  assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*<\/span>\s*<\/span><\/span>/u)
+  assert.doesNotMatch(text, /aria-label=0 commits/u, 'none pushed without a pull request, none counted')
   // The session: its two pull requests and its commit to main, the issue it names.
   assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*3 tasks[^]*\+2,001[^]*−11/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^]*?>#9<[^]*pull\/8[^]*?>#8<[^]*commit\/c{40}[^]*?><code>ccccccc<\/code>[^]*issues\/3[^]*?><span class="sr-only">Issue <\/span>#3</u)
@@ -155,12 +156,12 @@ test('more read as their button nears the end, but not while a filter picks; a l
   view._filter = ''
   updated(true)
   assert.equal(clicks, 1)
-  answer = () => Promise.reject(new Error('Reading what Claude and Codex did needs your GitHub sign-in.'))
+  answer = () => Promise.reject(new Error('Reading what the agents did needs your GitHub sign-in.'))
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
   const failed = shown('org/repo')
   failed.render()
   await setImmediate()
-  assert.match(templateText(failed.render()), /role="alert">Reading what Claude and Codex did needs your GitHub sign-in\.[^]*Retry/u)
+  assert.match(templateText(failed.render()), /role="alert">Reading what the agents did needs your GitHub sign-in\.[^]*Retry/u)
 })
 
 test('a session clicked, its card or title, opens its popup; a pull request or issue of it, that one\'s; a commit, on GitHub; held with a key, a link', async () => {
@@ -191,4 +192,22 @@ test('a session clicked, its card or title, opens its popup; a pull request or i
   const text = templateText(view.render())
   assert.match(text, /pull\/9 [^]*?@click=event => this\.openItem\(event, preview\.number, preview\)[^]*?>#9</u)
   assert.match(text, /commit\/c{40} [^]*?@click=\s+data-rest=1><code>/u)
+})
+
+test('an agent the server knows by its app: picked after Claude and Codex, counted before them, its avatar its mark, first on its tiles, Claude\'s beside it where its marks are', async () => {
+  const neo = { ...none, agents: ['neo'] }
+  answer = () => Promise.resolve({ pulls: [pull(12, 'neo/links', { ...neo, claude: true }), pull(11, 'neo/bump', neo), pull(10, 'claude/one', claude('session_A'))],
+    commits: [], issues: [], branches: [],
+    agents: [{ id: 'neo', name: ' Neo ', app: 3115942 }, { id: 'claude', name: 'Not Claude', app: 1 }, { id: 'odd one', name: 'Odd', app: 2 }, { id: 'nameless', app: 3 }],
+    more: false, after: null })
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  assert.deepEqual(view.list().entry.agents, [{ id: 'neo', name: 'Neo', app: 3115942 }], 'only well formed, never Claude or Codex')
+  const text = templateText(view.render())
+  assert.match(text, />Claude <span class="issues-count">2<[^]*>Codex <span class="issues-count">0<[^]*class=agent-pick is-neo [^]*src=\/api\/avatar\/app-3115942 [^]*>Neo <span class="issues-count">2</u)
+  assert.match(text, /class="agent-totals"><span class="agent-stats" role="group" aria-label=Neo>[^]*aria-label=Claude>/u)
+  assert.doesNotMatch(text, /role="group" aria-label=Codex>/u, 'an agent with no session read is not counted')
+  assert.match(text, /class="issue-rail"><span class=agent-mark is-neo role="img" aria-label=Neo><img class="agent-avatar" src=\/api\/avatar\/app-3115942 [^]*<span class=agent-mark is-claude role="img" aria-label=Claude>[^]*>Pull 12</u)
+  assert.equal(view.list().entry.sessions.filter(item => item.agents[0] === 'neo').length, 2, 'a pull request a session')
 })
