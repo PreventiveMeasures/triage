@@ -1139,6 +1139,22 @@ test('advisories its repository publishes on GitHub join npm\'s, its listing kep
   assert.ok(await h.db.getUpstreamCacheEntry('github/advisories/org/advised'), 'the listing is kept where bundle advisories keep it')
 })
 
+test('an advisory its repository rates worse for versions beyond npm\'s range is one row, as the worse of the two', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('rated-advised', '1.2.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/rated.git' } })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
+  insights(t, {
+    repos: { 'org/rated': { full_name: 'org/rated', private: false, visibility: 'public' } },
+    advisories: { 'rated-advised': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'moderate', vulnerable_versions: '<1.1.0', cwe: [], cvss: { score: 5.3 } }] },
+    repoAdvisories: { 'org/rated': [{ ghsa_id: 'GHSA-aaaa-bbbb-cccc', state: 'published', summary: 'Unreviewed', severity: 'critical', cwe_ids: [],
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'rated-advised' }, vulnerable_version_range: '< 1.2.0' }] }] },
+  })
+  const body = (await h.send('/api/npm/advisories?name=rated-advised')).json()
+  // 1.1.0 is the repository's alone, critical by it: the row says so.
+  assert.deepEqual(body.advisories, [{ id: 'GHSA-aaaa-bbbb-cccc', source: 'registry', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
+    title: 'Reviewed', severity: 'critical', cvss: 5.3, cwe: [], range: '<1.1.0 || < 1.2.0', affected: [1, 2] }])
+})
+
 test('advisories carry their text where their source has one: OSV\'s record of npm\'s, the repository\'s own', async t => {
   const h = await setup(t)
   const pkg = packageOf('texted', '1.1.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/texted.git' } })

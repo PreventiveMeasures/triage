@@ -369,7 +369,8 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   // one row, the first's (npm's, then OSV's, then the repository's, as
   // upstream orders them) with what it lacks taken from the rest, its ranges
   // joined as semver joins them, the versions and CWEs they cover together,
-  // and the highest score.
+  // and the worst severity and highest score of them: a version only the
+  // repository reports keeps the severity it gives.
   const merged = new Map<string, NpmAdvisory>()
   for (const row of result.body) {
     const affected = row.versions.map(version => index.get(version)).filter(at => at !== undefined)
@@ -385,7 +386,10 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     }
     const range = [known.range, row.range].filter(Boolean).join(' || ')
     const cvss = Math.max(known.cvss ?? -1, row.cvss ?? -1)
-    merged.set(row.id, { ...own, ...known, ...range && { range }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])], affected: [...known.affected, ...affected] })
+    const rank = (severity: string | undefined) => SEVERITY_RANK[severity ?? ''] ?? 4
+    const severity = rank(row.severity) < rank(known.severity) ? row.severity : known.severity
+    merged.set(row.id, { ...own, ...known, ...range && { range }, ...severity && { severity }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])],
+      affected: [...known.affected, ...affected] })
   }
   return {
     versions, repository, ...keptAt && { keptAt },
