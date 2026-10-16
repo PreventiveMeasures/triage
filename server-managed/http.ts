@@ -145,6 +145,7 @@ import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
+import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '@preventive/report'
 import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
@@ -194,7 +195,7 @@ import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
-import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
+import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
@@ -437,10 +438,12 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 
 // The avatars `/api/avatar/app-<id>` and `/api/avatar/user-<id>` serve, these
 // alone: the agents' known by their GitHub Apps or accounts (APP_AGENTS),
-// each its mark on the Agents tab. Each is fetched from GitHub once and
+// each its mark on the Agents tab, and those the app draws agents' accounts
+// by (GITHUB_AGENTS). Each is fetched from GitHub once and
 // kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
 // an account's, `…-0001-<id>`.
-const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.flatMap(agent => agent.avatar ?? []))
+const AGENT_AVATARS: ReadonlySet<string> = new Set([...APP_AGENTS, ...Object.values(GITHUB_AGENTS)]
+  .flatMap(agent => 'avatar' in agent && agent.avatar ? [agent.avatar] : []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
@@ -1902,7 +1905,7 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }),
-    `issues\0${kind}\0${state}\0${after ?? ''}`)
+    `issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`)
 }
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
@@ -1928,7 +1931,7 @@ async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, 
   const repoId = Number(query.get('repoId'))
   const number = itemNumber(query)
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${number}`)
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${ISSUES_READ_VERSION}\0${number}`)
 }
 
 // The issue's or pull request's number a request names, as GraphQL takes one

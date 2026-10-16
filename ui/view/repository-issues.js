@@ -20,6 +20,7 @@ import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, issueState, p
 import { addedNames, pullDependencies, readsDependencies, subscribePullDependencies } from './pull-dependencies.js'
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
+import { reviewLine } from './pull-reviews.js'
 
 export { issueState }
 
@@ -267,7 +268,7 @@ class RepositoryIssues extends LitElement {
   // A tile: its state's icon, and under it a pull request's review and
   // checks and how many comments, as a rail beside its title, number, author
   // and age, labels, a pull request's branches and size, and an open one's
-  // packages new to its lockfiles.
+  // reviews (pull-reviews.js) and packages new to its lockfiles.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
     const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number) : null
@@ -291,6 +292,7 @@ class RepositoryIssues extends LitElement {
         ${item.labels.length > 0 || item.moreLabels > 0 ? html`<span class="issue-labels">${labelChips(item)}</span>` : nothing}
         ${pulls && item.head ? html`<span class="issue-branch"><code>${item.head}</code>${item.base ? html`<span aria-hidden="true">→</span><code>${item.base}</code>` : nothing}
           <span class="issue-diff"><span class="is-added">+${item.additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${item.deletions.toLocaleString('en-US')}</span></span></span>` : nothing}
+        ${pulls && item.state === 'open' ? reviewLine(item.reviews) : nothing}
         ${dependencies ? dependencyLine(dependencies) : nothing}
       </span>`
   }

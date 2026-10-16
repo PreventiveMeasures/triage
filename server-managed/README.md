@@ -137,7 +137,9 @@ app draws itself, Dependabot by its avatar. Each is matched by its accounts' log
 confirming it wherever both are known, as the Agents tab tells them: Claude's
 `claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
 and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
-agent's `Copilot` and Dependabot's `dependabot[bot]`
+agent's `Copilot`, its code review's bot's `Copilot` too (and
+`copilot-pull-request-reviewer` on its reviews), a login named by both of
+Copilot's accounts still Copilot's, and Dependabot's `dependabot[bot]`
 (`common/managed/github-agents.ts`). Commits GitHub names no account for are
 matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
 Codex otherwise commits as whoever ran it, and those commits show as theirs,
@@ -1827,7 +1829,26 @@ them is a rail: its state, an icon and a stripe in GitHub's colors (open
 green, merged and completed purple, closed red, draft and not planned
 muted); under it, a pull request's review (approved, changes requested or
 review required) while open and its checks (passed, failed or running),
-each an icon, room held for both; then how many comments it has. Its
+each an icon, room held for both; then how many comments it has. An open
+pull request's tile has a line of its reviews (`pull-reviews.js`): each
+reviewer by a mark of how their latest review stands (approved, changes
+requested, commented, or review requested, a team's by its slug, Copilot's
+code review's by its bot, which GitHub names Copilot as it does Copilot's
+coding agent, told apart by its id, and `copilot-pull-request-reviewer` on
+its reviews, a reviewer requested again known by their account's id before
+their login; an agentic workflow's (gh-aw), which
+reviews, approving or not, as GitHub Actions' bot, by GitHub Actions' mark,
+its popup naming the workflow by the `gh-aw-workflow-id` marker gh-aw leaves
+in what it posts), and their
+name, an agent's by its mark alone, dimmed where their review was on an
+earlier commit than the latest; Codex first, by its summary comment rather
+than its reviews, since it posts a review only where it finds something:
+reviewed, reviewing, asked to review again (`@codex review`) since, or failed
+since; then how many review threads are open, with the gravest one's badge
+(P0 to P3, as Codex marks its findings); and **Unreviewed** where no review
+is on the latest commit, Codex's done with it counting, **Unreviewed?** where
+none read is but more reviews are than were read. Its author's own
+replies in its threads, which GitHub makes reviews of, are none. Its
 labels, each by a dot of its color, show whole while they fit, then the
 last is shortened first, to its dot alone, then the one before it; each
 tells its name on hover where it is shortened. As many show as the
@@ -1837,7 +1858,11 @@ popup over the tab, as a kanban card does (`dialogs/repository-item-dialog.js`):
 what the tile shows at once, then, as it is read, its description, what a
 pull request closes or what closed an issue, each opening in its place
 (**Back** returning), a pull request's commits, files changed and who merged
-it, and **Open on GitHub**. Held with a key, or with another button, a tile
+it, its reviews, a row each, Codex's code review and security review apart,
+each with the commit it was on (linked, the latest or an earlier one) and
+when, saying where none is on the latest commit, and its open threads, each
+by its badge, title, file and line, linked to it on GitHub, with how many are
+resolved; and **Open on GitHub**. Held with a key, or with another button, a tile
 opens on GitHub as a link does. A
 **Filter** picks among those read by every word typed, in a tile's number,
 title, author, labels or branch. Fifty are read at a time, the next as the
@@ -1855,7 +1880,21 @@ updatedAt, closedAt, comments, labels: [{ name, color }], moreLabels, state }`,
 an issue's with its `reason` (`completed`, `not-planned` or `duplicate`), a
 pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
 `deletions`, `head` and `base`, its `state` `merged` where it was, and an
-open one's `touchesLockfile` (below). They are
+open one's `touchesLockfile` (below) and its `reviews` (`pull-reviews.ts`): `{ head, reviewers: [{ login,
+id, team?, state, requested, commit, at }], moreReviews, moreRequests, threads: { open,
+resolved, more, severity }, codex: { login, id, code: { commit, status },
+security, requested, failed } | null }`, read from each reviewer's latest
+review (twenty, and ten reviews requested, how many more GitHub counts in
+`moreReviews` and `moreRequests` apart, the tile saying `+N` of both, each
+told apart rather than as reviewers, one perhaps in both, the
+latest commit unknown, rather than unreviewed, where a review is unread), the latest fifty threads (open ones
+being, mostly, those lately opened), the first five comments and the last
+twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which
+it posts as it is first asked, and the last twenty for asking it again and
+its failures since; a closed page reads none, keeping its query as cheap as
+it was. The item (`GET …/item`) has its pull request's `reviews` whether open
+or not, its threads' `list` (the latest hundred read) with each open one's `severity`,
+`title`, `path`, `line`, `outdated`, `author` and `url`. They are
 the whole repository's, so they are read only where the reader's grants
 reach all of it (`404 no-directory` otherwise), with the reader's own GitHub
 access; GraphQL needs a token (`403 github-token-required` without one). A
@@ -1864,7 +1903,8 @@ lists pull requests only with **Pull requests: read** (`502
 github-status-403`, the tab saying so, where GitHub refuses them) and reads a
 pull request's checks only with **Checks: read** and **Commit statuses:
 read**, its tiles showing none where GitHub refuses those alone (see GitHub
-App setup). Access is checked again before they are sent.
+App setup), and likewise its reviews, threads and comments where GitHub
+refuses those alone. Access is checked again before they are sent.
 
 `GET /api/admin/repositories/item?repoId=…&number=…` answers one issue or
 pull request, as its popup shows it, read and checked as a page is: its

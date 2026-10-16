@@ -18,6 +18,7 @@ import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, ag
 import { pullDependencies, readsDependencies, subscribePullDependencies } from '../pull-dependencies.js'
 import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
+import { reviewSections } from '../pull-reviews.js'
 import proseCSS from '../../styles/prose.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-repository-item.css'
@@ -90,7 +91,8 @@ class RepositoryItemDialog extends AppDialog {
 
   // An issue or pull request: its state, title and number; who opened it
   // when, its labels, a pull request's branches, size, commits and files,
-  // review and checks; what it closes or what closed it; the packages new to
+  // review and checks, and each of its reviews and open threads
+  // (pull-reviews.js); what it closes or what closed it; the packages new to
   // a pull request's lockfiles; its description.
   renderItem({ number, preview }) {
     const held = this._items.get(number)
@@ -121,6 +123,7 @@ class RepositoryItemDialog extends AppDialog {
         ${REVIEWS[item.review] && item.state === 'open' ? marked(REVIEWS[item.review], item.review) : nothing}
         ${CHECKS[item.checks] ? marked(CHECKS[item.checks], item.checks) : nothing}
       </p>` : nothing}
+      ${pulls && full ? reviewSections(full.reviews, repo) : nothing}
       ${full ? this.renderLinked(pulls ? 'Closes' : 'Closed by', pulls ? 'issues' : 'pulls', pulls ? full.closes : full.closedBy, full.moreLinked) : nothing}
       ${pulls && readsDependencies(item) ? this.renderDependencies(number) : nothing}
       ${full ? html`<div class="repo-item-description">${full.body ? renderHighlighted(flowText(full.body)) : html`<p class="repo-item-quiet">No description.</p>`}</div>
