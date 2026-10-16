@@ -66,13 +66,15 @@ function lineEnd(text, double) {
 
 // A quoted scalar's lines, its quotes off, folded as YAML folds them: the
 // spaces around each break taken off, a break a space, an empty line a
-// break, and an escaped break nothing.
-function fold(lines, double) {
+// break, and an escaped break nothing. An empty line after an escaped break
+// is refused: YAML and libyaml read it a break, js-yaml nothing.
+function fold(lines, double, number) {
   let empties = 0, escaped = false, text = ''
   for (const [at, raw] of lines.entries()) {
     const last = at === lines.length - 1
     const trimmed = at === 0 ? raw : raw.replace(/^ +/u, '')
     if (at > 0 && !last && trimmed === '') { empties++; continue }
+    if (escaped && empties > 0) throw new YamlError('an empty line after an escaped line break is not supported', number)
     if (at > 0) text += empties > 0 ? '\n'.repeat(empties) : escaped ? '' : ' '
     const end = last ? { text: trimmed, escaped: false } : lineEnd(trimmed, double)
     text += end.text
@@ -95,7 +97,7 @@ export function readQuotedLines(doc, first, owner, unescape) {
     lines.push(line.text.slice(0, end - 1))
     if (!/^(?: +#.*| *)$/u.test(line.text.slice(end))) throw new YamlError(`unexpected ${excerpt(line.text.slice(end))} after the value`, line.number)
     doc.advance()
-    const text = fold(lines, first[0] === '"')
+    const text = fold(lines, first[0] === '"', owner.number)
     return first[0] === '"' ? unescape(text, line.number) : text.replaceAll("''", "'")
   }
 }
@@ -153,11 +155,12 @@ function flowScan(text, open, last) {
 // closes, its lines joined by a space, comments off; but a plain scalar's
 // lines folded as YAML folds them, an empty line among them a break, and
 // one a comment ended refused where it goes on, as js-yaml refuses it, as
-// is a key over more than one line, or its `:` on a line after it. A tab
+// is a key over more than one line, or its `:` on a line after it, and a
+// plain scalar going on no deeper than `indent`, its owner's block's. A tab
 // is read in a comment line and a line of nothing but spaces and tabs, as
 // parse.js's peek reads them, but not in one a plain scalar folds into its
 // text (`tabbed`), as YAML has it, once the line after it shows it does.
-export function readFlowLines(doc, first, owner) {
+export function readFlowLines(doc, first, owner, indent) {
   let breaks = 0, ended = false, last = null, plain = false, scan = flowScan(first, 0, null), tabbed = null, text = ''
   for (let line = owner; ;) {
     if (scan.open === -1) throw new YamlError('a quoted scalar in a flow collection does not close on its line', line.number)
@@ -167,6 +170,7 @@ export function readFlowLines(doc, first, owner) {
       if (goesOn && ended) throw new YamlError('a plain scalar in a flow collection goes on past a comment', line.number)
       if (scan.keyed || (kept.startsWith(':') && !goesOn && (last === 'plain' || last === 'quoted'))) throw new YamlError('a key over more than one line is not supported', line.number)
       if (goesOn && tabbed !== null) noTab(tabbed)
+      if (goesOn && line.indent <= indent) throw new YamlError('bad indentation of a plain scalar in a flow collection', line.number)
       if (text !== '') text += goesOn && breaks > 1 ? '\n'.repeat(breaks - 1) : ' '
       text += kept
       breaks = 0
