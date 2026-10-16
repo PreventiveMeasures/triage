@@ -241,10 +241,25 @@ export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = 
   for (const { number, sha } of [...pulls.map(pull => ({ number: pull.number, sha: pull.head })), ...openPulls]) {
     if (numbered.has(number)) continue
     numbered.add(number)
-    add(sha, { kind: 'pull', name: `#${number}` })
+    add(sha, { kind: 'pull', name: `#${number}`, number })
   }
   for (const tag of tags) add(tag.sha, { kind: 'tag', name: tag.name })
   return named
+}
+
+// A subject, the pull requests it names by number (`#12`, as GitHub links
+// them: on their own or after a space or bracket) opening them on GitHub
+// (`github`, the repository's page there), in a new tab.
+function subjectLinks(subject, github) {
+  if (!github) return subject
+  const parts = []
+  let at = 0
+  for (const match of subject.matchAll(/(?<=^|[\s([])#(\d+)\b/gu)) {
+    parts.push(subject.slice(at, match.index), html`<a href=${`${github}/pull/${match[1]}`} target="_blank" rel="noopener noreferrer"
+      tabindex="-1">${match[0]}</a>`)
+    at = match.index + match[0].length
+  }
+  return at === 0 ? subject : [...parts, subject.slice(at)]
 }
 
 const laneX = lane => EDGE + lane * LANE
@@ -281,29 +296,37 @@ function historyGraph(layout, shown) {
   </svg>`
 }
 
-// A commit's branches and tags, as chips, a branch's marked in its line's
-// `color`: the first few, then how many more, those named in its tooltip.
-function refChips(refs, color, revision) {
+// A commit's branches, pull requests and tags, as chips, a branch's marked in
+// its line's `color`: the first few, then how many more, those named in its
+// tooltip. A pull request's opens it on GitHub (`github`, the repository's
+// page there), in a new tab, as its line's id does.
+function refChips(refs, color, revision, github) {
   if (!refs?.length) return nothing
-  const chip = ref => html`<span class=${classMap({ 'history-ref': true, [`is-${ref.kind}`]: true, 'is-default': ref.main === true,
-    'is-shown': ref.kind === revision.kind && ref.name === revision.name })}>${ref.kind === 'tag' ? appMarkup(TAG_ICON_SVG)
-    : ref.kind === 'pull' ? appMarkup(PULL_ICON_SVG) : nothing}<span>${ref.name}</span></span>`
+  const chip = ref => {
+    const classes = classMap({ 'history-ref': true, [`is-${ref.kind}`]: true, 'is-default': ref.main === true,
+      'is-shown': ref.kind === revision.kind && ref.name === revision.name })
+    const label = html`${ref.kind === 'tag' ? appMarkup(TAG_ICON_SVG) : ref.kind === 'pull' ? appMarkup(PULL_ICON_SVG) : nothing}<span>${ref.name}</span>`
+    return ref.kind === 'pull' && github ? html`<a class=${classes} href=${`${github}/pull/${ref.number}`} target="_blank" rel="noopener noreferrer" tabindex="-1"
+      aria-label=${`Pull request ${ref.name} on GitHub`}>${label}</a>` : html`<span class=${classes}>${label}</span>`
+  }
   const rest = refs.slice(MAX_REFS)
   return html`<span class="history-refs" style=${styleMap({ '--ref': `var(--lane-${color})` })}>${refs.slice(0, MAX_REFS).map(chip)}${rest.length > 0
     ? html`<span class="history-ref is-more" data-tooltip=${rest.map(ref => ref.name).join(', ')}>+${rest.length}</span>` : nothing}</span>`
 }
 
-// The tab's body, for the directory shown (`repository`, an entry's) and
-// the repository's branches and tags (`refs`, repository-code.js
+// The tab's body, for the directory shown (`repository`, an entry's), its
+// repository's full name (`repo`, repository-code.js repositoryFullName,
+// once known) and the repository's branches and tags (`refs`,
 // repositoryRefs), naming its revision.
 class RepositoryHistory extends LitElement {
-  static properties = { repository: { attribute: false }, refs: { attribute: false } }
+  static properties = { repository: { attribute: false }, repo: { attribute: false }, refs: { attribute: false } }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.repository = null
+    this.repo = null
     this.refs = null
     this._drawn = null
     this._moreButton = null
@@ -455,6 +478,12 @@ class RepositoryHistory extends LitElement {
     const named = historyRefs(entry, defaultBranch)
     const focused = Math.max(0, layout.rows.findIndex(row => row.commit.sha === shown))
     const graphWidth = EDGE * 2 + (layout.width - 1) * LANE
+    // Each line's short id, pull requests and the pull requests its subject
+    // names open them on GitHub, in a new tab, out of the lines' own keys'
+    // way; the rest of it, its code, its button named by its subject, then
+    // its author and time.
+    const repo = this.repo ?? this.repository.repo
+    const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">
       ${mode === 'all' && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.
@@ -464,12 +493,15 @@ class RepositoryHistory extends LitElement {
         <ol class="history-list" aria-label="Commits" @keydown=${this.keydown}>${layout.rows.map(({ commit, color }, row) => {
           const refs = named.get(commit.sha)
           const time = commit.committedAt == null ? null : new Date(commit.committedAt)
+          const short = commit.sha.slice(0, 7)
           return html`<li class=${classMap({ 'history-row': true, 'is-shown': commit.sha === shown })}>
-            <button type="button" class="history-commit" tabindex=${row === focused ? 0 : -1} aria-current=${commit.sha === shown ? 'true' : nothing}
+            ${github ? html`<a class="history-sha" href=${`${github}/commit/${commit.sha}`} target="_blank" rel="noopener noreferrer" tabindex="-1"
+              aria-label=${`Commit ${short} on GitHub`}>${short}</a>` : html`<code class="history-sha">${short}</code>`}
+            ${refChips(refs, color, revision, github)}
+            <span class="history-subject" id=${`history-subject-${commit.sha}`}>${subjectLinks(commit.subject || '(no message)', github)}</span>
+            <button type="button" class="history-commit" id=${`history-commit-${commit.sha}`} tabindex=${row === focused ? 0 : -1}
+              aria-labelledby=${`history-subject-${commit.sha} history-commit-${commit.sha}`} aria-current=${commit.sha === shown ? 'true' : nothing}
               @click=${() => this.open(commit, refs)}>
-              <code class="history-sha">${commit.sha.slice(0, 7)}</code>
-              ${refChips(refs, color, revision)}
-              <span class="history-subject">${commit.subject || '(no message)'}</span>
               <span class="history-author">${commitAuthors(commit.authorLogin, commit.authorName, commit.coauthors)}</span>
               ${time ? html`<time class="history-time" datetime=${time.toISOString()}>${compactTime(commit.committedAt)}</time>` : html`<span class="history-time"></span>`}
             </button>

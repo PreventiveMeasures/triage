@@ -75,6 +75,9 @@ function headerRead(key, ask) {
 
 export const browsableRepositories = () => headerRead('repositories', () => fetchBrowsableRepositories())
 export const repositoryRefs = repoId => headerRead(`refs\0${repoId}`, () => fetchRepositoryRefs(repoId))
+// A repository's full name (`owner/name`): the one it was opened by, else,
+// once they arrive, the one the repositories it may browse list it by.
+export const repositoryFullName = ({ repoId, repo }) => repo ?? browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName ?? null
 
 // The revision a commit of a repository was read by, where it was read by
 // one, to name it so again; and a commit read by `revision`.

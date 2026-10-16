@@ -16,7 +16,7 @@ mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => nul
 mock.module('../ui/view/repository-compare.js', { exports: { repositoryCompareSource: () => null } })
 mock.module('../ui/view/repository-code.js', { exports: {
   browsableRepositories: () => ({ status: 'ready', value: [] }), openRepositoryCodeTab() {}, repositoryCodeListing: () => '', repositoryCodeName: ({ repo }) => repo,
-  repositoryCodePending: () => null, repositoryCodeRoute: () => null, repositoryRefs: () => ({ status: 'loading' }), navigateToRepositoryCode() {}, shownRevision: () => ({}),
+  repositoryCodePending: () => null, repositoryCodeRoute: () => null, repositoryFullName: ({ repo }) => repo, repositoryRefs: () => ({ status: 'loading' }), navigateToRepositoryCode() {}, shownRevision: () => ({}),
 } })
 const { state } = await import('../client/state.ts')
 const { renderBundlesList } = await import('../ui/view/render-bundle.js')
