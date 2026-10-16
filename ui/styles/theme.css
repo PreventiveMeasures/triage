@@ -374,6 +374,8 @@ body.theme-paper {
 
   & .kanban-card .kanban-analyzer { border: 0; }
   & .kanban-column-header .count { background: none; }
+  /* A rail's selected card keeps only its leading edge. */
+  & .focus-side-card.active { background: none; }
   & .annotation-chip:is(.sel-with, .sel-without)::before {
     content: '';
     position: absolute;

@@ -23,22 +23,6 @@
    Screen only: print keeps the default theme's pinned palette
    (print.css) and none of the window. */
 
-/* On a screen of exactly 2 or 3 device pixels to the CSS pixel, the grain
-   filter draws the page in whole CSS pixels, each one device-pixel sample
-   copied across its square, as coarse as Windows 95 was on its screens.
-   Other ratios have no whole grain to give, and keep their sharp pixels.
-   Popovers take it too, and dialogs (dialog-base.css): they show in the
-   top layer, out of the page's reach. The filter is ui/w95-grain.svg,
-   named as served beside view.css (build-lit-svg.js leaves it so). */
-@media screen and (resolution: 2dppx) {
-  :root:has(> body.theme-w95),
-  body.theme-w95 :popover-open { filter: url('./w95-grain.svg#w95-grain-2'); }
-}
-@media screen and (resolution: 3dppx) {
-  :root:has(> body.theme-w95),
-  body.theme-w95 :popover-open { filter: url('./w95-grain.svg#w95-grain-3'); }
-}
-
 @media screen {
   :root:has(> body.theme-w95) {
     background: #008080;
@@ -83,8 +67,7 @@
       linear-gradient(to bottom left, transparent 50%, #000 50%) 6px 4px / 4px 4px no-repeat,
       linear-gradient(to top left, transparent 50%, #000 50%) 6px 8px / 4px 4px no-repeat;
     /* Caption glyphs, pixel by pixel, for a 16x14 caption button: close,
-       maximize, restore, and the title bar's own — a window's panes (the
-       theme toggle), the menu, the lock shut and open. */
+       maximize, restore, and the lock, shut and open. */
     --w95-glyph-close:
       linear-gradient(#000, #000) 4px 3px / 2px 1px no-repeat,
       linear-gradient(#000, #000) 10px 3px / 2px 1px no-repeat,
@@ -111,18 +94,6 @@
       linear-gradient(#000, #000) 3px 7px / 1px 3px no-repeat,
       linear-gradient(#000, #000) 8px 7px / 1px 3px no-repeat,
       linear-gradient(#000, #000) 3px 10px / 6px 1px no-repeat;
-    --w95-glyph-panes:
-      linear-gradient(#000, #000) 3px 2px / 9px 1px no-repeat,
-      linear-gradient(#000, #000) 3px 10px / 9px 1px no-repeat,
-      linear-gradient(#000, #000) 3px 3px / 1px 7px no-repeat,
-      linear-gradient(#000, #000) 11px 3px / 1px 7px no-repeat,
-      linear-gradient(#000, #000) 4px 6px / 7px 1px no-repeat,
-      linear-gradient(#000, #000) 7px 3px / 1px 3px no-repeat,
-      linear-gradient(#000, #000) 7px 7px / 1px 3px no-repeat;
-    --w95-glyph-menu:
-      linear-gradient(#000, #000) 4px 3px / 8px 2px no-repeat,
-      linear-gradient(#000, #000) 4px 6px / 8px 2px no-repeat,
-      linear-gradient(#000, #000) 4px 9px / 8px 2px no-repeat;
     --w95-glyph-lock:
       linear-gradient(#000, #000) 6px 3px / 3px 1px no-repeat,
       linear-gradient(#000, #000) 5px 4px / 1px 3px no-repeat,
@@ -228,7 +199,7 @@
     font-family: 'MS Sans Serif', 'Microsoft Sans Serif', Tahoma, Geneva, Verdana, sans-serif;
     font-size: 11px;
     line-height: 1.35;
-    /* Its type was bitmap, unsmoothed. */
+    /* Its type was bitmap, unsmoothed: sharp, at any pixel ratio. */
     -webkit-font-smoothing: none;
 
     /* The splitter between the panes is the sidebar's own margin, not a
@@ -237,14 +208,14 @@
     & app-sidebar { height: auto; margin-right: 4px; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
     & #main-content { border-top: 0; }
 
-    /* The theme toggle is the title bar's last button. */
+    /* The theme toggle is the title bar's last button, Close. */
     & theme-toggle {
       position: fixed;
       top: calc(var(--w95-gap) + var(--w95-frame) + (var(--w95-title-height) - 14px) / 2);
       right: calc(var(--w95-gap) + var(--w95-frame) + var(--wco-right-toolbar, 0px) + 2px);
       width: 16px; height: 14px;
       border: 0;
-      background: var(--w95-glyph-panes), var(--w95-face);
+      background: var(--w95-glyph-close), var(--w95-face);
       box-shadow: var(--w95-raised);
       font-size: 0;
 

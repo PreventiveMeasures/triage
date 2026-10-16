@@ -182,8 +182,8 @@
 /* W95 (styles/w95.css): the header is the window's title bar, pinned
    across the window's top whatever the sidebar's width, collapsed or
    not — the app's icon, `Triage - local` in bold white on navy, the
-   lock and the menu as its buttons, room at the end for the theme
-   toggle. The host draws no glass there (`--glass-blur: none`), so it
+   lock and the sidebar's toggle as its buttons, room at the end for
+   the theme toggle. The host draws no glass there (`--glass-blur: none`), so it
    is no containing block and `fixed` places against the viewport. In
    an installed app drawing its own title bar it keeps clear of the
    OS controls on either side. */
@@ -228,10 +228,15 @@
     &:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
   }
   /* Their glyphs are drawn as Windows 95's caption glyphs are, pixel by
-     pixel (styles/w95.css): the menu, and the lock, shut while it locks. */
-  & #sidebar-toggle { background: var(--w95-glyph-menu), var(--w95-face); }
+     pixel (styles/w95.css): the lock, shut while it locks, and the
+     sidebar's toggle as Maximize — collapsing the sidebar gives the page
+     the window — then Restore while it is collapsed. */
+  & #sidebar-toggle { background: var(--w95-glyph-maximize), var(--w95-face); }
   & #encryption-toggle { background: var(--w95-glyph-unlock), var(--w95-face); }
   & #encryption-toggle:is(.encrypted, .locked-pending) { background: var(--w95-glyph-lock), var(--w95-face); }
+}
+:host-context(body.theme-w95):host(.collapsed) .sidebar-header #sidebar-toggle {
+  background: var(--w95-glyph-restore), var(--w95-face);
 }
 
 /* And the actions are its status bar, pinned along the window's foot,

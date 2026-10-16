@@ -1694,6 +1694,14 @@ report.addEventListener('drop', (e) => {
 // (they don't start a transition).
 let kanbanTransitioning = false
 
+// W95 and Paper open and close the dialog in place, as a window and a
+// printed page would: no flight out of the card, no fade.
+const STILL_THEMES = ['theme-w95', 'theme-paper']
+function kanbanAnimates() {
+  return Boolean(document.startViewTransition)
+    && !STILL_THEMES.some(theme => document.body.classList.contains(theme))
+}
+
 function kanbanCardEl(gid) {
   if (!gid) return null
   return report.querySelector(`.kanban-card[data-gid="${CSS.escape(gid)}"]`)
@@ -1783,11 +1791,11 @@ function setKanbanPopoverGid(next) {
   const opening = prev === null && next !== null
   const closing = prev !== null && next === null
 
-  // Plain render path: no API available, or card-to-card switch
-  // (modal stays open, contents swap in place). Card switches stay
-  // allowed during an in-flight transition because they don't
-  // start a new one — only a render().
-  if (!document.startViewTransition || (!opening && !closing)) {
+  // Plain render path: no API available, a theme that doesn't
+  // animate it, or card-to-card switch (modal stays open, contents
+  // swap in place). Card switches stay allowed during an in-flight
+  // transition because they don't start a new one — only a render().
+  if (!kanbanAnimates() || (!opening && !closing)) {
     syncOpenedGroupTriage(next)
     showKanbanFinding(next)
     render()

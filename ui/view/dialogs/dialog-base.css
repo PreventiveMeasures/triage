@@ -181,15 +181,6 @@ header h3 {
   }
 }
 
-/* And it takes the page's grain (styles/w95.css): a dialog shows in the
-   top layer, out of reach of the filter on the page. */
-@media screen and (resolution: 2dppx) {
-  :host-context(body.theme-w95) dialog { filter: url('./w95-grain.svg#w95-grain-2'); }
-}
-@media screen and (resolution: 3dppx) {
-  :host-context(body.theme-w95) dialog { filter: url('./w95-grain.svg#w95-grain-3'); }
-}
-
 /* WCO PWA mode — theme.css makes <body> a drag region and opts
    interactive elements back out via `app-region: no-drag`, but those
    light-DOM rules can't reach the shadow. Without this mirror the

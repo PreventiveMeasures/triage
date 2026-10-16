@@ -2,16 +2,12 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 // SVG resources imported by components are Lit templates in the JS bundle.
-// Top-level SVG entry points (app icons, etc.) remain standalone assets; a
-// stylesheet that names one (`url('./w95-grain.svg#…')`) means that asset,
-// served beside the bundled view.css in dev and in out/, so the reference
-// is left as written rather than bundled.
+// Top-level SVG entry points (app icons, etc.) remain standalone assets.
 export const litSvgAsHtml = {
   name: 'lit-svg-as-html',
   setup(build) {
-    build.onResolve({ filter: /\.svg(?:#.*)?$/ }, (args) => {
-      if (args.importer?.endsWith('.css')) return { path: args.path, external: true }
-      if (!args.importer?.endsWith('.js') || !args.path.endsWith('.svg')) return null
+    build.onResolve({ filter: /\.svg$/ }, (args) => {
+      if (!args.importer || !args.importer.endsWith('.js')) return null
       return { path: resolve(dirname(args.importer), args.path), namespace: 'lit-svg' }
     })
     build.onLoad({ filter: /.*/, namespace: 'lit-svg' }, async (args) => {
