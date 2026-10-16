@@ -29,7 +29,7 @@ import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { type AddedPackage, type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 import type { PassingReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from './reviewed-dependencies.ts'
 
@@ -148,8 +148,9 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
 
 // A directory as the client is told it: what it adds, as many as MAX_ADDED,
 // each version with its review (`review`, as judged), those past them judged
-// as they are, against the versions they were, and how many of all want one
-// (`toReview`); the others its lockfiles lock that want reviews, and every one
+// as they are, against the versions they were, as is every one its lockfiles
+// lock of them (another integrity of it, say), each told by the least passing
+// of them, and those of all that want one (`toReview`); the others its lockfiles lock that want reviews, and every one
 // that can't be reviewed (as many of each as MAX_UNREVIEWED, how many more,
 // once `capped`); and how many it locks past those read (`moreLocked`), which
 // aren't checked; without `review`, what it adds alone.
@@ -157,12 +158,20 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
   if (!review) return { ...told, added: added.slice(0, MAX_ADDED).map(shown) }
-  const adds = new Set(added.map(lockedWith))
-  const own = added.map((pkg: AddedPackage) => ({ pkg, judged: review(pkg, pkg.was ?? []) }))
-  const others = locked.filter(pkg => !adds.has(lockedWith(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
+  const adds = new Map(added.map(pkg => [lockedAs(pkg), { pkg, variants: [pkg] }]))
+  for (const pkg of locked) {
+    const of = adds.get(lockedAs(pkg))
+    if (of && lockedWith(pkg) !== lockedWith(of.pkg)) of.variants.push(pkg)
+  }
+  const own = [...adds.values()].map(({ pkg, variants }) => {
+    const judged = variants.map(variant => ({ variant, ...review(variant, pkg.was ?? []) }))
+    const least = judged.find(one => 'unsupported' in one.review) ?? judged.find(one => one.wants) ?? judged[0]!
+    return { pkg, judged: least, wanting: judged.filter(one => one.wants).map(({ variant }) => variant) }
+  })
+  const others = locked.filter(pkg => !adds.has(lockedAs(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
   return { ...told, added: own.slice(0, MAX_ADDED).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })),
-    toReview: own.filter(({ judged }) => judged.wants).map(({ pkg }) => shown(pkg)),
+    toReview: own.flatMap(({ wanting }) => wanting.map(shown)),
     unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })), unsupported, moreLocked }
 }
 function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsupported: unknown[] }>({ toReview: _toReview, ...dir }: T) {

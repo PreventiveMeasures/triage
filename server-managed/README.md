@@ -2053,7 +2053,9 @@ version pnpm patches (`patched`) passes by no review here, the app reviewing
 no patch yet: only by the reviewed dependencies the host registers (below),
 or, without them, locked so, its patch too, at the commit reviewed since. A version it adds passes
 with as many reviews as required, of it whole or compared with a version it
-was, those past the two hundred told judged so too and counted (`toReview`); and apart from them, every other version its lockfiles lock wants its
+was, those past the two hundred told judged so too and counted (`toReview`),
+as is every one its lockfiles lock of it (another integrity, say), its row
+told by the least passing of them; and apart from them, every other version its lockfiles lock wants its
 reviews as well, of it whole or compared with any version of its package.
 Where the repository is reviewed since a commit, the versions its lockfiles
 locked there, of every lockfile of npm's ecosystem in it (a hundred at most)
