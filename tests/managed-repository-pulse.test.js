@@ -478,11 +478,17 @@ test('a pull request labelled for an agent, or no longer, after its year was cou
   assert.equal((await store.read(`1\0pulse-year-last`)).at, recounted, 'read again, nothing changed, not counted again')
 })
 
-test('two reads of the agents\' pull requests bring the same commits whatever order each read them in', () => {
-  const read = (merges, rebases = []) => ({ merges, rebases, through: 1, next: null })
+test('two reads of the pull requests merged bring the same commits, the agents\' and every one\'s, whatever order each read them in', () => {
+  const read = (merges, rebases = [], pulls = merges, pullRebases = rebases) => ({ merges, rebases, through: 1, next: null, pulls, pullRebases })
   assert.ok(sameMerges(read([['a', 1], ['b', 2]], [['c', 3, ['x', 'y']]]), read([['b', 2], ['a', 1]], [['c', 3, ['x', 'y']]])))
   assert.ok(!sameMerges(read([['a', 1]]), read([['a', 1], ['b', 2]])))
   assert.ok(!sameMerges(read([], [['c', 3, ['x', 'y']]]), read([], [['c', 3, ['x']]])))
+  // Another's pull request merged, or rebased, the agents' alike: its commits
+  // no longer pushed directly.
+  assert.ok(!sameMerges(read([['a', 1]]), read([['a', 1]], [], [['a', 1], ['d', 4]])))
+  assert.ok(!sameMerges(read([['a', 1]]), read([['a', 1]], [], [['a', 1]], [['e', 5, ['z', 'w']]])))
+  assert.ok(sameMerges(read([['a', 1]], [], [['a', 1], ['d', 4]]), read([['a', 1]], [], [['d', 4], ['a', 1]])))
+  assert.ok(!sameMerges({ merges: [], rebases: [], through: 1, next: null }, read([], [], [['d', 4]])), 'kept before every one\'s were read')
 })
 
 test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {

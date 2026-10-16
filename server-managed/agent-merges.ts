@@ -129,10 +129,12 @@ export async function agentMerges(fullName: string, token: string, since: number
   return result(kept?.through ?? null, { after: after!, from: from ?? stop, stop, read })
 }
 
-// Whether two reads of the agents' pull requests merged (agentMerges) bring
-// the same commits, whatever order each read them in.
+// Whether two reads of the pull requests merged (agentMerges) bring the
+// same commits, the agents' and every one's (`pulls`, `pullRebases`, which
+// tell those pushed directly), whatever order each read them in.
 export function sameMerges(a: AgentMerges, b: AgentMerges) {
-  const brought = (read: AgentMerges) => JSON.stringify([read.merges.map(entry => entry.join()).toSorted(), read.rebases.map(entry => JSON.stringify(entry)).toSorted()])
+  const sorted = (entries: unknown[] = []) => entries.map(entry => JSON.stringify(entry)).toSorted()
+  const brought = (read: AgentMerges) => JSON.stringify([read.merges, read.rebases, read.pulls, read.pullRebases].map(sorted))
   return brought(a) === brought(b)
 }
 
