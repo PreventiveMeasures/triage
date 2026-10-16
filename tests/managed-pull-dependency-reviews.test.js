@@ -444,16 +444,18 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   t.after(() => db.close())
   const users = await people(db)
   const send = api(db, users)
-  github(t, { ...PULL, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  const files = { ...PULL.files, [head]: { ...PULL.files[head], 'berry/yarn.lock': BASELINE['berry/yarn.lock'], 'bun.lock': BASELINE['bun.lock'] } }
+  github(t, { files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
   const ask = (repoId = '1') => send(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId })}`)
   assert.deepEqual((await ask()).body, { head, review: null, users: {} }, 'not enabled')
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const answer = await ask()
   assert.equal(answer.status, 200)
-  assert.deepEqual(answer.body, { head, base: head, cut: false, unread: [], users: {}, review: { required: 1, since, canReview: true, toReview: 0, unreviewed: 1, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] },
+  assert.deepEqual(answer.body, { head, base: head, cut: false, users: {}, review: { required: 1, since, canReview: true, toReview: 0, unreviewed: 1, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] },
     lockfiles: [{ paths: ['package-lock.json'], added: [], more: 0, moreLocked: 0, unreviewed: [{ name: 'kept', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 0,
-      unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 }] },
-  'ms reviewed, left-pad locked at the commit reviewed since; kept wanting reviews, mine, from git, failing it')
+      unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 },
+    { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }, { paths: ['bun.lock'], error: 'lockfile-unsupported' }] },
+  'ms reviewed, left-pad locked at the commit reviewed since; kept wanting reviews, mine, from git, failing it, as do the lockfiles left unread')
   assert.equal((await ask('x')).status, 400)
 })

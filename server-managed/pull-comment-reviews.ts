@@ -22,10 +22,12 @@ const KEPT_MS = 60_000
 const PARSED_KEPT_MS = 10 * 60_000
 const VERDICTS = new Set<string>(['accept', 'accept-with-nits', 'request-changes', 'reject'])
 
-const QUERY = `query($owner: String!, $name: String!, $number: Int!, $comments: String, $reviews: String) {
+// Its comments and its reviews, each a page on from its cursor, each only
+// while it has more (`readComments`, `readReviews`).
+const QUERY = `query($owner: String!, $name: String!, $number: Int!, $comments: String, $reviews: String, $readComments: Boolean!, $readReviews: Boolean!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    comments(first: 100, after: $comments) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } }
-    reviews(first: 50, after: $reviews) { pageInfo { hasNextPage endCursor }
+    comments(first: 100, after: $comments) @include(if: $readComments) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } }
+    reviews(first: 50, after: $reviews) @include(if: $readReviews) { pageInfo { hasNextPage endCursor }
       nodes { id author { ${ACTOR} } body state createdAt url comments(first: 100) { nodes { id author { ${ACTOR} } body createdAt url } } } }
   } } }`
 
@@ -44,6 +46,8 @@ function authored(node: Node, kind: ReviewComment['kind']): Authored[] {
     createdAt: node.createdAt, url: typeof node.url === 'string' ? node.url : '' } }]
 }
 const nodes = (list: unknown): Node[] => Array.isArray(list) ? list as Node[] : []
+// The cursor a page ends at, where more follow it.
+const next = (page: Page | undefined) => page?.pageInfo?.hasNextPage === true && typeof page.pageInfo.endCursor === 'string' ? page.pageInfo.endCursor : null
 
 // Pull request `number`'s comments, its reviews' and those on its diff, as
 // kept, else read of GitHub a page at a time.
@@ -53,9 +57,12 @@ export async function pullComments(fullName: string, token: string, number: numb
   if (known && Date.now() - known.at < KEPT_MS) return known.read
   const [owner, name] = fullName.split('/') as [string, string]
   const read: Authored[] = []
+  // Each connection read on from its cursor till it has no more, the other
+  // read on without it, never again from its first page.
   let cursors: { comments: string | null; reviews: string | null } = { comments: null, reviews: null }
-  for (let more = true; more && read.length < MAX_COMMENTS;) {
-    const data = await githubGraphql(QUERY, { owner, name, number, ...cursors }, token, fetchImpl) as
+  let reading = { comments: true, reviews: true }
+  while ((reading.comments || reading.reviews) && read.length < MAX_COMMENTS) {
+    const data = await githubGraphql(QUERY, { owner, name, number, ...cursors, readComments: reading.comments, readReviews: reading.reviews }, token, fetchImpl) as
       { repository?: { pullRequest?: { comments?: Page; reviews?: Page } | null } | null } | null
     const pull = data?.repository?.pullRequest
     if (!pull) break
@@ -64,9 +71,8 @@ export async function pullComments(fullName: string, token: string, number: numb
       read.push(...authored(node, 'review'))
       for (const inline of nodes(node.comments?.nodes)) read.push(...authored(inline, 'review-comment'))
     }
-    const next = (page: Page | undefined) => page?.pageInfo?.hasNextPage === true && typeof page.pageInfo.endCursor === 'string' ? page.pageInfo.endCursor : null
-    cursors = { comments: next(pull.comments), reviews: next(pull.reviews) }
-    more = cursors.comments !== null || cursors.reviews !== null
+    cursors = { comments: reading.comments ? next(pull.comments) : null, reviews: reading.reviews ? next(pull.reviews) : null }
+    reading = { comments: cursors.comments !== null, reviews: cursors.reviews !== null }
   }
   const kept = read.slice(0, MAX_COMMENTS)
   comments.set(key, { at: Date.now(), read: kept })

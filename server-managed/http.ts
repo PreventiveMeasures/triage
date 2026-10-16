@@ -204,7 +204,7 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
+import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, lockfileFormat, pullDependencies } from './pull-dependencies.ts'
 import { lockedAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
@@ -2056,13 +2056,15 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
     if (!head) return { value: { head: null, review: null }, kept: false }
     const { packages, paths, unread } = await lockedAt(fullName, token, head)
-    const told = { base: head, head, cut: false,
-      lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) }] }
+    // Each lockfile left unread a directory of its own failing the review,
+    // as a pull request's are.
+    const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+      ...unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
     const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
     if (!state) return { value: { head, review: null }, kept: false }
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
-    return { value: { ...await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), unread }, kept: false }
+    return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
   })
 }
 

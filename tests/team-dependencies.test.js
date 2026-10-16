@@ -17,9 +17,9 @@ const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry'
 const gitdep = { name: 'gitdep', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/gitdep.git', unsupported: 'git' }
 const big = Array.from({ length: 9 }, (_, at) => wants(`big-${at}`))
 const branches = {
-  7: { cut: false, review: { ...terms, unreviewed: 1 }, lockfiles: [dir({ unreviewed: [wants('old')] })], unread: [] },
-  8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()], unread: [] },
-  9: { cut: false, review: null, lockfiles: [dir()], unread: [] },
+  7: { cut: false, review: { ...terms, unreviewed: 1 }, lockfiles: [dir({ unreviewed: [wants('old')] })] },
+  8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir(), { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] },
+  9: { cut: false, review: null, lockfiles: [dir()] },
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false })], 8: [pull(2)], 9: [pull(5)] }
@@ -75,7 +75,9 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(versions, /shared[^]*data-tooltip=Added by org\/b#2, org\/a#1>org\/b#2 \+1</u)
   assert.match(versions, /<span class="team-deps-row">[^]*gitdep[^]*data-tooltip=From git, which isn’t reviewed>can’t review</u)
   assert.match(text, /<summary>org\/a’s default branch: 1 version unreviewed<\/summary>[^]*href=\/npm\/old@1\.0\.0\/review /u)
-  assert.doesNotMatch(text, /org\/b’s default branch|org\/c/u, 'one wanting none, and one not reviewed, not shown')
+  assert.match(text, /<summary>org\/b’s default branch: 0 versions unreviewed, 1 lockfile unread<\/summary>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
+    'one wanting none, but whose lockfile is unread')
+  assert.doesNotMatch(text, /org\/c/u, 'one not reviewed, not shown')
 
   view.open({ preventDefault() {} }, { repo: repo(8, 'org/b'), item: pull(2) })
   assert.deepEqual(opened, [{ repository: { repoId: 8, repo: 'org/b' }, target: { number: 2, preview: { ...pull(2), kind: 'pulls' } } }])

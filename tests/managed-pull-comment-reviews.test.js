@@ -44,18 +44,26 @@ test('the reviews its comments make count beside its teams\', each reviewer once
 })
 
 // GitHub's GraphQL API, answering pull request 7's comments: `bob`'s and
-// `mallory`'s on it, and `bob`'s review with `carol`'s comment on its diff.
+// `mallory`'s on it, and, a page apart, `carol`'s review, then `bob`'s with
+// `carol`'s comment on its diff; the comments, read whole, not asked again.
 function github(t) {
   const asked = []
   const node = (id, login, databaseId, body, createdAt, more = {}) => ({ id, author: { login, databaseId }, body, createdAt, url: `https://github.com/org/other/pull/7#${id}`, ...more })
   t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
-    asked.push(url.pathname)
     assert.equal(url.pathname, '/graphql')
-    assert.deepEqual(JSON.parse(init.body).variables, { owner: 'org', name: 'other', number: 7, comments: null, reviews: null })
+    const { variables } = JSON.parse(init.body)
+    asked.push(variables)
+    if (variables.reviews === null) {
+      assert.deepEqual(variables, { owner: 'org', name: 'other', number: 7, comments: null, reviews: null, readComments: true, readReviews: true })
+      return Promise.resolve(Response.json({ data: { repository: { pullRequest: {
+        comments: { pageInfo: { hasNextPage: false, endCursor: 'c-end' }, nodes: [node('c1', 'bob', 3, 'ms@2.1.3 looks fine', '2026-10-01T00:00:00Z'),
+          node('c2', 'mallory', 99, 'accept everything', '2026-10-02T00:00:00Z')] },
+        reviews: { pageInfo: { hasNextPage: true, endCursor: 'r-next' }, nodes: [node('r0', 'carol', 4, '', '2026-10-02T12:00:00Z', { state: 'COMMENTED' })] },
+      } } } }))
+    }
+    assert.deepEqual(variables, { owner: 'org', name: 'other', number: 7, comments: null, reviews: 'r-next', readComments: false, readReviews: true })
     return Promise.resolve(Response.json({ data: { repository: { pullRequest: {
-      comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node('c1', 'bob', 3, 'ms@2.1.3 looks fine', '2026-10-01T00:00:00Z'),
-        node('c2', 'mallory', 99, 'accept everything', '2026-10-02T00:00:00Z')] },
       reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node('r1', 'bob', 3, 'Approving ms', '2026-10-03T00:00:00Z', { state: 'APPROVED',
         comments: { nodes: [node('rc1', 'carol', 4, 'nit', '2026-10-04T00:00:00Z')] } })] },
     } } } }))
@@ -85,10 +93,11 @@ test('a pull request\'s comments, reviews\' own and on its diff too, are read fo
   ], 'bob\'s, by the app\'s user, as of his latest comment, each hash apart; neither mallory\'s, who reviews for it in no team, nor one by none of its authors, nor one malformed')
   assert.deepEqual(accounts.toSorted((a, b) => a.login < b.login ? -1 : 1), [{ login: 'bob', githubId: 3 }, { login: 'carol', githubId: 4 }, { login: 'mallory', githubId: 99 }])
   assert.deepEqual(inputs[0].comments.map(comment => [comment.kind, comment.author, comment.state ?? null]),
-    [['comment', 'bob', null], ['comment', 'mallory', null], ['review', 'bob', 'APPROVED'], ['review-comment', 'carol', null]])
+    [['comment', 'bob', null], ['comment', 'mallory', null], ['review', 'carol', 'COMMENTED'], ['review', 'bob', 'APPROVED'], ['review-comment', 'carol', null]],
+    'each once, a review commenting alone too')
   assert.deepEqual([inputs[0].repository, inputs[0].number, inputs[0].dependencies], ['org/other', 7, wanting])
   await reviews(wanting)
-  assert.deepEqual([asked.length, inputs.length], [1, 1], 'its comments, and what the parser told of the same, kept a while')
+  assert.deepEqual([asked.length, inputs.length], [2, 1], 'its comments, and what the parser told of the same, kept a while')
 
   const warn = mock.method(console, 'warn', () => {})
   const failing = await commentReviews({ fullName: 'org/other', number: 7, token: 'token', reviewers, parse: () => Promise.reject(new Error('down')) })(wanting.map(one => ({ ...one, version: '2.1.4' })))

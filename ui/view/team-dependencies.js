@@ -236,14 +236,18 @@ class TeamDependencies extends StateElement {
   }
 
   // What a repository's default branch locks that wants reviews, and what
-  // fails it there, apart.
+  // fails it there, its lockfiles left unread too, apart.
   renderBranch(repo, read) {
     const { versions, count } = unreviewedVersions(read.branch)
     const failed = reviewFailures(read.branch)
     if (count === 0 && !failed) return nothing
+    const unread = failed?.unread.flatMap(dir => dir.paths) ?? []
     return html`<details class="team-deps-section"><summary>${repo.name}’s default branch: ${plural(count, 'version')} unreviewed${failed?.count
-      ? `, ${failed.count.toLocaleString('en-US')} can’t be reviewed` : ''}</summary>
-      <ul class="team-deps-versions">${[...versions, ...failed?.versions ?? []].map(pkg => versionRow(pkg, read.branch.review))}</ul>
+      ? `, ${failed.count.toLocaleString('en-US')} can’t be reviewed` : ''}${unread.length > 0 ? `, ${plural(unread.length, 'lockfile')} unread` : ''}</summary>
+      ${unread.length > 0 ? html`<p class="team-deps-quiet" role="alert">Unread, so what ${unread.length === 1 ? 'it locks isn’t' : 'they lock aren’t'} checked:
+        ${unread.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>` : nothing}
+      ${versions.length + (failed?.versions.length ?? 0) > 0 ? html`<ul class="team-deps-versions">${[...versions, ...failed?.versions ?? []]
+        .map(pkg => versionRow(pkg, read.branch.review))}</ul>` : nothing}
       ${count > versions.length ? html`<p class="team-deps-quiet">and ${(count - versions.length).toLocaleString('en-US')} more</p>` : nothing}
     </details>`
   }

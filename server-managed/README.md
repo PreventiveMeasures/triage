@@ -2105,9 +2105,10 @@ version it was, in place of a comparison; a patched one never.
 `GET /api/admin/repositories/branch-dependencies?repoId=…` answers the same
 of the repository's default branch, for its team's Dependencies tab (below):
 every lockfile of npm's ecosystem at its head (`commit-lockfiles.ts`, a
-hundred at most, those its reader refuses or past them told, `unread`), the
-versions they lock told as one directory's, none added, each wanting
-reviews among `unreviewed`; `{ head, review: null }` where none is in effect
+hundred at most), the versions they lock told as one directory's, none
+added, each wanting reviews among `unreviewed`, and each lockfile its reader
+refuses, or past the hundred, a directory of its own failing the review
+(`lockfile-unreadable`, or `lockfile-unsupported`, Bun's); `{ head, review: null }` where none is in effect
 for the reader, `head` none where the branch has no commit.
 
 #### A team's Dependencies
@@ -2129,7 +2130,7 @@ whichever repository, as one review passes it everywhere: another adding it
 too says so (`+1`), and a later one counts it as one a pull request above
 adds. Apart from them, folded, are every version wanting reviews, each once,
 with the pull requests adding it, and, of each repository, what its default
-branch locks that wants reviews or fails it. What it reads is held for the
+branch locks that wants reviews or fails it, its lockfiles left unread named. What it reads is held for the
 session two minutes, and read again once a repository's review is set.
 
 #### Reviewed dependencies of the host
