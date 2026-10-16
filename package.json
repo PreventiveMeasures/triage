@@ -170,6 +170,7 @@
     "server-managed/report-sources.ts",
     "server-managed/revisions.ts",
     "server-managed/repository-browser.ts",
+    "server-managed/repository-changes.ts",
     "server-managed/repository-code.ts",
     "server-managed/repository-agents.ts",
     "server-managed/repository-history.ts",

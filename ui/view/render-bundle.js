@@ -49,6 +49,7 @@ import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, re
 import './repository-history.js'
 import './repository-agents.js'
 import './repository-pulse.js'
+import './repository-replay.js'
 import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
@@ -2003,13 +2004,14 @@ const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Sea
 const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'], [activityTab(tab), 'Activity']]
 
 // The body of a tab of a repository's directory reading none of its files
-// (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents or
-// Pulse.
+// (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents,
+// Pulse or Replay.
 function repositoryFilelessTab(repository, tab) {
   return tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
     .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository} .repo=${repositoryFullName(repository)}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository} .repo=${repositoryFullName(repository)}></repository-pulse>`
+    : tab === 'replay' ? html`<repository-replay .repository=${repository}></repository-replay>`
     : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`
 }
 
@@ -2197,6 +2199,7 @@ function renderBundleSlide(entry) {
           ['pulls', () => repositoryFilelessTab(entry.repository, 'pulls')],
           ['agents', () => repositoryFilelessTab(entry.repository, 'agents')],
           ['pulse', () => repositoryFilelessTab(entry.repository, 'pulse')],
+          ['replay', () => repositoryFilelessTab(entry.repository, 'replay')],
           ['review', () => withCompare(() => html`<npm-review .entry=${entry} .details=${details} .request=${state.npmReview} .session=${state.managedSession}
             .source=${npmComparisonSource(entry)}></npm-review>`)],
           ['compare', () => withCompare(() => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}

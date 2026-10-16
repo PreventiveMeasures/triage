@@ -299,6 +299,41 @@ function refChips(refs, color, revision, github) {
     ? html`<span class="history-ref is-more" data-tooltip=${rest.map(ref => ref.name).join(', ')}>+${rest.length}</span>` : nothing}</span>`
 }
 
+// The history of the directory `repository` shows in `mode` (as
+// RepositoryHistory.mode names them), as held, else read: its `entry`
+// (historyRead), the `key` it is held by, and `more`, reading its next page.
+// The branches not merged are every branch's, read as those are; every
+// branch's refused for want of a sign-in, the revision's.
+function readHistory(repository, mode) {
+  const { repoId, commit, path } = repository
+  const every = mode === 'all' || mode === 'unmerged'
+  const key = every ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
+  const ask = (page, held) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
+    { page, all: every, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
+    if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
+    return checked(answer)
+  })
+  const settle = mode === 'path' ? null : settleFrontier
+  const entry = historyRead(key, ask, settle)
+  if (every && entry.status === 'error' && entry.code === 'github-token-required') {
+    allRefused.add(repoId)
+    return readHistory(repository, 'revision')
+  }
+  return { mode, key, entry, more: () => readMore(key, entry, ask, settle) }
+}
+
+// What Replay plays (repository-replay.js): the history of the revision a
+// directory shows, below the repository's root the directory's, as Commits
+// reads and keeps it; `element` updated as it is read, from when it
+// watches till it unwatches; read again where it failed (rereadHistory).
+export const revisionHistory = repository => readHistory(repository, repository.path ? 'path' : 'revision')
+export const watchHistories = element => { shownElements.add(element) }
+export const unwatchHistories = element => { shownElements.delete(element) }
+export function rereadHistory(key) {
+  sessionHistories().delete(key)
+  repaint()
+}
+
 // The tab's body, for the directory shown (`repository`, an entry's), its
 // repository's full name (`repo`, repository-code.js repositoryFullName,
 // once known) and the repository's branches and tags (`refs`,
@@ -359,23 +394,8 @@ class RepositoryHistory extends LitElement {
     return allRefused.has(repoId) ? 'revision' : preferred
   }
 
-  // The branches not merged are every branch's, read as those are.
   history(mode) {
-    const { repoId, commit, path } = this.repository
-    const every = mode === 'all' || mode === 'unmerged'
-    const key = every ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
-    const ask = (page, held) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
-      { page, all: every, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
-      if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
-      return checked(answer)
-    })
-    const settle = mode === 'path' ? null : settleFrontier
-    const entry = historyRead(key, ask, settle)
-    if (every && entry.status === 'error' && entry.code === 'github-token-required') {
-      allRefused.add(repoId)
-      return { mode: 'revision', ...this.history('revision') }
-    }
-    return { mode, key, entry, more: () => readMore(key, entry, ask, settle) }
+    return readHistory(this.repository, mode)
   }
 
   // The graph of what it holds, the pull requests squashed into it planted

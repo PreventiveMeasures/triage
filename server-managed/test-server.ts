@@ -729,6 +729,63 @@ function historyFixture(url: URL, res: ServerResponse): void {
     ...path ? {} : { ...squashedInto(answered), ...page === 1 ? { openPulls } : {} } })
 }
 
+// What each history fixture commit changes, for Replay: a repository
+// growing from its oldest commit, each commit adding files, more of them
+// early on, modifying those there, now and then removing or renaming one,
+// as a few random draws seeded by its id pick them; a pull request's own
+// commits modify a file or two. Within the directory asked of, as the
+// server answers.
+const REPLAY_TREE = ['src/index.ts', 'src/app.tsx', 'src/view/render.ts', 'src/view/tree.ts', 'src/view/canvas.ts', 'src/view/styles.css',
+  'src/view/icons.svg', 'src/server/http.ts', 'src/server/db.ts', 'src/server/auth.ts', 'src/server/routes/history.ts', 'src/server/routes/pulse.ts',
+  'src/server/routes/issues.ts', 'src/utils/format.js', 'src/utils/types.d.ts', 'src/utils/time.js', 'src/workers/scan.js', 'src/workers/build.js',
+  'test/index.test.ts', 'test/view.test.ts', 'test/server.test.ts', 'test/fixtures/history.json', 'test/fixtures/report.json', 'docs/README.md',
+  'docs/managed.md', 'docs/images/replay.png', 'docs/images/pulse.png', '.github/workflows/ci.yml', '.github/workflows/release.yml',
+  'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'native/src/scan.rs', 'native/Cargo.toml',
+  'package.json', 'package-lock.json', 'README.md', 'tsconfig.json', 'LICENSE',
+  ...['scan', 'report', 'graph', 'compare', 'npm', 'risk', 'treemap', 'search'].flatMap(part => [`src/${part}/index.ts`, `src/${part}/model.ts`, `src/${part}/view.ts`,
+    `src/${part}/${part}.css`, `src/${part}/worker.js`, `src/${part}/fixtures/${part}.json`, `test/${part}.test.ts`, `docs/${part}.md`])]
+let replayChanges: Map<string, [string, string, string?][]> | null = null
+function replayChangesOf(asked: string) {
+  if (!replayChanges) {
+    replayChanges = new Map()
+    const present: string[] = []
+    let made = 0
+    for (const [label] of HISTORY_FIXTURE.toReversed()) {
+      const sha = historySha(label)
+      const draw = (at: number) => createHash('sha1').update(`${sha}\0${at}`).digest().readUInt32BE(0) / 2 ** 32
+      const files = new Map<string, [string, string, string?]>()
+      const adding = made < REPLAY_TREE.length ? 1 + Math.floor(draw(0) * (present.length < 12 ? 4 : 2)) : 0
+      for (let at = 0; at < adding && made < REPLAY_TREE.length; at++) {
+        const path = REPLAY_TREE[made++]!
+        present.push(path)
+        files.set(path, [path, 'A'])
+      }
+      for (let at = 0; at < 1 + Math.floor(draw(1) * 4) && present.length > 0; at++) {
+        const path = present[Math.floor(draw(2 + at) * present.length)]!
+        if (!files.has(path)) files.set(path, [path, 'M'])
+      }
+      if (draw(9) < 0.06 && present.length > 8) {
+        const path = present.splice(Math.floor(draw(10) * present.length), 1)[0]!
+        files.set(path, draw(11) < 0.5 ? [path, 'D'] : [path.replace(/(\.\w+)$/u, '-next$1'), 'R', path])
+        if (files.get(path)![1] === 'R') present.push(files.get(path)![0])
+      }
+      replayChanges.set(sha, [...files.values()])
+    }
+  }
+  return replayChanges.get(asked) ?? [[REPLAY_TREE[createHash('sha1').update(asked).digest()[0]! % 12]!, 'M']]
+}
+
+function changesFixture(url: URL, res: ServerResponse): void {
+  const shas = (url.searchParams.get('shas') ?? '').split(',')
+  const path = url.searchParams.get('path') ?? ''
+  if (shas.length > 50 || !shas.every(sha => /^[a-f\d]{40}$/u.test(sha))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const within = (file: string) => path === '' || file.startsWith(`${path}/`)
+  const changes = shas.map(sha => ({ sha, more: false, files: replayChangesOf(sha).flatMap(file => file[1] === 'R'
+    ? within(file[0]) ? [within(file[2]!) ? file : [file[0], 'A']] : within(file[2]!) ? [[file[2]!, 'D']] : []
+    : within(file[0]) ? [file] : []) }))
+  setTimeout(() => sendJson(res, 200, { path, changes }), 400)
+}
+
 // The fixture repository's package-lock.json, as npm 11 writes one, for the
 // code viewer's View lockfile: debug's own ms a second copy of ms.
 const fixtureLockfile = `${JSON.stringify({
@@ -753,6 +810,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
+  if (url.pathname.endsWith('/changes')) { changesFixture(url, res); return }
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
@@ -988,7 +1046,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|issues|agents|item|pulse)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|issues|agents|item|pulse)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

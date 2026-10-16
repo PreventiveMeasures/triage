@@ -36,6 +36,8 @@
 //   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true[&from=]] → the commits a revision reaches, a page at a time,
 //        or across the most recently updated branches, with the branches and tags naming them, then on from the commits `from`
 //        names | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/changes?repoId=&path=&shas= → the files each of the commits `shas` names (fifty at most)
+//        adds, modifies, removes and renames within `path`, as `git log --name-status` lists them | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/issues?repoId=&kind=issues|pulls&state=open|closed[&after=] → a page of the repository's issues
 //        or pull requests, the most recently updated first, with how many are open and closed | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what agents left: pull requests and commits to
@@ -113,7 +115,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyPageStore, historySquashStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -182,6 +184,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
+import { type ChangesStore, type CommitChanges, changesAsked, changesWithin, repositoryChanges } from './repository-changes.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
@@ -215,6 +218,7 @@ const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const REPO_CODE_PATH = '/api/admin/repositories/code'
 const REPO_HISTORY_PATH = '/api/admin/repositories/history'
+const REPO_CHANGES_PATH = '/api/admin/repositories/changes'
 const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
 const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
@@ -1637,6 +1641,56 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
+  }
+}
+
+// GET /api/admin/repositories/changes: the files each commit `shas` names
+// changes, as the code viewer's Replay plays them (repository-changes.ts),
+// within `path`: read as the history is, with the reader's own GitHub access,
+// within their grants as the code is, each commit's kept whole by the commit
+// (historyChanges) and only those within `path` answered, once access is
+// checked again.
+async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const asked = repositoryQuery(res, query)
+  if (!asked) return
+  const { repoId, path } = asked
+  const shas = changesAsked(query.get('shas'))
+  if (!shas) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const authorize = async () => {
+    const access = await authorizeRepository(res, deps, cookie, repoId, path)
+    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return access
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const changes = await repositoryChanges(access.repo.fullName, reader.readToken(), shas, historyChanges(deps, repoId))
+    await reader.recheckAccess()
+    const current = await authorize()
+    if (!current) return
+    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    sendJson(res, 200, { path, changes: [...changes].map(([sha, read]) => read ? { sha, ...changesWithin(read, path) } : { sha, files: null, more: false }) })
+  } catch (err) {
+    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    throw err
+  }
+}
+
+// The files repository `repoId`'s commits change, kept by each commit
+// (historyChangeStore, repository-changes.ts repositoryChanges).
+function historyChanges(deps: ManagedHttpDeps, repoId: number): ChangesStore {
+  const store = historyChangeStore<CommitChanges>(deps.db, deps.config.debug)
+  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  return {
+    async read(shas) {
+      const kept = await store.readMany(shas.map(keyOf))
+      return new Map(shas.flatMap(sha => {
+        const value = kept.get(keyOf(sha))?.value
+        return value && Array.isArray(value.files) ? [[sha, value] as const] : []
+      }))
+    },
+    write: (sha, changes) => store.write(keyOf(sha), changes, Date.now()),
   }
 }
 
@@ -3884,6 +3938,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_HISTORY_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryHistory(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_CHANGES_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryChanges(res, deps, cookie, url.searchParams); return
     }
     if (path === REPO_ISSUES_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
