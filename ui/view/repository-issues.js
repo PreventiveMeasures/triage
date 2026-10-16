@@ -241,7 +241,8 @@ class RepositoryIssues extends LitElement {
   openTile(event, item) {
     if (!plainClick(event)) return
     event.preventDefault()
-    openRepositoryItemDialog({ repository: this.repository, target: { number: item.number, preview: { ...item, kind: this.kind } } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo },
+      target: { number: item.number, preview: { ...item, kind: this.kind } } })
   }
 
   // A tile: its state's icon, and under it a pull request's review and

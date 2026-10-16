@@ -233,6 +233,11 @@ test('a session clicked, its card or title, opens its popup; a pull request or i
   view.openSession(card, claudeSession)
   assert.equal(card.prevented, true)
   assert.deepEqual(opened, [{ repository: view.repository, target: { session: claudeSession } }])
+  // Its popup by the name the tab was handed, where it was opened by none.
+  const unnamed = Object.assign(shown(null), { repo: 'org/named' })
+  unnamed.openSession(click(), claudeSession)
+  unnamed.openItem(click(), 9, null)
+  assert.deepEqual(opened.splice(-2).map(props => props.repository.repo), ['org/named', 'org/named'])
   const commit = click({ target: { closest: selector => selector === '.agent-chip.is-commit' ? {} : null } })
   view.openSession(commit, claudeSession)
   assert.equal(commit.prevented, false, 'a commit opens on GitHub')

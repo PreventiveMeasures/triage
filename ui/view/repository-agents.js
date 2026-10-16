@@ -318,14 +318,14 @@ class RepositoryAgents extends LitElement {
   openSession(event, session) {
     if (!plainClick(event) || event.target?.closest?.('.agent-chip.is-commit')) return
     event.preventDefault()
-    openRepositoryItemDialog({ repository: this.repository, target: { session } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { session } })
   }
 
   openItem(event, number, preview) {
     if (!plainClick(event)) return
     event.preventDefault()
     event.stopPropagation()
-    openRepositoryItemDialog({ repository: this.repository, target: { number, preview } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { number, preview } })
   }
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its

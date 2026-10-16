@@ -462,7 +462,8 @@ class RepositoryPulse extends LitElement {
   openItem(event, kind, item) {
     if (!plainClick(event)) return
     event.preventDefault()
-    openRepositoryItemDialog({ repository: this.repository, target: { number: item.number, preview: { ...item, kind, labels: [], comments: 0 } } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo },
+      target: { number: item.number, preview: { ...item, kind, labels: [], comments: 0 } } })
   }
 }
 if (!customElements.get('repository-pulse')) customElements.define('repository-pulse', RepositoryPulse)

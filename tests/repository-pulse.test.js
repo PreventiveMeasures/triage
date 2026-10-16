@@ -254,6 +254,10 @@ test('an item clicked opens its popup, what the list knew shown as it reads the 
   view.openItem(plain, 'issues', item(3, { kind: 'issues', state: 'open', reason: null }))
   assert.equal(plain.prevented, true)
   assert.deepEqual(opened, [{ repository: view.repository, target: { number: 3, preview: { ...item(3, { state: 'open', reason: null }), kind: 'issues', labels: [], comments: 0 } } }])
+  // Its popup by the name the tab was handed, where it was opened by none.
+  const unnamed = Object.assign(shown(null), { repo: 'org/named' })
+  unnamed.openItem(click(), 'issues', item(3))
+  assert.equal(opened.pop().repository.repo, 'org/named')
   for (const held of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
     const event = click(held)
     view.openItem(event, 'pulls', item(5))
