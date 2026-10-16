@@ -13,7 +13,10 @@
 // adding where npm didn't tell it, and one npm tells none of is listed as its
 // own; one dismissed is paired alike, where it is used struck through, but
 // lists none of its own. Whose alerts couldn't be had is said beside, the
-// rest shown all the same.
+// rest shown all the same. Each repository's GitHub Actions on a tab of
+// their own (repository-risk-actions.js): the actions and reusable
+// workflows its workflows use, resolved on GitHub, and what their steps
+// fetch or run past a pin.
 // Opened by its URL alone,
 // /manage/repositories/risk, until it is linked.
 import { html, nothing, unsafeCSS } from 'lit'
@@ -29,6 +32,7 @@ import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
 import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
+import { ACTION_KINDS, ActionsState, findingsCell, pinnedTo, referenceHref } from './repository-risk-actions.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
@@ -84,6 +88,9 @@ const ERRORS = {
   'dependabot-not-installed': 'App not installed',
   'dependabot-unverified': 'Sign-in not verified, sign in again',
   'github-app-not-configured': 'GitHub App not configured',
+  'workflow-unreadable': 'Unreadable',
+  'workflow-too-large': 'Too large to read',
+  'invalid-uses': 'Not a reference GitHub reads',
 }
 const errorText = code => ERRORS[code] ?? code
 const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
@@ -296,7 +303,7 @@ function rank(row) {
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
   static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
-    _query: { state: true }, _tab: { state: true },
+    _query: { state: true }, _tab: { state: true }, _actionKind: { state: true },
     _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
@@ -309,8 +316,10 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // The advisories' KINDS shown, and the packages' PACKAGE_KINDS.
     this._kind = 'production'
     this._packageKind = 'all'
+    // The Actions tab's ACTION_KINDS shown.
+    this._actionKind = 'all'
     this._query = ''
-    // packages or advisories.
+    // packages, advisories or actions.
     this._tab = 'packages'
     this._scan = null
     this._drawTimer = null
@@ -356,6 +365,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // By id and package: an advisory, its versions locked and where (Sets),
     // and Dependabot's alerts of it by where (_alert).
     this._advisories = new Map()
+    // Each repository's Actions, and the references they make, resolved.
+    this._actions = new ActionsState()
   }
 
   disconnectedCallback() {
@@ -438,7 +449,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       for (const lockfile of repo.lockfiles?.values() ?? []) told += Number(lockfile.packages !== null || Boolean(lockfile.error)) + Number(Boolean(lockfile.advisories || lockfile.advisoriesError))
     }
     for (const row of this._packages.values()) if (row.risk && !row.risk.stale) told++
-    return told
+    return told + this._actions.told()
   }
 
   _apply(line) {
@@ -449,7 +460,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       // listed by another name, as renamed, forgotten.
       const listed = new Map(line.repos.map(({ id, fullName }) => [id, fullName]))
       const gone = [...this._repos.values()].filter(repo => listed.get(repo.id) !== repo.fullName)
-      for (const repo of gone) this._repos.delete(repo.id)
+      for (const repo of gone) { this._repos.delete(repo.id); this._actions.forget(repo.id) }
       this._forget(gone.flatMap(repo => [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)), gone.some(repo => repo.dependabot?.alerts))
       for (const { id, fullName } of line.repos) if (!this._repos.has(id)) this._repos.set(id, { id, fullName, commit: null, lockfiles: null, error: null, detail: null, dependabot: null })
     } else if (line.type === 'repo') {
@@ -462,6 +473,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         const told = [...repo.lockfiles?.keys() ?? []].map(path => `${repo.fullName}/${path}`)
         const alerted = Boolean(repo.dependabot?.alerts)
         Object.assign(repo, { lockfiles: null, error: line.error, detail: line.detail ?? null, dependabot: null })
+        this._actions.forget(repo.id)
         this._forget(told, alerted)
         return
       }
@@ -498,6 +510,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       this._applyAdvisories(line)
     } else if (line.type === 'dependabot') {
       this._applyDependabot(line)
+    } else if (line.type === 'action' || ((line.type === 'workflows' || line.type === 'workflow') && this._repos.has(line.repo))) {
+      this._actions.apply(line)
     }
   }
 
@@ -744,7 +758,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <h1 class="sr-only">Repository risk</h1>
-      <div class="page-intro"><p class="intro">Each connected repository’s npm lockfiles at its default branch, and what risk finds in each package they lock.</p>
+      <div class="page-intro"><p class="intro">Each connected repository’s npm lockfiles and GitHub Actions at its default branch: what risk finds in each package they lock, and what each workflow pulls in.</p>
         ${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
@@ -752,18 +766,21 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       ${this._progress()}
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       ${this._repos.size === 0 ? nothing : html`<div class="manage-list">${this._lockfiles()}
-        ${this._packages.size === 0 ? nothing : this._tab === 'advisories' ? this._advisoryTable() : this._packageTable()}</div>`}
+        ${this._packages.size === 0 && this._actions.files.size === 0 ? nothing
+          : this._tab === 'advisories' ? this._advisoryTable() : this._tab === 'actions' ? this._actionsTable() : this._packageTable()}</div>`}
     </div>`
   }
 
   _tabs() {
-    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`]]
+    const actions = this._actions.actions.size
+    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`],
+      ['actions', html`Actions${actions > 0 ? html`<span class="n">${formatCount.format(actions)}</span>` : nothing}`]]
     return html`<div class="risk-tabs" role="tablist" aria-label="Results">${tabs.map(([tab, label]) => html`<button type="button" role="tab"
       aria-selected=${this._tab === tab} @click=${() => { this._tab = tab }}>${label}</button>`)}</div>`
   }
 
-  _search(count, total, what) {
-    return html`<input type="search" aria-label=${`Search ${what}`} placeholder="Search by package…" .value=${this._query} @input=${event => { this._query = event.target.value }}>
+  _search(count, total, what, by = 'package') {
+    return html`<input type="search" aria-label=${`Search ${what}`} placeholder=${`Search by ${by}…`} .value=${this._query} @input=${event => { this._query = event.target.value }}>
       <span class="result-count">${count === total ? '' : `${formatCount.format(count)} of `}${formatCount.format(total)} ${what}</span>`
   }
 
@@ -825,7 +842,19 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
           `${count(wasStale - stale)} of ${count(wasStale)} assessed again.`] }] : [],
       ...advisories.total > 0 ? [{ label: 'Advisories', value: advisories.total,
         ...apart([['malware', advisories.malware], ['prod', advisories.needed], ['dev', advisories.dev]]) }] : [],
+      ...this._actionsMetrics(),
     ]
+  }
+
+  // Workflows read of those listed, and the references they make resolved,
+  // where any repository's Actions were told.
+  _actionsMetrics() {
+    if (this._actions.listed.size === 0) return []
+    const { workflows, workflowsRead, actions, resolved } = this._actions.counts()
+    const flagged = this._actions.rows('all', '', {}).filter(row => row.severity && row.severity !== 'notice' && row.severity !== 'low').length
+    return [{ label: 'Workflows', value: workflowsRead, of: workflows, bar: [['read', workflowsRead]] },
+      ...actions > 0 ? [{ label: 'Actions resolved', value: resolved, of: actions, bar: [['read', resolved]] }] : [],
+      { label: 'Actions flagged', value: flagged, bar: [], tone: flagged > 0 ? 'high' : null }]
   }
 
   // The scan's metrics (_metrics), each read with a bar and its tooltip a
@@ -860,7 +889,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _repoStatus(repo) {
     if (repo.error) return html`<span class="risk-error" data-tooltip=${repo.detail ?? nothing}>${errorText(repo.error)}</span>`
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
-    return repo.lockfiles.size === 0 ? html`<span class="risk-none">No npm lockfiles</span>` : null
+    return repo.lockfiles.size === 0 && !this._actions.listed.has(repo.id) ? html`<span class="risk-none">No npm lockfiles</span>` : null
   }
 
   _lockfileStatus(lockfile) {
@@ -869,17 +898,29 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   // A line a repository: its name, and its lockfiles beside it, each with its
-  // format and how many packages it locks, or why there are none.
+  // format and how many packages it locks, or why there are none; then its
+  // workflows and actions of its own, each with how many findings it has.
   _lockfiles() {
-    return html`<section class="risk-section" aria-label="Lockfiles">
-      <h2>Lockfiles</h2>
+    return html`<section class="risk-section" aria-label="Lockfiles and workflows">
+      <h2>${this._actions.listed.size > 0 ? 'Lockfiles and workflows' : 'Lockfiles'}</h2>
       <ul class="risk-repos">${[...this._repos.values()].map(repo => html`<li>
         <span class="risk-repo-name" data-tooltip-truncated data-tooltip=${repo.fullName}>${repo.fullName}</span>
         ${this._repoStatus(repo) ?? html`<ul class="risk-lockfiles">${[...repo.lockfiles.values()].map(lockfile => html`<li>
           <span class="mono">${lockfile.path}</span><span class="risk-lockfile-meta">${lockfile.format} · ${this._lockfileStatus(lockfile)}</span>
-        </li>`)}</ul>`}
+        </li>`)}${this._workflowItems(repo)}</ul>`}
       </li>`)}</ul>
     </section>`
+  }
+
+  // A repository's workflows and actions of its own, each with how many
+  // findings it has, or why it couldn't be read; or why its workflows
+  // couldn't be listed.
+  _workflowItems(repo) {
+    const listed = this._actions.listed.get(repo.id)
+    if (!listed) return nothing
+    if (listed.error) return html`<li><span class="mono">.github/workflows</span><span class="risk-lockfile-meta"><span class="risk-error" data-tooltip=${listed.detail ?? nothing}>${errorText(listed.error)}</span></span></li>`
+    return this._actions.filesOf(repo.id).map(file => html`<li><span class="mono">${file.path}</span><span class="risk-lockfile-meta">${file.kind} · ${file.error
+      ? html`<span class="risk-error" data-tooltip=${file.detail ?? nothing}>${errorText(file.error)}</span>` : `${formatCount.format(file.findings.length)} findings`}</span></li>`)
   }
 
   // The tabs and the controls of the results, kept in view as they scroll.
@@ -966,6 +1007,61 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       </table></div>`}
       ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}
     </section>`
+  }
+
+  // Where an Actions row is linked: a repository's name by its id, and a
+  // file's line on GitHub at the commit read.
+  _actionLinks() {
+    return {
+      repo: id => this._repos.get(id)?.fullName ?? String(id),
+      line: (id, path, line) => {
+        const repo = this._repos.get(id)
+        return repo?.commit ? `https://github.com/${repo.fullName}/blob/${repo.commit}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}` : null
+      },
+    }
+  }
+
+  _actionsTable() {
+    const links = this._actionLinks()
+    const counts = Object.fromEntries(Object.keys(ACTION_KINDS).map(kind => [kind, this._actions.rows(kind, '', links).length]))
+    const rows = this._actions.rows(this._actionKind, this._query, links)
+    const empty = this._state === 'running' ? 'None yet.' : this._actions.listed.size === 0 ? 'No workflows were read.' : 'Nothing found.'
+    return html`<section class="risk-section" aria-label="Actions">
+      ${this._resultsHead(html`${this._kindToggle('Which', ACTION_KINDS, counts, this._actionKind, kind => { this._actionKind = kind })}
+        ${this._search(rows.length, counts[this._actionKind], 'rows', 'name')}`)}
+      ${rows.length === 0 ? html`<p class="msg">${empty}</p>` : html`<div class="link-table"><table>
+        <thead><tr><th>Uses</th><th>Pinned to</th><th>Findings</th><th class="risk-used-column">Used in</th></tr></thead>
+        <tbody>${repeat(rows.slice(0, MAX_ROWS), row => row.key, row => this._actionRow(row))}</tbody>
+      </table></div>`}
+      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}
+    </section>`
+  }
+
+  // A row: a reference by its key, linked to it on GitHub, and what it is
+  // pinned to; or what a step pulls in; its findings, and where it is used.
+  _actionRow(row) {
+    const href = row.kind === 'action' ? referenceHref(row) : null
+    // A commit cut short, as GitHub shows one; the whole key in its tooltip.
+    const ref = row.key.replace(/^[^@]*@/u, '').replace(/^([\da-f]{7})[\da-f]{33}\b/u, '$1')
+    const name = row.kind === 'action' ? html`<span data-tooltip=${row.key}>${row.key.replace(/@.*$/u, '')}<span class="risk-version">@${ref}</span></span>` : row.name
+    const status = row.line?.error ? html`<span class="risk-error" data-tooltip=${row.line.detail ?? nothing}>${errorText(row.line.error)}</span>`
+      : row.kind === 'action' && !row.line ? this._pending('Resolving…', 'Not resolved') : nothing
+    return html`<tr>
+      <td><span class="risk-package">${icon(row.kind === 'action' ? GITHUB_ICON_SVG : BUNDLE_ICON_SVG)}${href
+        ? html`<a class="risk-name mono" href=${href} target="_blank" rel="noopener noreferrer">${name}</a>` : html`<span class="mono">${name}</span>`}</span></td>
+      <td class="mono">${pinnedTo(row.line) ?? (row.kind === 'action' ? status : nothing)}</td>
+      <td>${row.findings.length > 0 ? findingsCell(row.findings) : row.kind === 'action' && row.line && !row.line.error ? html`<span class="risk-none">None found</span>` : pinnedTo(row.line) ? status : nothing}</td>
+      <td>${this._actionUsedIn(row.usedIn)}</td>
+    </tr>`
+  }
+
+  // Where a row is used: a workflow's line, linked, or an action naming it,
+  // or how many, opening into each.
+  _actionUsedIn(usedIn) {
+    const item = ({ text, href }) => href ? html`<a class="risk-name risk-used" href=${href} target="_blank" rel="noopener noreferrer">${icon(GITHUB_ICON_SVG)}<span
+      class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${text}>${text}</span></a>` : html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${text}>${text}</span>`
+    if (usedIn.length === 1) return item(usedIn[0])
+    return html`<details class="risk-used-all"><summary>${formatCount.format(usedIn.length)} places</summary><ul>${usedIn.map(each => html`<li>${item(each)}</li>`)}</ul></details>`
   }
 
   _advisoryRow(row, links) {

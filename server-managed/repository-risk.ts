@@ -23,7 +23,12 @@
 // vulnerabilities, told beside. A repository's Dependabot alerts of npm's, open or dismissed,
 // are told once its lockfiles' advisories are, each with the versions its
 // lockfile locks that it covers, for the page to blend them into npm's; one
-// whose alerts couldn't be had tells why, and the scan goes on.
+// whose alerts couldn't be had tells why, and the scan goes on. Where the
+// source lists a repository's workflows, they and the actions of its own
+// they use are told once its lockfiles are, each read for what it calls for
+// (repository-actions.ts), and the actions and reusable workflows of others
+// they name resolved on GitHub as the scan goes on (`actions`), each once,
+// before it is done.
 import type { LockfileFormat } from '@preventive/upstream/github.js'
 import { type Severity, npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
@@ -39,6 +44,9 @@ import { type AdvisoryRow, type Audit, type AuditSource, auditLockfile } from '.
 import { type DependabotRead, type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
   readRepository } from './repository-risk-read.ts'
 import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
+import type { ActionsSource } from '../actions-scan/index.js'
+import { type ActionLine, type ActionRef, type ActionsResolver, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines,
+  resolvingActions } from './repository-actions.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
@@ -78,6 +86,13 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends Audi
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
+  // Resolves the actions and reusable workflows of others that repositories'
+  // workflows name, on GitHub; without it, none is resolved.
+  actions?: ActionsSource
+  // Where a repository's Actions' files as read at a commit, and a reference
+  // resolved, are kept beyond this instance.
+  actionFiles?: KeptStore<WorkflowsRead>
+  actionLines?: KeptStore<ActionLine>
 }
 
 
@@ -99,6 +114,7 @@ export type RepositoryRiskLine =
     & ({ published: string | null; severity: Severity | null; score: number; findings: { id: string; severity: Severity; takenDown?: true }[] } | RiskFailure))
   | ({ type: 'advisories'; repo: number; path: string } & ({ advisories: AdvisoryRow[] } | RiskFailure))
   | ({ type: 'dependabot'; repo: number } & ({ alerts: DependabotAlertRow[] } | RiskFailure))
+  | WorkflowsLine | WorkflowLine | ActionLine
   | { type: 'done' }
   // The scan stopped for its part's time (repositoryRiskLines `partMs`), what
   // it told kept: to be asked again, from where it stopped.
@@ -106,9 +122,10 @@ export type RepositoryRiskLine =
 
 // The repositories a scan answered in parts told whole by a part's end: each
 // by its id, its name and a team's directories in it then, and its
-// lockfiles' keys (`${format}\0${sha}`) of those read.
+// lockfiles' keys (`${format}\0${sha}`) of those read, and the references
+// its Actions make, to resolve.
 export interface ScanProgress { repos: ToldRepository[] }
-interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[] }
+interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[]; actions?: ActionRef[] }
 
 type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 
@@ -125,6 +142,8 @@ export interface RiskCaches {
   lockfiles: Lru<LockfileRead>
   risks: Lru<{ at: number; line: RiskLine }>
   advisories: Lru<{ at: number; audit: Audit }>
+  actionFiles: Lru<WorkflowsRead>
+  actions: Lru<{ at: number; line: ActionLine }>
 }
 export const riskCaches = (): RiskCaches => ({
   listings: lru(1000),
@@ -132,6 +151,9 @@ export const riskCaches = (): RiskCaches => ({
   lockfiles: lru(200_000, read => 'packages' in read ? read.packages.length + 1 : 1),
   risks: lru(50_000),
   advisories: lru(50_000, kept => Array.isArray(kept.audit) ? kept.audit.length + 1 : 1),
+  // By their text, a kilobyte at a time.
+  actionFiles: lru(64 * 1024, read => 'files' in read ? read.files.reduce((sum, file) => sum + ('text' in file ? Math.ceil(file.text.length / 1024) : 1), 1) : 1),
+  actions: lru(10_000),
 })
 // How many repositories are read at once (repository-risk-read.ts), ahead of
 // the one told: each asks GitHub one thing after another (opening it, and
@@ -159,6 +181,9 @@ interface Scan {
   stale: AssessedPackage[]
   // The repositories told whole, this part or one before (ScanProgress).
   told: Map<number, ToldRepository>
+  // Resolves the references repositories' Actions make, where the source
+  // does.
+  actions: ActionsResolver | null
 }
 
 // A package as a scan meets it: by its name, version and a mirror's integrity.
@@ -315,6 +340,7 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
     scan.lines.add(line)
     if ('packages' in line) assessLater(scan, line.packages)
   }
+  const refs = read.actions ? tellActions(scan, repo, read.actions, lockfiles) : []
   for (const { sha, line } of lockfiles) {
     if (scan.signal.aborted) return
     const advisories = 'packages' in line ? await readAdvisories(scan, line, sha) : null
@@ -325,7 +351,17 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
   if (scan.signal.aborted) return
   if (dependabot) scan.lines.add(dependabotLine(repo.repoId, dependabot, lockfiles))
   scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
-    lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []) })
+    lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []), ...refs.length > 0 ? { actions: refs } : {} })
+}
+
+// A repository's Actions told, npx held to its lockfiles' packages, and the
+// references they make given to resolve: those references.
+function tellActions(scan: Scan, repo: RepositoryRiskRepo, read: WorkflowsRead, lockfiles: RepositoryRead['lockfiles']) {
+  const locked = lockfiles.flatMap(({ line }) => 'packages' in line ? [{ path: line.path, names: new Set(line.packages.map(({ name }) => name)) }] : [])
+  const { lines, refs } = actionsLines(repo.repoId, repo.fullName.split('/')[0]!, read, locked)
+  for (const line of lines) scan.lines.add(line)
+  scan.actions?.add(refs)
+  return refs
 }
 
 // Whether an earlier part told `repo` whole, by its name and a team's
@@ -342,6 +378,7 @@ async function toldBefore(scan: Scan, repo: RepositoryRiskRepo) {
     reads.push(read.packages)
   }
   for (const packages of reads) assessLater(scan, packages)
+  scan.actions?.add(told.actions ?? [])
   return true
 }
 
@@ -404,7 +441,13 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   // none waited for: the work under way, such as a request to GitHub, which
   // isn't given up on at once, outlasting it.
   const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
-  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map() }
+  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions: null }
+  if (source.actions) {
+    scan.actions = resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions, store: source.actionLines })
+  }
+  // Once the repositories are read, what their Actions name is resolved
+  // alongside the assessments, and waited on before the scan is done.
+  let resolving: Promise<void> | undefined
   const failed: unknown[] = []
   void (async () => {
     try {
@@ -412,13 +455,17 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
       await assessing(scan, async assess => {
         const looking = lookUp(scan, assess)
         // stopped at once where reading fails;
-        try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally { scan.lookups.close() }
+        try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally {
+          scan.lookups.close()
+          resolving = scan.actions?.close()
+        }
         await looking
       })
       // then those told stale, and those only devDependencies need, in turn.
       for (const left of leftOver(scan)) {
         if (!running.aborted && left.length > 0) await assessing(scan, assess => { assess(left); return Promise.resolve() })
       }
+      await resolving
       if (!running.aborted) scan.lines.add({ type: 'done' })
     } catch (error) {
       failed.push(error)

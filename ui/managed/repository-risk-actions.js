@@ -1,0 +1,220 @@
+// The Actions tab of Manage → Repositories → Risk (repository-risk.js): what
+// each repository's workflows pull in, as the scan tells it
+// (server-managed/repository-actions.ts): each action and reusable workflow
+// of another repository, by its key, resolved on GitHub, what it is pinned
+// to and what it calls for, its own code's findings among them; and each
+// thing a workflow's steps fetch or run past a pin, by what it is, wherever
+// it is. Each row is used in the workflows that name it, each linked to its
+// line on GitHub at the commit read, or in the actions that name it in turn.
+import { html, nothing } from 'lit'
+import { SEVERITIES } from '../../risk/files/stamps.js'
+import { usesKey } from '../../actions-scan/uses.js'
+
+// What each finding is called, and what it says, beside what it found.
+export const ACTION_FINDINGS = {
+  'unpinned': ['Unpinned', 'By a tag or a branch, which its repository’s owner can point anywhere, not a full commit sha.'],
+  'short-sha': ['Short sha', 'A short sha, which GitHub reads as a branch or tag named so too.'],
+  'unpinned-image': ['Image by tag', 'An image by a tag, which its publisher can move, not a digest.'],
+  'fetched-package': ['Fetched package', 'A package fetched and run as it resolves now, past what a lockfile locks.'],
+  'unlocked-install': ['Unlocked install', 'An install that resolves anew where package.json and the lockfile disagree; npm ci holds to the lockfile.'],
+  'remote-script': ['Remote script', 'A script fetched and run as it is fetched.'],
+  'clone': ['Clone', 'A repository cloned at whatever its branch has.'],
+  'hosts': ['Host', 'A service malicious code sends what it takes to, or fetches what it runs from.'],
+  'script-injection': ['Script injection', 'An expression anyone can write, in a script: what it holds runs as the script’s own code.'],
+  'pwn-request': ['Runs a fork’s code', 'Checks out a pull request’s own code where the workflow runs with the base repository’s secrets.'],
+  'untrusted-artifact': ['Untrusted artifact', 'Takes another run’s artifacts, which a fork’s pull request writes, where the workflow runs with secrets.'],
+  'secrets-inherited': ['Inherits secrets', 'Another owner’s reusable workflow handed every secret.'],
+  'invalid-uses': ['Invalid', 'A uses: GitHub can’t read.'],
+  'deprecated-runtime': ['Old Node.js', 'A Node.js GitHub no longer runs actions on.'],
+  'repo-missing': ['Repository missing', 'No such repository on GitHub: anyone who takes its owner’s name can publish one.'],
+  'repo-moved': ['Repository moved', 'Renamed or transferred: GitHub redirects the old name until someone takes it.'],
+  'repo-fork': ['Fork', 'A fork of another repository.'],
+  'repo-archived': ['Archived', 'Archived by its owner.'],
+  'branch-ref': ['Branch', 'A branch, which moves with every push.'],
+  'ambiguous-ref': ['Tag and branch', 'A tag and a branch of the same name.'],
+  'ref-missing': ['Ref missing', 'Neither a tag nor a branch: GitHub runs whichever is pushed first.'],
+  'not-version': ['Not a version', 'A tag that is no version.'],
+  'tag-off-release': ['Tag off release', 'A major or minor tag on a commit no release of its line is on, as a tag moved by whoever took the repository is.'],
+  'tag-off-branch': ['Tag off branch', 'The tag’s commit is on none of its branches, as a release’s built files may be.'],
+  'outdated': ['Outdated', 'An older major version than the latest release.'],
+  'imposter-commit': ['Imposter commit', 'In the history of none of the repository’s branches and releases: GitHub serves a fork’s commit under the name of the repository it forked.'],
+  'unverified-commit': ['Unverified commit', 'In the history of none of the branches and releases looked at; it has more.'],
+  'commit-missing': ['Commit missing', 'GitHub has no such commit.'],
+  'untagged-commit': ['Untagged commit', 'A commit no tag names: no release.'],
+  'comment-mismatch': ['Comment mismatch', 'The version the comment beside it names isn’t this commit’s.'],
+  'action-missing': ['No action.yml', 'No action.yml where it names, at the commit.'],
+  'unreadable': ['Unreadable', 'Its file couldn’t be read as GitHub reads it.'],
+}
+const HOST_LABELS = { 'Exfiltration': 'Exfiltration host', 'Remote': 'Remote host', 'IP lookup': 'IP lookup' }
+
+export const ACTION_KINDS = {
+  all: ['All'],
+  actions: ['Actions', 'Actions and reusable workflows of other repositories, resolved on GitHub.'],
+  steps: ['Steps', 'What workflows’ steps fetch or run past a pin, and what else they call for.'],
+}
+
+const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
+const worst = findings => findings.reduce((best, { severity }) => severityRank(severity) < severityRank(best) ? severity : best, null)
+export const findingLabel = finding => finding.id === 'hosts' ? HOST_LABELS[finding.tag] ?? 'Host' : ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
+
+// What a finding found, as its tooltip tells it beside what it says.
+function findingDetail(finding) {
+  const parts = []
+  if (finding.id === 'fetched-package') parts.push(`${finding.tool} ${finding.name}${finding.spec ? `@${finding.spec}` : ''}`, ...finding.localFirst ? [finding.locked ? (finding.installed ? '' : 'locked, but run before any install') : 'no lockfile here locks it'] : [])
+  if (finding.services) parts.push(finding.services.join(', '))
+  if (finding.expression) parts.push(`\${{ ${finding.expression} }}`)
+  if (finding.to) parts.push(`now ${finding.to}`)
+  if (finding.parent) parts.push(`of ${finding.parent}`)
+  if (finding.latest) parts.push(`latest ${finding.latest}`)
+  if (finding.release) parts.push(`its line’s latest release is ${finding.release}`)
+  if (finding.comment) parts.push(`# ${finding.comment}, ${finding.tags?.length ? `tags here: ${finding.tags.join(', ')}` : 'no tag is on it'}`)
+  if (finding.image) parts.push(finding.image)
+  if (finding.file) parts.push(`in ${finding.file}${finding.line ? `, line ${finding.line}` : ''}`)
+  if (finding.detail) parts.push(finding.detail)
+  return [ACTION_FINDINGS[finding.id]?.[1], ...parts.filter(Boolean)].filter(Boolean).join('\n')
+}
+
+// What a step's finding is about, as its row is named: its package, its
+// image, its expression, or what it is.
+function stepName(finding) {
+  if (finding.id === 'fetched-package') return `${finding.tool} ${finding.name}${finding.spec ? `@${finding.spec}` : ''}`
+  if (finding.id === 'unlocked-install') return finding.tool
+  if (finding.id === 'unpinned-image') return finding.image
+  if (finding.id === 'clone') return `git clone ${finding.url ?? ''}`.trim()
+  if (finding.id === 'hosts') return finding.services.join(', ')
+  if (finding.id === 'script-injection') return `\${{ ${finding.expression} }}`
+  if (finding.id === 'secrets-inherited' || finding.id === 'invalid-uses') return finding.uses
+  if (finding.id === 'deprecated-runtime') return `runs.using: ${finding.using}`
+  if (finding.id === 'remote-script' && finding.command) return finding.command
+  if (finding.id === 'pwn-request' && finding.ref) return finding.ref === 'gh pr checkout' ? finding.ref : `actions/checkout ref: ${finding.ref}`
+  return findingLabel(finding)
+}
+
+// The workflows, actions and repositories' Actions a scan told, by its
+// lines: each repository's workflows' paths, or why not; each file, by
+// repository and path; each reference resolved, by key.
+export class ActionsState {
+  constructor() {
+    this.listed = new Map()
+    this.files = new Map()
+    this.actions = new Map()
+  }
+
+  apply(line) {
+    if (line.type === 'workflows') {
+      this.listed.set(line.repo, line.error ? { error: line.error, detail: line.detail ?? null } : { paths: line.paths })
+      for (const key of [...this.files.keys()]) if (key.startsWith(`${line.repo}\0`)) this.files.delete(key)
+    } else if (line.type === 'workflow') this.files.set(`${line.repo}\0${line.path}`, line)
+    else if (line.type === 'action' && !this.actions.has(line.key)) this.actions.set(line.key, line)
+    else if (line.type === 'action' && !line.error) this.actions.set(line.key, line)
+  }
+
+  // What a repository no longer listed, or read again, told: forgotten.
+  forget(repo) {
+    this.listed.delete(repo)
+    for (const key of [...this.files.keys()]) if (key.startsWith(`${repo}\0`)) this.files.delete(key)
+  }
+
+  // How much is told, for a scan's parts to tell whether one went further.
+  told() {
+    return this.listed.size + this.files.size + this.actions.size
+  }
+
+  // Files read and listed, and references resolved and named.
+  counts() {
+    let listed = 0, read = 0
+    for (const [repo, told] of this.listed) {
+      listed += told.paths?.length ?? 0
+      read += [...this.files.values()].filter(file => file.repo === repo && file.kind === 'workflow').length
+    }
+    const named = new Set(this.rowsOfActions({}).map(row => row.key))
+    return { workflows: listed, workflowsRead: read, actions: named.size, resolved: [...named].filter(key => this.actions.has(key)).length }
+  }
+
+  // A row of each reference, resolved or not yet, and where it is used:
+  // each workflow's line naming it, and each action naming it in turn.
+  rowsOfActions(links) {
+    const rows = new Map()
+    const row = key => rows.get(key) ?? rows.set(key, { key, kind: 'action', usedIn: [], local: [] }).get(key)
+    for (const file of this.files.values()) {
+      for (const uses of file.uses ?? []) {
+        if (uses.kind !== 'action' && uses.kind !== 'workflow') continue
+        const at = row(usesKey(uses))
+        at.uses = uses
+        at.usedIn.push({ text: `${links.repo?.(file.repo) ?? file.repo}/${file.path}:${uses.line}`, href: links.line?.(file.repo, file.path, uses.line) ?? null })
+        at.local.push(...(file.findings ?? []).filter(finding => finding.line === uses.line && (finding.id === 'unpinned' || finding.id === 'short-sha' || finding.id === 'secrets-inherited')))
+      }
+    }
+    for (const line of this.actions.values()) for (const uses of line.uses ?? []) row(uses.key).usedIn.push({ text: `via ${line.key}`, href: null })
+    for (const at of rows.values()) {
+      const line = this.actions.get(at.key) ?? null
+      const seen = new Set()
+      at.line = line
+      at.findings = [...at.local, ...line?.findings ?? []].filter(finding => { const key = `${finding.id}\0${finding.file ?? ''}\0${finding.file ? finding.line : ''}`; return !seen.has(key) && seen.add(key) })
+      at.severity = worst(at.findings)
+    }
+    return [...rows.values()]
+  }
+
+  // A row of each thing steps fetch or run past a pin, or else call for, by
+  // what it is, and where.
+  rowsOfSteps(links) {
+    const rows = new Map()
+    for (const file of this.files.values()) {
+      const named = new Set((file.uses ?? []).filter(uses => uses.kind === 'action' || uses.kind === 'workflow').map(uses => uses.line))
+      for (const finding of file.findings ?? []) {
+        if ((finding.id === 'unpinned' || finding.id === 'short-sha' || finding.id === 'secrets-inherited') && named.has(finding.line)) continue
+        const name = stepName(finding)
+        const key = `${finding.id}\0${finding.tag ?? ''}\0${name}`
+        const at = rows.get(key) ?? rows.set(key, { key, kind: 'step', name, findings: [finding], severity: finding.severity, usedIn: [] }).get(key)
+        if (severityRank(finding.severity) < severityRank(at.severity)) { at.severity = finding.severity; at.findings = [finding] }
+        at.usedIn.push({ text: `${links.repo?.(file.repo) ?? file.repo}/${file.path}:${finding.line}`, href: links.line?.(file.repo, file.path, finding.line) ?? null })
+      }
+    }
+    return [...rows.values()]
+  }
+
+  // The rows of `kind` (ACTION_KINDS) searched for, the most severe first,
+  // then, of none, those that couldn't be resolved, those still to be, and
+  // those found nothing of; then those of more findings, then by name.
+  rows(kind, query, links) {
+    const rows = [...kind === 'steps' ? [] : this.rowsOfActions(links), ...kind === 'actions' ? [] : this.rowsOfSteps(links)]
+    const text = query.trim().toLowerCase()
+    const standing = row => row.findings.length > 0 ? 0 : row.line?.error ? 1 : row.line || row.kind === 'step' ? 3 : 2
+    return rows.filter(row => !text || (row.name ?? row.key).toLowerCase().includes(text))
+      .toSorted((a, b) => severityRank(a.severity) - severityRank(b.severity) || standing(a) - standing(b) || b.findings.length - a.findings.length
+        || (a.name ?? a.key).localeCompare(b.name ?? b.key))
+  }
+
+  // The repositories' files a repository's line lists, each with its kind
+  // and its findings' count, or why it couldn't be read.
+  filesOf(repo) {
+    return [...this.files.values()].filter(file => file.repo === repo)
+  }
+}
+
+// What a reference is pinned to, as GitHub resolved it: its commit, and
+// the tags on it; null where it isn't resolved.
+export function pinnedTo(line) {
+  if (!line || line.error || !line.commit) return null
+  const short = line.commit.slice(0, 7)
+  const tags = line.tags?.length ? ` (${line.tags.join(', ')})` : ''
+  if (line.at === 'sha') return `${short}${tags}`
+  return `${line.at === 'branch' ? 'branch' : 'tag'} → ${short}${tags}`
+}
+
+// The findings' cell of a row: each by its severity, its tooltip saying what
+// it found, and where in a resolved reference's own code.
+export function findingsCell(findings) {
+  return html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
+    data-tooltip=${findingDetail(finding) || nothing}>${findingLabel(finding)}${finding.file ? html`<span class="risk-in-code"> in code</span>` : nothing}</li>`)}</ul>`
+}
+
+// A reference's link on GitHub at the ref it names, its path in it.
+export function referenceHref({ uses, line }) {
+  const repo = line?.repository?.fullName ?? uses?.repo ?? line?.repo
+  const ref = line?.commit ?? uses?.ref ?? line?.ref
+  if (!repo || !ref) return null
+  const path = uses?.path ?? line?.path ?? ''
+  return `https://github.com/${repo}/${line?.kind === 'workflow' || uses?.kind === 'workflow' ? 'blob' : 'tree'}/${encodeURIComponent(ref)}${path ? `/${path.split('/').map(encodeURIComponent).join('/')}` : ''}`
+}
