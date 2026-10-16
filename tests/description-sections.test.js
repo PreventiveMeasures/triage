@@ -472,6 +472,9 @@ describe('lineBlockSegments', () => {
     ])
     assert.deepEqual(lineBlockSegments('## 1. A numbered one'), [{ level: 2, text: '1. A numbered one' }])
     assert.deepEqual(lineBlockSegments('## Title\n---'), [{ level: 2, text: 'Title' }, { rule: true }], 'a rule under a heading')
+    for (const rule of ['***', '___', '- - -']) {
+      assert.deepEqual(lineBlockSegments(`Prose\n${rule}`), ['Prose', { rule: true }], `${rule}, which can't underline prose`)
+    }
   })
 
   it('leaves the rest as it is: a reference, a hash with no space, seven hashes, a setext heading', () => {

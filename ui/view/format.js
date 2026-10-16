@@ -822,11 +822,13 @@ export function listSegments(text) {
 // come back as strings, a heading as `{ level, text }` (its closing
 // hashes dropped) and a rule as `{ rule: true }`. Only those two —
 // setext headings, block quotes and the rest of markdown stay text: a
-// `---` right under a line of prose underlines it, so it is no rule.
+// `---` right under a line of prose underlines it, so it is no rule
+// (a `***`, `___` or `- - -` there can't be an underline, and is one).
 //
 // A paragraph with neither comes back as a single-element array holding
 // it unchanged, the same fast path listSegments offers.
 const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/u
+const SETEXT_UNDERLINE_RE = /^ {0,3}-+[ \t]*$/u
 
 export function lineBlockSegments(text) {
   const lines = text.split('\n')
@@ -838,7 +840,8 @@ export function lineBlockSegments(text) {
   }
   lines.forEach((line, i) => {
     const heading = HEADING_RE.exec(line)
-    if (!heading && !(i === from && HRULE_RE.test(line))) return
+    const rule = HRULE_RE.test(line) && (i === from || !SETEXT_UNDERLINE_RE.test(line))
+    if (!heading && !rule) return
     pushProse(i)
     out.push(heading ? { level: heading[1].length, text: heading[2] } : { rule: true })
     from = i + 1

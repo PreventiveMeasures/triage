@@ -43,6 +43,10 @@ test('a pull request\'s headings, test plan and sign-off are drawn as such', () 
   assert.doesNotMatch(text, /##|\[x\]|\[ \]|---|_Generated/u)
 })
 
+test('each emphasis ends at its own closing underscore', () => {
+  assert.equal(shown('_a_ and _b_, _one_ and _two_'), '<em>a</em> and <em>b</em>, <em>one</em> and <em>two</em>')
+})
+
 test('what isn\'t one of those shapes stays as written', () => {
   for (const text of ['snake_case_name and __init__', '#972 and #hashtag', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
     assert.equal(shown(text), text, text)

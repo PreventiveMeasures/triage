@@ -145,7 +145,7 @@ function severityBadge(f, { variant = 'full' } = {}) {
 // Fenced code never reaches here — renderHighlighted splits the blocks
 // out first — so a snippet's quotes and backticks stay the code they
 // are instead of being chipped up as markup.
-const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<!\w)_[^\s_](?:[^\n]*?\S)?_(?!\w)|"[^"\n]+"|`[^`\n]+`/gu
+const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<!\w)_[^\s_](?:[^\n]*?\S)??_(?!\w)|"[^"\n]+"|`[^`\n]+`/gu
 function renderInline(text) {
   const parts = []
   let lastIdx = 0
