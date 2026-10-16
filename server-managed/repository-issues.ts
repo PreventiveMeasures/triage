@@ -16,7 +16,7 @@ import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields,
 
 export const ISSUES_PAGE = 50
 // What a kept page or item was read as: kept ones read before differ.
-export const ISSUES_READ_VERSION = 2
+export const ISSUES_READ_VERSION = 3
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
