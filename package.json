@@ -89,6 +89,7 @@
     "server-e2e/ws-server.ts",
     "server-e2e/config.example.json",
     "server-managed/activity.ts",
+    "server-managed/agent-merges.ts",
     "server-managed/app-agents.ts",
     "server-managed/avatar-store.ts",
     "server-managed/blob-store.ts",

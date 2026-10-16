@@ -6,9 +6,10 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
-import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, agentMerges, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
+import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
+import { agentCommits, agentMerges } from '../server-managed/agent-merges.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -230,6 +231,23 @@ test('an agent\'s pull request merged with a merge commit brings its own commits
   const commit = (at, parents = ['p']) => ({ sha: shaOf(at), parents, subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: since + DAY, coauthors: [] })
   const counted = commitStats([commit(1, ['p', 'q']), commit(2), commit(3), commit(7)], since, new Set(read.merges.map(([sha]) => sha)))
   assert.deepEqual([counted.weeks[0].days[1], counted.weeks[0].agentDays[1]], [3, 2], 'the merge itself left out')
+})
+
+test('an agent\'s pull request rebased brings its commits\' copies, told by their subjects from its last back; one squashed, its own commit alone', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const pull = (merge, headlines) => ({ updatedAt: when, mergedAt: when, headRefName: 'codex/work', mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } },
+    commits: { nodes: headlines.map((messageHeadline, at) => ({ commit: { oid: shaOf(merge * 100 + at), messageHeadline } })) } })
+  github(t, { graphql: mergedPulls([pull(10, ['First', 'Second', `${'Third, its subject long '.repeat(3)}…`]), pull(30, ['One', 'Two'])]) })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.rebases.map(([sha, , subjects]) => [sha, subjects.length]), [[shaOf(10), 3], [shaOf(30), 2]])
+  // The default branch, newest first: the rebase's copies, then one of
+  // another's of the same subject; the squash merge, titled as its pull
+  // request, over a commit of its last commit's subject.
+  const line = [[10, 'Third, its subject long Third, its subject long Third, its subject long and longer'], [11, 'Second'], [12, 'First'], [13, 'First'],
+    [30, 'Work (#5)'], [31, 'One']]
+  const commits = line.map(([at, subject], index) => ({ sha: shaOf(at), parents: [shaOf(line[index + 1]?.[0] ?? 99)], subject }))
+  assert.deepEqual([...agentCommits(read, commits)].toSorted(), [10, 11, 12, 30].map(shaOf).toSorted())
 })
 
 test('a year counts the commits merged from an agent\'s pull request with agents, their messages marking none; the pull requests merged read a few queries an answer', async t => {

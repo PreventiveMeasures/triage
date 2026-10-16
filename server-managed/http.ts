@@ -192,8 +192,9 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { type AgentMerges, PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, agentMerges, commitStats, defaultHead, periodStats, pulseSince,
-  repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
+import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
+  repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
+import { type AgentMerges, agentCommits, agentMerges } from './agent-merges.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -1983,7 +1984,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       const merges = await agentMerges(fullName, token, first, ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null)
       await store.write(mergesKey, merges, Date.now())
       if (merges.next) return { stats: await last(), reading: null, pulls: merges.next.read, pending: false, kept: false }
-      const stats = commitStats(year.commits, first, new Set(merges.merges.map(([sha]) => sha)))
+      const stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
       await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
       return { stats, reading: null, pulls: null, pending: false, kept: false }
     }
