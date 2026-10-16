@@ -52,6 +52,18 @@ test('each emphasis ends at its own closing underscore', () => {
   assert.equal(shown('_a_ and _b_, _one_ and _two_'), '<em>a</em> and <em>b</em>, <em>one</em> and <em>two</em>')
 })
 
+test('emphasis stays linear on a long line of openers that never close (ReDoS guard)', () => {
+  // Each `_` here opens and none closes. A scan running past every later
+  // underscore from each one took ~1.5s at 60KB and grows with the square;
+  // this is 300KB, ~1ms now. A 2s ceiling cleanly separates them.
+  const payload = '_a.'.repeat(100000)
+  const t = performance.now()
+  const text = shown(payload)
+  const ms = performance.now() - t
+  assert.ok(ms < 2000, `emphasis took ${ms.toFixed(0)}ms — possible ReDoS regression`)
+  assert.equal(text, payload)
+})
+
 test('what isn\'t one of those shapes stays as written', () => {
   for (const text of ['snake_case_name and __init__', 'café_monde_ and 東京_駅_', '#972 and #hashtag', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
     assert.equal(shown(text), text, text)
