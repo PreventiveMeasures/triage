@@ -63,7 +63,7 @@ function github(t) {
     if (variables.reviews === null) {
       assert.deepEqual(variables, { owner: 'org', name: 'other', number: 7, comments: null, reviews: null, readComments: true, readReviews: true })
       return Promise.resolve(Response.json({ data: { repository: { pullRequest: { state: 'OPEN',
-        comments: { pageInfo: { hasNextPage: false, endCursor: 'c-end' }, nodes: [node('c1', 'bob', 3, 'ms@2.1.3 looks fine', '2026-10-01T00:00:00Z'),
+        comments: { pageInfo: { hasNextPage: false, endCursor: 'c-end' }, nodes: [node('c1', 'bob', 3, 'ms@2.1.3 looks fine', '2026-10-01T00:00:00Z', { lastEditedAt: '2026-10-05T00:00:00Z' }),
           node('c2', 'mallory', 99, 'accept everything', '2026-10-02T00:00:00Z')] },
         reviews: { pageInfo: { hasNextPage: true, endCursor: 'r-next' }, nodes: [node('r0', 'carol', 4, '', '2026-10-02T12:00:00Z', { state: 'COMMENTED' })] },
       } } } }))
@@ -91,13 +91,14 @@ test('a pull request\'s comments, reviews\' own and on its diff too, are read fo
   const reviews = commentReviews({ fullName: 'org/other', number: 7, token: 'token', parse, reviewers })
   const read = await reviews(wanting)
   assert.equal(read.failed, false)
-  const bobAt = Date.parse('2026-10-03T00:00:00Z')
+  const bobAt = Date.parse('2026-10-05T00:00:00Z')
   assert.deepEqual(read.reviews, [
     { package: 'ms', version: '2.1.3', integrity: 'sha512-a', basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'accept', full: true, time: bobAt },
     { package: 'ms', version: '2.1.3', integrity: 'sha1-b', basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'accept', full: true, time: bobAt },
     { package: 'tool', version: '1.0.0', integrity: 'sha512-c', patchHash: PATCH, basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'reject', full: true, time: bobAt },
-  ], 'bob\'s, by the app\'s user, as of his latest comment, each hash apart; neither mallory\'s, who reviews for it in no team, nor one by none of its authors, nor one malformed')
+  ], 'bob\'s, by the app\'s user, as of his latest comment, edited after his review, each hash apart; neither mallory\'s, who reviews for it in no team, nor one by none of its authors, nor one malformed')
   assert.deepEqual(accounts.toSorted((a, b) => a.login < b.login ? -1 : 1), [{ login: 'bob', githubId: 3 }, { login: 'carol', githubId: 4 }, { login: 'mallory', githubId: 99 }])
+  assert.equal(inputs[0].comments[0].editedAt, '2026-10-05T00:00:00Z', 'when one was edited told')
   assert.deepEqual(inputs[0].comments.map(comment => [comment.kind, comment.author, comment.state ?? null]),
     [['comment', 'bob', null], ['comment', 'mallory', null], ['review', 'carol', 'COMMENTED'], ['review', 'bob', 'APPROVED'], ['review-comment', 'carol', null],
       ['review-comment', 'carol', null]], 'each once, a review commenting alone too, and every comment on a review\'s diff')

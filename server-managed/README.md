@@ -2176,7 +2176,8 @@ them). It is given the pull request (`repository`, `number`) and its
 comments (`comments`, a thousand at most, read of GitHub's GraphQL API and
 kept in the instance a minute): each with its `kind` (`comment`, `review`,
 whatever its state, which it tells, `state`, or `review-comment`, on a line
-of its diff, every one of each review's), `id`, `author` (a login), `body`, `createdAt` and `url`. It
+of its diff, every one of each review's), `id`, `author` (a login), `body`, `createdAt`, `editedAt` where it was
+edited, and `url`. It
 answers the reviews they make: `[{ user, time?, dependencies: [{ name,
 version, integrity, patchHash?, status }] }]`, `status` `accept`,
 `accept-with-nits`, `request-changes` or `reject`, each full, its answer to
@@ -2184,7 +2185,7 @@ the same kept ten minutes. A review counts only where its `user` wrote one
 of the comments and the app's user that GitHub account is (by its id, else
 its login, a linked account's too) publishes reviews to a team counting for
 the repository: as that user's, as of its `time`, else their latest
-comment's, each reviewer once among their reviews here, their latest
+comment's, as last written or edited, each reviewer once among their reviews here, their latest
 telling where they stand; a patched version's, of its patch. They count for
 the open pull request alone and are never stored: the host is to merge one
 reviewed so only once those reviews reach what its lookup reads, so a

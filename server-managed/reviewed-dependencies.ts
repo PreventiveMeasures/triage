@@ -36,7 +36,8 @@ export type ReviewVerdict = 'accept' | 'accept-with-nits' | 'request-changes' | 
 // A comment of an open pull request's, as `parseComments` is given it: one
 // on the pull request (`comment`), a review's own (`review`, whatever its
 // state, a comment's alone too), or one on a line of its diff
-// (`review-comment`); by its author's GitHub login.
+// (`review-comment`); by its author's GitHub login; when it was written, and
+// last edited (`editedAt`) where it was.
 export interface ReviewComment {
   kind: 'comment' | 'review' | 'review-comment'
   id: string
@@ -44,6 +45,7 @@ export interface ReviewComment {
   body: string
   state?: string
   createdAt: string
+  editedAt?: string
   url: string
 }
 // What `parseComments` reads: the pull request, its comments, and the

@@ -23,22 +23,24 @@ const KEPT_MS = 60_000
 const PARSED_KEPT_MS = 10 * 60_000
 const VERDICTS = new Set<string>(['accept', 'accept-with-nits', 'request-changes', 'reject'])
 
+// A comment as read: when it was written, and last edited, where it was.
+const COMMENT = `id author { ${ACTOR} } body createdAt lastEditedAt url`
 // Its comments and its reviews, each a page on from its cursor, each only
 // while it has more (`readComments`, `readReviews`).
 const QUERY = `query($owner: String!, $name: String!, $number: Int!, $comments: String, $reviews: String, $readComments: Boolean!, $readReviews: Boolean!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { state
-    comments(first: 100, after: $comments) @include(if: $readComments) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } }
+    comments(first: 100, after: $comments) @include(if: $readComments) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT} } }
     reviews(first: 50, after: $reviews) @include(if: $readReviews) { pageInfo { hasNextPage endCursor }
-      nodes { id author { ${ACTOR} } body state createdAt url comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } } } }
+      nodes { ${COMMENT} state comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT} } } } }
   } } }`
 // A review's comments on lines of its diff, a page on from its cursor.
 const REVIEW_COMMENTS = `query($id: ID!, $after: String) { node(id: $id) { ... on PullRequestReview {
-  comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } } } } }`
+  comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT} } } } } }`
 
 // A comment as read, and its author's account.
 interface Authored { comment: ReviewComment; account: { login: string | null; id: number | null } }
 type Page = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: unknown }
-type Node = { id?: unknown; author?: GraphAccount; body?: unknown; state?: unknown; createdAt?: unknown; url?: unknown; comments?: Page }
+type Node = { id?: unknown; author?: GraphAccount; body?: unknown; state?: unknown; createdAt?: unknown; lastEditedAt?: unknown; url?: unknown; comments?: Page }
 
 // A pull request's comments as read, and whether it is open.
 interface PullComments { open: boolean; read: Authored[] }
@@ -49,7 +51,7 @@ function authored(node: Node, kind: ReviewComment['kind']): Authored[] {
   if (typeof node?.id !== 'string' || typeof node.body !== 'string' || typeof node.createdAt !== 'string') return []
   const account = actorOf(node.author)
   return [{ account, comment: { kind, id: node.id, author: account.login, body: node.body, ...typeof node.state === 'string' ? { state: node.state } : {},
-    createdAt: node.createdAt, url: typeof node.url === 'string' ? node.url : '' } }]
+    createdAt: node.createdAt, ...typeof node.lastEditedAt === 'string' ? { editedAt: node.lastEditedAt } : {}, url: typeof node.url === 'string' ? node.url : '' } }]
 }
 const nodes = (list: unknown): Node[] => Array.isArray(list) ? list as Node[] : []
 // The cursor a page ends at, where more follow it.
@@ -113,12 +115,13 @@ async function parsed(parse: NonNullable<ReviewedDependencies['parseComments']>,
 
 const when = (time: unknown) => typeof time === 'number' ? time : typeof time === 'string' ? Date.parse(time) : Number.NaN
 // The reviews `answer` makes that count, by the users `reviewers` names,
-// each dependency's of each hash its integrity names.
+// each dependency's of each hash its integrity names, as of the time it
+// tells, else its user's latest comment's, as last written or edited.
 function counted(answer: CommentReview[], read: Authored[], reviewers: Map<string, string>): PublishedReview[] {
   const latest = new Map<string, number>()
   for (const { comment } of read) {
     const login = comment.author?.toLowerCase()
-    if (login) latest.set(login, Math.max(latest.get(login) ?? 0, when(comment.createdAt) || 0))
+    if (login) latest.set(login, Math.max(latest.get(login) ?? 0, when(comment.createdAt) || 0, when(comment.editedAt) || 0))
   }
   return answer.flatMap(review => {
     const login = typeof review?.user === 'string' ? review.user.toLowerCase() : ''
