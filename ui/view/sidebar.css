@@ -191,10 +191,10 @@
   position: fixed; z-index: 1;
   top: calc(var(--w95-gap) + var(--w95-frame));
   right: calc(var(--w95-gap) + var(--w95-frame) + var(--wco-right-toolbar, 0px));
-  left: calc(var(--w95-gap) + var(--w95-frame));
+  left: calc(var(--w95-window-left) + var(--w95-frame));
   height: var(--w95-title-height); min-height: 0;
   justify-content: normal; gap: 2px;
-  padding: 0 22px 0 max(2px, env(titlebar-area-x, 0px) - var(--w95-gap) - var(--w95-frame));
+  padding: 0 22px 0 max(2px, env(titlebar-area-x, 0px) - var(--w95-window-left) - var(--w95-frame));
   background: var(--w95-title); color: #fff;
 
   & .brand {
@@ -235,7 +235,7 @@
   position: fixed; z-index: 1;
   right: calc(var(--w95-gap) + var(--w95-frame));
   bottom: calc(var(--w95-gap) + var(--w95-frame) + var(--w95-taskbar-height));
-  left: calc(var(--w95-gap) + var(--w95-frame));
+  left: calc(var(--w95-window-left) + var(--w95-frame));
   height: var(--w95-status-height);
   flex-direction: row; justify-content: normal; gap: 2px;
   padding: 0; border-top: 0;
@@ -660,9 +660,44 @@ sidebar-view-button[hidden] { display: none !important; }
   }
 }
 
-/* W95 (styles/theme.css) picks a row as Windows 95 does: navy, its text
-   white. The row's own colours flip rather than each label's, so its
-   icons, counts and actions follow. */
+/* W95 (styles/w95.css): the pane is Explorer's tree — its search a
+   sunken field, its groups plain bold names, its nesting drawn in dotted
+   lines, the storage warning a tooltip's yellow, its scrollbar Windows
+   95's (the document's can't reach into this root). */
+:host-context(body.theme-w95) {
+  & .sidebar-search {
+    margin: 2px 2px 4px;
+    border: 0; background: #fff;
+    box-shadow: var(--w95-sunken);
+
+    &:has(input:focus) { background: #fff; }
+    & input { font-size: 11px; }
+  }
+  & .file-group-header { padding-top: .35rem; font-size: 11px; color: #000; text-transform: none; letter-spacing: 0; }
+  & .file-item button.file-name { font-size: 11px; }
+  & .file-item.indented::before { background: none; border-left: 1px dotted var(--w95-shadow); }
+  & #storage-status {
+    border-color: #000; background: #ffffe1; color: #000;
+
+    &:hover { border-color: #000; background: #ffffe1; }
+  }
+  & #file-list { scrollbar-width: auto; scrollbar-color: auto; }
+  & ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
+  & ::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
+}
+/* Its arrow buttons, written flat: Chrome drops these nested. */
+:host-context(body.theme-w95) ::-webkit-scrollbar-button:single-button {
+  display: block; width: 16px; height: 16px;
+  background: var(--w95-arrow-down), var(--w95-face);
+  box-shadow: var(--w95-raised);
+}
+:host-context(body.theme-w95) ::-webkit-scrollbar-button:single-button:vertical:decrement {
+  background: var(--w95-arrow-up), var(--w95-face);
+}
+
+/* W95 picks a row as Windows 95 does: navy, its text white. The row's
+   own colours flip rather than each label's, so its icons, counts and
+   actions follow. */
 :host-context(body.theme-w95) .file-item.current {
   --text: #fff;
   --muted: var(--w95-light);

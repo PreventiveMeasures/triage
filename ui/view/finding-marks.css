@@ -215,3 +215,31 @@
 .triage-menu-deleted:not(:disabled):hover { color: var(--critical); }
 
 .line-num a:hover { color: var(--accent); }
+
+/* W95 (styles/w95.css): these controls are Windows 95 buttons — each
+   raised on its own, sunk while pressed — and their labels drop the
+   all-caps and tracking, a severity named as a word. The document's
+   rules can't reach this root, so its own say so. */
+:host-context(body.theme-w95) {
+  & *, & *::before, & *::after { letter-spacing: 0 !important; text-transform: none !important; }
+  & .badge { border-radius: 0; text-transform: capitalize !important; }
+  & .mark-action-group {
+    gap: 0; overflow: visible;
+    border: 0; border-radius: 0; background: none;
+  }
+  & :is(.mark-comment, .mark-fix, .mark-flag, .mark-copy, .mark-link, .mark-issue, .mark-claude, .mark-triage-menu) {
+    height: 23px; padding: 0 6px;
+    border: 0; border-radius: 0;
+    background: var(--w95-face); color: #000;
+    box-shadow: var(--w95-raised);
+
+    &:not(:last-child) { border-right: 0; }
+    &:not(:disabled):hover { background: var(--w95-face); color: #000; border-color: transparent; }
+    &:not(:disabled):active { box-shadow: var(--w95-sunken); }
+    &:disabled { color: var(--w95-shadow); opacity: 1; }
+  }
+  & .mark-triage-menu .mark-triage-label { font-weight: 400; }
+  & .triage-menu[popover] { border: 1px solid #000; border-radius: 0; box-shadow: none; background: var(--w95-face); }
+  & .triage-menu-item:not(:disabled):hover { background: var(--w95-title); color: #fff; }
+  & .triage-menu-item.active::before { color: inherit; }
+}

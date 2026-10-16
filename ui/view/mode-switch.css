@@ -83,3 +83,16 @@ button[aria-pressed='true'] .track {
   font-size: .68rem;
   line-height: 1.2;
 }
+
+/* W95 (styles/w95.css): the switch is a check box beside its label, as
+   Windows 95 sets one; the theme draws the box and its mark. */
+:host-context(body.theme-w95) {
+  & .checkbox-mode { padding: 0 4px; color: #000; font-size: 11px; font-weight: 400; }
+  & .checkbox-mode input {
+    appearance: none;
+    width: 13px; height: 13px;
+    background: #fff; box-shadow: var(--w95-sunken);
+
+    &:checked { background: var(--w95-check), #fff; }
+  }
+}

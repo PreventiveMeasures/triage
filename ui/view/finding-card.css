@@ -1397,3 +1397,28 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     & .token.cdata { color: #666 !important; }
   }
 }
+
+/* W95 (styles/w95.css): the focus view's triage states are a row of
+   Windows 95 buttons, the card's state held down; its section heads and
+   captions drop the all-caps (finding-marks.css says so for the rest). */
+:host-context(body.theme-w95) {
+  &:host([context='focus']) .triage-menu-item {
+    min-height: 23px; padding: 0 8px;
+    border: 0; border-radius: 0;
+    background: var(--w95-face); color: #000;
+    box-shadow: var(--w95-raised);
+    font-size: 11px; font-weight: 400;
+
+    &.active {
+      border-color: transparent;
+      background: var(--w95-dither); color: #000;
+      box-shadow: var(--w95-sunken);
+    }
+    &:not(:disabled):hover { background: var(--w95-face); }
+  }
+  & :is(.code-preview-btn, .gh-ref-btn, .finding-code-btn) {
+    border: 0; border-radius: 0;
+    background: var(--w95-face); color: #000;
+    box-shadow: var(--w95-raised);
+  }
+}

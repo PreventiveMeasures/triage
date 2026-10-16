@@ -1,0 +1,105 @@
+/* `<w95-desktop>` shadow-DOM styles, imported as text by w95-desktop.js.
+   The W95 theme's bevels and colours come from its custom properties on
+   `body.theme-w95` (styles/w95.css), which reach this root by
+   inheritance; outside that theme nothing is drawn at all. The host
+   takes no box: its icons and taskbar are fixed to the screen. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:host { display: none; }
+:host-context(body.theme-w95) {
+  display: contents;
+  color: #000;
+  font-size: 11px;
+  cursor: default; user-select: none;
+}
+@media print { :host { display: none !important; } }
+
+/* An installed app's page background drags its window (styles/theme.css);
+   the document's opt-outs can't reach into this root, so its controls
+   opt themselves out, as the theme toggle does. */
+/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) {
+  .icons, .taskbar {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
+/* The desktop's icons, down its left edge, where the window leaves them
+   room; none where it doesn't, or where it is maximized. */
+.icons {
+  position: fixed; top: 8px; left: 4px; z-index: 0;
+  display: flex; flex-direction: column; gap: 14px;
+  width: 76px;
+}
+@media (width < 960px) { .icons { display: none; } }
+/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+@media (display-mode: window-controls-overlay) { .icons { display: none; } }
+:host-context(body.theme-w95.report-fullscreen) .icons { display: none; }
+
+.icon {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 100%; padding: 2px 0;
+  border: 0; background: none; color: #fff;
+  font: inherit; text-align: center;
+
+  & svg { display: block; }
+  &:focus { outline: none; }
+}
+.label { padding: 0 2px; line-height: 13px; }
+/* Picked, as Windows 95 picks one: its name in navy, ringed with dots
+   while it has the focus, and its picture washed with the navy. */
+.icon.picked .label { background: var(--w95-title); }
+.icon:focus-visible .label { outline: 1px dotted #ff0; }
+.icon.picked svg { filter: sepia(1) saturate(4) hue-rotate(190deg) brightness(.55); }
+
+.taskbar {
+  position: fixed; right: 0; bottom: 0; left: 0; z-index: 900;
+  display: flex; align-items: center; gap: 4px;
+  height: var(--w95-taskbar-height); padding: 2px;
+  background: var(--w95-face);
+  box-shadow: inset 0 1px var(--w95-light), inset 0 2px #fff;
+}
+:host-context(body.theme-w95.report-fullscreen) .taskbar { display: none; }
+
+.start, .task {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 5px 0 4px;
+  border: 0; background: var(--w95-face); color: inherit;
+  box-shadow: var(--w95-raised);
+  font: inherit; white-space: nowrap;
+}
+.start {
+  font-weight: 700;
+
+  &:active { box-shadow: var(--w95-sunken); padding: 1px 4px 0 5px; }
+  &:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+}
+/* The flag: its four panes, red, green, blue and yellow. */
+.logo {
+  flex: none; width: 15px; height: 13px;
+  background:
+    linear-gradient(#f00, #f00) 0 0 / 7px 6px no-repeat,
+    linear-gradient(#0a0, #0a0) 8px 0 / 7px 6px no-repeat,
+    linear-gradient(#00f, #00f) 0 7px / 7px 6px no-repeat,
+    linear-gradient(#fd0, #fd0) 8px 7px / 7px 6px no-repeat;
+}
+/* The window's button, held down as the active window's is: sunk, and
+   the dither of a pressed toggle behind its label. */
+.task {
+  flex: 0 1 160px; min-width: 0; overflow: hidden;
+  font-weight: 700;
+  background: var(--w95-dither);
+  box-shadow: var(--w95-sunken);
+}
+.task-icon {
+  flex: none; width: 16px; height: 16px;
+  background: url('./icon.svg') center / contain no-repeat;
+}
+.tray {
+  display: inline-flex; align-items: center;
+  height: 22px; margin-left: auto; padding: 0 10px;
+  box-shadow: var(--w95-shallow);
+  font-variant-numeric: tabular-nums;
+}
