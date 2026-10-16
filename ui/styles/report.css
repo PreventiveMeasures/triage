@@ -2350,7 +2350,9 @@ body.report-fullscreen {
    so the source matches the file-row chrome elsewhere. */
 .bundle-source-overlay {
   position: fixed; inset: 0;
-  z-index: 50;
+  /* Above the finding popup (findings.css `.kanban-detail-backdrop`,
+     1100), whose Code button opens it. */
+  z-index: 1200;
   /* Theme-aware dim — matches `meta[name="theme-color"]` (the
      same variable the kanban modal's dim uses) so light mode
      dims to off-white and dark mode dims to the near-black

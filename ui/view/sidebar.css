@@ -179,7 +179,7 @@
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
-/* W95 (styles/theme.css): the header is the window's title bar, pinned
+/* W95 (styles/w95.css): the header is the window's title bar, pinned
    across the window's top whatever the sidebar's width, collapsed or
    not — the app's icon, `Triage - local` in bold white on navy, the
    lock and the menu as its buttons, room at the end for the theme
@@ -223,12 +223,15 @@
     background: var(--w95-face); box-shadow: var(--w95-raised);
     -webkit-app-region: no-drag; app-region: no-drag;
 
-    & svg { width: 10px; height: 10px; }
-    &#sidebar-toggle svg { width: 12px; height: 12px; shape-rendering: crispedges; }
-    &, &:hover { background: var(--w95-face); color: #000; }
+    & svg { display: none; }
     &:active { box-shadow: var(--w95-pressed); }
     &:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
   }
+  /* Their glyphs are drawn as Windows 95's caption glyphs are, pixel by
+     pixel (styles/w95.css): the menu, and the lock, shut while it locks. */
+  & #sidebar-toggle { background: var(--w95-glyph-menu), var(--w95-face); }
+  & #encryption-toggle { background: var(--w95-glyph-unlock), var(--w95-face); }
+  & #encryption-toggle:is(.encrypted, .locked-pending) { background: var(--w95-glyph-lock), var(--w95-face); }
 }
 
 /* And the actions are its status bar, pinned along the window's foot,
@@ -683,9 +686,13 @@ sidebar-view-button[hidden] { display: none !important; }
 
     &:hover { border-color: #000; background: #ffffe1; }
   }
-  & #file-list { scrollbar-width: auto; scrollbar-color: auto; }
-  & ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
-  & ::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
+  /* The list's own thin bar gives way to the full 16px one, in the
+     gutter it already keeps for it. */
+  & #file-list { padding-right: 0; scrollbar-width: auto; scrollbar-color: auto; }
+  & ::-webkit-scrollbar,
+  & #file-list::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
+  & ::-webkit-scrollbar-thumb,
+  & #file-list::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
 }
 /* Its arrow buttons, written flat: Chrome drops these nested. */
 :host-context(body.theme-w95) ::-webkit-scrollbar-button:single-button {
