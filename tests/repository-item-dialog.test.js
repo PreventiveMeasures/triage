@@ -187,3 +187,17 @@ test('a popup\'s read is known as its item\'s latest, for its tile to show; one 
   knowItems(7, [{ ...tile, number: 40, state: 'closed' }], 6000, 'pulls')
   assert.match(templateText(dialog.render()), /aria-label=Closed/u)
 })
+
+test('a list\'s later read of a popup\'s item shows as it says, what a list reads none of as its popup read it: whether it changes a lockfile', async () => {
+  const { knowItems } = await import('../ui/view/repository-items.js')
+  dependencies = () => new Promise(() => {})
+  answer = () => Promise.resolve({ ...tile, number: 41, touchesLockfile: true, body: '', closes: [], commits: 1, files: 1, readAt: 5000 })
+  const dialog = shown()
+  dialog.open({ number: 41, preview: { ...tile, number: 41, touchesLockfile: true } })
+  await setImmediate()
+  // The closed list, read later: merged, and no word of its lockfiles, which a closed page reads none of.
+  knowItems(7, [{ ...tile, number: 41, state: 'merged' }], 6000, 'pulls')
+  const text = templateText(dialog.render())
+  assert.match(text, /aria-label=Merged/u)
+  assert.match(text, /<h4>New dependency versions<\/h4>/u)
+})

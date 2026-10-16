@@ -24,7 +24,7 @@ import { addedVersions, pullDependencies, readsDependencies, subscribePullDepend
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
-import { knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
+import { groupAt, groupOf, knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
 
 export { issueState }
 
@@ -65,12 +65,11 @@ function checked(answer) {
 // as now known (repository-items.js): each it lists as read latest, one read
 // since in the other state left where it was, as it shows now; where the list
 // reaches them, those read since it was that are now in its state, among them
-// by when each was last updated; and its counts, those that moved between
-// open and closed since the page its counts came with was read (`countsAt`)
-// moved: known so where a read knew one as it was no earlier than then, or
-// GitHub closed one now closed after it, a later page's counts counting one
-// moved before; one arriving that no read knew in the other, perhaps only
-// updated since, moves none, nor one whose move then is unknown.
+// by when each was last updated; and its counts, each of the repository's of
+// `kind` known moved between open and closed where it is now in the other of
+// the two than they counted it in (counted): as recorded as they were adopted,
+// unless GitHub closed one now closed, or updated one now open, no later than
+// they were read (`countsAt`), which counted it as it is.
 export function listedNow(repoId, kind, listState, entry) {
   const belongs = item => (item.state === 'open') === (listState === 'open')
   const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
@@ -84,28 +83,48 @@ export function listedNow(repoId, kind, listState, entry) {
     items.splice(at === -1 ? items.length : at, 0, item)
   }
   const countsAt = entry.countsAt ?? entry.readAt
-  const group = listState === 'open' ? 'open' : 'closed'
-  const since = ({ item, moved }) => Boolean(moved)
-    && (moved.before >= countsAt || (item.state !== 'open' && (item.closedAt ?? item.mergedAt ?? Number.NEGATIVE_INFINITY) > countsAt))
-  const moved = latest.filter(held => !belongs(held.item) && held.moved?.from === group && since(held)).length
-    - arrived.filter(held => held.moved?.from !== group && since(held)).length
+  const counted = held => {
+    const now = groupOf(held.item)
+    const closedAt = held.item.closedAt ?? held.item.mergedAt ?? null
+    if (now === 'closed' ? closedAt !== null && closedAt <= countsAt : (held.item.updatedAt ?? Number.POSITIVE_INFINITY) <= countsAt) return now
+    return entry.counted?.get(held.item.number) ?? groupAt(held, countsAt)
+  }
+  const all = new Map(knownItems(repoId, kind).map(held => [held.item.number, held]))
+  for (const held of latest) if (!all.has(held.item.number)) all.set(held.item.number, held)
+  let moved = 0
+  for (const held of all.values()) {
+    const then = counted(held)
+    if (then !== groupOf(held.item)) moved += then === listState ? 1 : -1
+  }
   const other = listState === 'open' ? 'closed' : 'open'
   const counts = { [listState]: Math.max(0, entry.counts[listState] - moved), [other]: Math.max(0, entry.counts[other] + moved) }
   return { items, counts }
 }
 
+// What a list's counts, as it adopts them, counted each known one of its
+// repository and kind in, open or closed, as best known then (groupAt at
+// `countsAt`): one moving after, either way, moves them (listedNow).
+function rebase(repoId, kind, entry) {
+  const counted = new Map(knownItems(repoId, kind).map(held => [held.item.number, groupAt(held, entry.countsAt)]))
+  for (const item of entry.items) if (!counted.has(item.number)) counted.set(item.number, groupOf(item))
+  entry.counted = counted
+}
+
 // The list `key` names, as held, else read: `{ status }`, 'loading', then
 // 'ready' with its `items`, `counts`, and where more follow, the cursor
 // reading them (`after`), or 'error' with its `error`; read again once old,
-// or an error's retry is due.
-function listRead(key, ask) {
+// or an error's retry is due. `adopt` records what its counts counted.
+function listRead(key, ask, adopt) {
   const data = sessionLists()
   const held = data.get(key)
   if (held && Date.now() < held.until) return held
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(null).then(answer => {
-    if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null })
+    if (data.get(key) !== loading) return null
+    const entry = { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null }
+    adopt(entry)
+    data.set(key, entry)
     return null
   }, err => {
     if (data.get(key) !== loading) return null
@@ -117,7 +136,7 @@ function listRead(key, ask) {
 }
 
 // The next page of a list, after those it holds.
-function readMore(key, entry, ask) {
+function readMore(key, entry, ask, adopt) {
   if (entry.loadingMore || !entry.more) return
   entry.loadingMore = true
   entry.moreError = null
@@ -133,6 +152,7 @@ function readMore(key, entry, ask) {
     if (answer.readAt >= entry.countsAt) {
       entry.counts = answer.counts
       entry.countsAt = answer.readAt
+      adopt(entry)
     }
     entry.more = answer.more
     entry.after = answer.after
@@ -250,8 +270,9 @@ class RepositoryIssues extends StateElement {
       knowItems(repoId, answer.items, answer.readAt, kind)
       return answer
     })
-    const entry = listRead(key, ask)
-    return { key, entry, more: () => readMore(key, entry, ask) }
+    const adopt = held => rebase(repoId, kind, held)
+    const entry = listRead(key, ask, adopt)
+    return { key, entry, more: () => readMore(key, entry, ask, adopt) }
   }
 
   pick(listState) {

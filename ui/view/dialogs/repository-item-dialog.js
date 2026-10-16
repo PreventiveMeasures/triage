@@ -109,8 +109,11 @@ class RepositoryItemDialog extends AppDialog {
   // new to a pull request's lockfiles; its description.
   renderItem({ number, preview }) {
     const held = this._items.get(number)
-    // As read latest, by its popup or a list (repository-items.js).
-    const item = knownItem(this.repository.repoId, number)?.item ?? held?.item ?? preview ?? null
+    // As read latest, by its popup or a list (repository-items.js), what a
+    // list reads none of (whether it changes a lockfile, a closed one's) as
+    // its popup read it.
+    const known = knownItem(this.repository.repoId, number)?.item
+    const item = known ? { ...preview, ...held?.item, ...known } : held?.item ?? preview ?? null
     const kind = item?.kind ?? 'issues'
     const repo = this.repository.repo
     const href = repo ? `https://github.com/${repo}/${kind === 'pulls' ? 'pull' : 'issues'}/${number}` : null

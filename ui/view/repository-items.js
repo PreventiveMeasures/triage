@@ -63,3 +63,18 @@ export function knownItems(repoId, kind) {
 
 // How many times what is known changed: observed, any change.
 export const knownChanges = () => known.changes
+
+// Which of open and closed `item` is in.
+export const groupOf = item => item.state === 'open' ? 'open' : 'closed'
+
+// Which of open and closed one known (`held`, knownItem's) was in at `at`, as
+// best known: as read, where it was read no later; where it moved since, as it
+// was, where a read knew it so no earlier than `at`, or GitHub closed it after
+// `at`; else as it is.
+export function groupAt(held, at) {
+  const now = groupOf(held.item)
+  if (held.readAt <= at || !held.moved) return now
+  if (held.moved.before >= at) return held.moved.from
+  const closedAt = held.item.closedAt ?? held.item.mergedAt ?? null
+  return now === 'closed' && closedAt !== null && closedAt > at ? held.moved.from : now
+}

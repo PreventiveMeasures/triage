@@ -187,6 +187,25 @@ test('counts move by those moved after they were read: once, though a later page
   assert.match(text, /#28/u)
 })
 
+test('counts adopted with a later page move by one moved after them either way: one closed before them, reopened after, back', async () => {
+  const { knowItems } = await import('../ui/view/repository-items.js')
+  const pages = [{ items: [pull(52), pull(51), pull(50)], counts: { open: 11, closed: 967 }, more: true, after: 'next', readAt: 1000 },
+    { items: [pull(49)], counts: { open: 10, closed: 968 }, more: false, readAt: 3000 }]
+  answer = () => Promise.resolve(pages.shift())
+  const view = shown('pulls')
+  view.render()
+  await setImmediate()
+  knowItems(7, [{ ...pull(50, { state: 'closed', closedAt: 1500, updatedAt: 1500 }), kind: 'pulls' }], 2000)
+  view.list('open').more()
+  await setImmediate()
+  assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // Reopened after the counts were read.
+  knowItems(7, [{ ...pull(50, { closedAt: null, updatedAt: 5500 }), kind: 'pulls' }], 6000)
+  const text = templateText(view.render())
+  assert.match(text, /Open<span class="n">11<\/span>[^]*Closed<span class="n">967<\/span>/u)
+  assert.match(text, /aria-label=Open>[^]*#50/u)
+})
+
 test('one arriving in a list that no read knew in another state, only updated since, moves no counts', async () => {
   const { knowItems } = await import('../ui/view/repository-items.js')
   const hours = count => Date.now() - count * 3_600_000
