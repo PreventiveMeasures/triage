@@ -606,10 +606,9 @@ class RepositoryPulse extends LitElement {
   }
 
   // The period alone, a column a day or a week: commits over a scale of
-  // counts, releases atop them and those an agent made or co-authored over
-  // the rest where the year holds any, and under them lines added above a
-  // line and removed
-  // below it, one scale for both; each column named under them, today's
+  // counts, those an agent made or co-authored atop the rest, releases at
+  // their foot, where the year holds any, and under them lines added above
+  // a line and removed below it, one scale for both; each column named under them, today's
   // marked. A week's days each their figures written on them; a month's
   // weekends shaded. A column pointed at, or read with the arrow keys, is
   // marked in both, its figures and who made its commits beside it; clicked,
@@ -652,12 +651,13 @@ class RepositoryPulse extends LitElement {
     // A day's figure written on its bar, in a week.
     const figure = (item, text) => written && !item.future ? html`<span class="pulse-figure">${text}</span>` : nothing
     const bar = (kind, value, parts = nothing) => html`<span class=${`pulse-bar${kind}`} style=${styleMap({ '--value': `${value}` })}>${parts}</span>`
-    // Releases atop a column's, then commits with agents, those without them
-    // at its foot; commits with agents not apart, the rest under releases.
+    // Commits with agents atop a column's, those without them under them,
+    // releases at its foot, as the legend names them left to right; commits
+    // with agents not apart, the rest over releases.
     const parts = item => {
       const releases = apart.releases ? item.releases : 0
       const rest = item.commits - releases
-      return [[' is-release', releases], ...apart.agents ? [['', item.agents], [' is-without', rest - item.agents]] : [['', rest]]].map(([kind, count]) => count > 0
+      return [...apart.agents ? [['', item.agents], [' is-without', rest - item.agents]] : [['', rest]], [' is-release', releases]].map(([kind, count]) => count > 0
         ? html`<span class=${`pulse-part${kind}`} style=${styleMap({ '--part': `${count}` })}></span>` : nothing)
     }
     return html`<figure class=${`pulse-panel pulse-activity${written ? ' is-written' : ''}`} tabindex="0"
@@ -842,7 +842,7 @@ class RepositoryPulse extends LitElement {
 
   // The latest pull requests merged or opened, or issues closed or opened,
   // as the reader picks, GitHub found in the period, or as it is narrowed
-  // (narrowing), so said over them, each its state, title, number, author
+  // (narrowing), so said beside their title, each its state, title, number, author
   // and when, opening its popup; where there were more, the rest on GitHub,
   // narrowed alike. None, while the period, or the narrowing, reads; none
   // narrowed to a contributor whose commits name no GitHub account.
@@ -858,13 +858,14 @@ class RepositoryPulse extends LitElement {
     const all = repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pulls' : 'issues'}?q=${encodeURIComponent(`${search}${range}${by}`)}` : null
     const who = narrowing?.who ? commitAuthorName(narrowing.who.login, narrowing.who.name) : null
     const scope = narrowing ? [who && `by ${who}`, narrowing.when ?? 'in the period'].filter(Boolean).join(' ') : 'in the period'
+    // What they're narrowed to, beside the title, as the plots name theirs.
+    const narrowedTo = narrowing ? [who && `by ${who}`, narrowing.when].filter(Boolean).join(' ') : ''
     return html`<section class="pulse-panel pulse-list" aria-label=${title}>
-      <div class="pulse-head"><h3>${title}</h3>
+      <div class="pulse-head"><h3>${title}</h3>${narrowing ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}
         <div class="history-modes" role="group" aria-label=${`${title} shown`}>${kinds.map(([name, label]) => html`<button type="button"
           aria-pressed=${String(name === kind)} @click=${() => this.showList(items, name)}>${label}<span class="n">${told?.[name] ? number(told[name].count)
             : '–'}</span></button>`)}</div>
       </div>
-      ${narrowing ? html`<p class="pulse-narrowed">${scope[0].toUpperCase()}${scope.slice(1)}</p>` : nothing}
       ${narrowing?.nobody ? html`<p class="pulse-note">${who}’s commits name no GitHub account to find their ${title.toLowerCase()} by.</p>`
         : narrowed?.status === 'error' ? html`<p class="pulse-note" role="alert">${narrowed.error}</p>`
         : listed === null ? html`<p class="pulse-note" role="status">Reading…</p>` : listed.length === 0 ? html`<p class="pulse-note">None ${scope}.</p>` : html`<ol>${listed.map(item => {
