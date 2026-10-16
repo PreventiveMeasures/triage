@@ -296,6 +296,7 @@ class RepositoryReplay extends LitElement {
     this._camera = null
     this._colors = null
     this._themes = null
+    this._resize = null
     this._restless = 0
     this._laidOut = Number.NEGATIVE_INFINITY
     this._pointer = null
@@ -310,6 +311,10 @@ class RepositoryReplay extends LitElement {
     // A theme picked, drawn in its colors at once, as the other graphs are.
     this._themes = new AbortController()
     globalThis.addEventListener('deepview-theme-changed', () => this.themeChanged(), { signal: this._themes.signal })
+    // Resized, drawn again to its size on the next frame, however still it
+    // is, the canvas never left stretched.
+    this._resize = globalThis.ResizeObserver ? new ResizeObserver(() => { this.restless() }) : null
+    this._resize?.observe(this)
     this._last = performance.now()
     this._frame = requestAnimationFrame(time => this.frame(time))
   }
@@ -319,6 +324,7 @@ class RepositoryReplay extends LitElement {
     shownElements.delete(this)
     unwatchHistories(this)
     this._themes?.abort()
+    this._resize?.disconnect()
     cancelAnimationFrame(this._frame)
     this._frame = null
     // Paused where it was, to play on from there when shown again.
