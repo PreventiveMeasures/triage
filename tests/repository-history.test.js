@@ -246,6 +246,18 @@ test('every branch\'s history as the server kept it, missing the commit a branch
   let text = templateText(view.render())
   assert.match(text, /id=history-subject-9{40}>Since<\/span>\s*<button [^>]*?aria-current=true/u, 'the commit shown, marked')
   assert.doesNotMatch(text, /isn’t among these commits/u)
+  // A commit of a pull request squashed into those listed, planted among
+  // them, is no commit they miss.
+  const own = '8'.repeat(40)
+  state.managedSession = { id: 'planted', role: 'admin' }
+  answer = () => Promise.resolve({ ...allAnswer, pulls: [{ number: 5, merge: a, head: own, commits: [commit(own, [b], 15, 'Squashed work')] }] })
+  const planted = shownAt(own)
+  planted.render()
+  await setImmediate()
+  planted.render()
+  await setImmediate()
+  assert.equal(requests.filter(request => request[3].fresh).length, 1, 'not read again for it')
+  assert.match(templateText(planted.render()), /Squashed work/u)
   // A read again that fails keeps those listed, and says what they miss.
   answer = (repoId, ref, path, options) => options.fresh ? Promise.reject(new Error('GitHub is down.')) : Promise.resolve(allAnswer)
   state.managedSession = { id: 'another', role: 'admin' }

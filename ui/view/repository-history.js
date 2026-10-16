@@ -335,9 +335,12 @@ function readHistory(repository, mode) {
   })
   const settle = mode === 'path' ? null : settleFrontier
   const entry = historyRead(key, ask, settle)
-  // Every branch's, as the server kept them, missing the commit shown, as
-  // they do once a branch reaches it since: read again, afresh.
-  if (every && entry.status === 'ready' && !entry.fresh && !entry.commits.some(item => item.sha === commit)) refreshHistory(key, entry, ask, settle)
+  // Every branch's, as the server kept them, missing the commit shown, those
+  // of the pull requests squashed into them planted among them too, as they
+  // do once a branch reaches it since: read again, afresh.
+  if (every && entry.status === 'ready' && !entry.fresh && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
+    refreshHistory(key, entry, ask, settle)
+  }
   if (every && entry.status === 'error' && entry.code === 'github-token-required') {
     allRefused.add(repoId)
     return readHistory(repository, 'revision')
