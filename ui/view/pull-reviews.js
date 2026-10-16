@@ -65,13 +65,14 @@ export function reviewStandings(reviews) {
 const moreReviewers = reviews => (reviews.moreReviews ?? 0) + (reviews.moreRequests ?? 0)
 
 // Whether a review is on the latest commit: one that reviewed it, or Codex,
-// done with it; taken as so where more reviews are than were read, one of
-// them perhaps on it (a request unread is none).
+// done with it; null, unknown, where none read is but more reviews are than
+// were read, one of them perhaps on it (a request unread is none).
 export function headReviewed(reviews) {
-  if (!reviews.head || reviews.moreReviews > 0) return true
+  if (!reviews.head) return true
   const codex = reviews.codex?.code
-  return (codex?.status === 'done' && codex.commit === reviews.head)
-    || reviews.reviewers.some(reviewer => STANDING[reviewer.state] && reviewer.state !== 'dismissed' && reviewer.commit === reviews.head)
+  if ((codex?.status === 'done' && codex.commit === reviews.head)
+    || reviews.reviewers.some(reviewer => STANDING[reviewer.state] && reviewer.state !== 'dismissed' && reviewer.commit === reviews.head)) return true
+  return reviews.moreReviews > 0 ? null : false
 }
 
 // The gravest open thread's badge, as Codex draws it: P0 and P1 grave, P2
@@ -79,14 +80,15 @@ export function headReviewed(reviews) {
 const severity = level => level ? html`<span class=${`review-severity is-${level}`}>${level.toUpperCase()}</span>` : nothing
 
 // A tile's line of its reviews: a mark a reviewer, then its open threads,
-// then, where no review is on the latest commit, that it is unreviewed.
+// then, where no review is on the latest commit, that it is unreviewed, and
+// where none read is, more unread, that it may be.
 export function reviewLine(reviews) {
   if (!reviews) return nothing
   const standings = reviewStandings(reviews)
   const { open, more, severity: gravest } = reviews.threads
   const threads = open > 0 ? `${plural(open, 'open review thread', more)}${gravest ? `, the gravest ${gravest.toUpperCase()}` : ''}`
     : more ? 'No open review thread among those read; more on GitHub' : null
-  const unreviewed = !headReviewed(reviews)
+  const onHead = headReviewed(reviews)
   return html`<span class="issue-reviews">
     ${standings.map(({ who, standing: [state, glyph, name], commit, stale, requested }) => {
       // Named on its mark, as the reviewer is on their name.
@@ -96,7 +98,8 @@ export function reviewLine(reviews) {
     })}
     ${moreReviewers(reviews) > 0 ? html`<span class="review-more" data-tooltip=${plural(moreReviewers(reviews), 'more reviewer')}>+${moreReviewers(reviews)}</span>` : nothing}
     ${threads ? html`<span class="review-threads" role="img" aria-label=${threads} data-tooltip=${threads}>${THREAD}<span>${open}${more ? '+' : ''}</span>${severity(gravest)}</span>` : nothing}
-    ${unreviewed ? html`<span class="review-unreviewed" data-tooltip=${standings.length > 0 ? 'No review is on the latest commit' : 'No reviews yet'}>Unreviewed</span>` : nothing}
+    ${onHead === false ? html`<span class="review-unreviewed" data-tooltip=${standings.length > 0 ? 'No review is on the latest commit' : 'No reviews yet'}>Unreviewed</span>`
+      : onHead === null ? html`<span class="review-unreviewed" data-tooltip="No review read is on the latest commit; more on GitHub">Unreviewed?</span>` : nothing}
   </span>`
 }
 
@@ -130,7 +133,8 @@ export function reviewSections(reviews, repo) {
   return html`<section class="repo-item-section"><h4>Reviews</h4>
       ${rows.length > 0 ? html`<ul>${rows}</ul>` : html`<p class="repo-item-quiet">No reviews yet.</p>`}
       ${moreReviewers(reviews) > 0 ? html`<p class="repo-item-quiet">And ${plural(moreReviewers(reviews), 'more reviewer')}, on GitHub.</p>` : nothing}
-      ${rows.length > 0 && !headReviewed(reviews) ? html`<p class="repo-item-quiet">No review is on the latest commit, <code>${short(head)}</code>.</p>` : nothing}
+      ${headReviewed(reviews) === null ? html`<p class="repo-item-quiet">No review read is on the latest commit, <code>${short(head)}</code>; one of those on GitHub may be.</p>`
+        : rows.length > 0 && !headReviewed(reviews) ? html`<p class="repo-item-quiet">No review is on the latest commit, <code>${short(head)}</code>.</p>` : nothing}
     </section>
     ${open > 0 || resolved > 0 ? html`<section class="repo-item-section"><h4>Open threads</h4>
       ${list.length > 0 ? html`<ul>${list.map(thread => html`<li><a class="repo-item-row review-thread" href=${thread.url ?? nothing} target="_blank" rel="noopener noreferrer">

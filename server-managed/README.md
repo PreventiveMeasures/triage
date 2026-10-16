@@ -1831,7 +1831,9 @@ pull request's tile has a line of its reviews (`pull-reviews.js`): each
 reviewer by a mark of how their latest review stands (approved, changes
 requested, commented, or review requested, a team's by its slug, Copilot's
 code review's by its bot, which GitHub names Copilot as it does Copilot's
-coding agent, told apart by its id; an agentic workflow's (gh-aw), which
+coding agent, told apart by its id, and `copilot-pull-request-reviewer` on
+its reviews, a reviewer requested again known by their account's id before
+their login; an agentic workflow's (gh-aw), which
 reviews, approving or not, as GitHub Actions' bot, by GitHub Actions' mark,
 its popup naming the workflow by the `gh-aw-workflow-id` marker gh-aw leaves
 in what it posts), and their
@@ -1841,7 +1843,8 @@ than its reviews, since it posts a review only where it finds something:
 reviewed, reviewing, asked to review again (`@codex review`) since, or failed
 since; then how many review threads are open, with the gravest one's badge
 (P0 to P3, as Codex marks its findings); and **Unreviewed** where no review
-is on the latest commit, Codex's done with it counting. Its author's own
+is on the latest commit, Codex's done with it counting, **Unreviewed?** where
+none read is but more reviews are than were read. Its author's own
 replies in its threads, which GitHub makes reviews of, are none. Its
 labels, each by a dot of its color, show whole while they fit, then the
 last is shortened first, to its dot alone, then the one before it; each
@@ -1880,7 +1883,7 @@ resolved, more, severity }, codex: { login, id, code: { commit, status },
 security, requested, failed } | null }`, read from each reviewer's latest
 review (twenty, and ten reviews requested, how many more GitHub counts in
 `moreReviews` and `moreRequests` apart, the tile saying `+N` of both, the
-latest commit unreviewed only where no review is unread), the latest fifty threads (open ones
+latest commit unknown, rather than unreviewed, where a review is unread), the latest fifty threads (open ones
 being, mostly, those lately opened), the first five comments and the last
 twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which
 it posts as it is first asked, and the last twenty for asking it again and

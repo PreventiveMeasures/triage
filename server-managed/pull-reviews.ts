@@ -156,7 +156,10 @@ function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
       unnamed++
       continue
     }
-    const reviewed = reviewers.find(item => item.login?.toLowerCase() === login.toLowerCase())
+    // By their account where both name it, as GitHub may name one account
+    // otherwise on its reviews than on its requests (Copilot's code review's
+    // bot); else by their login.
+    const reviewed = reviewers.find(item => id !== null && item.id !== null ? item.id === id : item.login?.toLowerCase() === login.toLowerCase())
     if (reviewed) reviewed.requested = true
     else reviewers.push({ login, id, state: null, requested: true, commit: null, at: null })
   }

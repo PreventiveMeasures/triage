@@ -30,6 +30,13 @@ test('a pull request\'s reviewers are each by their latest review and its commit
   ], 'none pending, none the author\'s; one reviewed and requested again once; Copilot\'s code review asked for, by its bot; a mannequin and an enterprise\'s team')
   assert.deepEqual(reviews.threads, { open: 0, resolved: 0, more: false, severity: null })
   assert.deepEqual([reviews.moreReviews, reviews.moreRequests], [0, 2], 'those GitHub names no one for, counted rather than gone: a reviewer of a kind unknown, and a request naming none')
+  // Copilot's code review reviews as its bot's login, and is requested again by its name, Copilot, the one account.
+  const copilot = pullReviews({ headRefOid: head, latestReviews: { nodes: [review({ login: 'copilot-pull-request-reviewer', databaseId: 175728472 }, 'COMMENTED', earlier),
+    review({ login: 'Copilot', databaseId: 198982749 }, 'COMMENTED')] },
+  reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'Bot', login: 'Copilot', databaseId: 175728472 } }, { requestedReviewer: { __typename: 'User', login: 'kay', databaseId: null } },
+    { requestedReviewer: { __typename: 'User', login: 'KAY', databaseId: 6 } }] } }, 'author')
+  assert.deepEqual(copilot.reviewers.map(({ login, id, requested }) => [login, id, requested]), [['copilot-pull-request-reviewer', 175728472, true], ['Copilot', 198982749, false],
+    ['kay', null, true]], 'by the account where both name it, else by the login')
   const many = pullReviews({ headRefOid: head, latestReviews: { totalCount: 23, nodes: [review({ login: 'ada', databaseId: 2 }, 'APPROVED')] }, reviewRequests: { totalCount: 12, nodes: [] } }, 'author')
   assert.deepEqual([many.moreReviews, many.moreRequests], [22, 12], 'those past the reviews and the requests read, apart, as GitHub counts them')
   assert.equal(reviews.codex, null)
