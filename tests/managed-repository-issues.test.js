@@ -150,6 +150,25 @@ test('a GitHub App refused a pull request\'s checks lists it without them; refus
   assert.deepEqual(await (await fixture(t))({ repoId: '1', kind: 'pulls' }), { status: 502, body: { error: 'github-status-403' } })
 })
 
+test('a list GitHub rejects unread, or takes too long to read, says which, in GitHub\'s words logged', async t => {
+  const warned = t.mock.method(console, 'warn', () => {})
+  // As GitHub rejects a query naming a type its API doesn't know: no type of
+  // error, no data.
+  let answer = { errors: [{ path: ['query', 'repository', 'page', 'nodes', 'reviewRequests', 'nodes', 'requestedReviewer', '... on EnterpriseTeam'],
+    extensions: { code: 'undefinedType', typeName: 'EnterpriseTeam' }, locations: [{ line: 12, column: 9 }], message: 'No such type EnterpriseTeam, so it can\'t be a fragment condition' }] }
+  github(t, () => answer)
+  const request = await fixture(t)
+  assert.deepEqual(await request({ repoId: '1', kind: 'pulls' }), { status: 502, body: { error: 'github-malformed' } })
+  assert.match(warned.mock.calls[0].arguments.join(' '), /No such type EnterpriseTeam/u)
+  answer = { data: null, errors: [{ message: 'Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.' }] }
+  assert.deepEqual(await request({ repoId: '1', kind: 'issues' }), { status: 502, body: { error: 'github-timeout' } })
+  assert.equal(warned.mock.callCount(), 2)
+  // Errors GitHub names, read past or not, aren't.
+  answer = { ...page([]), errors: [{ type: 'FORBIDDEN', path: ['repository', 'page', 'nodes', 0, 'commits', 'nodes', 0, 'commit', 'statusCheckRollup'] }] }
+  assert.equal((await request({ repoId: '1', kind: 'pulls', state: 'closed' })).status, 200)
+  assert.equal(warned.mock.callCount(), 2)
+})
+
 test('a list that names no kind or state, or a cursor that isn\'t one, is a bad request', async t => {
   const request = await fixture(t)
   github(t, () => page([]))

@@ -115,6 +115,7 @@ const REPOSITORY_CODE_ERRORS = {
   'github-status-403': 'GitHub denied this request. Check repository access and the GitHub App’s read permissions.',
   'github-malformed': 'GitHub’s archive of this directory could not be verified against its commit.',
   'github-unreachable': 'Could not connect to GitHub. Try again shortly.',
+  'github-timeout': 'GitHub took too long to answer. Try again shortly.',
   400: 'Not a repository directory and commit.',
   403: 'Repository access is required to read its files.',
   404: 'This repository, commit or directory is unavailable.',
