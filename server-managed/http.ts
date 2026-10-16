@@ -142,6 +142,7 @@ import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
+import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '@preventive/report'
 import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
@@ -431,10 +432,12 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 
 // The avatars `/api/avatar/app-<id>` and `/api/avatar/user-<id>` serve, these
 // alone: the agents' known by their GitHub Apps or accounts (APP_AGENTS),
-// each its mark on the Agents tab. Each is fetched from GitHub once and
+// each its mark on the Agents tab, and those the app draws agents' accounts
+// by (GITHUB_AGENTS). Each is fetched from GitHub once and
 // kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
 // an account's, `…-0001-<id>`.
-const AGENT_AVATARS: ReadonlySet<string> = new Set(APP_AGENTS.flatMap(agent => agent.avatar ?? []))
+const AGENT_AVATARS: ReadonlySet<string> = new Set([...APP_AGENTS, ...Object.values(GITHUB_AGENTS)]
+  .flatMap(agent => 'avatar' in agent && agent.avatar ? [agent.avatar] : []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {

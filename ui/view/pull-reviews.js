@@ -56,7 +56,7 @@ export function reviewStandings(reviews) {
     ...codex ? [{ who: githubUser(reviews.codex.login, 'Codex'), standing: codex, commit, stale: commit !== null && commit !== reviews.head }] : [],
     ...reviews.reviewers.map(reviewer => ({
       who: reviewer.team ? html`<span class="app-user-name">@${reviewer.team}</span>` : githubUser(reviewer.login, reviewer.login ?? 'someone'),
-      standing: STANDING[reviewer.state] ?? REQUESTED, requested: reviewer.requested && Boolean(STANDING[reviewer.state]),
+      standing: STANDING[reviewer.state] ?? REQUESTED, requested: reviewer.requested && Boolean(STANDING[reviewer.state]), workflow: reviewer.workflow ?? null,
       commit: reviewer.commit, at: reviewer.at, stale: reviewer.commit !== null && reviewer.commit !== reviews.head })),
   ]
 }
@@ -107,7 +107,8 @@ function onCommit(commit, head, repo) {
 }
 
 // A popup's reviews: a row a reviewer, Codex's code and security reviews
-// a row each, how it stands, on which commit, when; then its open threads,
+// a row each, how it stands, the agentic workflow (gh-aw) that posted it,
+// on which commit, when; then its open threads,
 // each linked to where it is on GitHub, and how many are resolved.
 export function reviewSections(reviews, repo) {
   if (!reviews) return nothing
@@ -117,8 +118,9 @@ export function reviewSections(reviews, repo) {
   const rows = [
     ...codex?.code ? [codexRow(codex.code, codexStanding(codex) ?? CODEX.done, 'Code review')] : [],
     ...codex?.security ? [codexRow(codex.security, CODEX[codex.security.status] ?? CODEX.done, 'Security review')] : [],
-    ...reviewStandings({ ...reviews, codex: null }).map(({ who, standing: [state, glyph, name], commit, at, requested }) => html`<li class="review-row">${who}
-      <span class=${`review-state is-${state}`}>${glyph}${name}${requested ? ', requested again' : ''}</span>${onCommit(commit, head, repo)}${
+    ...reviewStandings({ ...reviews, codex: null }).map(({ who, standing: [state, glyph, name], commit, at, requested, workflow }) => html`<li class="review-row">${who}
+      <span class=${`review-state is-${state}`}>${glyph}${name}${requested ? ', requested again' : ''}</span>${
+      workflow ? html`<span class="review-on">by the workflow <code>${workflow}</code></span>` : nothing}${onCommit(commit, head, repo)}${
       at ? html`<time datetime=${new Date(at).toISOString()}>${date(at)}</time>` : nothing}</li>`),
   ]
   const { open, resolved, more, list = [] } = reviews.threads

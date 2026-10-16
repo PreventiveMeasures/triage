@@ -454,10 +454,11 @@ function issuesFixture(url: URL, res: ServerResponse): void {
 // and an approval on an earlier one, a P1 open; Codex asked again, changes
 // requested, P2s open and some resolved; none yet, a user, a team and
 // Copilot's code review asked;
-// Codex and an approval on the latest, a question open; Codex failed, a
+// Codex, an approval and an agentic workflow's (gh-aw's, as GitHub Actions)
+// on the latest, a question open; Codex failed, a
 // comment. Its popup's (`detail`) lists its open threads.
 const CODEX_ACCOUNT = { login: 'chatgpt-codex-connector', id: 199175422 }
-const REVIEW_USERS = { 'chatgpt-codex-connector': { agent: 'codex' }, 'Copilot': { agent: 'copilot' } }
+const REVIEW_USERS = { 'chatgpt-codex-connector': { agent: 'codex' }, 'Copilot': { agent: 'copilot' }, 'github-actions': { agent: 'actions' } }
 function reviewsFixture(index: number, number: number, now: number, detail = false) {
   const earlier = number.toString(16).padStart(40, 'b'), head = number.toString(16).padStart(40, 'e')
   const at = (hours: number) => now - hours * 3_600_000
@@ -475,7 +476,9 @@ function reviewsFixture(index: number, number: number, now: number, detail = fal
     { reviewers: [{ login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
       { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null },
       { login: 'Copilot', id: 175728472, state: null, requested: true, commit: null, at: null }], threads: [], resolved: 0, codex: null },
-    { reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: head, at: at(2) }], resolved: 0, codex: codex(head, 'done', earlier),
+    { reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: head, at: at(2) },
+      { login: 'github-actions', id: 41898282, ...detail ? { workflow: 'pr-review' } : {}, state: 'approved', requested: false, commit: head, at: at(1) }], resolved: 0,
+      codex: codex(head, 'done', earlier),
       threads: [finding(null, 'Why not a Set here?', 'ui/view/pull-reviews.js', 61, { login: 'ada', id: 2 })] },
     { reviewers: [{ login: 'kay', id: 6, state: 'commented', requested: false, commit: head, at: at(1) }], threads: [], resolved: 0, codex: codex(earlier, 'done', earlier, { failed: true }) },
   ]

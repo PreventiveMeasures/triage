@@ -1831,7 +1831,10 @@ pull request's tile has a line of its reviews (`pull-reviews.js`): each
 reviewer by a mark of how their latest review stands (approved, changes
 requested, commented, or review requested, a team's by its slug, Copilot's
 code review's by its bot, which GitHub names Copilot as it does Copilot's
-coding agent, told apart by its id), and their
+coding agent, told apart by its id; an agentic workflow's (gh-aw), which
+reviews, approving or not, as GitHub Actions' bot, by GitHub Actions' mark,
+its popup naming the workflow by the `gh-aw-workflow-id` marker gh-aw leaves
+in what it posts), and their
 name, an agent's by its mark alone, dimmed where their review was on an
 earlier commit than the latest; Codex first, by its summary comment rather
 than its reviews, since it posts a review only where it finds something:

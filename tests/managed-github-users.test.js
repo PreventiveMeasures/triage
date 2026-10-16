@@ -43,6 +43,9 @@ test('an agent\'s account is told by its login, its id confirming it where both 
   // Copilot's code review, by its own bot, which GitHub names Copilot as it names Copilot's coding agent.
   assert.deepEqual([['Copilot', 175728472], ['copilot-pull-request-reviewer', 175728472], ['copilot-pull-request-reviewer[bot]', null], ['Copilot', 1], ['copilot-swe-agent', 175728472]]
     .map(([login, id]) => githubAgent(login, id)), ['copilot', 'copilot', 'copilot', null, null], 'a login two accounts are named by is either\'s, by its id')
+  // GitHub Actions' bot, as agentic workflows (gh-aw) review as.
+  assert.deepEqual([['github-actions', 41898282], ['github-actions[bot]', null], ['github-actions', 7], [null, 'github-actions[bot]']]
+    .map(([login, account]) => login ? githubAgent(login, account) : githubAgent(null, null, account)), ['actions', 'actions', null, 'actions'])
   assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
     .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
 })

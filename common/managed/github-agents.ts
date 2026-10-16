@@ -18,7 +18,10 @@
 // reviews, the accounts' ids telling the two apart: a login may so be more
 // than one account's. Dependabot, its GitHub App, as its bot,
 // `dependabot` to GitHub's GraphQL API, `dependabot[bot]` to its REST API and
-// in its address. Cursor's agents commit as whoever ran them, with a
+// in its address. GitHub's Agentic Workflows (gh-aw) post, and approve or
+// review pull requests, as GitHub Actions' bot, `github-actions` (41898282,
+// `[bot]` to the REST API), its mark the GitHub Actions App's avatar; other
+// workflows the bot runs are as much its own. Cursor's agents commit as whoever ran them, with a
 // `Co-authored-by: Cursor Agent <cursoragent@cursor.com>` trailer; the app
 // has no mark of Cursor's, and draws it by its name's letter. Each by the
 // addresses (`emails`) its commits name it by, as author or co-author.
@@ -33,6 +36,7 @@ export const GITHUB_AGENTS = {
   copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] },
     { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'] },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'] },
+  actions: { name: 'GitHub Actions', avatar: 'app-15368', accounts: [{ id: 41898282, logins: ['github-actions', 'github-actions[bot]'] }], names: ['github-actions[bot]'] },
   cursor: { name: 'Cursor', accounts: [], names: ['Cursor Agent'], emails: ['cursoragent@cursor.com'] },
 } as const satisfies Record<string, GithubAgent>
 export type GithubAgentId = keyof typeof GITHUB_AGENTS

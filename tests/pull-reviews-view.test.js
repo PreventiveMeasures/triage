@@ -6,7 +6,7 @@ import { knowGithubUsers } from '../ui/view/github-users.js'
 import { headReviewed, reviewLine, reviewSections } from '../ui/view/pull-reviews.js'
 
 const earlier = 'b'.repeat(40), head = 'e'.repeat(40)
-knowGithubUsers({ users: { 'chatgpt-codex-connector': { agent: 'codex' } } })
+knowGithubUsers({ users: { 'chatgpt-codex-connector': { agent: 'codex' }, 'github-actions': { agent: 'actions' } } })
 const codex = (code, more = {}) => ({ login: 'chatgpt-codex-connector', id: 199175422, code, security: { commit: earlier, status: 'done' }, requested: false, failed: false, ...more })
 const counted = (open = 0, severity = null, more = {}) => ({ open, resolved: 0, more: false, severity, ...more })
 
@@ -56,6 +56,9 @@ test('a popup lists each review, Codex\'s code and security reviews apart, on wh
   assert.match(text, /Code review: reviewed<\/span><span class="review-on">on <a href=https:\/\/github\.com\/org\/repo\/commit\/e{40}[^>]*><code>eeeeeee<\/code><\/a>, the latest commit/u)
   assert.match(text, /Security review: reviewed<\/span><span class="review-on">on [^]*<code>bbbbbbb<\/code><\/a>, an earlier commit/u)
   assert.match(text, /ada[^]*Changes requested, requested again[^]*an earlier commit[^]*Oct 14, 2026/u)
+  const actions = templateText(reviewSections({ head, codex: null, threads: counted(),
+    reviewers: [{ login: 'github-actions', id: 41898282, workflow: 'pr-review', state: 'approved', requested: false, commit: head, at: null }] }, 'org/repo'))
+  assert.match(actions, /GitHub Actions[^]*Approved<\/span><span class="review-on">by the workflow <code>pr-review<\/code><\/span>[^]*the latest commit/u)
   assert.match(text, /<h4>Open threads<\/h4>[^]*href=https:\/\/github\.com\/org\/repo\/pull\/5#discussion_r1[^]*is-p2>P2<[^]*Keep the cache[^]*server\/a\.ts:12[^]*outdated/u)
   assert.match(text, /2 threads resolved\./u)
   assert.doesNotMatch(text, /No review is on the latest commit/u)

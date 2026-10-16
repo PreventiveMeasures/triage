@@ -9,7 +9,10 @@
 // Codex's own, which it keeps in a comment of its own (its summary, edited in
 // place) rather than in reviews, reviewing only where it finds something:
 // the commit its code review and its security review were last on, either
-// one still running, asked for again since, or failed since.
+// one still running, asked for again since, or failed since. A review an
+// agentic workflow (gh-aw) posted, as GitHub Actions' bot, names its
+// workflow by the marker gh-aw leaves (`<!-- gh-aw-workflow-id: NAME -->`), in
+// the popup, which reads reviews' bodies.
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
 
@@ -30,7 +33,7 @@ const COMMIT = /^[a-f\d]{40}$/u
 // The fields a pull request's reviews are read by, its threads' places and
 // links with them for its popup (`detail`).
 export const reviewFields = (threads: number, detail: boolean) => `headRefOid
-  latestReviews(first: ${REVIEWERS}) { totalCount nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
+  latestReviews(first: ${REVIEWERS}) { totalCount nodes { author { ${ACTOR} } state submittedAt commit { oid }${detail ? ' body' : ''} } }
   reviewRequests(first: ${REQUESTS}) { totalCount nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Bot { login databaseId }
     ... on Mannequin { login databaseId } ... on Team { slug } ... on EnterpriseTeam { slug } } } }
   reviewThreads(last: ${threads}) { totalCount nodes { isResolved isOutdated${detail ? ' path line originalLine' : ''}
@@ -49,7 +52,7 @@ type Thread = { isResolved?: unknown; isOutdated?: unknown; path?: unknown; line
   comments?: { nodes?: (Comment & { url?: unknown })[] } | null } | null
 export type ReviewNode = {
   headRefOid?: unknown
-  latestReviews?: { totalCount?: unknown; nodes?: ({ author?: GraphAccount; state?: unknown; submittedAt?: unknown; commit?: { oid?: unknown } | null } | null)[] } | null
+  latestReviews?: { totalCount?: unknown; nodes?: ({ author?: GraphAccount; state?: unknown; submittedAt?: unknown; commit?: { oid?: unknown } | null; body?: unknown } | null)[] } | null
   reviewRequests?: { totalCount?: unknown; nodes?: ({ requestedReviewer?: { __typename?: unknown; login?: unknown; databaseId?: unknown; slug?: unknown } | null } | null)[] } | null
   reviewThreads?: { totalCount?: unknown; nodes?: Thread[] } | null
   firstComments?: { nodes?: Comment[] } | null
@@ -63,6 +66,7 @@ const SUMMARY = /<!--\s*codex-review-state:v1\s+(\{[^]*?\})\s*-->/u
 // Asking it to review again reruns its code review alone, never its security review.
 const ASKED = /^@codex\s+review\b/iu
 const FAILED = /^Codex Review: Something went wrong/u
+const WORKFLOW = /<!--\s*gh-aw-workflow-id:\s*([\w.-]{1,100})\s*-->/u
 
 const timeOf = (value: unknown) => {
   const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
@@ -122,7 +126,7 @@ function codexOf(node: ReviewNode) {
     requested: asked !== null && !(failed !== null && failed > asked), failed: failed !== null && (asked === null || failed > asked) }
 }
 
-type Reviewer = { login: string | null; id: number | null; team?: string; state: string | null; requested: boolean; commit: string | null; at: number | null }
+type Reviewer = { login: string | null; id: number | null; team?: string; workflow?: string; state: string | null; requested: boolean; commit: string | null; at: number | null }
 
 // The reviewers, each once: by their latest review, its state and commit;
 // whose is requested (again, for one who reviewed), a user, a bot (Copilot's
@@ -136,7 +140,8 @@ function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
     const { login, id } = actorOf(review?.author)
     const state = STATES[String(review?.state)]
     if (!state || (login !== null && login.toLowerCase() === own) || (codex && isCodex(review?.author))) return []
-    return [{ login, id, state, requested: false, commit: commitOf(review?.commit?.oid), at: timeOf(review?.submittedAt) }]
+    const workflow = WORKFLOW.exec(textOf(review?.body))?.[1]
+    return [{ login, id, ...workflow ? { workflow } : {}, state, requested: false, commit: commitOf(review?.commit?.oid), at: timeOf(review?.submittedAt) }]
   })
   let unnamed = 0
   for (const request of node.reviewRequests?.nodes ?? []) {
