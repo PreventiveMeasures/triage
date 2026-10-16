@@ -164,6 +164,25 @@ export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = fals
     REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
 }
 
+const REPOSITORY_CHANGES_ERRORS = {
+  ...REPOSITORY_HISTORY_ERRORS,
+  'no-directory': 'This directory’s changes are not available to you.',
+  'github-malformed': 'GitHub answered with a commit’s files that couldn’t be read.',
+  400: 'Not a repository’s commits.',
+}
+
+// The files each of the commits `shas` names changes within `path`, as
+// Replay plays them, fifty commits at most.
+export function fetchRepositoryChanges(repoId, path, shas, { signal } = {}) {
+  return request(`/api/admin/repositories/changes?${new URLSearchParams({ repoId, path, shas: shas.join(',') })}`,
+    REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+}
+
+// The files commit `commit` holds within `path`, which Replay starts from.
+export function fetchRepositoryTree(repoId, path, commit, { signal } = {}) {
+  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+}
+
 const REPOSITORY_ISSUES_ERRORS = {
   ...REPOSITORY_CODE_ERRORS,
   'no-directory': 'Issues and pull requests show only with access to the whole repository.',

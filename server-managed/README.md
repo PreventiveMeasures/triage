@@ -233,7 +233,7 @@ window also navigate to their managed page URL.
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents` or `pulse` (`history`, its earlier name, opens Commits) |
+| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents`, `pulse` or `replay` (`history`, its earlier name, opens Commits) |
 | `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
 | `/manage/code/:repoId/:commit/compare[/:otherCommit[/code\|/diff]][?path=:directory]` | Its Compare tab, with the directory at another commit, in its Code or Diff mode |
 | `/manage/scans` | Scans |
@@ -1648,15 +1648,15 @@ Compare to open with again.
 
 ## Activity
 
-The **Activity** tab holds what happens around the code, in five views, each
-its own route's tab (`commits`, `issues`, `pulls`, `agents`, `pulse`): its
-**Commits** (below), **Issues** and **Pull requests**, **Agents**
-and **Pulse**. It opens on the view last shown, Commits until one is
-(`ui/view/repository-activity.js`). Each view's bar starts with their
-picker, an icon each (a commit on its line, an issue's ring, a pull
-request's branches, a robot's head, a pulse's beat), as the graph's layouts
-are picked, which switches the view as a tab does, Back returning to the
-one before.
+The **Activity** tab holds what happens around the code, in six views, each
+its own route's tab (`commits`, `issues`, `pulls`, `agents`, `pulse`,
+`replay`): its **Commits** (below), **Issues** and **Pull requests**,
+**Agents**, **Pulse** and **Replay**. It opens on the view last shown,
+Commits until one is (`ui/view/repository-activity.js`). Each view's bar
+starts with their picker, an icon each (a commit on its line, an issue's
+ring, a pull request's branches, a robot's head, a pulse's beat, and a play
+button's triangle), as the graph's layouts are picked, which switches the
+view as a tab does, Back returning to the one before.
 
 ## Commits
 
@@ -2064,6 +2064,82 @@ token) is read again for the year, with them. They are read as Issues are:
 with the reader's own GitHub access, only where their grants reach the
 whole repository, a token needed, and access checked again before they are
 sent.
+
+## Replay
+
+Activity's play button, **Replay**, plays the latest commits of the
+revision shown as [Gource](https://gource.io) plays a repository's history
+(`ui/view/repository-replay.js`, `ui/view/replay-model.js`): on a canvas
+filling the tab, the repository's directories as a tree from its root
+(below the root, from the directory shown), starting from the files as
+they were before the first commit played (its parent's), from none where
+that commit is the repository's first, each directory's files a
+cluster of dots about it on a sunflower's spiral, each dot in its kind's
+color (its extension: the eight counted most in the order Commits colors
+its lanes, the rest Other's gray, a key at the corner naming them). Those
+who made each commit, its author and co-authors, each on a solid disc (a
+user of the app by their avatar; Claude, Codex and Copilot as their apps'
+icons are, Claude's mark white on its orange, OpenAI's black on white,
+Copilot's white on GitHub's dark; another agent by its avatar where the app
+has one; anyone else by their name's letter), fly to the files it changes, a beam to each, green where
+the file is added, amber modified and red removed, the file glowing as its
+beam reaches it, a removed one shrinking away, and a directory it empties
+going with it. The camera eases to fit the tree as it grows. The day and
+how many commits are played show at the top, the commit last played (its
+id, subject and who made it, as Commits shows them) along the foot, and what is under the pointer
+(a file's or directory's path, or who made commits) beside it.
+
+**Last 100**, **300** (at first) or **1,000** picks how many of the latest
+commits play, merges left out (their other parents' commits change their
+files), the oldest first, ordered as Commits orders them (by their times,
+but never a commit before its parent, whatever a clock off dates it): read
+as Commits reads a revision's history (a
+directory's, below the root), as many pages as hold them. Each plays a day
+of its time a second after the one before at 1×, but no sooner than 0.08s
+nor later than 0.6s, quiet spells skipped as Gource's `--auto-skip-seconds`
+skips them; **½×** to **8×** plays it slower or faster. Under it, play
+and pause (once ended, play again from the first), and a track of the
+commits to seek through, the played filled, those read behind them: a seek
+makes every commit before it at once, on the files it starts from. It
+starts playing as it opens, unless the reader asks for less motion. The
+files it starts from are read once (`GET /api/admin/repositories/tree`),
+drawn as soon as they are; what each commit changes is read twenty
+at first, then fifty at a time, the oldest first from where it plays, as a
+video buffers, while it shows; it waits at a commit not read yet, saying
+so. A commit of more files than are read (`more`, below) is made whole by
+the files it leaves, read as those it starts from are, before it plays:
+what it changes past them is made as it plays, or as a seek passes it.
+Where the files it starts from, or those a cut commit leaves, are more
+than are read, the summary says it is drawn in part: files past them are
+neither drawn nor, where a cut commit removes them, removed. A
+page of the history failing to read is said, with **Retry**, and no
+replay is taken from the commits read so far. Each replay, where it is and
+what was read, is kept for the session, paused when another view or count
+is picked.
+
+`GET /api/admin/repositories/changes?repoId=…&path=…&shas=…` answers
+`{ path, changes }` (`repository-changes.ts`): for each of the commits
+`shas` names (as many as fifty), its `files` as `git log --name-status`
+names their changes, `[path, status]`, `A` added (a copy too), `M`
+modified, `D` removed, or `[path, 'R', from]` renamed, as GitHub's REST API
+lists a commit's files (`GET /repos/:owner/:repo/commits/:sha`), a hundred
+a page while each is full, as many as three hundred, `more` where it had
+more; null for a commit GitHub has none of. Within `path`, only its files
+are answered, a rename across its edge the file added where it comes in and
+removed where it goes out. A commit's files never change, so each is kept by the commit
+(`repository/changes`, a month, as Commits' pages are), whole, and read of
+GitHub once, six at a time. They are read as the history is: with the
+reader's own GitHub access, only within their grants (a directory they
+reach all of), and access checked again before they are sent.
+
+`GET /api/admin/repositories/tree?repoId=…&path=…&commit=…` answers
+`{ commit, path, files, cut }`: the files the commit holds within `path`,
+by their paths, as GitHub lists its tree and every tree under it at once
+(`GET /repos/:owner/:repo/git/trees/:commit?recursive=1`), its blobs, not
+its directories nor submodules, as many as 25,000, `cut` where there were
+more or GitHub cut its listing short (past 100,000 entries), which the
+summary then says; `files` null for a commit GitHub has none of. Kept by
+the commit as the changes are (`repository/trees`), and read as they are.
 
 # npm package viewer
 

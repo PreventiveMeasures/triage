@@ -9,7 +9,8 @@
 // advisories, for an hour (repository-risk.ts); and what the code viewer read
 // of a repository's GitHub, its issues, pull requests and agents' work, for a
 // day (http.ts keptAnswer), and its history, a page from a commit at a time,
-// for a month (repository-history.ts historyFrom). Each store removes its own rows kept longer
+// for a month (repository-history.ts historyFrom), as are the files each of
+// its commits changes and holds (repository-changes.ts). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -108,3 +109,11 @@ export const historyPageStore = <T>(db: UpstreamCacheStore, debug = false): Kept
 // The pull requests squashed into a repository's commits, by the commit
 // (repository-history.ts squashedPulls): kept as its history's pages are.
 export const historySquashStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/squashes', HISTORY_PAGE_KEPT_MS, debug)
+// The files each of a repository's commits changes (repository-changes.ts
+// repositoryChanges), by the commit, which never change: kept as its
+// history's pages are.
+export const historyChangeStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/changes', HISTORY_PAGE_KEPT_MS, debug)
+// The files a repository's commit holds (repository-changes.ts
+// repositoryTree), by the commit, which never change: kept as its history's
+// pages are.
+export const historyTreeStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/trees', HISTORY_PAGE_KEPT_MS, debug)

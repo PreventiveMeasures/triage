@@ -29,24 +29,26 @@ beforeEach(() => {
     bundleDetails: { integrity: entry.integrity, json: { sources: {} }, repository: entry.repository }, bundleSourceFile: null, triage: new Map() })
 })
 
-test('a directory open shows its commits, issues, pull requests, agents and pulse in managed mode as one Activity tab, opening on the view last shown, a bundle\'s Issues tab not standing in', () => {
-  for (const tab of ['commits', 'issues', 'pulls', 'pulse', 'agents']) {
+test('a directory open shows its commits, issues, pull requests, agents, pulse and replay in managed mode as one Activity tab, opening on the view last shown, a bundle\'s Issues tab not standing in', () => {
+  for (const tab of ['commits', 'issues', 'pulls', 'pulse', 'replay', 'agents']) {
     state.bundleDetailsTab = tab
     const text = templateText(renderBundlesList([entry]))
     assert.equal(state.bundleDetailsTab, tab)
-    assert.match(text, ['commits', 'agents', 'pulse'].includes(tab) ? new RegExp(`<repository-${tab === 'commits' ? 'history' : tab} `, 'u') : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
+    assert.match(text, ['commits', 'agents', 'pulse', 'replay'].includes(tab) ? new RegExp(`<repository-${tab === 'commits' ? 'history' : tab} `, 'u') : new RegExp(`<repository-issues [^>]*\\.kind=${tab}`, 'u'), tab)
     assert.match(text, new RegExp(`>Treemap<[^]*>Code<[^]*>Search<[^]*data-bundle-tab="${tab}" aria-selected=true [^>]*>Activity<`, 'u'), tab)
-    assert.doesNotMatch(text, />(?:History|Issues|Pull requests|Agents|Pulse)<\/button>/u, 'no tab of their own')
+    assert.doesNotMatch(text, />(?:History|Issues|Pull requests|Agents|Pulse|Replay)<\/button>/u, 'no tab of their own')
   }
   // Another tab open, Activity opens on the view last shown.
   state.bundleDetailsTab = 'code'
   assert.match(templateText(renderBundlesList([entry])), /data-bundle-tab="agents" aria-selected=false [^>]*>Activity</u)
 })
 
-test('Activity\'s picker: an icon each, its name to read, no tooltip, opening each view as its tab does, the one shown pressed', () => {
+test('Activity\'s picker: an icon each, Replay\'s a play button, its name to read, no tooltip, opening each view as its tab does, the one shown pressed', () => {
   const text = templateText(activityPicker('pulls'))
   assert.deepEqual([...text.matchAll(/data-bundle-tab=(\w+) aria-label=([^>]+?) aria-pressed=(\w+)>/gu)].map(match => match.slice(1)),
-    [['commits', 'Commits', 'false'], ['issues', 'Issues', 'false'], ['pulls', 'Pull requests', 'true'], ['agents', 'Agents', 'false'], ['pulse', 'Pulse', 'false']])
-  assert.equal(text.split('<svg ').length - 1, 5)
+    [['commits', 'Commits', 'false'], ['issues', 'Issues', 'false'], ['pulls', 'Pull requests', 'true'], ['agents', 'Agents', 'false'], ['pulse', 'Pulse', 'false'],
+      ['replay', 'Replay', 'false']])
+  assert.equal(text.split('<svg ').length - 1, 6)
+  assert.match(text, /data-bundle-tab=replay [^>]*><svg [^>]*><path d="M5 3\.25v9\.5L12\.75 8z"\/><\/svg>/u, 'a play button\'s triangle')
   assert.doesNotMatch(text, /tooltip|title=/u)
 })
