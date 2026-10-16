@@ -18,6 +18,9 @@ const MERGED_COMMITS = 100
 // Of each, as many labels as MERGED_LABELS, GitHub's most a page, a label
 // naming any agent the app knows making it an agent's.
 const MERGED_LABELS = 100
+// How long before or after a pull request rebased onto the branch was merged
+// its copies are committed.
+const REBASE_SKEW_MS = 10 * 60_000
 const LABEL_AGENTS = [...new Set([...Object.keys(GITHUB_AGENTS), ...APP_AGENTS.map(agent => agent.id)])]
 const SHA = /^[a-f\d]{40}$/u
 
@@ -149,7 +152,7 @@ const headed = (subject: string, headline: string) => headline.endsWith('…') ?
 export function agentCommits(read: AgentMerges, commits: HistoryCommit[]): Set<string> {
   const shas = new Set(read.merges.map(([sha]) => sha))
   const bySha = new Map(commits.map(commit => [commit.sha, commit]))
-  for (const [last, , subjects, more = 0] of read.rebases) {
+  for (const [last, merged, subjects, more = 0] of read.rebases) {
     let commit = bySha.get(last)
     let at = subjects.length - 1
     for (; commit && at >= 0; commit = bySha.get(commit.parents[0] ?? '')) {
@@ -160,8 +163,13 @@ export function agentCommits(read: AgentMerges, commits: HistoryCommit[]): Set<s
       at = found - 1
     }
     // Each of its latest commits read copied, as many as it had before them
-    // the commits below, on their first parents.
-    for (let rest = at < 0 ? more : 0; commit && rest > 0; rest--, commit = bySha.get(commit.parents[0] ?? '')) shas.add(commit.sha)
+    // the commits below, on their first parents, as long as each was
+    // committed as it was merged, as a rebase commits its copies: not past
+    // its first, its empty ones, which a rebase leaves out, counted too.
+    const copiedAsMerged = (when: number | null) => when !== null && Math.abs(when - merged) <= REBASE_SKEW_MS
+    for (let rest = at < 0 ? more : 0; commit && rest > 0 && copiedAsMerged(commit.committedAt); rest--, commit = bySha.get(commit.parents[0] ?? '')) {
+      shas.add(commit.sha)
+    }
   }
   return shas
 }

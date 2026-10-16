@@ -247,6 +247,10 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
   type Counts = Map<number, number[]>
   const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Counts; days: Counts; commits: number }>()
   const punches = Object.fromEntries(PULSE_WEEKS.map(span => [span, emptyPunch()]))
+  // Each commit's author, by the key their commits are counted by, and of a
+  // login an account took on, that account (`merged`).
+  const keys = new Map<string, string>()
+  const merged = new Map<string, { login: string | null; id: number | null; name: string | null }>()
   const add = (counts: Counts, at: number, made: number[]) => counts.set(at, made.map((value, index) => (counts.get(at)?.[index] ?? 0) + value))
   for (const commit of commits) {
     if (commit.parents.length > 1 || commit.committedAt === null || commit.committedAt < first) continue
@@ -271,6 +275,7 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
     const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin.toLowerCase()}`
       : commit.authorName ? `=${commit.authorName}` : null
     if (!key) continue
+    keys.set(commit.sha, key)
     const person = people.get(key) ?? { login: commit.authorLogin, logins: new Set<string>(), id: commit.authorId ?? null, name: commit.authorName,
       weeks: new Map(), days: new Map(), commits: 0 }
     if (commit.authorLogin) person.logins.add(commit.authorLogin.toLowerCase())
@@ -291,13 +296,18 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
     for (const [day, counts] of person.days) add(account.days, day, counts)
     account.commits += person.commits
     people.delete(key)
+    merged.set(key, account)
   }
   const rows = (counts: Counts) => [...counts].toSorted(([a], [b]) => a - b).map(([at, made]) => [at, ...made])
   const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, id, name, weeks: theirs, days }) => ({
     login, id, name, weeks: rows(theirs) as [number, number, number, number][], days: rows(days) as [number, number, number, number, number, number, number][] }))
+  // Each pushed directly by the contributor its author's commits are counted
+  // as, whatever account it named.
   const directCommits = commits.filter(commit => direct.has(commit.sha) && commit.committedAt !== null && commit.committedAt >= first)
-    .toSorted((a, b) => b.committedAt! - a.committedAt!).slice(0, DIRECT_LISTED)
-    .map(({ sha, committedAt, subject, authorLogin, authorId, authorName }) => ({ sha, at: committedAt!, subject, login: authorLogin, id: authorId ?? null, name: authorName }))
+    .toSorted((a, b) => b.committedAt! - a.committedAt!).slice(0, DIRECT_LISTED).map(({ sha, committedAt, subject, authorLogin, authorId, authorName }) => {
+      const author = people.get(keys.get(sha) ?? '') ?? merged.get(keys.get(sha) ?? '') ?? { login: authorLogin, id: authorId ?? null, name: authorName }
+      return { sha, at: committedAt!, subject, login: author.login, id: author.id, name: author.name }
+    })
   return { weeks, contributors, punch: punches[52]!, punches, lines: true, directCommits }
 }
 

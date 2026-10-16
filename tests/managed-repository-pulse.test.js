@@ -316,11 +316,15 @@ test('a pull request rebased of more commits than its latest read: how many more
     mergeCommit: { oid: shaOf(3), parents: { totalCount: 1 } }, commits: { totalCount: 4, nodes: own } }]) })
   const read = await agentMerges('org/repo', 'token', since, null)
   assert.deepEqual(read.pullRebases, [[shaOf(3), since + DAY, ['Two', 'Three'], 2]])
-  const commit = (sha, parents, subject) => ({ sha, parents, subject, authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: since + DAY, coauthors: [] })
-  // Its four commits copied onto the branch over one pushed directly.
+  const commit = (sha, parents, subject, committedAt = since + DAY) => ({ sha, parents, subject, authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt, coauthors: [] })
+  // Its four commits copied onto the branch, as it was merged, over one
+  // pushed directly a while before.
   const commits = [commit(shaOf(3), [shaOf(2)], 'Three'), commit(shaOf(2), [shaOf(1)], 'Two'), commit(shaOf(1), [shaOf(0)], 'One'), commit(shaOf(0), ['pushed'], 'Zero'),
-    commit('pushed', ['first'], 'Pushed'), commit('first', [], 'First')]
+    commit('pushed', ['first'], 'Pushed', since + HOUR), commit('first', [], 'First', since)]
   assert.deepEqual([...directCommits(read, commits, shaOf(3))].toSorted(), ['first', 'pushed'])
+  // One of the two unread empty, left out by the rebase: none past its copies taken for it.
+  const dropped = [...commits.slice(0, 3), commit(shaOf(1), ['pushed'], 'One'), ...commits.slice(4)]
+  assert.deepEqual([...directCommits(read, dropped, shaOf(3))].toSorted(), ['first', 'pushed'], 'the one pushed before it not its own')
 })
 
 test('a year counts the commits pushed to the branch directly each day, each contributor\'s too, the latest listed; a period, its own alone', () => {
@@ -335,6 +339,14 @@ test('a year counts the commits pushed to the branch directly each day, each con
     { sha: 'b', at: first + DAY + HOUR, subject: 'Commit b', login: null, id: null, name: 'Alan Kay' }], 'the latest first')
   assert.deepEqual(periodStats(read, 4).directCommits.map(item => item.sha), ['c'])
   assert.deepEqual(periodStats(read, 52).directCommits.map(item => item.sha), ['c', 'b'])
+})
+
+test('a commit pushed directly is listed as the contributor its author\'s commits are counted as: a login\'s read before ids were, its one account\'s', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const commit = (sha, authorId) => ({ sha, parents: ['p'], subject: sha, authorName: 'Ada', authorLogin: 'ada', authorId, committedAt: first + DAY, coauthors: [] })
+  const read = commitStats([commit('old', undefined), commit('new', 7)], first, new Set(), new Set(), new Set(['old', 'new']))
+  assert.deepEqual(read.contributors.map(person => [person.login, person.id]), [['ada', 7]])
+  assert.deepEqual(read.directCommits.map(item => [item.sha, item.login, item.id]).toSorted(), [['new', 'ada', 7], ['old', 'ada', 7]])
 })
 
 test('a year counts the commits that release the repository apart, none of them with agents whoever made them', () => {
