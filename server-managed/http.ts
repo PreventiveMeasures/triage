@@ -1933,7 +1933,8 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
 // on shows the year as it was till it is counted again; one past
 // YEAR_COMMITS is GitHub's statistics' (repositoryStats, repositoryLines),
 // kept together as an issue's page is and through GitHub computing them
-// again, `pending` while it first computes them.
+// again, `pending` while it first computes them, the year last counted
+// beside it so too.
 async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
   const first = pulseSince(52, Date.now())
   const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
@@ -1941,6 +1942,10 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const store = repositoryReadStore(deps.db, deps.config.debug)
   const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
   const lastKey = `${repoId}\0pulse-year-last`
+  const last = async () => {
+    const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
+    return kept?.first === first ? kept.stats : null
+  }
   const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
   if (held && !('tooMany' in held)) return { stats: held, reading: null, pending: false, kept: head.kept }
   if (!held) {
@@ -1950,10 +1955,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
       return { stats, reading: null, pending: false, kept: false }
     }
-    if (!year.tooMany) {
-      const last = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
-      return { stats: last?.first === first ? last.stats : null, reading: year.read, pending: false, kept: false }
-    }
+    if (!year.tooMany) return { stats: await last(), reading: year.read, pending: false, kept: false }
     await store.write(key, { tooMany: true }, Date.now())
   }
   // Its commits and lines read together, kept as one: never the one GitHub
@@ -1963,7 +1965,8 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     const [stats, lines] = await Promise.all([repositoryStats(fullName, token), repositoryLines(fullName, token, first)])
     return withLines(stats, lines)
   }, computing).catch((err: unknown) => { if (computing(err)) return null; throw err })
-  return { stats: counted?.value ?? null, reading: null, pending: !counted, kept: counted?.kept === true }
+  if (counted) return { stats: counted.value, reading: null, pending: false, kept: counted.kept }
+  return { stats: await last(), reading: null, pending: true, kept: false }
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {

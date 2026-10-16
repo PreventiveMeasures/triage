@@ -5,7 +5,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
-import { StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
+import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -341,6 +341,20 @@ test('a head moved on, its year read anew, the year last counted answered meanwh
   assert.deepEqual([moved.body.reading, total(moved.body)], [500, 700], 'five pages read, the year as it was')
   const counted = await request({ repoId: '1', weeks: '1' })
   assert.deepEqual([counted.body.reading, total(counted.body)], [null, 1300])
+})
+
+test('a head moved on past YEAR_COMMITS, GitHub still computing its statistics, the year last counted answered meanwhile', async t => {
+  const request = await fixture(t)
+  github(t, { commits: chain(700, Date.now()), answer: () => Response.json({}, { status: 202 }) })
+  const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
+  await request({ repoId: '1' })
+  assert.equal(total((await request({ repoId: '1' })).body), 700)
+  const head = 'f'.repeat(40)
+  const store = repositoryReadStore(request.db)
+  await store.write('1\0pulse-head', { sha: head }, Date.now())
+  await store.write(`1\0pulse-year\0${PULSE_YEAR_VERSION}\0${head}\0${pulseSince(52, Date.now())}`, { tooMany: true }, Date.now())
+  const moved = await request({ repoId: '1' })
+  assert.deepEqual([moved.body.pending, moved.body.reading, total(moved.body)], [true, null, 700])
 })
 
 test('pages kept without lines, as GitHub\'s REST API lists them, are read again for the pulse', async t => {
