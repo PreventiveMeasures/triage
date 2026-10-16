@@ -1838,7 +1838,7 @@ review required) while open and its checks (passed, failed or running),
 each an icon, room held for both; then how many comments it has. An open
 pull request's tile has a line of its reviews (`pull-reviews.js`): each
 reviewer by a mark of how their latest review stands (approved, changes
-requested, commented, or review requested, a team's by its slug, Copilot's
+requested, commented, or review requested, Copilot's
 code review's by its bot, which GitHub names Copilot as it does Copilot's
 coding agent, told apart by its id, and `copilot-pull-request-reviewer` on
 its reviews, a reviewer requested again known by their account's id before
@@ -1912,11 +1912,15 @@ read**, its tiles showing none where GitHub refuses those alone (see GitHub
 App setup), and likewise its reviews, threads and comments where GitHub
 refuses those alone. Access is checked again before they are sent. A list
 GitHub takes too long to read (it stops a query after ten seconds) is `502
-github-timeout`; one it answers with errors of no type GitHub names, as it
-rejects a query naming a field or type its API doesn't know, `502
+github-timeout`; one it refuses for a scope the token lacks
+(`INSUFFICIENT_SCOPES`), as a field a GitHub App lacks the permission for is,
+`502 github-status-403`; one it answers with errors of no type GitHub names, as
+it rejects a query naming a field or type its API doesn't know, `502
 github-malformed`. GitHub's own words for those errors are logged on the
-server. Its API knows no `EnterpriseTeam`, though its docs' schema does, so a
-review requested of a team is read by `Team` alone.
+server. A team requested to review is counted among the requests GitHub
+names no one for, not named: reading a team needs its organization's
+**Members** permission, which a query lacking fails whole (as one naming an
+`EnterpriseTeam`, which GitHub's docs' schema has and its API doesn't, does).
 
 `GET /api/admin/repositories/item?repoId=…&number=…` answers one issue or
 pull request, as its popup shows it, read and checked as a page is: its

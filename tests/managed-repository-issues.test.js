@@ -150,7 +150,7 @@ test('a GitHub App refused a pull request\'s checks lists it without them; refus
   assert.deepEqual(await (await fixture(t))({ repoId: '1', kind: 'pulls' }), { status: 502, body: { error: 'github-status-403' } })
 })
 
-test('a list GitHub rejects unread, or takes too long to read, says which, in GitHub\'s words logged', async t => {
+test('a list GitHub rejects unread, refuses for a scope its token lacks, or takes too long to read, says which, in GitHub\'s words logged', async t => {
   const warned = t.mock.method(console, 'warn', () => {})
   // As GitHub rejects a query naming a type its API doesn't know: no type of
   // error, no data.
@@ -163,10 +163,16 @@ test('a list GitHub rejects unread, or takes too long to read, says which, in Gi
   answer = { data: null, errors: [{ message: 'Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug.' }] }
   assert.deepEqual(await request({ repoId: '1', kind: 'issues' }), { status: 502, body: { error: 'github-timeout' } })
   assert.equal(warned.mock.callCount(), 2)
+  // A field a token lacks the scope for, refused as a field a GitHub App
+  // lacks the permission for is.
+  answer = { errors: [{ type: 'INSUFFICIENT_SCOPES', locations: [{ line: 9, column: 5 }], message: 'Your token has not been granted the required scopes to execute this query. '
+    + 'The \'slug\' field requires one of the following scopes: [\'read:org\', \'read:discussion\'], but your token has only been granted the: [\'\'] scopes.' }] }
+  assert.deepEqual(await request({ repoId: '1', kind: 'issues', state: 'closed' }), { status: 502, body: { error: 'github-status-403' } })
+  assert.match(warned.mock.calls[2].arguments.join(' '), /The 'slug' field requires/u, 'logged in GitHub\'s words')
   // Errors GitHub names, read past or not, aren't.
   answer = { ...page([]), errors: [{ type: 'FORBIDDEN', path: ['repository', 'page', 'nodes', 0, 'commits', 'nodes', 0, 'commit', 'statusCheckRollup'] }] }
   assert.equal((await request({ repoId: '1', kind: 'pulls', state: 'closed' })).status, 200)
-  assert.equal(warned.mock.callCount(), 2)
+  assert.equal(warned.mock.callCount(), 3)
 })
 
 test('a list that names no kind or state, or a cursor that isn\'t one, is a bad request', async t => {

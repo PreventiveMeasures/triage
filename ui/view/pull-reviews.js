@@ -55,7 +55,7 @@ export function reviewStandings(reviews) {
   return [
     ...codex ? [{ who: githubUser(reviews.codex.login, 'Codex'), standing: codex, commit, stale: commit !== null && commit !== reviews.head }] : [],
     ...reviews.reviewers.map(reviewer => ({
-      who: reviewer.team ? html`<span class="app-user-name">@${reviewer.team}</span>` : githubUser(reviewer.login, reviewer.login ?? 'someone'),
+      who: githubUser(reviewer.login, reviewer.login ?? 'someone'),
       standing: STANDING[reviewer.state] ?? REQUESTED, requested: reviewer.requested && Boolean(STANDING[reviewer.state]), workflow: reviewer.workflow ?? null,
       commit: reviewer.commit, at: reviewer.at, stale: reviewer.commit !== null && reviewer.commit !== reviews.head })),
   ]
