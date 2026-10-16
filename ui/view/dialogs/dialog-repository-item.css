@@ -118,6 +118,17 @@ svg .dotted { stroke-dasharray: 1 2.2; }
   &.is-p1 { background: var(--high); }
   &.is-p2 { background: var(--medium); color: #000; }
 }
+/* The packages new to a pull request's lockfiles: each directory's lockfiles
+   named over their packages, each a row of its name, its version muted, and
+   its tags, dev and where it is from. */
+.repo-item-lockfiles + .repo-item-lockfiles { margin-top: .6rem; }
+.repo-item-lockfiles > p { margin: 0 0 .3rem; overflow-wrap: anywhere; }
+.repo-item-version { color: var(--muted); }
+span.repo-item-row:hover { background: none; }
+.repo-item-tag {
+  flex: none; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted); font-size: .72rem; line-height: 1.5;
+}
 .repo-item-description {
   padding-top: .75rem; border-top: 1px solid var(--border);
   white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;

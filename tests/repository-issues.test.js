@@ -7,10 +7,13 @@ import { templateText } from './_lit.js'
 const state = {}
 const requests = []
 let answer = null
+const dependencyRequests = []
+let dependencies = () => new Promise(() => {})
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryIssues(repoId, kind, options) { requests.push([repoId, kind, options]); return answer(repoId, kind, options) },
   fetchRepositoryHistory: () => new Promise(() => {}),
+  fetchPullDependencies(repoId, number) { dependencyRequests.push([repoId, number]); return dependencies(repoId, number) },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
@@ -123,6 +126,41 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   // Opened by none, its name is the one its repositories list it by, once they arrive.
   unnamed.repo = 'org/named'
   assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5/u)
+})
+
+test('an open pull request changing a lockfile, or that may, shows the packages new to its lockfiles once read, two at a time; one changing none, or not open, asks none', async () => {
+  dependencyRequests.length = 0
+  const reads = []
+  dependencies = (repoId, number) => new Promise(resolve => { reads.push([number, resolve]) })
+  const added = names => names.map(name => ({ name, version: '1.0.0', source: 'registry' }))
+  answer = () => Promise.resolve({ items: [pull(1, { touchesLockfile: true }), pull(2, { touchesLockfile: false }), pull(3), pull(4, { touchesLockfile: null }),
+    pull(5, { touchesLockfile: true }), pull(6, { state: 'merged', touchesLockfile: true }), pull(7, { draft: true, touchesLockfile: true })], counts: { open: 6, closed: 1 }, more: false })
+  const view = shown('pulls')
+  view.render()
+  await setImmediate()
+  assert.doesNotMatch(templateText(view.render()), /issue-deps/u, 'nothing while they are read')
+  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4]], 'two at a time, in the order asked')
+  reads.shift()[1]({ number: 1, cut: false, lockfiles: [
+    { paths: ['package-lock.json'], added: added(['plain-crypto-js', 'tool']), more: 0 },
+    { paths: ['web/pnpm-lock.yaml'], added: added(['tool', 'zod']), more: 2 },
+    { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' },
+  ] })
+  await setImmediate()
+  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4], [7, 5]])
+  reads.shift()[1]({ number: 4, cut: false, lockfiles: [] })
+  reads.shift()[1]({ number: 5, cut: false, lockfiles: [{ paths: ['package-lock.json'], added: [], more: 0 }] })
+  await setImmediate()
+  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4], [7, 5], [7, 7]], 'a draft is open; a merged one\'s tile asks none')
+  reads.shift()[1]({ number: 7, cut: false, lockfiles: [{ paths: ['yarn.lock'], added: added(Array.from({ length: 22 }, (_, at) => `p${at}`)), more: 0 }] })
+  await setImmediate()
+  const tiles = templateText(view.render()).split('<li ').slice(1)
+  assert.match(tiles[0], /<span class="issue-deps" data-tooltip=New dependencies: plain-crypto-js, tool, zod and more><svg[^]*<\/svg><span class="issue-deps-names">plain-crypto-js, tool, zod<\/span>\s*<span class="issue-deps-count">3\+ new<\/span>/u,
+    'each name once, across its directories, "+" where more were left unsent')
+  assert.deepEqual(tiles.map(tile => tile.includes('issue-deps')), [true, false, false, false, false, false, true], 'none where none is new')
+  assert.match(tiles[6], /data-tooltip=New dependencies: p0, [^>]*, p19 and 2 more>/u, 'as many named on hover as fit, the rest counted')
+  // Kept for the session: drawn again, none asked again.
+  templateText(view.render())
+  assert.equal(dependencyRequests.length, 4)
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

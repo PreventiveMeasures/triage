@@ -105,6 +105,10 @@ export function fetchRepositoryItem(repoId, number, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryItem(repoId, number, options))
 }
 
+export async function fetchPullDependencies(repoId, number, options) {
+  return (await loadManagedBundle()).fetchPullDependencies(repoId, number, options)
+}
+
 export function fetchRepositoryPulse(repoId, weeks, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }

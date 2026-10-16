@@ -1876,8 +1876,8 @@ the next where `more`. Each item is `{ number, title, author, createdAt,
 updatedAt, closedAt, comments, labels: [{ name, color }], moreLabels, state }`,
 an issue's with its `reason` (`completed`, `not-planned` or `duplicate`), a
 pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
-`deletions`, `head` and `base`, its `state` `merged` where it was; an open
-one's with its `reviews` (`pull-reviews.ts`): `{ head, reviewers: [{ login,
+`deletions`, `head` and `base`, its `state` `merged` where it was, and an
+open one's `touchesLockfile` (below) and its `reviews` (`pull-reviews.ts`): `{ head, reviewers: [{ login,
 id, team?, state, requested, commit, at }], moreReviews, moreRequests, threads: { open,
 resolved, more, severity }, codex: { login, id, code: { commit, status },
 security, requested, failed } | null }`, read from each reviewer's latest
@@ -1907,7 +1907,8 @@ pull request, as its popup shows it, read and checked as a page is: its
 tile's fields, `kind` (`issues` or `pulls`), its description's Markdown as
 written (`body`, never GitHub's HTML of it, shown as finding descriptions
 are), an issue's pull requests closing it (`closedBy`), a pull request's
-issues it closes (`closes`), its `commits`, `files` changed and `mergedBy`;
+issues it closes (`closes`), its `commits`, `files` changed and `mergedBy`,
+and, open, merged or closed, its `touchesLockfile` (below);
 `404 github-not-found` where the repository has none of that number. A
 description past 20,000 characters is shortened (`bodyShortened`), and of
 those it closes or that closed it, ten are named and the rest counted
@@ -1923,6 +1924,53 @@ refuses to read again (the GitHub App's permission for it withdrawn, the
 repository or item gone) is no longer kept, the next to ask refused as
 GitHub refused it. The
 Agents tab's pages are kept so too.
+
+### New dependencies
+
+A pull request that changes a lockfile tells the packages its lockfiles lock
+that they locked none of before it (`pull-dependencies.ts`): an open one's
+tile, under its branches, as a line of their names, shortened as the tile's
+width does, and how many (each named on hover, twenty at most); and its
+popup, open, merged or closed, under **New dependencies**, each directory's
+lockfiles over their packages, each by its name and version, npm's opening
+in the app's npm viewer, one from git, a tarball, a file or a mirror tagged
+so, and one only devDependencies need tagged **dev**. The lockfiles are those
+of npm's ecosystem that repository risk reads (`package-lock.json` and
+`npm-shrinkwrap.json` of `lockfileVersion: 3`, `pnpm-lock.yaml` of pnpm 9 to
+12 and Yarn 1's `yarn.lock`), none under a `node_modules` nor in a test's
+fixtures, which no install takes. Whether a pull request changes one is told
+by the files GitHub lists of it, a hundred at most: `touchesLockfile` is
+`true` where one of them is a lockfile, `false` where none is, and `null`
+where none of a hundred is but it changes more, which it may yet; omitted
+where GitHub refuses its files. Only one that does, or may, is read; a closed
+one's tile tells nothing of it, as its list reads no files.
+
+`GET /api/admin/repositories/pull-dependencies?repoId=…&number=…` answers
+`{ number, base, head, lockfiles, cut }`, read and checked as an item is
+(above), and kept by its number as one is. GitHub's comparison of the pull
+request's base with its head names where its branch left its base, its merge
+base (`base`), as **Files changed** compares from it, and lists the files it
+changes, three hundred at most; one changing as many has them listed from its
+own list, a hundred a page, three thousand at most. Each directory's
+lockfiles it changes (`paths`, as many directories as twenty) are read at its
+merge base and at its head, each held to its blob as repository risk reads
+them: `added` the packages its lockfiles lock at its head of names none of
+them locked at the merge base, whichever version, so a version bump adds
+none and a lockfile replaced by another, Yarn's by pnpm's, is read as the one
+it replaced, each `{ name, version, source, from?, dev? }` as a scan's
+lockfile line tells it, its integrity left out, by name, two hundred at most,
+the rest counted (`more`); or, where a lockfile there couldn't be read, its
+`error` (`lockfile-unreadable`, with its reader's `detail`, or
+`github-not-found`). `cut` is set where it changes more files than are
+listed, or lockfiles in more directories than are read. What a pull
+request's base's and head's commits tell is kept in the database (under
+`repository/pull-dependencies`, a month), as what they hold never changes;
+each lockfile read, in the instance's memory by its commit, so that pull
+requests branching off the same commit, as a bot's do, read it once. The
+page reads two at a time, those asked first first, and keeps them for the
+session five minutes, as it keeps the tiles. GitHub refusing the
+repository's contents or its pull request is the answer's failure (`502
+github-status-403`, the popup saying so).
 
 
 ## Agents
