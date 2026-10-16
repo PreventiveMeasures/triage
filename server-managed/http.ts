@@ -42,8 +42,8 @@
 //        the default branch no pull request merged, with issues, agents' branches and the app agents first | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
-//   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week over the last
-//        year, its contributors and when in the week they commit, counted from its commits as Commits keeps them (how many are
+//   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
+//        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
 //        History, issues, item, agents and pulse each carry `users`: the app's users and agents the GitHub accounts they
@@ -186,8 +186,8 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { PULSE_WEEKS, type PulseStats, StatsPending, commitStats, defaultHead, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines,
-  yearCommits } from './repository-pulse.ts'
+import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
+  repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -1834,7 +1834,8 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
       keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => repositoryActivity(fullName, token, weeks)),
       pulseCommits(deps, repoId, fullName, token),
     ])
-    return { value: { weeks, ...period.value, stats: year.stats, reading: year.reading, pending: year.pending }, kept: period.kept && year.kept }
+    return { value: { weeks, ...period.value, stats: year.stats && periodStats(year.stats, weeks), reading: year.reading, pending: year.pending },
+      kept: period.kept && year.kept }
   })
 }
 
@@ -1851,7 +1852,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
   if (!head.value.sha) return { stats: commitStats([], first), reading: null, pending: false, kept: head.kept }
   const store = repositoryReadStore(deps.db, deps.config.debug)
-  const key = `${repoId}\0pulse-year\0${head.value.sha}\0${first}`
+  const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
   const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
   if (held && !('tooMany' in held)) return { stats: held, reading: null, pending: false, kept: head.kept }
   if (!held) {

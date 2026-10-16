@@ -1968,8 +1968,7 @@ token needed, and access checked again before they are sent.
 The **Pulse** tab shows how the repository moves over a **Week**, **Month**,
 **Quarter** or **Year**: one, four, thirteen or fifty-two weeks to today, as
 GitHub's statistics count weeks (Sunday first, UTC), the current week the
-last of them. Its dates are named in the bar, beside **Charts** and
-**Table**, which show its charts as tables of the same figures.
+last of them. Its dates are named in the bar.
 
 - **Figures**, a tile each: the default branch's commits, how many people
   made them, the pull requests merged (and opened) and the issues closed
@@ -1978,25 +1977,40 @@ last of them. Its dates are named in the bar, beside **Charts** and
   ("↑ from 110 the month before"): this week's Sunday to Thursday beside
   last week's, not the days just before, whose days of the week differ. The
   year's commits are set beside none, only the last year's being counted.
-- **Commits**, a column a week over the last year, the period's in blue, the
-  rest gray, over a scale of round counts; under them **Lines**, added above
-  a line in blue and removed below it in red, one scale for both, the weeks
-  outside the period faded; the months named under both, the year where
-  January starts.
-- **Contributors**, those who made commits in the period, as many as eight,
-  ranked by their commits in bars, each with the lines they added and
-  removed, and how many more there were; each name opens their GitHub page
-  (one whose commits name no GitHub account by the name they carry, unlinked).
+- **Commits**, the period alone, a column a day in a week or a month, a
+  week in a quarter or a year, over a scale of round counts; under them
+  **Lines**, added above a line in blue and removed below it in red, one
+  scale for both; the columns named under both (each day of a week, each
+  week's Sunday in a month, every other week in a quarter, each month in a
+  year, the year where January starts), a day's weekend lightly shaded, the
+  days still to come empty. A column pointed at is washed across both plots,
+  and a card beside it gives its day or week ("so far" for this week, "today"
+  for today), its commits, its lines and who made the most of its commits.
+  The chart takes the keyboard's focus: the arrow keys read each column, Home
+  and End the first and the latest, the card's figures read aloud. A column
+  clicked, or picked with Enter, is the one the contributors are of, marked
+  in the accent, till it is clicked again, its chip cleared, or Escape.
+  Where GitHub's statistics count the year, which count lines and
+  contributors a week, a week or a month shows no lines (the quarter and the
+  year do) and a day's contributors are its week's, said so.
+- **Contributors**, those who made commits in the period, or in the column
+  picked, as many as eight, ranked by their commits in bars, each with the
+  lines they added and removed, the rest a click away; each name opens
+  their GitHub page (one whose commits name no GitHub account by the name
+  they carry, unlinked).
+- **Pull requests**, merged or opened, and **issues**, closed or opened, as
+  each panel's toggle picks (merged and closed first, the pick kept), each
+  kind's count on its button: the ten latest, and, where there were more, a
+  link to all of them on GitHub; each opens its popup as an Issues tile does.
 - **When commits are made**, a cell an hour of each day of the week, Monday
   first, the more commits the deeper its blue, as the scale under it shows;
-  in each author's own time zone, and not only the period's.
-- **Merged** and **opened pull requests**, **closed** and **opened issues**,
-  the ten latest of each, with how many there were and, where there were
-  more, a link to all of them on GitHub; each opens its popup as an Issues
-  tile does.
+  in each author's own time zone, the period's (not only the period's where
+  GitHub's statistics count the year).
 
-Each column, bar and cell names its figures on hover. A period read anew
-shows the last one read, faded, till it is.
+The activity spans two columns of three beside the contributors, the lists
+and when commits are made under them; two a row where narrower, one where
+narrower still. Each cell of the punch card names its figures on hover. A
+period read anew shows the last one read, faded, till it is.
 
 The year is counted from the default branch's commits themselves, as the
 Commits tab reads and keeps them: each page of a hundred commits, kept by
@@ -2030,10 +2044,15 @@ GitHub sorts no search by when a pull request was merged or an issue closed,
 so the fifty most recently updated are read and the ten latest merged or
 closed of them listed: all of them where the period holds fifty or fewer.
 `stats` is the year: `weeks`, a row a week, its commits each day (UTC) and
-in all and its lines added and removed; `contributors`, by login, else
+in all and its lines added and removed, and, counted from its commits, each
+day's (`dayLines`, `[added, removed]`); `contributors`, by login, else
 name, as many as a hundred, the most commits that year first, each their
-weeks of it with any; `punch`, commits by day of the week and hour; and
-`lines`, false where GitHub counts none.
+weeks of it with any, and, counted from their commits, their days
+(`days`); `punch`, commits by day of the week and hour, the period's where
+counted from its commits (`periodPunch`; the server counts each period's
+with the year and sends the one asked for); and `lines`, false where GitHub
+counts none. A year counted is kept under a version of what it holds, so
+one counted before it held as much is counted again.
 Merges are left out, as GitHub's statistics leave them. A year counted is
 kept by the head it was counted from (`repository/reads`, a day), the head
 as Issues' pages are (two minutes, then answered while read again); one not
