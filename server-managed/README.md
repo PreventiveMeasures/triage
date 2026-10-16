@@ -2112,11 +2112,11 @@ paused when another view or count is picked.
 `shas` names (as many as fifty), its `files` as `git log --name-status`
 names their changes, `[path, status]`, `A` added (a copy too), `M`
 modified, `D` removed, or `[path, 'R', from]` renamed, as GitHub's REST API
-lists a commit's files (`GET /repos/:owner/:repo/commits/:sha`), its first
-page, as many as three hundred, `more` where it had more; null for a commit
-GitHub has none of. Within `path`, only its files are answered, a rename
-across its edge the file added where it comes in and removed where it goes
-out. A commit's files never change, so each is kept by the commit
+lists a commit's files (`GET /repos/:owner/:repo/commits/:sha`), a hundred
+a page while each is full, as many as three hundred, `more` where it had
+more; null for a commit GitHub has none of. Within `path`, only its files
+are answered, a rename across its edge the file added where it comes in and
+removed where it goes out. A commit's files never change, so each is kept by the commit
 (`repository/changes`, a month, as Commits' pages are), whole, and read of
 GitHub once, six at a time. They are read as the history is: with the
 reader's own GitHub access, only within their grants (a directory they

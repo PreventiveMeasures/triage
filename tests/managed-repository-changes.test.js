@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { CHANGES_ASKED, MAX_FILES, MAX_TREE_FILES, changesAsked, changesWithin, commitChanges, repositoryTree } from '../server-managed/repository-changes.ts'
+import { CHANGES_ASKED, FILES_PAGE, MAX_FILES, MAX_TREE_FILES, changesAsked, changesWithin, commitChanges, repositoryChanges, repositoryTree }
+  from '../server-managed/repository-changes.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -38,6 +39,7 @@ function github(t) {
     if (tree) return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     const sha = /^\/repos\/org\/repo\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
     if (sha) asked.push(sha)
+    if (sha && FILES[sha]) assert.deepEqual(Object.fromEntries(url.searchParams), { per_page: '100', page: '1' })
     if (sha && FILES[sha]) return Promise.resolve(Response.json({ sha, files: FILES[sha] }))
     if (sha) return Promise.resolve(Response.json({ message: 'No commit found for SHA' }, { status: 422 }))
     return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
@@ -62,7 +64,7 @@ async function fixture(t, { role = 'admin' } = {}) {
   }
 }
 
-test('a commit\'s files as git names their changes: copies added, renames with the path before, those unchanged none, the first page\'s alone', () => {
+test('a commit\'s files as git names their changes: copies added, renames with the path before, those unchanged none, as many as three hundred', () => {
   assert.deepEqual(commitChanges({ files: FILES[a] }), { more: false, files: [['src/allowed/new.js', 'A'], ['src/allowed/kept.ts', 'M'], ['src/other/secret.ts', 'M'], ['README.md', 'D']] })
   assert.deepEqual(commitChanges({ files: FILES[b] }).files, [['src/allowed/moved.js', 'R', 'src/allowed/old.js'], ['src/allowed/in.js', 'R', 'src/other/in.js'],
     ['src/other/out.js', 'R', 'src/allowed/out.js'], ['src/allowed/copy.js', 'A']])
@@ -143,4 +145,26 @@ test('a tree of more files than are answered, or one GitHub cuts short, is told 
   answer([{ path: 'x', type: 'blob' }], true)
   assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['x'], cut: true })
   assert.equal(kept.size, 2)
+})
+
+test('a commit\'s files are read a hundred a page while each page is full, as many as three hundred, before what it changes is kept', async t => {
+  // Commits of 250 and 420 files, and one of exactly a page.
+  const counts = { [a]: 250, [b]: 420, [c]: FILES_PAGE }
+  const pages = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const sha = url.pathname.split('/').at(-1)
+    const [size, page] = [Number(url.searchParams.get('per_page')), Number(url.searchParams.get('page'))]
+    pages.push([sha.slice(0, 1), page])
+    const files = Array.from({ length: Math.max(0, Math.min(size, counts[sha] - (page - 1) * size)) }, (_, at) => ({ filename: `f${(page - 1) * size + at}.js`, status: 'added' }))
+    return Promise.resolve(Response.json({ sha, files }))
+  })
+  const kept = new Map()
+  const store = { read: () => Promise.resolve(new Map()), write: (sha, changes) => { kept.set(sha, changes); return Promise.resolve() } }
+  const read = await repositoryChanges('org/repo', null, [a, b, c], store)
+  assert.deepEqual([a, b, c].map(sha => [read.get(sha).files.length, read.get(sha).more]), [[250, false], [MAX_FILES, true], [FILES_PAGE, false]])
+  assert.deepEqual(read.get(a).files.at(-1), ['f249.js', 'A'], 'the last page\'s files too')
+  assert.deepEqual(pages.toSorted(), [['a', 1], ['a', 2], ['a', 3], ['b', 1], ['b', 2], ['b', 3], ['c', 1], ['c', 2]],
+    'no page past the three hundredth file, and a full page\'s next asked')
+  assert.equal(kept.size, 3)
 })

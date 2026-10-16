@@ -2,11 +2,11 @@
 // (GET /api/admin/repositories/changes), as `git log --name-status` lists
 // them: each file's path and whether the commit added (`A`), modified (`M`),
 // removed (`D`) or renamed (`R`, with the path it had) it, as GitHub's REST
-// API lists a commit's files (GET /repos/:owner/:repo/commits/:sha), the
-// first page of them, as many as MAX_FILES, `more` where it had more. What
-// a commit changes never changes, so each is kept by the commit (`kept`),
-// whole, read of GitHub once; what a reader is answered, only the files
-// within the directory they asked of (changesWithin). And the files a
+// API lists a commit's files (GET /repos/:owner/:repo/commits/:sha), a
+// page of FILES_PAGE at a time, as many as MAX_FILES, `more` where it had
+// more. What a commit changes never changes, so each is kept by the commit
+// (`kept`), whole, read of GitHub once; what a reader is answered, only the
+// files within the directory they asked of (changesWithin). And the files a
 // commit holds, which Replay starts from (GET /api/admin/repositories/tree),
 // as GitHub lists its tree at once (repositoryTree), kept as well.
 
@@ -16,8 +16,10 @@ import { GithubApiError, githubJson } from './github-app.ts'
 // CHANGES_PARALLEL.
 export const CHANGES_ASKED = 50
 const CHANGES_PARALLEL = 6
-// GitHub's first page of a commit's files.
+// A commit's files read, as many as fill MAX_FILES, FILES_PAGE a page (the
+// most GitHub lists a page; it lists fewer, unasked).
 export const MAX_FILES = 300
+export const FILES_PAGE = 100
 const MAX_PATH = 4096
 const SHA = /^[a-f\d]{40}$/u
 
@@ -75,6 +77,19 @@ async function eachOf<T>(items: T[], parallel: number, run: (item: T) => Promise
   await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => { while (next < items.length) await run(items[next++]!) }))
 }
 
+// A commit's files as GitHub lists them, read a page at a time while each
+// is full, till MAX_FILES are.
+async function commitFiles(url: string, token: string | null, fetchImpl: typeof fetch) {
+  const files: unknown[] = []
+  for (let page = 1; files.length < MAX_FILES; page++) {
+    const data = await githubJson(`${url}?per_page=${FILES_PAGE}&page=${page}`, token, fetchImpl) as { files?: unknown } | null
+    if (!Array.isArray(data?.files)) throw new GithubApiError(502, 'github-malformed')
+    files.push(...data.files)
+    if (data.files.length < FILES_PAGE) break
+  }
+  return { files }
+}
+
 // What each of `shas` changes, kept, else read of GitHub and then kept; null
 // for one GitHub has no commit of (as one of another repository is).
 export async function repositoryChanges(fullName: string, token: string | null, shas: string[], kept: ChangesStore,
@@ -84,7 +99,7 @@ export async function repositoryChanges(fullName: string, token: string | null, 
   const repo = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
   await eachOf(asked.filter(sha => !found.has(sha)), CHANGES_PARALLEL, async sha => {
     try {
-      const changes = commitChanges(await githubJson(`${repo}/commits/${sha}`, token, fetchImpl))
+      const changes = commitChanges(await commitFiles(`${repo}/commits/${sha}`, token, fetchImpl))
       found.set(sha, changes)
       await kept.write(sha, changes)
     } catch (err) {
