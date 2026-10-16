@@ -135,15 +135,46 @@ test('the files a commit holds, which Replay starts from: its blobs, as GitHub l
   assert.deepEqual((await manager({ repoId: '1', path: '', commit: a }, 'tree')).body, { error: 'no-directory' })
 })
 
-test('a tree of more files than are answered, or one GitHub cuts short, is told cut', async t => {
+test('a tree of more files than are answered keeps those nearest the root, told cut', async t => {
   const kept = new Map()
   const store = { read: sha => Promise.resolve(kept.get(sha) ?? null), write: (sha, tree) => { kept.set(sha, tree); return Promise.resolve() } }
-  const answer = (tree, truncated = false) => { t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ tree, truncated }))) }
-  answer(Array.from({ length: MAX_TREE_FILES + 1 }, (_, at) => ({ path: `f${at}`, type: 'blob' })))
+  const files = [...Array.from({ length: MAX_TREE_FILES - 1 }, (_, at) => ({ path: `f${at}`, type: 'blob' })), { path: 'a/b/c.js', type: 'blob' }, { path: 'a/d.js', type: 'blob' }]
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ tree: files, truncated: false })))
   const many = await repositoryTree('org/repo', null, a, store)
-  assert.deepEqual([many.files.length, many.cut], [MAX_TREE_FILES, true])
-  answer([{ path: 'x', type: 'blob' }], true)
-  assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['x'], cut: true })
+  assert.deepEqual([many.files.length, many.cut, many.files.includes('a/d.js'), many.files.includes('a/b/c.js')], [MAX_TREE_FILES, true, true, false])
+  assert.deepEqual(many.files.slice(0, 2), ['a/d.js', 'f0'], 'by path')
+  assert.equal(kept.size, 1)
+})
+
+test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at a time: each tree\'s own entries, and each tree in it whole', async t => {
+  const kept = new Map()
+  const store = { read: sha => Promise.resolve(kept.get(sha) ?? null), write: (sha, tree) => { kept.set(sha, tree); return Promise.resolve() } }
+  const [src, deps, v8, big] = ['1', '2', '3', '4'].map(digit => digit.repeat(40))
+  // The commit's and deps' listings whole cut short; v8's and src's not; big's own entries cut short too.
+  const trees = {
+    [`${a}:1`]: { tree: [{ path: 'README.md', type: 'blob' }], truncated: true },
+    [`${a}:`]: { tree: [{ path: 'README.md', type: 'blob' }, { path: 'deps', type: 'tree', sha: deps }, { path: 'src', type: 'tree', sha: src },
+      { path: 'vendor', type: 'commit', sha: v8 }, { path: 'bad', type: 'tree', sha: 'main' }], truncated: false },
+    [`${src}:1`]: { tree: [{ path: 'a.js', type: 'blob' }, { path: 'lib', type: 'tree' }, { path: 'lib/b.js', type: 'blob' }], truncated: false },
+    [`${deps}:1`]: { tree: [], truncated: true },
+    [`${deps}:`]: { tree: [{ path: 'x.c', type: 'blob' }, { path: 'v8', type: 'tree', sha: v8 }], truncated: false },
+    [`${v8}:1`]: { tree: [{ path: 'y.cc', type: 'blob' }], truncated: false },
+    [`${b}:1`]: { tree: [], truncated: true },
+    [`${b}:`]: { tree: [{ path: 'z.js', type: 'blob' }, { path: 'big', type: 'tree', sha: big }], truncated: false },
+    [`${big}:1`]: { tree: [], truncated: true },
+    [`${big}:`]: { tree: [{ path: 'w.js', type: 'blob' }], truncated: true },
+  }
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const key = `${url.pathname.split('/').at(-1)}:${url.searchParams.get('recursive') ?? ''}`
+    asked.push(`${key.slice(0, 1)}${key.slice(40)}`)
+    return Promise.resolve(trees[key] ? Response.json(trees[key]) : Response.json({ message: 'Not Found' }, { status: 404 }))
+  })
+  assert.deepEqual(await repositoryTree('org/repo', null, a, store), { files: ['README.md', 'deps/v8/y.cc', 'deps/x.c', 'src/a.js', 'src/lib/b.js'], cut: false },
+    'no directories, submodules nor trees named by no id')
+  assert.deepEqual(asked, ['a:1', 'a:', '2:1', '1:1', '2:', '3:1'], 'nearest the root first')
+  assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['big/w.js', 'z.js'], cut: true }, 'a tree\'s own entries cut short, cut')
   assert.equal(kept.size, 2)
 })
 
