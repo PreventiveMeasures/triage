@@ -62,6 +62,16 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'ready' with its `commits`, `more` and the `branches` and `tags` naming
 // them, or 'error' with its `error`; read again once old, or an error's retry
 // is due.
+// A history's first page as read, `fresh` where the server read every
+// branch then rather than answering with those it kept.
+function readEntry(answer, settle, fresh = false) {
+  const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
+    branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
+    pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null, fresh }
+  settle?.(entry)
+  return entry
+}
+
 function historyRead(key, ask, settle) {
   const data = sessionHistories()
   const held = data.get(key)
@@ -69,13 +79,7 @@ function historyRead(key, ask, settle) {
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(1).then(answer => {
-    if (data.get(key) === loading) {
-      const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
-        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
-        pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null }
-      settle?.(entry)
-      data.set(key, entry)
-    }
+    if (data.get(key) === loading) data.set(key, readEntry(answer, settle))
     return null
   }, err => {
     if (data.get(key) !== loading) return null
@@ -84,6 +88,21 @@ function historyRead(key, ask, settle) {
     return null
   }).finally(repaint)
   return loading
+}
+
+// Every branch's history read again, afresh (`ask`'s third argument), its
+// branches read now rather than as the server kept them: the one held shown
+// meanwhile, `refreshing`, and kept where that read fails; once each.
+function refreshHistory(key, held, ask, settle) {
+  held.fresh = true
+  held.refreshing = true
+  ask(1, null, true).then(answer => {
+    if (sessionHistories().get(key) === held) sessionHistories().set(key, readEntry(answer, settle, true))
+    return null
+  }, () => null).finally(() => {
+    held.refreshing = false
+    repaint()
+  })
 }
 
 // A whole repository's history read on (`settle`, as a page is read), every
@@ -309,13 +328,16 @@ function readHistory(repository, mode) {
   const { repoId, commit, path } = repository
   const every = mode === 'all' || mode === 'unmerged'
   const key = every ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
-  const ask = (page, held) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
-    { page, all: every, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
+  const ask = (page, held, fresh = false) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
+    { page, all: every, ...fresh ? { fresh: true } : {}, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
     if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
     return checked(answer)
   })
   const settle = mode === 'path' ? null : settleFrontier
   const entry = historyRead(key, ask, settle)
+  // Every branch's, as the server kept them, missing the commit shown, as
+  // they do once a branch reaches it since: read again, afresh.
+  if (every && entry.status === 'ready' && !entry.fresh && !entry.commits.some(item => item.sha === commit)) refreshHistory(key, entry, ask, settle)
   if (every && entry.status === 'error' && entry.code === 'github-token-required') {
     allRefused.add(repoId)
     return readHistory(repository, 'revision')
@@ -492,7 +514,7 @@ class RepositoryHistory extends LitElement {
     const repo = this.repo ?? this.repository.repo
     const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">
-      ${mode === 'all' && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
+      ${mode === 'all' && !entry.refreshing && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
       <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth}px` })}>
         ${historyGraph(layout, shown)}

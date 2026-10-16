@@ -198,6 +198,14 @@ test('all branches reads the 25 most recently committed to, the default branch f
   // Asked again: its branches kept a while, each tip's page kept for good, nothing of the history read of GitHub.
   assert.deepEqual((await request({ repoId: '1', all: 'true' })).body, body)
   assert.equal(historyQueries(asked).length, 3)
+  // Asked afresh, as the client asks where they miss the commit it shows:
+  // its branches read now, unless they were just read; its tips' pages kept.
+  assert.deepEqual((await request({ repoId: '1', all: 'true', fresh: 'true' })).body, body)
+  assert.equal(historyQueries(asked).length, 3, 'read too lately to read again')
+  const later = Date.now() + 30_000
+  t.mock.method(Date, 'now', () => later)
+  assert.deepEqual((await request({ repoId: '1', all: 'true', fresh: 'true' })).body, body)
+  assert.deepEqual(historyQueries(asked).slice(3).map(query => query.body.variables.after), [null, 'p2'], 'its branches read again, alone')
 
   const anonymous = await fixture(t)
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })

@@ -1575,6 +1575,9 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   const { repoId, ref, path } = asked
   const page = Number(query.get('page') ?? '1')
   const all = query.get('all') === 'true'
+  // Every branch's heads read now, not as kept: the client asks so where
+  // they miss the commit shown, as a branch moved since may.
+  const fresh = query.get('fresh') === 'true'
   // A whole repository's later pages read on from where those before stop:
   // all branches', always; a revision's, where the client names them.
   const from = query.get('from')
@@ -1600,7 +1603,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       // What a later page reads on from, the client knows; whether one may
       // follow, the deepest page says.
       body = starts ? { all: true, page, commits: (await historyFrom(repo, token, starts, pages)).commits, more: page < MAX_HISTORY_PAGE }
-        : { all: true, ...await repositoryAllHistory(repo, token, (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token))).value, pages) }
+        : { all: true, ...await repositoryAllHistory(repo, token,
+          (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, fresh)).value, pages) }
     } else {
       const commit = await reader.commit(ref)
       // The branches and tags naming commits: with a token, every branch All
@@ -1630,7 +1634,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     }
     const [pulls, openPulls] = token && path === '' ? await Promise.all([
       squashedPulls(repo, token, listed, historySquashes(deps, repoId)).catch(quiet<SquashedPull[]>([])),
-      page === 1 ? keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token)).then(answer => answer.value.pulls, quiet(null)) : null,
+      page === 1 ? keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token), undefined, fresh).then(answer => answer.value.pulls, quiet(null)) : null,
     ]) : [[], null]
     await reader.recheckAccess()
     const current = await authorize()
@@ -1726,8 +1730,10 @@ function historyChanges(deps: ManagedHttpDeps, repoId: number): ChangesStore {
   }
 }
 
-// How long what readWholeRepository read is answered as kept, unread again.
+// How long what readWholeRepository read is answered as kept, unread again;
+// and how long one read is answered as kept even where it is asked for afresh.
 const REPOSITORY_READ_FRESH_MS = 2 * 60_000
+const REPOSITORY_READ_FLOOR_MS = 10_000
 // The repositories' reads being read again behind a kept answer, by key.
 const repositoryRereads = new Set<string>()
 // A read GitHub refused, not failed: its credential or the GitHub App's
@@ -1742,10 +1748,12 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // kept, answered at once and read again behind it for the next to ask, where
 // the instance outlives its answer (not serverless, where it is read again
 // before it is answered); `kept` where it was, or where reading it again
-// failed as `keepThrough` lets it. One GitHub refuses to read again is no
+// failed as `keepThrough` lets it. One asked for afresh (`fresh`) is read
+// now, unless it was read REPOSITORY_READ_FLOOR_MS since, what was kept
+// answered where that read fails. One GitHub refuses to read again is no
 // longer kept: the next to ask is refused as GitHub refused it.
 async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
-  keepThrough: (err: unknown) => boolean = () => false): Promise<{ value: T; kept: boolean }> {
+  keepThrough: (err: unknown) => boolean = () => false, fresh = false): Promise<{ value: T; kept: boolean }> {
   const store = repositoryReadStore(deps.db, deps.config.debug)
   // One kept longer than a day, not yet removed (pruneKept removes them as
   // others are written), is none.
@@ -1762,7 +1770,8 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
     }
   }
   const age = held ? Date.now() - held.at : Infinity
-  if (held && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
+  const now = fresh && age >= REPOSITORY_READ_FLOOR_MS
+  if (held && !now && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
       repositoryRereads.add(key)
       // Its failure leaves the kept answer sent until it is a day old, so it is said.
@@ -1774,7 +1783,7 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   try {
     return { value: await readKept(), kept: false }
   } catch (err) {
-    if (held && keepThrough(err)) return { value: held.value as T, kept: true }
+    if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true }
     throw err
   }
 }
