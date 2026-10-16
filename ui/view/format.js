@@ -564,13 +564,13 @@ export function githubRefLabel(url) {
 //
 // A paragraph is left EXACTLY as written when any of its lines opens
 // something block-level — an indented (code) line, a list marker, a
-// fence, a quote, a heading, a table row. Those are the constructs
+// fence, a quote, a heading, a table row, a rule. Those are the constructs
 // whose line breaks carry meaning (a piolium PoC snippet, a list of
 // affected files), and `.desc` / `.section-body` keep `pre-wrap` so
 // they still render as the report wrote them. (The fence alternatives
 // are belt-and-braces: `flowText` carves every FENCED block out before
 // a line reaches here, so a fence line no longer arrives on this path.)
-const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6} |\||`{3}|~{3})/u
+const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6}(?:[ \t]|$)|\||`{3}|~{3})/u
 
 function flowParagraphs(text) {
   // The capturing split keeps the blank-line runs, so paragraph
@@ -578,7 +578,7 @@ function flowParagraphs(text) {
   return text.split(/(\n{2,})/u).map((chunk) => {
     if (/^\n+$/u.test(chunk)) return chunk
     const lines = chunk.split('\n')
-    if (lines.some((l) => BLOCK_LINE_RE.test(l))) return chunk
+    if (lines.some((l) => BLOCK_LINE_RE.test(l) || HRULE_RE.test(l))) return chunk
     return lines.map((l) => l.trim()).filter(Boolean).join(' ')
   }).join('')
 }
@@ -604,8 +604,12 @@ function flowRun(run, keepLead, keepTail) {
 // parsers use — @preventive/report/src/md-structure.js) and only the prose between
 // them is reflowed, which also means prose sharing a paragraph with a
 // snippet now flows instead of being pinned by it.
-export function flowText(text) {
-  if (!text) return text
+//
+// GitHub's web editor saves a body with CRLF line endings, and every
+// line test here reads `\n` alone, so those come in as `\n` first.
+export function flowText(raw) {
+  if (!raw) return raw
+  const text = raw.replaceAll('\r\n', '\n')
   const ranges = fenceRanges(text)
   if (ranges.length === 0) return flowParagraphs(text)
   const out = []
@@ -729,7 +733,7 @@ export function codeBlockSegments(text) {
 // it unchanged, the same fast path codeBlockSegments offers.
 const LIST_ITEM_RE = /^( *)(?:[-*+]|(\d{1,9})[.)]) +(?=\S)/u
 // `* * *` and `- - -` are horizontal rules, not one-item lists.
-const HRULE_RE = /^ {0,3}([-*_])(?: *\1){2,} *$/u
+const HRULE_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u
 
 function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
 
@@ -794,8 +798,9 @@ export function listSegments(text) {
         }
         // Back at the margin after a blank line: the list is over. Without
         // the blank it's a wrapped item, which markdown reads as part of
-        // the item however far left the report wrapped it to.
-        if (indent < item.column && afterBlank) break
+        // the item however far left the report wrapped it to — unless the
+        // line is a heading or a rule, which no item wraps onto.
+        if (indent < item.column && (afterBlank || HEADING_RE.test(line) || HRULE_RE.test(line))) break
       }
       item.lines.push(shedIndent(line, item.column))
       afterBlank = false
@@ -814,7 +819,46 @@ export function listSegments(text) {
   return out
 }
 
-// ── Line ranges ──────────────────────────────────────────────────────
+// ── Headings and rules ───────────────────────────────────────────────
+// A pull request's description is sectioned with `## Summary` /
+// `### Testing` headings and signed off under a `---` rule, which used
+// to print as their own source text. Each is one whole line, so a
+// paragraph holding one splits around it: the prose before and after
+// come back as strings, a heading as `{ level, text }` (its closing
+// hashes dropped) and a rule as `{ rule: true }`. Only those two —
+// setext headings, block quotes and the rest of markdown stay text: a
+// `---` right under a line of prose underlines it, so it is no rule
+// (a `***`, `___` or `- - -` there can't be an underline, and is one;
+// nor can a line of spaces be underlined).
+//
+// A paragraph with neither comes back as a single-element array holding
+// it unchanged, the same fast path listSegments offers.
+const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$/u
+const SETEXT_UNDERLINE_RE = /^ {0,3}-+[ \t]*$/u
+
+export function lineBlockSegments(text) {
+  const lines = text.split('\n')
+  const out = []
+  let from = 0
+  // A line of spaces beside a heading or a rule is no part of the prose.
+  const pushProse = (until) => {
+    const run = lines.slice(from, until).join('\n').replaceAll(/^(?:[ \t]*\n)+|(?:\n[ \t]*)+$/gu, '')
+    if (run.trim()) out.push(run)
+  }
+  lines.forEach((line, i) => {
+    const heading = HEADING_RE.exec(line)
+    const rule = HRULE_RE.test(line) && (i === from || !lines[i - 1].trim() || !SETEXT_UNDERLINE_RE.test(line))
+    if (!heading && !rule) return
+    pushProse(i)
+    out.push(heading ? { level: heading[1].length, text: heading[2] } : { rule: true })
+    from = i + 1
+  })
+  if (out.length === 0) return [text]
+  pushProse(lines.length)
+  return out
+}
+
+// ── Line ranges──────────────────────────────────────────────────────
 // A finding's `line` is not always one line. Reports cite spans —
 // `src/a.js:20-30` for a whole function, a block, a chain of calls —
 // and md-structure.js's parseCodeRef keeps them whole rather than

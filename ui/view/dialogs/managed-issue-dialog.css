@@ -46,6 +46,10 @@ h4 { font-size: 1.15rem; line-height: 1.4; overflow-wrap: anywhere; }
 .issue-labels span { border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; font-size: .75rem; }
 .para + .para, .md-list { margin-top: .75em; }
 .md-list { padding-left: 1.5em; }
+.md-list li.md-task { list-style: none; position: relative; }
+.md-task > input { position: absolute; left: -1.4em; top: .2em; margin: 0; }
+.md-heading { font-weight: 600; margin-top: .75em; }
+.md-rule { border: 0; border-top: 1px solid var(--border); }
 .inline-code, .code-block { font-family: monospace; background: var(--bg, var(--surface)); border-radius: 4px; }
 .inline-code { padding: 1px 4px; }
 .code-block { white-space: pre; overflow: auto; padding: 10px; margin: 10px 0; }
