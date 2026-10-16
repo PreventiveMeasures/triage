@@ -1707,7 +1707,12 @@ hundred. Older
 commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
-it, a note says so. A directory lists the commits touching it, in a
+it, they are read again, afresh (`fresh=true`: the server reads every branch
+then rather than answering with those it kept, unless it read them in the
+last ten seconds, then saying when it may (`retryIn`, the tab asking once more
+then), and answers with those kept where that read fails), those listed shown
+meanwhile, as a branch moved since reaches it, once for each commit shown;
+still missing it, a note says so. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line shows
 its commit, the view staying on Commits, named in the header by the branch
 (the default first), else the tag, naming it. The view reads

@@ -31,6 +31,8 @@ const MAX_REFS = 3
 // What keys reach in a line: its links on GitHub, then its button.
 const LINE_KEYS = 'a[href], .history-commit'
 const KEEP_MS = 5 * 60_000
+// The longest a read again of every branch, answered as the server kept them, waits to ask once more.
+const RETRY_FRESH_MS = 15_000
 const RETRY_MS = 30_000
 // Where every branch's next page reads on from, as many as the server reads
 // branches at first (repository-history.ts ALL_BRANCHES).
@@ -62,6 +64,16 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'ready' with its `commits`, `more` and the `branches` and `tags` naming
 // them, or 'error' with its `error`; read again once old, or an error's retry
 // is due.
+// A history's first page as read, `sought` the commits shown it was read
+// again, afresh, for (refreshHistory).
+function readEntry(answer, settle, sought = new Set()) {
+  const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
+    branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
+    pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null, sought }
+  settle?.(entry)
+  return entry
+}
+
 function historyRead(key, ask, settle) {
   const data = sessionHistories()
   const held = data.get(key)
@@ -69,13 +81,7 @@ function historyRead(key, ask, settle) {
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(1).then(answer => {
-    if (data.get(key) === loading) {
-      const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
-        branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
-        pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null }
-      settle?.(entry)
-      data.set(key, entry)
-    }
+    if (data.get(key) === loading) data.set(key, readEntry(answer, settle))
     return null
   }, err => {
     if (data.get(key) !== loading) return null
@@ -84,6 +90,32 @@ function historyRead(key, ask, settle) {
     return null
   }).finally(repaint)
   return loading
+}
+
+// Every branch's history read again, afresh (`ask`'s third argument), for
+// the commit shown, its branches read now rather than as the server kept
+// them: the one held shown meanwhile, `refreshing`, and kept where that read
+// fails; once for each commit shown, and once more where the server, having
+// read them just before, answered as it kept them, when it may read them
+// again (`retryIn`, `retryAt`).
+function refreshHistory(key, held, ask, settle, commit) {
+  const sought = held.sought
+  held.sought = new Set(sought).add(commit)
+  held.refreshing = true
+  ask(1, null, true).then(answer => {
+    if (sessionHistories().get(key) !== held) return null
+    const retryIn = held.retried === commit ? 0 : Math.min(Number(answer.retryIn) || 0, RETRY_FRESH_MS)
+    const entry = readEntry(answer, settle, retryIn > 0 ? sought : held.sought)
+    if (retryIn > 0) {
+      Object.assign(entry, { retried: commit, retryAt: Date.now() + retryIn })
+      setTimeout(repaint, retryIn)
+    }
+    sessionHistories().set(key, entry)
+    return null
+  }, () => null).finally(() => {
+    held.refreshing = false
+    repaint()
+  })
 }
 
 // A whole repository's history read on (`settle`, as a page is read), every
@@ -309,13 +341,20 @@ function readHistory(repository, mode) {
   const { repoId, commit, path } = repository
   const every = mode === 'all' || mode === 'unmerged'
   const key = every ? `all\0${repoId}` : `${repoId}\0${commit}\0${path}`
-  const ask = (page, held) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
-    { page, all: every, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
+  const ask = (page, held, fresh = false) => fetchRepositoryHistory(repoId, every ? '' : commit, path,
+    { page, all: every, ...fresh ? { fresh: true } : {}, ...mode !== 'path' && page > 1 ? { from: held.next } : {} }).then(answer => {
     if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
     return checked(answer)
   })
   const settle = mode === 'path' ? null : settleFrontier
   const entry = historyRead(key, ask, settle)
+  // Every branch's, as the server kept them, missing the commit shown, those
+  // of the pull requests squashed into them planted among them too, as they
+  // do once a branch reaches it since: read again, afresh.
+  if (every && entry.status === 'ready' && !entry.refreshing && !entry.sought.has(commit) && !(entry.retryAt > Date.now())
+    && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
+    refreshHistory(key, entry, ask, settle, commit)
+  }
   if (every && entry.status === 'error' && entry.code === 'github-token-required') {
     allRefused.add(repoId)
     return readHistory(repository, 'revision')
@@ -492,7 +531,7 @@ class RepositoryHistory extends LitElement {
     const repo = this.repo ?? this.repository.repo
     const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">
-      ${mode === 'all' && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
+      ${mode === 'all' && !entry.refreshing && !(entry.retryAt > Date.now()) && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
       <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth}px` })}>
         ${historyGraph(layout, shown)}

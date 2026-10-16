@@ -209,16 +209,107 @@ test('the tab reads every branch at the root, marks the commit shown, and shows 
     { repoId: 7, repo: 'org/repo', path: '', commit: a, bundleTab: 'commits', revision: { kind: 'branch', name: 'main' } },
     { repoId: 7, repo: 'org/repo', path: '', commit: b, bundleTab: 'commits' },
   ], 'shown in its place, on Commits')
-  // A commit older than those listed offers its own history.
+  // A commit those listed miss, as the server kept them, reads every
+  // branch again, afresh, those listed shown meanwhile; still missing it, it
+  // says so, read no more.
   const older = shownAt(x)
-  assert.match(templateText(older.render()), /fffffff<\/code> isn’t among these commits\.<\/p>/u)
+  let text2 = templateText(older.render())
+  assert.doesNotMatch(text2, /isn’t among these commits/u, 'not while every branch is read again')
+  assert.match(text2, /Merge work/u)
+  assert.deepEqual(requests.at(-1), [7, '', '', { page: 1, all: true, fresh: true }])
+  await setImmediate()
+  text2 = templateText(older.render())
+  assert.match(text2, /fffffff<\/code> isn’t among these commits\.<\/p>/u)
+  older.render()
+  assert.equal(requests.length, 2, 'once')
   // Opened by none, its name is the one its repositories list it by, once
   // they arrive: its ids are only text until then.
   const unnamed = Object.assign(shownAt(a), { repository: { ...shownAt(a).repository, repo: null } })
   assert.match(templateText(unnamed.render()), /<code class="history-sha">aaaaaaa<\/code>/u)
   unnamed.repo = 'org/named'
   assert.match(templateText(unnamed.render()), new RegExp(`<a class="history-sha" href=https://github.com/org/named/commit/${a} `, 'u'))
-  assert.equal(requests.length, 1, 'what was read is kept')
+  assert.equal(requests.length, 2, 'what was read is kept')
+})
+
+test('every branch\'s history as the server kept it, missing the commit a branch has reached since, is read again afresh and shows it', async () => {
+  const head = '9'.repeat(40)
+  // The server's kept heads, from before main moved on to `head`.
+  answer = (repoId, ref, path, options) => Promise.resolve(options.fresh
+    ? { ...allAnswer, commits: [commit(head, [a], 40, 'Since'), ...allAnswer.commits], branches: [{ name: 'main', sha: head }] }
+    : allAnswer)
+  const view = shownAt(head)
+  view.render()
+  await setImmediate()
+  assert.doesNotMatch(templateText(view.render()), /isn’t among these commits/u, 'those kept shown while read again')
+  await setImmediate()
+  assert.deepEqual(requests.map(request => request[3]), [{ page: 1, all: true }, { page: 1, all: true, fresh: true }])
+  let text = templateText(view.render())
+  assert.match(text, /id=history-subject-9{40}>Since<\/span>\s*<button [^>]*?aria-current=true/u, 'the commit shown, marked')
+  assert.doesNotMatch(text, /isn’t among these commits/u)
+  // A commit of a pull request squashed into those listed, planted among
+  // them, is no commit they miss.
+  const own = '8'.repeat(40)
+  state.managedSession = { id: 'planted', role: 'admin' }
+  answer = () => Promise.resolve({ ...allAnswer, pulls: [{ number: 5, merge: a, head: own, commits: [commit(own, [b], 15, 'Squashed work')] }] })
+  const planted = shownAt(own)
+  planted.render()
+  await setImmediate()
+  planted.render()
+  await setImmediate()
+  assert.equal(requests.filter(request => request[3].fresh).length, 1, 'not read again for it')
+  assert.match(templateText(planted.render()), /Squashed work/u)
+  // Read again where the server read them just before, answered as kept:
+  // asked once more when it may read them again.
+  state.managedSession = { id: 'soon', role: 'admin' }
+  const later = '7'.repeat(40)
+  let freshReads = 0
+  answer = (repoId, ref, path, options) => {
+    if (!options.fresh) return Promise.resolve(allAnswer)
+    freshReads++
+    return Promise.resolve(freshReads === 1 ? { ...allAnswer, retryIn: 5 }
+      : { ...allAnswer, commits: [commit(later, [a], 50, 'Later'), ...allAnswer.commits], branches: [{ name: 'main', sha: later }] })
+  }
+  const soon = shownAt(later)
+  soon.render()
+  await setImmediate()
+  soon.render()
+  await setImmediate()
+  assert.equal(freshReads, 1)
+  assert.doesNotMatch(templateText(soon.render()), /isn’t among these commits/u, 'not while it waits to ask again')
+  await new Promise(resolve => { setTimeout(resolve, 10) })
+  soon.render()
+  await setImmediate()
+  assert.equal(freshReads, 2)
+  assert.match(templateText(soon.render()), /id=history-subject-7{40}>Later</u)
+  // Read again for the commit shown, not for good: another commit a branch
+  // reaches since, those held missing it, reads them again, afresh, once.
+  const newest = '6'.repeat(40)
+  answer = (repoId, ref, path, options) => {
+    if (!options.fresh) return Promise.resolve(allAnswer)
+    freshReads++
+    return Promise.resolve({ ...allAnswer, commits: [commit(newest, [later], 60, 'Newest'), commit(later, [a], 50, 'Later'), ...allAnswer.commits],
+      branches: [{ name: 'main', sha: newest }] })
+  }
+  const next = shownAt(newest)
+  assert.doesNotMatch(templateText(next.render()), /isn’t among these commits/u, 'not while every branch is read again')
+  await setImmediate()
+  assert.equal(freshReads, 3)
+  assert.match(templateText(next.render()), /id=history-subject-6{40}>Newest<\/span>\s*<button [^>]*?aria-current=true/u)
+  shownAt(later).render()
+  next.render()
+  await setImmediate()
+  assert.equal(freshReads, 3, 'listed, not read again')
+  // A read again that fails keeps those listed, and says what they miss.
+  answer = (repoId, ref, path, options) => options.fresh ? Promise.reject(new Error('GitHub is down.')) : Promise.resolve(allAnswer)
+  state.managedSession = { id: 'another', role: 'admin' }
+  const again = shownAt(head)
+  again.render()
+  await setImmediate()
+  again.render()
+  await setImmediate()
+  text = templateText(again.render())
+  assert.match(text, /Merge work/u)
+  assert.match(text, /9999999<\/code> isn’t among these commits/u)
 })
 
 test('this revision\'s history reads a page at a time, from the commit shown; every branch, where it needs a sign-in, falls back to it', async () => {

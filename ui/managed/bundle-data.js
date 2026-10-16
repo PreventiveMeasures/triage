@@ -159,8 +159,9 @@ const REPOSITORY_HISTORY_ERRORS = {
 // The History tab's commits: from a revision, a page at a time (`page`), or
 // across the repository's most recently updated branches (`all`), a later
 // page on from the commits `from` names.
-export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, from = null, signal } = {}) {
-  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...from ? { from: from.join(',') } : {} })}`,
+export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, fresh = false, from = null, signal } = {}) {
+  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
+    ...from ? { from: from.join(',') } : {} })}`,
     REPOSITORY_HISTORY_ERRORS, response => response.json(), signal)
 }
 
