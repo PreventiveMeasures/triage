@@ -298,8 +298,12 @@ function listTemplate({ ordered, start, items }) {
 // stay out of that mode for the same reason paragraphs do: those
 // surfaces are a line or two of summary in a row or a side panel, and
 // a block element opening a list there would break the line they get.
-export function renderHighlighted(text, { paragraphs = true } = {}) {
-  if (!text) return text
+//
+// CRLF line endings come in as `\n`, as in flowText, for the bodies that
+// reach here without it.
+export function renderHighlighted(raw, { paragraphs = true } = {}) {
+  if (!raw) return raw
+  const text = raw.replaceAll('\r\n', '\n')
   const blocks = paragraphs ? listSegments(text) : [text]
   // More than one block means the prose runs have LIST SIBLINGS, and
   // the gap between them is a margin — which needs an element to sit

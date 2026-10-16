@@ -604,8 +604,12 @@ function flowRun(run, keepLead, keepTail) {
 // parsers use — @preventive/report/src/md-structure.js) and only the prose between
 // them is reflowed, which also means prose sharing a paragraph with a
 // snippet now flows instead of being pinned by it.
-export function flowText(text) {
-  if (!text) return text
+//
+// GitHub's web editor saves a body with CRLF line endings, and every
+// line test here reads `\n` alone, so those come in as `\n` first.
+export function flowText(raw) {
+  if (!raw) return raw
+  const text = raw.replaceAll('\r\n', '\n')
   const ranges = fenceRanges(text)
   if (ranges.length === 0) return flowParagraphs(text)
   const out = []
