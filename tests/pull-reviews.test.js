@@ -23,12 +23,11 @@ test('a pull request\'s reviewers are each by their latest review and its commit
     { login: 'grace', id: 3, state: 'changes', requested: true, commit: earlier, at: Date.parse('2026-10-16T05:00:00Z') },
     { login: 'kay', id: 6, state: 'commented', requested: false, commit: null, at: Date.parse('2026-10-16T05:00:00Z') },
     { login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
-    { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null },
     { login: 'Copilot', id: 175728472, state: null, requested: true, commit: null, at: null },
     { login: 'imported-ada', id: 8, state: null, requested: true, commit: null, at: null },
   ], 'none pending, none the author\'s; one reviewed and requested again once; Copilot\'s code review asked for, by its bot; a mannequin')
   assert.deepEqual(reviews.threads, { open: 0, resolved: 0, more: false, severity: null })
-  assert.deepEqual([reviews.moreReviews, reviews.moreRequests], [0, 2], 'those GitHub names no one for, counted rather than gone: a reviewer of a kind unknown, and a request naming none')
+  assert.deepEqual([reviews.moreReviews, reviews.moreRequests], [0, 3], 'those GitHub names no one for, counted rather than gone: a team, a reviewer of a kind unknown, and a request naming none')
   // Copilot's code review reviews as its bot's login, and is requested again by its name, Copilot, the one account.
   const copilot = pullReviews({ headRefOid: head, latestReviews: { nodes: [review({ login: 'copilot-pull-request-reviewer', databaseId: 175728472 }, 'COMMENTED', earlier),
     review({ login: 'Copilot', databaseId: 198982749 }, 'COMMENTED')] },
@@ -100,9 +99,11 @@ test('the fields read for reviews are those GitHub may refuse alone; a popup rea
   assert.match(reviewFields(50, false), /headRefOid[^]*latestReviews\(first: 20\) \{ totalCount[^]*reviewRequests\(first: 10\) \{ totalCount[^]*reviewThreads\(last: 50\)[^]*/u)
   assert.match(reviewFields(50, false), /firstComments: comments\(first: 5\)[^]*lastComments: comments\(last: 20\) \{[^]*body createdAt updatedAt \} \}$/u)
   assert.doesNotMatch(reviewFields(50, false), /path line/u)
-  assert.match(reviewFields(50, false), /requestedReviewer \{ __typename \.\.\. on User \{ login databaseId \} \.\.\. on Bot \{ login databaseId \}\s+\.\.\. on Mannequin \{ login databaseId \} \.\.\. on Team \{ slug \} \} \} \}/u)
-  // GitHub's API, unlike its docs, knows no EnterpriseTeam: a query naming one fails whole.
-  assert.doesNotMatch(reviewFields(100, true), /EnterpriseTeam/u)
+  assert.match(reviewFields(50, false), /requestedReviewer \{ __typename \.\.\. on User \{ login databaseId \} \.\.\. on Bot \{ login databaseId \}\s+\.\.\. on Mannequin \{ login databaseId \} \} \} \}/u)
+  // A team, read only with its organization's Members permission, and an
+  // EnterpriseTeam, which GitHub's API knows none of: a query naming either
+  // fails whole without them.
+  assert.doesNotMatch(reviewFields(100, true), /Team/u)
   assert.match(reviewFields(100, true), /reviewThreads\(last: 100\) \{ totalCount nodes \{ isResolved isOutdated path line originalLine[^]*body url/u)
   assert.match(reviewFields(100, true), /latestReviews\(first: 20\) \{ totalCount nodes \{[^]*commit \{ oid \} body \} \}/u, 'a popup reads its reviews\' bodies')
   assert.doesNotMatch(reviewFields(50, false).split('reviewRequests')[0], /\bbody\b/u, 'a tile none')

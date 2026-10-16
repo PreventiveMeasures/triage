@@ -115,7 +115,8 @@ const TIMED_OUT = /\btimeout\b/iu
 // One GraphQL query with `token`, answered with its `data`: one GitHub answers
 // with errors, but for those the caller reads past (`tolerated`, the fields
 // they name then null), is rate limited, names what isn't there, is refused,
-// as one a GitHub App lacks the permission for is, took GitHub too long, or
+// as one a GitHub App lacks the permission for is, or a token the scope for
+// (`INSUFFICIENT_SCOPES`, a sign-in's having none), took GitHub too long, or
 // else is malformed, as one GitHub rejects unread is (a field or type its API
 // doesn't know). GitHub's words for errors of none of those first three types
 // are logged, those read past too.
@@ -132,7 +133,7 @@ export async function githubGraphql(query: string, variables: Record<string, unk
   if (errors.length > 0) {
     if (errors.some(error => error?.type === 'RATE_LIMITED')) throw new GithubApiError(429, 'github-rate-limited', 60)
     if (errors.some(error => error?.type === 'NOT_FOUND')) throw new GithubApiError(404, 'github-not-found')
-    if (errors.some(error => error?.type === 'FORBIDDEN')) throw new GithubApiError(502, 'github-status-403')
+    if (errors.some(error => error?.type === 'FORBIDDEN' || error?.type === 'INSUFFICIENT_SCOPES')) throw new GithubApiError(502, 'github-status-403')
     if (errors.some(error => typeof error?.message === 'string' && TIMED_OUT.test(error.message))) throw new GithubApiError(502, 'github-timeout')
     throw new GithubApiError(502, 'github-malformed')
   }

@@ -12,12 +12,10 @@ const counted = (open = 0, severity = null, more = {}) => ({ open, resolved: 0, 
 
 test('a tile\'s reviews mark each reviewer by how their latest review stands, dimmed where it was on an earlier commit, Codex first by its summary', () => {
   const text = templateText(reviewLine({ head, codex: codex({ commit: head, status: 'done' }), threads: counted(),
-    reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: earlier, at: 1 }, { login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
-      { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null }] }))
+    reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: earlier, at: 1 }, { login: 'linus', id: 7, state: null, requested: true, commit: null, at: null }] }))
   assert.match(text, /class=review-mark is-reviewed><span class="review-glyph" role="img" aria-label=Reviewed, on the latest commit[^]*Codex/u)
   assert.match(text, /class=review-mark is-approved is-stale>[^]*aria-label=Approved, on an earlier commit \(bbbbbbb\)[^]*ada/u)
   assert.match(text, /class=review-mark is-requested>[^]*aria-label=Review requested[^]*linus/u)
-  assert.match(text, /@security/u, 'a team by its slug')
   assert.doesNotMatch(text, /Unreviewed/u, 'Codex reviewed the latest commit')
   assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviews: 1, moreRequests: 2 })),
     /class="review-more" data-tooltip=1 more review and 2 more review requests, on GitHub>\+3</u, 'each counted apart, a reviewer perhaps in both')
