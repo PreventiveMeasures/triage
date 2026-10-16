@@ -40,7 +40,7 @@
 //   GET /api/admin/repositories/changes?repoId=&path=&shas= → the files each of the commits `shas` names (fifty at most)
 //        adds, modifies, removes and renames within `path`, as `git log --name-status` lists them | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/tree?repoId=&path=&commit= → the files commit `commit` holds within `path`, as many as
-//        25,000, for Replay to start from | 400/401/403/404/409/429/502
+//        75,000, for Replay to start from | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/issues?repoId=&kind=issues|pulls&state=open|closed[&after=] → a page of the repository's issues
 //        or pull requests, the most recently updated first, with how many are open and closed | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/agents?repoId=[&pulls=&commits=] → a page of what agents left: pull requests and commits to
@@ -193,7 +193,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { type ChangesStore, type CommitChanges, type CommitTree, changesAsked, changesWithin, repositoryChanges, repositoryTree, treeWithin } from './repository-changes.ts'
+import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, repositoryChanges, repositoryTree, treeWithin } from './repository-changes.ts'
 import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
@@ -1688,17 +1688,18 @@ async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDep
 
 // GET /api/admin/repositories/tree: the files commit `commit` holds within
 // `path`, which Replay starts from (repository-changes.ts repositoryTree),
-// kept whole by the commit (historyTreeStore); none (null) for one GitHub
-// has none of. Read as Replay's reads are (readForReplay).
+// kept whole by the commit and the rules it is read by (historyTreeStore,
+// TREES_READ); none (null) for one GitHub has none of. Read as Replay's
+// reads are (readForReplay).
 async function handleRepositoryTree(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const commit = query.get('commit') ?? ''
   if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const store = historyTreeStore<CommitTree>(deps.db, deps.config.debug)
   await readForReplay(res, deps, cookie, query, async (fullName, token, repoId, path) => {
     const kept = { read: async (sha: string) => {
-      const value = (await store.read(`${repoId}\0${sha}`))?.value
+      const value = (await store.read(`${repoId}\0${TREES_READ}\0${sha}`))?.value
       return value && Array.isArray(value.files) ? value : null
-    }, write: (sha: string, tree: CommitTree) => store.write(`${repoId}\0${sha}`, tree, Date.now()) }
+    }, write: (sha: string, tree: CommitTree) => store.write(`${repoId}\0${TREES_READ}\0${sha}`, tree, Date.now()) }
     const tree = await repositoryTree(fullName, token, commit, kept)
     return { commit, path, ...tree ? treeWithin(tree, path) : { files: null, cut: false } }
   })

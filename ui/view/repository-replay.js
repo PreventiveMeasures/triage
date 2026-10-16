@@ -48,6 +48,8 @@ const NAMES = 10
 const FACE = 11
 const SPREAD = 72
 const LAYOUT_MS = 250
+// A file's dot, in pixels, below which it is drawn square.
+const SQUARE_DOT = 1.8
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
 const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
@@ -474,6 +476,15 @@ class RepositoryReplay extends LitElement {
     const color = name => getComputedStyle(swatches.querySelector(`.is-${name}`)).color
     const colors = { background: color('background'), text: color('text'), muted: color('muted'), surface: color('surface'), added: color('added'), modified: color('modified'),
       removed: color('removed'), kinds: Array.from({ length: KINDS }, (_, kind) => color(`kind-${kind}`)), font: getComputedStyle(this).fontFamily }
+    // The files' colors as a pixel's bytes, red, green, blue and alpha, as
+    // a canvas paints them, whatever the stylesheet names them in.
+    const probe = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true })
+    colors.pixels = new Map([colors.muted, ...colors.kinds].map(paint => {
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = paint
+      probe.fillRect(0, 0, 1, 1)
+      return [paint, [...probe.getImageData(0, 0, 1, 1).data]]
+    }))
     this._colors = colors
   }
 
@@ -518,21 +529,35 @@ class RepositoryReplay extends LitElement {
     context.stroke()
 
     // Files, a path a color; those glowing or going after, each its own.
+    // None off the canvas; dots of a few pixels, as a large tree's are,
+    // squares, as they look, set as pixels (dotLayer).
     const dot = Math.max(1.2, FILE_DOT * camera.zoom)
+    const square = dot < SQUARE_DOT
     const kindOf = file => replay.colors.has(file.extension) ? colors.kinds[replay.colors.get(file.extension)] : colors.muted
     const lit = []
     const byColor = new Map()
     for (const file of scene.files.values()) {
       if (file.removed !== null || clock - file.touched < GLOW_S) { lit.push(file); continue }
+      const [x, y] = [fileX(file), fileY(file)]
+      if (x < -dot || y < -dot || x > width + dot || y > height + dot) continue
       const color = kindOf(file)
-      const path = byColor.get(color) ?? byColor.set(color, new Path2D()).get(color)
-      path.moveTo(fileX(file) + dot, fileY(file))
-      path.arc(fileX(file), fileY(file), dot, 0, 2 * Math.PI)
+      const at = byColor.get(color) ?? byColor.set(color, []).get(color)
+      at.push(x, y)
     }
-    context.globalAlpha = 0.85
-    for (const [color, path] of byColor) {
-      context.fillStyle = color
-      context.fill(path)
+    if (square) {
+      context.globalAlpha = 1
+      context.drawImage(this.dotLayer(canvas, byColor, ratio, dot * ratio, 0.85), 0, 0, width, height)
+    } else {
+      context.globalAlpha = 0.85
+      for (const [color, at] of byColor) {
+        context.fillStyle = color
+        context.beginPath()
+        for (let index = 0; index < at.length; index += 2) {
+          context.moveTo(at[index] + dot, at[index + 1])
+          context.arc(at[index], at[index + 1], dot, 0, 2 * Math.PI)
+        }
+        context.fill()
+      }
     }
     for (const file of lit) {
       const glow = Math.max(0, 1 - (clock - file.touched) / GLOW_S)
@@ -630,6 +655,36 @@ class RepositoryReplay extends LitElement {
     context.textAlign = 'start'
     context.globalAlpha = 1
     this.hover(scene, sx, sy, fileX, fileY, dot)
+  }
+
+  // The files' dots, each its color's (`byColor`: each color's dots, where
+  // each is on the canvas, x then y, `ratio` of its pixels to each), squares
+  // `half` pixels out from where each is, as pixels of a layer the canvas's
+  // size, at `alpha`: many thousands set sooner than as many squares drawn.
+  // A dot over another hides it.
+  dotLayer(canvas, byColor, ratio, half, alpha) {
+    const [wide, high] = [canvas.width, canvas.height]
+    if (this._dots?.wide !== wide || this._dots?.high !== high) {
+      const image = new ImageData(wide, high)
+      this._dots = { wide, high, image, pixels: new Uint32Array(image.data.buffer), layer: Object.assign(document.createElement('canvas'), { width: wide, height: high }) }
+    }
+    const { image, pixels, layer } = this._dots
+    pixels.fill(0)
+    for (const [color, at] of byColor) {
+      const [red, green, blue, opacity] = this._colors.pixels.get(color) ?? [128, 128, 128, 255]
+      // An ImageData's bytes, red first, read four at a time as a little-endian number.
+      const pixel = (Math.round(opacity * alpha) << 24 | blue << 16 | green << 8 | red) >>> 0
+      for (let index = 0; index < at.length; index += 2) {
+        const x = at[index] * ratio, y = at[index + 1] * ratio
+        const left = Math.max(0, Math.round(x - half)), right = Math.min(wide, Math.round(x + half))
+        const bottom = Math.min(high, Math.round(y + half))
+        for (let row = Math.max(0, Math.round(y - half)); row < bottom; row++) {
+          for (let column = row * wide + left, end = row * wide + right; column < end; column++) pixels[column] = pixel
+        }
+      }
+    }
+    layer.getContext('2d').putImageData(image, 0, 0)
+    return layer
   }
 
   // Where the camera looks, and how near: easing toward the middle of the

@@ -2208,7 +2208,18 @@ they were before the first commit played (its parent's), from none where
 that commit is the repository's first, each directory's files a
 cluster of dots about it on a sunflower's spiral, each dot in its kind's
 color (its extension: the eight counted most in the order Commits colors
-its lanes, the rest Other's gray, a key at the corner naming them). Those
+its lanes, the rest Other's gray, a key at the corner naming them). Each
+directory's tree is packed about it: the trees under it about its files,
+each as a disc, as near as they go without one on another, the largest
+nearest, each turned to face away from it; so a directory takes room by
+its files, not by how many directories it has, however broad, and a
+small one beside a broad one shows as large as its files are. As the tree
+changes, only the directories it changes under are laid out again, and
+move no more than they must: a directory new set in the nearest room for
+it, one grown pushing those beside it aside, the smaller the further; room
+one leaves stays. Dots of a few pixels, as a large tree's are, are drawn
+square, set as pixels, so a tree of tens of thousands of files plays as
+smoothly as a small one. Those
 who made each commit, its author and co-authors, each on a solid disc (a
 user of the app by their avatar; Claude, Codex and Copilot as their apps'
 icons are, Claude's mark white on its orange, OpenAI's black on white,
@@ -2268,10 +2279,19 @@ reach all of), and access checked again before they are sent.
 `{ commit, path, files, cut }`: the files the commit holds within `path`,
 by their paths, as GitHub lists its tree and every tree under it at once
 (`GET /repos/:owner/:repo/git/trees/:commit?recursive=1`), its blobs, not
-its directories nor submodules, as many as 25,000, `cut` where there were
-more or GitHub cut its listing short (past 100,000 entries), which the
-summary then says; `files` null for a commit GitHub has none of. Kept by
-the commit as the changes are (`repository/trees`), and read as they are.
+its directories nor submodules, as many as 75,000. Where GitHub cuts that
+listing short (past 100,000 entries or 7 MB, as it does a large
+repository's, nodejs/node's among them), it is read as GitHub advises, a
+tree at a time: the tree's own entries, then each tree in it whole, or,
+where that is cut short too, its own entries in turn, six at once, as many
+as 400 trees, each round of trees read whole, every tree beside another,
+but for trees no file of which could be kept (as deep as the 75,000 files
+nearest the root read, or deeper). Past 75,000, those nearest the root
+are kept; `cut` where some are left out,
+which the summary then says; `files` null for a commit GitHub has none of.
+Kept by the commit, and the rules it is read by, as the changes are
+(`repository/trees`), a tree kept by older rules read again, and read as
+they are.
 
 # npm package viewer
 

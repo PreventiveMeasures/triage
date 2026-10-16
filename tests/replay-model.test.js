@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BEAM_S, FADE_S, FILE_DOT, IDLE_S, MAX_GAP, MIN_GAP, REMOVE_S, advanceScene, assignColors, changeFile, clusterRadius, createScene, extensionOf, fileChanges,
-  layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from '../ui/view/replay-model.js'
+import { BEAM_S, FADE_S, FILE_DOT, FILE_STEP, IDLE_S, MAX_GAP, MIN_GAP, REMOVE_S, advanceScene, assignColors, changeFile, clusterRadius, createScene, extensionOf,
+  fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from '../ui/view/replay-model.js'
 
 const DAY = 86_400_000
 const commit = (sha, at, parents = ['p']) => ({ sha, parents, committedAt: at })
@@ -120,6 +120,56 @@ test('broad, deep trees\' directories are laid out with no two directories\' fil
       for (const other of dirs.slice(index + 1)) assert.equal(overlap(one, other), false, `seed ${seed}: ${one.path || '/'} and ${other.path}`)
     }
   }
+})
+
+// A repository as nodejs/node's is: small directories (lib, benchmark)
+// beside a broad, deep one (deps, thirty directories of three, one of them
+// deeper).
+const broad = () => ['README.md', ...Array.from({ length: 100 }, (_, at) => `lib/l${at % 5}/f${at}.js`), ...Array.from({ length: 100 }, (_, at) => `benchmark/b${at % 10}/f${at}.js`),
+  ...Array.from({ length: 2700 }, (_, at) => `deps/d${at % 30}/s${Math.floor(at / 30) % 3}/f${at}.c`), ...Array.from({ length: 120 }, (_, at) => `deps/d${at % 30}/s0/deep/x/f${at}.h`)]
+  .map(path => [path, 'A'])
+// How much of the box the scene is drawn in its directories' files fill.
+function filled(scene) {
+  const box = sceneBounds(scene)
+  return [...scene.dirs.values()].reduce((sum, dir) => sum + Math.PI * clusterRadius(dir.files.length) ** 2, 0) / ((box.maxX - box.minX) * (box.maxY - box.minY))
+}
+function apart(scene) {
+  const dirs = [...scene.dirs.values()]
+  for (const [index, one] of dirs.entries()) for (const other of dirs.slice(index + 1)) assert.equal(overlap(one, other), false, `${one.path || '/'} and ${other.path}`)
+}
+
+test('a tree is packed, its directories\' files filling a good share of what the scene is drawn in, however broad and deep a directory of it is', () => {
+  const scene = createScene()
+  settleCommit(scene, broad())
+  snapScene(scene)
+  // Laid out as a balloon tree, each directory's on a ring about it, a little over a hundredth.
+  assert.ok(filled(scene) > 0.08, String(filled(scene)))
+  apart(scene)
+})
+
+test('as the tree changes its directories move no more than they must: laid out again unchanged, none; a file added, hardly; a directory new or gone, a little', () => {
+  const scene = createScene()
+  settleCommit(scene, broad())
+  snapScene(scene)
+  const box = sceneBounds(scene)
+  const size = Math.max(box.maxX - box.minX, box.maxY - box.minY)
+  const where = () => new Map([...scene.dirs].map(([path, dir]) => [path, [dir.tx, dir.ty]]))
+  const moved = before => Math.max(...[...before].filter(([path]) => scene.dirs.has(path))
+    .map(([path, [x, y]]) => Math.hypot(scene.dirs.get(path).tx - x, scene.dirs.get(path).ty - y)))
+  const change = files => {
+    const before = where()
+    settleCommit(scene, files)
+    layoutScene(scene)
+    return moved(before)
+  }
+  scene.layout = true
+  assert.equal(change([]), 0)
+  assert.ok(change([['deps/d7/s1/new.c', 'A']]) < FILE_STEP)
+  assert.ok(change([['deps/d7/s1/fresh/a.c', 'A']]) < 0.05 * size)
+  assert.ok(change(Array.from({ length: 40 }, (_, at) => [`lib/big/f${at}.js`, 'A'])) < 0.05 * size)
+  assert.ok(change(Array.from({ length: 10 }, (_, at) => [`benchmark/b3/f${3 + at * 10}.js`, 'D'])) < 0.05 * size)
+  assert.deepEqual([scene.dirs.has('lib/big'), scene.dirs.has('benchmark/b3')], [true, false])
+  apart(scene)
 })
 
 test('the scene moves toward where it sits, and a replay sought is drawn there at once', () => {

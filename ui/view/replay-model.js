@@ -82,7 +82,8 @@ export function createScene() {
 // A directory, grown out of its parent's place, and there till laid out.
 function directory(path, parent) {
   return { path, name: path.slice(path.lastIndexOf('/') + 1), parent, dirs: [], files: [], depth: parent ? parent.depth + 1 : 0,
-    x: parent?.x ?? 0, y: parent?.y ?? 0, tx: parent?.tx ?? 0, ty: parent?.ty ?? 0, cluster: 0, ring: 0, extent: 0, touched: Number.NEGATIVE_INFINITY }
+    x: parent?.x ?? 0, y: parent?.y ?? 0, tx: parent?.tx ?? 0, ty: parent?.ty ?? 0, cluster: 0, radius: 0, node: [0, 0], at: [0, 0], lx: undefined, ly: undefined,
+    packed: false, dirty: true, touched: Number.NEGATIVE_INFINITY }
 }
 
 // The directory `path` names, made with those above it where it isn't,
@@ -101,6 +102,7 @@ function directoryOf(scene, path) {
   }
   parent.dirs.splice(low, 0, made)
   scene.dirs.set(path, made)
+  unsettle(parent)
   scene.layout = true
   return made
 }
@@ -118,6 +120,7 @@ export function changeFile(scene, path, kind, at) {
     file = { path, name: path.slice(slash + 1), extension: extensionOf(path), dir, ox: 0, oy: 0, touched: at, kind, removed: null }
     dir.files.push(file)
     scene.files.set(path, file)
+    unsettle(dir)
     scene.layout = true
   }
   file.touched = at
@@ -135,10 +138,12 @@ function removeFile(scene, file) {
   dir.files.splice(dir.files.indexOf(file), 1)
   scene.files.delete(file.path)
   scene.going.delete(file)
-  for (let empty = dir; empty.parent && empty.files.length === 0 && empty.dirs.length === 0; empty = empty.parent) {
-    empty.parent.dirs.splice(empty.parent.dirs.indexOf(empty), 1)
-    scene.dirs.delete(empty.path)
+  let left = dir
+  for (; left.parent && left.files.length === 0 && left.dirs.length === 0; left = left.parent) {
+    left.parent.dirs.splice(left.parent.dirs.indexOf(left), 1)
+    scene.dirs.delete(left.path)
   }
+  unsettle(left)
   scene.layout = true
 }
 
@@ -226,123 +231,304 @@ export function fileOffset(index) {
   return [radius * Math.cos(index * GOLDEN_ANGLE), radius * Math.sin(index * GOLDEN_ANGLE)]
 }
 
-// Where each directory sits, as a balloon tree lays one out: the root's at
-// the middle, its directories on a ring about it all the way round, each
-// other's on a ring about it facing away from its parent, half a turn wide;
-// each ring clear of its directory's files, and wide enough for the trees on
-// it, each in a share of it about as wide as its tree is seen from there;
-// then any directories' files the shares, being near, left on another's
-// moved apart (separate).
+// Where each directory sits, its tree packed about it: a directory's files
+// a disc about it (`cluster`, half a gap past them), and each tree under it
+// a disc (`radius`) about its own, beside its files and each other's as
+// near as they go without one on another, the tree turned to face away from
+// the directory it is under. Packed first all at once, the largest trees
+// nearest (packSiblings), the tree as small as it goes; then, as it
+// changes, only the directories it changes under laid out again, and those
+// no more than they must be (relax): a tree new set in the nearest room for
+// it, one grown pushing those it reaches aside, the smaller the further;
+// so a replay's trees move a little as it plays, not all at once.
 export function layoutScene(scene) {
   measure(scene.root)
-  place(scene.root, 0, 0, -Math.PI / 2, 2 * Math.PI)
-  separate([...scene.dirs.values()])
+  place(scene.root, -scene.root.node[0], -scene.root.node[1], 0)
   scene.layout = false
 }
 
-// Directories' files, `dirs` (each after its parent, as a scene holds them),
-// moved off one another: round after round, any two whose files and the
-// gap about them overlap pushed apart along the line between them, half
-// each, or, one under the other, the one under alone, each tree moved with
-// its directory and the root where it is, till none overlap, or as many
-// rounds as SEPARATE_ROUNDS; an overlap of less than SLACK, the pushes'
-// own rounding, none. Those that may overlap are found sweeping across
-// them, by where each begins, left to right.
-const SEPARATE_ROUNDS = 40
-const SLACK = 0.5
-function separate(dirs) {
-  const under = (dir, above) => {
-    for (let at = dir.parent; at && at.depth >= above.depth; at = at.parent) if (at === above) return true
-    return false
-  }
-  for (let round = 0; round < SEPARATE_ROUNDS; round++) {
-    const pushes = new Map()
-    const push = (dir, x, y) => {
-      const held = pushes.get(dir)
-      if (held) {
-        held[0] += x
-        held[1] += y
-      } else pushes.set(dir, [x, y])
-    }
-    const swept = dirs.toSorted((a, b) => a.tx - a.cluster - (b.tx - b.cluster))
-    for (const [at, one] of swept.entries()) {
-      for (let next = at + 1; next < swept.length && swept[next].tx - swept[next].cluster < one.tx + one.cluster; next++) {
-        const other = swept[next]
-        const need = one.cluster + other.cluster
-        const [dx, dy] = [other.tx - one.tx, other.ty - one.ty]
-        if (Math.abs(dy) >= need - SLACK) continue
-        const apart = Math.hypot(dx, dy)
-        if (apart >= need - SLACK) continue
-        const angle = apart > 1e-6 ? Math.atan2(dy, dx) : keyAngle(other.path)
-        const [ux, uy] = [Math.cos(angle) * (need - apart), Math.sin(angle) * (need - apart)]
-        if (under(other, one)) push(other, ux, uy)
-        else if (under(one, other)) push(one, -ux, -uy)
-        else {
-          push(one, -ux / 2, -uy / 2)
-          push(other, ux / 2, uy / 2)
-        }
-      }
-    }
-    if (pushes.size === 0) return
-    // Each directory by its own push and those of the directories above it.
-    const moved = new Map()
-    for (const dir of dirs) {
-      const own = pushes.get(dir)
-      const above = dir.parent ? moved.get(dir.parent) : null
-      const by = own && above ? [own[0] + above[0], own[1] + above[1]] : own ?? above
-      if (!by) continue
-      moved.set(dir, by)
-      dir.tx += by[0]
-      dir.ty += by[1]
-    }
-  }
+// A directory, and those above it, to be laid out again.
+function unsettle(dir) {
+  for (let at = dir; at && !at.dirty; at = at.parent) at.dirty = true
 }
 
 // How far a directory's files reach from it, half a gap past (`cluster`),
-// the ring its directories sit on (`ring`), and how far its tree reaches
-// from it (`extent`): a tree facing away from its parent comes no nearer it
-// than its own files, and is seen from it no wider than the half disc of
-// its extent.
+// where the trees under it are, each its disc's middle from its files
+// (`lx`, `ly`), and the disc its tree fills (`radius`): where its files are
+// in it (`node`), and where each tree under it is (`at`), from its middle.
 function measure(dir) {
+  if (!dir.dirty) return
   for (const child of dir.dirs) measure(child)
   dir.cluster = Math.max(clusterRadius(dir.files.length), FILE_DOT) + GAP / 2
-  if (dir.dirs.length === 0) {
-    dir.ring = 0
-    dir.extent = dir.cluster
-    return
+  const own = { x: 0, y: 0, r: dir.cluster }
+  const trees = dir.dirs.map(child => ({ child, x: child.lx, y: child.ly, r: child.radius }))
+  if (dir.packed) relax(own, trees)
+  else {
+    // The largest beside its files first, then each the nearest it goes.
+    const packed = [own, ...trees.toSorted((a, b) => b.r - a.r || (a.child.name < b.child.name ? -1 : 1))]
+    packSiblings(packed)
+    for (const tree of trees) [tree.x, tree.y] = [tree.x - own.x, tree.y - own.y]
+    ;[own.x, own.y] = [0, 0]
   }
-  const wedge = dir.parent ? Math.PI : 2 * Math.PI
-  let ring = dir.cluster + Math.max(...dir.dirs.map(child => child.cluster))
-  for (let tries = 0; tries < 80 && shares(dir.dirs, ring) > wedge; tries++) ring *= 1.1
-  dir.ring = ring
-  dir.extent = Math.max(dir.cluster, ring + Math.max(...dir.dirs.map(child => child.extent)))
+  const disc = enclose([own, ...trees])
+  dir.radius = disc.r
+  dir.node = [-disc.x, -disc.y]
+  for (const tree of trees) {
+    ;[tree.child.lx, tree.child.ly] = [tree.x, tree.y]
+    tree.child.at = [tree.x - disc.x, tree.y - disc.y]
+  }
+  dir.packed = true
+  dir.dirty = false
 }
 
-// The angle the tree of `dir` takes on a ring of `radius`, and the trees of
-// `dirs` all together: a tree is seldom as wide as its extent's half disc,
-// so a share is a little narrower (TIGHT), trees' empty edges overlapping
-// where they are, and any files that do moved apart after (separate); never
-// narrower than its own files.
-const TIGHT = 0.8
-const shareOf = (dir, radius) => 2 * Math.max(TIGHT * Math.atan(dir.extent / radius), Math.asin(Math.min(1, dir.cluster / radius)))
-const shares = (dirs, radius) => dirs.reduce((sum, dir) => sum + shareOf(dir, radius), 0)
-
-// A directory placed at (`x`, `y`), its directories in the `wedge` about
-// `facing`, each in its share, the room left between them.
-function place(dir, x, y, facing, wedge) {
-  dir.tx = x
-  dir.ty = y
-  if (dir.dirs.length === 0) return
-  const taken = shares(dir.dirs, dir.ring)
-  const full = wedge >= 2 * Math.PI
-  const room = Math.max(0, wedge - taken) / (full ? dir.dirs.length : dir.dirs.length + 1)
-  let angle = facing - (full ? 0 : wedge / 2) + (full ? 0 : room)
+// A directory, its disc's middle at (`x`, `y`) turned by `turn`, and the
+// trees under it, each turned to face away from it.
+function place(dir, x, y, turn) {
+  const [cos, sin] = [Math.cos(turn), Math.sin(turn)]
+  const at = ([dx, dy]) => [x + dx * cos - dy * sin, y + dx * sin + dy * cos]
+  ;[dir.tx, dir.ty] = at(dir.node)
   for (const child of dir.dirs) {
-    const share = shareOf(child, dir.ring)
-    const at = angle + share / 2
-    place(child, x + dir.ring * Math.cos(at), y + dir.ring * Math.sin(at), at, Math.PI)
-    angle += share + room
+    const [cx, cy] = at(child.at)
+    place(child, cx, cy, Math.atan2(cy - dir.ty, cx - dir.tx))
   }
+}
+
+// Discs (`circles`, each its `r`) packed as tight as they go, each beside
+// those before it, as near their middle as it goes (Wang, Wang, Dai and
+// Wang's front-chain packing, as d3-hierarchy packs siblings): each its
+// `x` and `y`.
+function packSiblings(circles) {
+  const [a, b, c] = circles
+  if (!a) return
+  ;[a.x, a.y] = [0, 0]
+  if (!b) return
+  ;[a.x, b.x, b.y] = [-b.r, a.r, 0]
+  if (!c) return
+  besides(b, a, c)
+  // The chain of discs on the packing's edge, from `head` on round to `tail`.
+  let head = { c: a }, tail = { c: b }
+  const third = { c }
+  head.next = third.previous = tail
+  tail.next = head.previous = third
+  third.next = tail.previous = head
+  pack: for (let i = 3; i < circles.length; i++) {
+    const circle = circles[i]
+    besides(head.c, tail.c, circle)
+    // The nearest disc on the chain it is on, ahead or behind, if any.
+    let ahead = tail.next, aheadBy = tail.c.r, behind = head.previous, behindBy = head.c.r
+    do {
+      if (aheadBy <= behindBy) {
+        if (overlaps(ahead.c, circle)) {
+          tail = ahead
+          head.next = tail
+          tail.previous = head
+          i--
+          continue pack
+        }
+        aheadBy += ahead.c.r
+        ahead = ahead.next
+      } else {
+        if (overlaps(behind.c, circle)) {
+          head = behind
+          head.next = tail
+          tail.previous = head
+          i--
+          continue pack
+        }
+        behindBy += behind.c.r
+        behind = behind.previous
+      }
+    } while (ahead !== behind.next)
+    // On none: between the two it is beside, and the pair nearest the middle
+    // those the next goes beside.
+    const placed = { c: circle, previous: head, next: tail }
+    head.next = tail.previous = tail = placed
+    let nearest = nearness(head)
+    for (let link = placed.next; link !== tail; link = link.next) {
+      const near = nearness(link)
+      if (near < nearest) [head, nearest] = [link, near]
+    }
+    tail = head.next
+  }
+}
+
+// `c` set beside `a` and `b`, touching both.
+function besides(b, a, c) {
+  const [dx, dy] = [b.x - a.x, b.y - a.y]
+  const apart = dx * dx + dy * dy
+  if (!apart) {
+    ;[c.x, c.y] = [a.x + c.r, a.y]
+    return
+  }
+  const toA = (a.r + c.r) ** 2, toB = (b.r + c.r) ** 2
+  if (toA > toB) {
+    const along = (apart + toB - toA) / (2 * apart)
+    const across = Math.sqrt(Math.max(0, toB / apart - along * along))
+    ;[c.x, c.y] = [b.x - along * dx - across * dy, b.y - along * dy + across * dx]
+  } else {
+    const along = (apart + toA - toB) / (2 * apart)
+    const across = Math.sqrt(Math.max(0, toA / apart - along * along))
+    ;[c.x, c.y] = [a.x + along * dx - across * dy, a.y + along * dy + across * dx]
+  }
+}
+
+const overlaps = (a, b) => {
+  const reach = a.r + b.r - 1e-6
+  return reach > 0 && reach * reach > (b.x - a.x) ** 2 + (b.y - a.y) ** 2
+}
+
+// How near the middle a disc on the chain and the next are, between them.
+function nearness(link) {
+  const [a, b] = [link.c, link.next.c]
+  const both = a.r + b.r
+  return ((a.x * b.r + b.x * a.r) / both) ** 2 + ((a.y * b.r + b.y * a.r) / both) ** 2
+}
+
+// The least disc about `circles`, each whole in it (Welzl's, as Matoušek,
+// Sharir and Welzl move each circle it leaves out to the front, as
+// d3-hierarchy encloses packed circles): its middle, `x` and `y`, and `r`;
+// taken in an order of their own, the same each time, a disc tried from
+// one circle, then two, then three, each it leaves out added and the rest
+// tried again. Where rounding leaves none (a disc of three in a line), or
+// one not settling in as many tries as ENCLOSE_TRIES a circle, the disc
+// about their box's middle reaching them all.
+const ENCLOSE_TRIES = 64
+function enclose(circles) {
+  const order = circles.toSorted((a, b) => keyAngle(`${a.x},${a.y}`) - keyAngle(`${b.x},${b.y}`))
+  let basis = [], disc = null, tries = 0
+  for (let at = 0; at < order.length; at++) {
+    if (disc && within(disc, order[at])) continue
+    basis = widened(basis, order[at])
+    disc = discOf(basis)
+    if (!Number.isFinite(disc.x + disc.y + disc.r) || ++tries > ENCLOSE_TRIES * order.length) return about(circles)
+    at = -1
+  }
+  return disc
+}
+
+function about(circles) {
+  const [x, y] = [0, 1].map(axis => {
+    const ends = circles.flatMap(circle => axis === 0 ? [circle.x - circle.r, circle.x + circle.r] : [circle.y - circle.r, circle.y + circle.r])
+    return (Math.min(...ends) + Math.max(...ends)) / 2
+  })
+  return { x, y, r: Math.max(...circles.map(circle => Math.hypot(circle.x - x, circle.y - y) + circle.r)) }
+}
+
+// The least basis of circles a disc about `basis` and `circle` is made of.
+function widened(basis, circle) {
+  if (basis.every(other => within(circle, other))) return [circle]
+  for (const one of basis) if (!holds(circle, one) && basis.every(other => within(discOf([one, circle]), other))) return [one, circle]
+  for (const [at, one] of basis.entries()) {
+    for (const other of basis.slice(at + 1)) {
+      if (!holds(discOf([one, other]), circle) && !holds(discOf([one, circle]), other) && !holds(discOf([other, circle]), one)
+        && basis.every(held => within(discOf([one, other, circle]), held))) return [one, other, circle]
+    }
+  }
+  return [...basis, circle].length <= 3 ? [...basis, circle] : [circle]
+}
+
+// Whether disc `a` holds `b` whole, short of its edge (`holds`), or as
+// near as rounding tells (`within`).
+const holds = (a, b) => a.r - b.r >= 0 && (a.r - b.r) ** 2 >= (b.x - a.x) ** 2 + (b.y - a.y) ** 2
+function within(a, b) {
+  const room = a.r - b.r + Math.max(a.r, b.r, 1) * 1e-9
+  return room > 0 && room * room > (b.x - a.x) ** 2 + (b.y - a.y) ** 2
+}
+
+// The least disc touching each of one, two or three circles from without.
+function discOf([a, b, c]) {
+  if (!b) return { x: a.x, y: a.y, r: a.r }
+  if (!c) {
+    const [dx, dy, dr] = [b.x - a.x, b.y - a.y, b.r - a.r]
+    const apart = Math.hypot(dx, dy) || 1e-12
+    return { x: (a.x + b.x + dx / apart * dr) / 2, y: (a.y + b.y + dy / apart * dr) / 2, r: (apart + a.r + b.r) / 2 }
+  }
+  const [a2, a3, b2, b3, c2, c3] = [a.x - b.x, a.x - c.x, a.y - b.y, a.y - c.y, b.r - a.r, c.r - a.r]
+  const d1 = a.x ** 2 + a.y ** 2 - a.r ** 2
+  const [d2, d3] = [d1 - b.x ** 2 - b.y ** 2 + b.r ** 2, d1 - c.x ** 2 - c.y ** 2 + c.r ** 2]
+  const ab = a3 * b2 - a2 * b3
+  const [xa, xb, ya, yb] = [(b2 * d3 - b3 * d2) / (ab * 2) - a.x, (b3 * c2 - b2 * c3) / ab, (a3 * d2 - a2 * d3) / (ab * 2) - a.y, (a2 * c3 - a3 * c2) / ab]
+  const [qa, qb, qc] = [xb ** 2 + yb ** 2 - 1, 2 * (a.r + xa * xb + ya * yb), xa ** 2 + ya ** 2 - a.r ** 2]
+  const r = -(Math.abs(qa) > 1e-6 ? (qb + Math.sqrt(qb * qb - 4 * qa * qc)) / (2 * qa) : qc / qb)
+  return { x: a.x + xa + xb * r, y: a.y + ya + yb * r, r }
+}
+
+// The trees under a directory (`trees`, each where it was, `x` and `y` from
+// its files, `own`, and its `r`) moved no more than they must: one new (no
+// `x`) set in the nearest room for it (roomFor); then, round after round,
+// any two on one another pushed
+// apart along the line between them, the smaller the further, and any on
+// its files pushed out from them, till none are, or as many rounds as
+// SEPARATE_ROUNDS; an overlap of less than SLACK, the pushes' own rounding,
+// none. Room left where one shrank, or went, is left.
+const SEPARATE_ROUNDS = 60
+const SLACK = 0.5
+function relax(own, trees) {
+  const set = trees.filter(tree => tree.x !== undefined)
+  for (const tree of trees) {
+    if (tree.x !== undefined) continue
+    roomFor(tree, own, set)
+    set.push(tree)
+  }
+  for (let round = 0; round < SEPARATE_ROUNDS; round++) {
+    let moved = false
+    for (const tree of trees) {
+      const apart = Math.hypot(tree.x, tree.y), need = own.r + tree.r
+      if (apart >= need - SLACK) continue
+      const angle = apart > 1e-6 ? Math.atan2(tree.y, tree.x) : keyAngle(tree.child.name)
+      ;[tree.x, tree.y] = [Math.cos(angle) * need, Math.sin(angle) * need]
+      moved = true
+    }
+    const swept = trees.toSorted((a, b) => a.x - a.r - (b.x - b.r))
+    for (const [at, one] of swept.entries()) {
+      for (let next = at + 1; next < swept.length && swept[next].x - swept[next].r < one.x + one.r; next++) {
+        const other = swept[next]
+        const need = one.r + other.r
+        const [dx, dy] = [other.x - one.x, other.y - one.y]
+        if (Math.abs(dy) >= need - SLACK) continue
+        const apart = Math.hypot(dx, dy)
+        if (apart >= need - SLACK) continue
+        const angle = apart > 1e-6 ? Math.atan2(dy, dx) : keyAngle(other.child.name)
+        // Each pushed by the other's share of their two discs' room.
+        const [oneShare, otherShare] = [other.r ** 2, one.r ** 2].map(share => share / (one.r ** 2 + other.r ** 2) * (need - apart))
+        ;[one.x, one.y] = [one.x - Math.cos(angle) * oneShare, one.y - Math.sin(angle) * oneShare]
+        ;[other.x, other.y] = [other.x + Math.cos(angle) * otherShare, other.y + Math.sin(angle) * otherShare]
+        moved = true
+      }
+    }
+    if (!moved) return
+  }
+}
+
+// Where a tree new to a directory goes: the spot nearest its files where it
+// touches none of the trees `set` nor its files, of those where it touches
+// two of them (its files and one of the trees, or two trees); with none,
+// beside its files at its own angle, or past every tree out along it.
+function roomFor(tree, own, set) {
+  const free = spot => Math.hypot(spot.x, spot.y) >= own.r + tree.r - SLACK
+    && set.every(other => Math.hypot(other.x - spot.x, other.y - spot.y) >= other.r + tree.r - SLACK)
+  const spots = []
+  const touching = (one, other) => {
+    for (const [a, b] of [[one, other], [other, one]]) {
+      const spot = { r: tree.r }
+      besides(a, b, spot)
+      spots.push(spot)
+    }
+  }
+  for (const other of set) touching(own, other)
+  const swept = set.toSorted((a, b) => a.x - a.r - (b.x - b.r))
+  for (const [at, one] of swept.entries()) {
+    for (let next = at + 1; next < swept.length && swept[next].x - swept[next].r < one.x + one.r + 2 * tree.r; next++) {
+      const other = swept[next]
+      if (Math.hypot(other.x - one.x, other.y - one.y) < one.r + other.r + 2 * tree.r) touching(one, other)
+    }
+  }
+  const angle = keyAngle(tree.child.name)
+  if (set.length === 0) spots.push({ x: Math.cos(angle) * (own.r + tree.r), y: Math.sin(angle) * (own.r + tree.r) })
+  let best = null
+  for (const spot of spots) if (free(spot) && (!best || Math.hypot(spot.x, spot.y) < Math.hypot(best.x, best.y))) best = spot
+  const beyond = Math.max(own.r, ...set.map(other => Math.hypot(other.x, other.y) + other.r)) + tree.r
+  ;[tree.x, tree.y] = best ? [best.x, best.y] : [Math.cos(angle) * beyond, Math.sin(angle) * beyond]
 }
 
 // Everything `dt` seconds nearer where it sits: directories toward their
