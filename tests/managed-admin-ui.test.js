@@ -115,6 +115,12 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   await page._saveDependencyReview(off, { ...off.dependencyReview, enabled: true })
   globalThis.removeEventListener('dependency-review-changed', changed)
   assert.deepEqual(told, ['changed'], 'pull requests\' reviews read before asked again')
+  const left = createPage(Repositories)
+  left.session = { csrfToken: 'csrf' }
+  globalThis.addEventListener('dependency-review-changed', changed)
+  await left._saveDependencyReview(off, { ...off.dependencyReview, enabled: true })
+  globalThis.removeEventListener('dependency-review-changed', changed)
+  assert.deepEqual(told, ['changed', 'changed'], 'the page left while it saved, all the same')
   assert.deepEqual(sent.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null }, 'csrf'])
   assert.deepEqual(page._detail.dependencyReview, { enabled: true, required: 1, since: null })
   assert.deepEqual(page._data.repositories[0].dependencyReview, page._detail.dependencyReview)

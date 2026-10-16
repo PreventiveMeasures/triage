@@ -788,12 +788,13 @@ class ManagedAdminRepos extends ManagedPage {
     this._actionError = null
     try {
       const dependencyReview = await this.appState.mutate(() => setRepositoryDependencyReview(repo.id, setting, this._csrf), ['repos'])
+      // Pull requests' dependencies read with their review before, told
+      // again, the page left meanwhile or not.
+      globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
       if (!this.isConnected) return
       if (this._detail?.id === repo.id) this._detail = { ...this._detail, dependencyReview }
       if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, dependencyReview } : entry) }
       this._reviewDraft = null
-      // Pull requests' dependencies read with their review before, told again.
-      globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
     } catch (err) {
       this._actionError = `Couldn't save ${repo.fullName}'s dependency review: ${err?.message ?? err}`
     } finally {
