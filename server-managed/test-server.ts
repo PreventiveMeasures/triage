@@ -595,7 +595,8 @@ function pulseFixture(url: URL, res: ServerResponse, narrowed = false): void {
 // repository-pulse.ts commitStats counts them and periodStats answers them
 // for a period of `span` weeks: each day's lines, the commits agents made or
 // co-authored, the releases (every other week one of Linus's), the commits
-// pushed directly (Margaret's and the releases) and each contributor's days
+// pushed directly (Margaret's, with agents or not, and the releases) and
+// each contributor's days
 // too, and when the period's commits
 // are made: the agents' own all theirs, a share of everyone else's, a tenth
 // at the year's start, over half by its end.
@@ -605,7 +606,7 @@ function pulseStats(now: number, span: number) {
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const directCommits: { sha: string; at: number; subject: string; login: string | null; id: null; name: string | null }[] = []
+  const directCommits: { sha: string; at: number; subject: string; login: string | null; id: null; name: string | null; kind: 'agent' | 'without' | 'release' }[] = []
   const shaFor = (at: number) => at.toString(16).padStart(40, 'd')
   const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
@@ -653,7 +654,8 @@ function pulseStats(now: number, span: number) {
         for (let nth = 0; nth < count; nth++) {
           directCommits.push({ sha: shaFor(directCommits.length), at: week + busy[slot]! * 86_400_000 + (10 + nth) * 3_600_000,
             subject: released[slot] && nth === 0 ? `Release v1.${index}.0` : `Tidy ${['the sidebar', 'the README', 'a test', 'the styles'][(index + nth) % 4]}`,
-            login: login.startsWith('=') ? null : login, id: null, name: login.startsWith('=') ? login.slice(1) : null })
+            login: login.startsWith('=') ? null : login, id: null, name: login.startsWith('=') ? login.slice(1) : null,
+            kind: released[slot] && nth === 0 ? 'release' : nth < withAgents[slot]! ? 'agent' : 'without' })
         }
       }
       for (const [slot, day] of busy.entries()) {

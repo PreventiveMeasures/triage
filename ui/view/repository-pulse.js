@@ -75,6 +75,9 @@ const LISTS = {
 const LIST_KINDS = ['merged', 'opened', 'closed', 'created']
 // A commit's mark, as the activity tabs draw Commits'.
 const COMMIT_ICON = icon(svg`<circle cx="8" cy="8" r="2.75"/><path d="M8 1v4.25M8 10.75V15"/>`)
+// What a commit pushed directly is, each its mark's name: one with agents,
+// one without, or a release, as the plots tell them.
+const DIRECT_KINDS = { agent: 'Commit with agents', without: 'Commit without agents', release: 'Release' }
 const DIRECT_SHOWN = 10
 // A narrowing's most authors, as the server takes them.
 const NARROWED_AUTHORS = 10
@@ -127,7 +130,8 @@ function checked(answer) {
     direct: weeks.length > 0 && weeks.every(week => week.directDays !== null) && Array.isArray(answer.stats.directCommits),
     directCommits: Array.isArray(answer.stats.directCommits) ? answer.stats.directCommits.filter(item => typeof item?.sha === 'string'
       && Number.isSafeInteger(item.at)).map(item => ({ sha: item.sha, at: item.at, subject: typeof item.subject === 'string' ? item.subject : '',
-      login: typeof item.login === 'string' ? item.login : null, id: Number.isSafeInteger(item.id) ? item.id : null, name: typeof item.name === 'string' ? item.name : null }))
+      login: typeof item.login === 'string' ? item.login : null, id: Number.isSafeInteger(item.id) ? item.id : null, name: typeof item.name === 'string' ? item.name : null,
+      kind: typeof item.kind === 'string' && Object.hasOwn(DIRECT_KINDS, item.kind) ? item.kind : null }))
       : [],
   } : null
   return { weeks: answer.weeks, since: answer.since, merged: told('merged'), opened: told('opened'), closed: told('closed'), created: told('created'),
@@ -583,6 +587,9 @@ class RepositoryPulse extends LitElement {
     // the period reads.
     const told = (label, kind, opened) => answer[kind] ? this.renderTile(label, number(answer[kind].count), versus(answer[kind].count, answer[kind].previous, before),
       `${number(answer[opened].count)} opened`) : this.renderTile(label, '–', 'Reading…', '')
+    // The lists, three of them (commits pushed directly, and issues) a row
+    // with when commits are made where the pulse is wide enough.
+    const lists = this.renderLists(answer, narrowing, now)
     return html`<section class="pulse-tiles" aria-label="Figures">
         ${this.renderTile('Commits', summary.commits === null ? '–' : number(summary.commits), counting ?? versus(summary.commits, summary.previous, before), 'to the default branch')}
         ${this.renderTile('Contributors', summary.authors === null ? '–' : number(summary.authors), counting, 'who made them')}
@@ -593,10 +600,10 @@ class RepositoryPulse extends LitElement {
         'added and removed', summary.additions === null ? nothing : this.renderRatio(summary.additions, summary.deletions))}
         ${summary.agents === null || !withAgents(answer.stats) ? nothing : this.renderAgentsTile(summary, before)}
       </section>
-      <div class="pulse-grid">
+      <div class=${`pulse-grid${lists.length > 2 ? ' is-lists' : ''}`}>
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
           : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, waitingTexts(answer))}</div>`}
-        ${this.renderLists(answer, narrowing, now)}
+        ${lists}
         ${answer.stats ? this.renderPunch(answer.stats) : nothing}
       </div>`
   }
@@ -861,7 +868,8 @@ class RepositoryPulse extends LitElement {
 
   // The pull requests, the commits pushed to the branch directly where there
   // are any, and the issues, two at least: the issues, where there are none,
-  // left out beside commits pushed directly; still read, shown.
+  // left out beside commits pushed directly; still read, shown. Each a panel
+  // of its own, for the grid to lay out by how many.
   renderLists(answer, narrowing, now) {
     const direct = answer.stats ? directIn(answer.stats, narrowing?.since ?? answer.since, narrowing?.until ?? Number.POSITIVE_INFINITY, narrowing?.person ?? null, now)
       : null
@@ -869,8 +877,8 @@ class RepositoryPulse extends LitElement {
       : answer
     const issues = told?.closed && told.created ? told.closed.count + told.created.count : null
     const commits = direct !== null && direct.count > 0
-    return html`${this.renderList(answer, 'pulls', narrowing)}${commits ? this.renderDirect(direct, narrowing) : nothing}${commits && issues === 0 ? nothing
-      : this.renderList(answer, 'issues', narrowing)}`
+    return [this.renderList(answer, 'pulls', narrowing), ...commits ? [this.renderDirect(direct, narrowing)] : [],
+      ...commits && issues === 0 ? [] : [this.renderList(answer, 'issues', narrowing)]]
   }
 
   // The latest commits pushed to the branch directly, of the period or as
@@ -888,8 +896,9 @@ class RepositoryPulse extends LitElement {
     return html`<section class="pulse-panel pulse-list" aria-label="Direct commits">
       <div class="pulse-head"><h3 data-tooltip="Commits pushed to the default branch, not merged from a pull request">Direct commits</h3>${narrowing
         ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}<span class="pulse-count">${number(direct.count)}</span></div>
-      <ol>${shown.map(item => html`<li><a class="pulse-item is-commit" href=${repo ? `https://github.com/${repo}/commit/${item.sha}` : nothing} target="_blank"
-        rel="noopener noreferrer"><span class="issue-state" role="img" aria-label="Commit">${COMMIT_ICON}</span>
+      <ol>${shown.map(item => html`<li><a class=${`pulse-item is-commit${item.kind ? ` is-${item.kind}` : ''}`}
+        href=${repo ? `https://github.com/${repo}/commit/${item.sha}` : nothing} target="_blank" rel="noopener noreferrer"><span class="issue-state" role="img"
+        aria-label=${item.kind ? DIRECT_KINDS[item.kind] : 'Commit'}>${COMMIT_ICON}</span>
         <span class="pulse-item-title">${item.subject || '(no message)'}</span>
         <span class="pulse-item-meta"><span>${item.sha.slice(0, 7)}</span><span>${contributor(item)}</span><time datetime=${new Date(item.at).toISOString()}>${compactTime(item.at)}</time></span>
       </a></li>`)}</ol>

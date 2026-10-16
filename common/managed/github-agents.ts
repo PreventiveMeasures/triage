@@ -76,3 +76,17 @@ export function oneAgent(login: string, ids: Iterable<number>): boolean {
   const theirs = new Set([...ids].map(id => githubAgent(login, id)))
   return theirs.size === 1 && !theirs.has(null)
 }
+
+// The accounts agents work as, a person's to GitHub, as the app is told of
+// them, each by its id and logins: the pull requests they open and the
+// commits they push to a branch directly are agents' (the Pulse's,
+// server-managed/agent-merges.ts agentMerges, repository-pulse.ts
+// commitStats), whatever their branches and labels, the rest of what they do
+// theirs. Christopher Turing's.
+export const AGENT_OPERATED = [{ id: 188797125, logins: ['ChristopherTuring'] }] as const satisfies readonly GithubAgentAccount[]
+
+// Whether an author is an account agents work as (AGENT_OPERATED): by its id
+// where GitHub gives it, whatever it is renamed to, else by its login,
+// regardless of case.
+export const agentOperated = (login: string | null, id: number | null = null): boolean => AGENT_OPERATED.some(account => id === null
+  ? typeof login === 'string' && account.logins.some(name => name.toLowerCase() === login.toLowerCase()) : account.id === id)

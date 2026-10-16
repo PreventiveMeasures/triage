@@ -12,14 +12,14 @@
 // the start of the week `weeks` weeks back, and over the same days of the
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
-import { githubAgent } from '../common/managed/github-agents.ts'
+import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 7
+export const PULSE_YEAR_VERSION = 8
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -67,8 +67,10 @@ export interface PulseWeek { week: number; days: number[]; commits: number; addi
 export interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
   days?: [number, number, number, number, number, number, number][] }
 // A commit pushed to the branch directly, as Pulse lists it: its id, when it
-// was committed, its subject and its author, by account, else name.
-export interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null }
+// was committed, its subject, its author, by account, else name, and what it
+// is: a release, else one an agent took part in, else one without.
+export interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null
+  kind: 'agent' | 'without' | 'release' }
 // Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
 // each commit's own time zone, and, counted from its commits, each period's
 // (`punches`, by its weeks); `lines` false where GitHub counts none, null
@@ -222,16 +224,19 @@ export async function yearCommits(fullName: string, token: string, head: string,
 // GitHub's agents (common/managed/github-agents.ts githubAgent), or any of
 // its co-authors an agent (commit-coauthors.ts coauthorsOf), as Commits
 // marks them; or one an agent's pull request brought (`merges`,
-// agent-merges.ts agentCommits).
-const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>) => merges.has(commit.sha)
+// agent-merges.ts agentCommits); or one an account agents work as pushed to
+// the branch directly (`direct`, github-agents.ts agentOperated).
+const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>, direct: ReadonlySet<string>) => merges.has(commit.sha)
+  || (direct.has(commit.sha) && agentOperated(commit.authorLogin, commit.authorId ?? null))
   || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || (commit.coauthors ?? []).some(coauthor => coauthor.agent)
 
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed, in all and each day,
 // those that release the repository (`releases`, release-commits.ts) and,
-// of the rest, those an agent made or co-authored, or merged from an agent's
-// pull request (`merges`, withAgent), each day;
+// of the rest, those an agent made or co-authored, merged from an agent's
+// pull request (`merges`) or pushed directly as an account agents work as
+// (`direct`, withAgent), each day;
 // its contributors,
 // by account (its id, by the login it committed as first listed, the newest,
 // whatever it was renamed from; a login's commits read before ids were, the
@@ -269,7 +274,7 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
     week.additions += additions
     week.deletions += deletions
     const release = releases.has(commit.sha)
-    const agent = !release && withAgent(commit, merges)
+    const agent = !release && withAgent(commit, merges, direct)
     if (release) week.releaseDays[weekday]!++
     if (direct.has(commit.sha)) week.directDays[weekday]!++
     if (agent) week.agentDays[weekday]!++
@@ -307,9 +312,11 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
   // Each pushed directly by the contributor its author's commits are counted
   // as, whatever account it named.
   const directCommits = commits.filter(commit => direct.has(commit.sha) && commit.committedAt !== null && commit.committedAt >= first)
-    .toSorted((a, b) => b.committedAt! - a.committedAt!).slice(0, DIRECT_LISTED).map(({ sha, committedAt, subject, authorLogin, authorId, authorName }) => {
+    .toSorted((a, b) => b.committedAt! - a.committedAt!).slice(0, DIRECT_LISTED).map((commit): PulseCommit => {
+      const { sha, committedAt, subject, authorLogin, authorId, authorName } = commit
       const author = people.get(keys.get(sha) ?? '') ?? merged.get(keys.get(sha) ?? '') ?? { login: authorLogin, id: authorId ?? null, name: authorName }
-      return { sha, at: committedAt!, subject, login: author.login, id: author.id, name: author.name }
+      const kind = releases.has(sha) ? 'release' : withAgent(commit, merges, direct) ? 'agent' : 'without'
+      return { sha, at: committedAt!, subject, login: author.login, id: author.id, name: author.name, kind }
     })
   return { weeks, contributors, punch: punches[52]!, punches, lines: true, directCommits }
 }

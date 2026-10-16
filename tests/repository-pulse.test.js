@@ -419,8 +419,8 @@ test('commits pushed directly listed where there are any, between the pull reque
   // Each Monday's commit pushed directly: Alan Kay's of Sep 28 and one of Oct 12 listed.
   const direct = stats({ weeks: year().map(row => ({ ...row, directDays: row.days.map((count, day) => day === 1 ? count : 0) })),
     contributors: stats().contributors.map(person => ({ ...person, days: person.days.map(row => [...row, 0, 0, person.name === 'Alan Kay' ? row[1] : 0]) })),
-    directCommits: [{ sha: 'b'.repeat(40), at: Date.UTC(2026, 9, 12, 9), subject: 'Bump the version', login: 'linus', id: null, name: 'Linus' },
-      { sha: 'c'.repeat(40), at: SINCE + WEEK + DAY + hour, subject: 'Fix by hand', login: null, id: null, name: 'Alan Kay' }] })
+    directCommits: [{ sha: 'b'.repeat(40), at: Date.UTC(2026, 9, 12, 9), subject: 'Bump the version', login: 'linus', id: null, name: 'Linus', kind: 'release' },
+      { sha: 'c'.repeat(40), at: SINCE + WEEK + DAY + hour, subject: 'Fix by hand', login: null, id: null, name: 'Alan Kay', kind: 'without' }] })
   answer = () => Promise.resolve(pulse({ stats: direct }))
   narrowedAnswer = () => Promise.resolve({ merged: { count: 0, items: [] }, opened: { count: 0, items: [] }, closed: { count: 0, items: [] }, created: { count: 0, items: [] } })
   const view = shown()
@@ -429,12 +429,16 @@ test('commits pushed directly listed where there are any, between the pull reque
   let text = templateText(view.render())
   const panels = () => [...text.matchAll(/class="pulse-panel pulse-list" aria-label=([^>]+)>/gu)].map(([, label]) => label.replaceAll('"', ''))
   assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'the period\'s issue beside them')
+  assert.match(text, /<div class=pulse-grid is-lists>/u, 'three lists, a row with when commits are made where there is room')
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>/u, 'each Monday\'s')
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/commit\/b{40} [^]*Bump the version[^]*bbbbbbb[^]*linus[^]*Fix by hand[^]*ccccccc[^]*Alan Kay/u)
+  assert.match(text, /class=pulse-item is-commit is-release\s+href=[^]*aria-label=Release>[^]*Bump the version/u, 'each its kind\'s, as the plots color it')
+  assert.match(text, /class=pulse-item is-commit is-without\s+href=[^]*aria-label=Commit without agents>[^]*Fix by hand/u)
   assert.match(text, /<p class="pulse-note">2 older commits not listed\.<\/p>/u, 'the two the server doesn\'t list, so said')
   view.showPerson('=Alan Kay')
   text = templateText(view.render())
   assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'no issue of theirs, left out')
+  assert.match(text, /<div class=pulse-grid>/u)
   assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">by Alan Kay<\/span><span class="pulse-count">1<\/span>/u)
   assert.doesNotMatch(text, /Bump the version/u)
   view.showPerson('=Alan Kay')
@@ -472,6 +476,7 @@ test('commits pushed directly the server doesn\'t list said, a shorter period\'s
   let text = templateText(view.render())
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">1<\/span>[^]*Fix by hand/u)
   assert.doesNotMatch(text, /not listed|Ahead of time/u)
+  assert.match(text, /class=pulse-item is-commit\s+href=[^]*aria-label=Commit>[^]*Fix by hand/u, 'one the server tells no kind of, gray')
   view.pick(4)
   text = templateText(view.render())
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>[^]*Fix by hand[^]*<p class="pulse-note">3 older commits not listed\.<\/p>/u,

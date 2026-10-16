@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { withAppUsers } from '../server-managed/github-users.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { githubAgent } from '../common/managed/github-agents.ts'
+import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
 import { namedAccounts } from '../common/managed/github-logins.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
@@ -48,6 +48,12 @@ test('an agent\'s account is told by its login, its id confirming it where both 
     .map(([login, account]) => login ? githubAgent(login, account) : githubAgent(null, null, account)), ['actions', 'actions', null, 'actions'])
   assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
     .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
+})
+
+test('an account agents work as is told by its id where GitHub gives it, whatever it is renamed to, else by its login; no agent\'s own', () => {
+  assert.deepEqual([['ChristopherTuring', 188797125], ['christopherturing', null], ['renamed', 188797125], ['ChristopherTuring', 7], ['ada', null], [null, null]]
+    .map(([login, id]) => agentOperated(login, id)), [true, true, true, false, false, false])
+  assert.equal(githubAgent('ChristopherTuring', 188797125), null, 'what else it does its person\'s')
 })
 
 test('a login an answer names beside more than one account, one GitHub named by it once and one it names by it now, is no one\'s', async t => {

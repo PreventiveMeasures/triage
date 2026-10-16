@@ -4025,6 +4025,16 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   .pulse-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .pulse-activity, .pulse-wide { grid-column: span 2; }
 }
+/* Three lists, the commits pushed directly and the issues both shown, and
+   room for them a row with when commits are made: the plots twice the
+   contributors, as before; each list a third of the plots, when commits
+   are made as wide as the contributors, under them. Nine columns. */
+@container pulse (width >= 104rem) {
+  .pulse-grid.is-lists { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+  .pulse-grid.is-lists > * { grid-column: span 3; }
+  .pulse-grid.is-lists > :is(.pulse-activity, .pulse-wide) { grid-column: span 6; }
+  .pulse-grid.is-lists > .pulse-list { grid-column: span 2; }
+}
 .pulse-head {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .5rem; margin-bottom: .6rem; color: var(--muted);
   & h3 { margin: 0; color: var(--text); font-size: .85rem; font-weight: 600; }
@@ -4254,7 +4264,15 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-merged, &.is-completed { --state: var(--issue-merged); }
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
-  &.is-commit { --state: var(--muted); }
+  /* A commit pushed directly gray, its mark tinged with its kind's hue as
+     the plots color it: with agents, without, a release. Mixed in Oklab,
+     the hue the kind's whatever the gray's faint blue, a little of its
+     chroma; the amber's a share more, the gray's blue taking some of it.
+     Its row a little shorter than a pull request's or an issue's. */
+  &.is-commit { --state: var(--muted); padding-block: .125rem; }
+  &.is-commit.is-agent { --state: color-mix(in oklab, var(--muted), var(--pulse-accent) 30%); }
+  &.is-commit.is-without { --state: color-mix(in oklab, var(--muted), var(--pulse-without) 40%); }
+  &.is-commit.is-release { --state: color-mix(in oklab, var(--muted), var(--pulse-release) 30%); }
   & .issue-state { margin: 0; }
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }
