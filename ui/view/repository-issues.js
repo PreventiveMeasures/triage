@@ -65,22 +65,25 @@ function checked(answer) {
 // as now known (repository-items.js): each it lists as read latest, one read
 // since in the other state left where it was, as it shows now; where the list
 // reaches them, those read since it was that are now in its state, among them
-// by when each was last updated; and its counts, those moving between open
-// and closed moved.
+// by when each was last updated; and its counts, those read since the page
+// its counts came with was (`countsAt`) moving between open and closed moved,
+// a later page's counting those read before it.
 export function listedNow(repoId, kind, listState, entry) {
   const belongs = item => (item.state === 'open') === (listState === 'open')
-  const items = entry.items.map(item => knownItem(repoId, item.number)?.item ?? item)
+  const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
+  const items = latest.map(({ item }) => item)
   const listed = new Set(items.map(item => item.number))
   const oldest = entry.more ? entry.items.at(-1)?.updatedAt ?? 0 : null
   const arrived = knownItems(repoId, kind).filter(({ item, readAt }) => readAt > entry.readAt && !listed.has(item.number) && belongs(item)
-    && (oldest === null || (item.updatedAt ?? 0) >= oldest)).map(({ item }) => item).toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-  for (const item of arrived) {
+    && (oldest === null || (item.updatedAt ?? 0) >= oldest)).toSorted((a, b) => (b.item.updatedAt ?? 0) - (a.item.updatedAt ?? 0))
+  for (const { item } of arrived) {
     const at = items.findIndex(other => (other.updatedAt ?? 0) < (item.updatedAt ?? 0))
     items.splice(at === -1 ? items.length : at, 0, item)
   }
-  const moved = entry.items.length + arrived.length - items.filter(belongs).length
+  const since = ({ readAt }) => readAt > (entry.countsAt ?? entry.readAt)
+  const moved = latest.filter(held => !belongs(held.item) && since(held)).length - arrived.filter(since).length
   const other = listState === 'open' ? 'closed' : 'open'
-  const counts = { [listState]: Math.max(0, entry.counts[listState] - moved + arrived.length), [other]: Math.max(0, entry.counts[other] + moved - arrived.length) }
+  const counts = { [listState]: Math.max(0, entry.counts[listState] - moved), [other]: Math.max(0, entry.counts[other] + moved) }
   return { items, counts }
 }
 
@@ -95,7 +98,7 @@ function listRead(key, ask) {
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(null).then(answer => {
-    if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null })
+    if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null })
     return null
   }, err => {
     if (data.get(key) !== loading) return null
@@ -118,7 +121,12 @@ function readMore(key, entry, ask) {
     if (sessionLists().get(key) !== entry) return null
     const held = new Set(entry.items.map(item => item.number))
     entry.items = [...entry.items, ...answer.items.filter(item => !held.has(item.number))]
-    entry.counts = answer.counts
+    // Its counts, the latest read: a page the server kept from before the
+    // one they came with leaves them.
+    if (answer.readAt >= entry.countsAt) {
+      entry.counts = answer.counts
+      entry.countsAt = answer.readAt
+    }
     entry.more = answer.more
     entry.after = answer.after
     entry.until = Date.now() + KEEP_MS

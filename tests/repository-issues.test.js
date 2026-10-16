@@ -158,6 +158,32 @@ test('a tile shows its item as read latest: one its popup read since as merged s
   view.pick('open')
 })
 
+test('counts read with a later page count one read before it, moved since its list was: moved once', async () => {
+  const { knowItems } = await import('../ui/view/repository-items.js')
+  const pages = [{ items: [pull(31), pull(30)], counts: { open: 11, closed: 967 }, more: true, after: 'next', readAt: 1000 },
+    { items: [pull(29)], counts: { open: 10, closed: 968 }, more: true, after: 'last', readAt: 3000 },
+    { items: [pull(28)], counts: { open: 12, closed: 966 }, more: false, readAt: 500 }]
+  answer = () => Promise.resolve(pages.shift())
+  const view = shown('pulls')
+  view.render()
+  await setImmediate()
+  knowItems(7, [{ ...pull(30, { state: 'merged' }), kind: 'pulls' }], 2000)
+  assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // More, read since #30 was: its counts count it merged already.
+  view.list('open').more()
+  await setImmediate()
+  assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // One merged since that page, moved.
+  knowItems(7, [{ ...pull(31, { state: 'merged' }), kind: 'pulls' }], 4000)
+  assert.match(templateText(view.render()), /Open<span class="n">9<\/span>[^]*Closed<span class="n">969<\/span>/u)
+  // The last page, kept on the server from before the first: its counts older than those held.
+  view.list('open').more()
+  await setImmediate()
+  const text = templateText(view.render())
+  assert.match(text, /Open<span class="n">9<\/span>[^]*Closed<span class="n">969<\/span>/u)
+  assert.match(text, /#28/u)
+})
+
 test('an open pull request changing a lockfile, or that may, shows the package versions new to its lockfiles once read, two at a time; one changing none, or not open, asks none', async () => {
   dependencyRequests.length = 0
   const reads = []
