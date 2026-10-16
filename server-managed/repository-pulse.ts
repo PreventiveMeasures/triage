@@ -19,7 +19,7 @@ import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accoun
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 5
+export const PULSE_YEAR_VERSION = 6
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -49,17 +49,20 @@ export class StatsPending extends Error {
 
 // A week: its commits each day (Sunday first) and in all, the lines they
 // added and removed, and, counted from its commits, each day's lines
-// (`dayLines`, `[added, removed]`) and the commits an agent made or
-// co-authored each day (`agentDays`), which GitHub's statistics don't count.
+// (`dayLines`, `[added, removed]`), the commits that release the repository
+// each day (`releaseDays`, release-commits.ts) and, of the rest, those an
+// agent made or co-authored (`agentDays`), which GitHub's statistics don't
+// count.
 export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
-  agentDays?: number[] }
+  agentDays?: number[]; releaseDays?: number[] }
 // A contributor, by their login and their account's numeric id (`id`, where
 // GitHub named it), else by the name their commits carry, and their weeks,
 // each `[week, commits, additions, deletions]`, those with any; counted from
 // their commits, their days too, each `[day, commits, additions, deletions,
-// agents]`, `agents` those of the commits an agent took part in (withAgent).
+// agents, releases]`, `releases` those that release the repository and
+// `agents`, of the rest, those an agent took part in (withAgent).
 export interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
-  days?: [number, number, number, number, number][] }
+  days?: [number, number, number, number, number, number][] }
 // Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
 // each commit's own time zone, and, counted from its commits, each period's
 // (`punches`, by its weeks); `lines` false where GitHub counts none, null
@@ -215,21 +218,22 @@ const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>) => merges
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed, in all and each day,
-// and those an agent made or co-authored, or merged from an agent's pull
-// request (`merges`, withAgent), each day;
+// those that release the repository (`releases`, release-commits.ts) and,
+// of the rest, those an agent made or co-authored, or merged from an agent's
+// pull request (`merges`, withAgent), each day;
 // its contributors,
 // by account (its id, by the login it committed as first listed, the newest,
 // whatever it was renamed from; a login's commits read before ids were, the
 // one account's that committed as it, where only one did), else login, each
 // matched as GitHub matches logins, regardless of case, else name (as many
 // as MAX_CONTRIBUTORS, the most commits first),
-// and their weeks and days, each day's commits with agents too; and its
-// commits by day of the week and hour, in each author's own time zone (else
-// UTC, where GitHub told none), the year's and each period's (PULSE_WEEKS,
-// its last weeks).
-export function commitStats(commits: HistoryCommit[], first: number, merges: ReadonlySet<string> = new Set()): PulseStats {
+// and their weeks and days, each day's releases and commits with agents too;
+// and its commits by day of the week and hour, in each author's own time
+// zone (else UTC, where GitHub told none), the year's and each period's
+// (PULSE_WEEKS, its last weeks).
+export function commitStats(commits: HistoryCommit[], first: number, merges: ReadonlySet<string> = new Set(), releases: ReadonlySet<string> = new Set()): PulseStats {
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0,
-    dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]), agentDays: Array.from({ length: 7 }, () => 0) }))
+    dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]), agentDays: Array.from({ length: 7 }, () => 0), releaseDays: Array.from({ length: 7 }, () => 0) }))
   type Counts = Map<number, number[]>
   const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Counts; days: Counts; commits: number }>()
   const punches = Object.fromEntries(PULSE_WEEKS.map(span => [span, emptyPunch()]))
@@ -247,7 +251,9 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
     week.commits++
     week.additions += additions
     week.deletions += deletions
-    const agent = withAgent(commit, merges)
+    const release = releases.has(commit.sha)
+    const agent = !release && withAgent(commit, merges)
+    if (release) week.releaseDays[weekday]!++
     if (agent) week.agentDays[weekday]!++
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     for (const span of PULSE_WEEKS) if (at >= 52 - span) punches[span]![local.getUTCDay()]![local.getUTCHours()]!++
@@ -258,7 +264,7 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
       weeks: new Map(), days: new Map(), commits: 0 }
     if (commit.authorLogin) person.logins.add(commit.authorLogin.toLowerCase())
     add(person.weeks, week.week, [1, additions, deletions])
-    add(person.days, Math.floor(commit.committedAt / DAY_MS) * DAY_MS, [1, additions, deletions, agent ? 1 : 0])
+    add(person.days, Math.floor(commit.committedAt / DAY_MS) * DAY_MS, [1, additions, deletions, agent ? 1 : 0, release ? 1 : 0])
     person.commits++
     people.set(key, person)
   }
@@ -277,7 +283,7 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
   }
   const rows = (counts: Counts) => [...counts].toSorted(([a], [b]) => a - b).map(([at, made]) => [at, ...made])
   const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, id, name, weeks: theirs, days }) => ({
-    login, id, name, weeks: rows(theirs) as [number, number, number, number][], days: rows(days) as [number, number, number, number, number][] }))
+    login, id, name, weeks: rows(theirs) as [number, number, number, number][], days: rows(days) as [number, number, number, number, number, number][] }))
   return { weeks, contributors, punch: punches[52]!, punches, lines: true }
 }
 

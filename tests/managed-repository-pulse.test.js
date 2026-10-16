@@ -10,6 +10,7 @@ import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStat
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
 import { agentCommits, agentMerges, sameMerges } from '../server-managed/agent-merges.ts'
+import { releaseChanges, releaseCommits } from '../server-managed/release-commits.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -46,9 +47,10 @@ const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({
 
 // GitHub, as the pulse reads it: each statistic answered by `answer`, the
 // default branch's head and history from `commits` (as many as a hundred
-// from each commit asked), and other GraphQL (the period's searches) by
-// `graphql`; `asked` the statistics asked and the GraphQL bodies.
-function github(t, { answer = kind => Response.json(stats[kind]), commits = [], graphql = () => ({ data: {} }) } = {}) {
+// from each commit asked), each commit's files by `files` (its paths, by
+// its id), and other GraphQL (the period's searches) by `graphql`; `asked`
+// the statistics and files asked and the GraphQL bodies.
+function github(t, { answer = kind => Response.json(stats[kind]), commits = [], graphql = () => ({ data: {} }), files = {} } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', (input, options = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
@@ -67,6 +69,12 @@ function github(t, { answer = kind => Response.json(stats[kind]), commits = [], 
         })) } }))
       }
       return Promise.resolve(Response.json(graphql(body)))
+    }
+    // A commit's files, as Replay reads them.
+    const changed = files[/^\/repos\/org\/repo\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]]
+    if (changed) {
+      asked.push(`files ${url.pathname.slice(-40)}`)
+      return Promise.resolve(Response.json({ files: changed.map(filename => ({ filename, status: 'modified' })) }))
     }
     const kind = /^\/repos\/org\/repo\/stats\/(\w+)$/u.exec(url.pathname)?.[1]
     if (kind) {
@@ -165,12 +173,12 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   const none = [0, 0]
   const noAgents = [0, 0, 0, 0, 0, 0, 0]
   assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1, dayLines: [none, [3, 1], none, none, none, none, none],
-    agentDays: noAgents })
+    agentDays: noAgents, releaseDays: noAgents })
   assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1,
-    dayLines: [[1, 1], none, [10, 0], none, none, none, none], agentDays: noAgents })
+    dayLines: [[1, 1], none, [10, 0], none, none, none, none], agentDays: noAgents, releaseDays: noAgents })
   assert.deepEqual(read.contributors, [
-    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1, 0], [first + WEEK, 1, 1, 1, 0]] },
-    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0, 0]] },
+    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1, 0, 0], [first + WEEK, 1, 1, 1, 0, 0]] },
+    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0, 0, 0]] },
   ])
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
@@ -249,6 +257,74 @@ test('a pull request whose agent\'s label is taken off is read again, none of wh
   pulls.splice(0, pulls.length, pull(1, ['bug'], [2, 3], 2, later), pull(4, [], [5, 6], 1, later), pull(7, ['codex']))
   const second = await agentMerges('org/repo', 'token', since, first)
   assert.deepEqual([second.merges.map(([sha]) => sha), second.rebases], [[shaOf(7)], []])
+})
+
+test('a commit releases the repository where it changes no code: a package.json, and beside it only lockfiles and changelogs in Markdown', () => {
+  const changes = (...files) => ({ files: files.map(file => Array.isArray(file) ? file : [file, 'M']), more: false })
+  assert.ok(releaseChanges(changes('package.json')))
+  assert.ok(releaseChanges(changes('package.json', 'package-lock.json', 'CHANGELOG.md')))
+  assert.ok(releaseChanges(changes('packages/a/package.json', 'packages/a/CHANGELOG.md', 'pnpm-lock.yaml', 'yarn.lock', ['.changeset/brave-cats.md', 'D'])),
+    'a monorepo\'s, its changesets consumed')
+  assert.ok(releaseChanges(changes('package.json', 'History.md', 'docs/changelog-2026.markdown', ['docs/CHANGELOG.md', 'R', 'CHANGELOG.md'])))
+  assert.ok(!releaseChanges(changes('CHANGELOG.md', 'package-lock.json')), 'no package.json')
+  assert.ok(!releaseChanges(changes('package.json', 'src/index.js')), 'code')
+  assert.ok(!releaseChanges(changes('package.json', 'README.md')), 'a Markdown file no changelog')
+  assert.ok(!releaseChanges(changes('package.json', ['CHANGELOG.md', 'R', 'src/index.js'])), 'one renamed from code')
+  assert.ok(!releaseChanges({ ...changes('package.json'), more: true }), 'its files not all listed')
+  assert.ok(!releaseChanges(changes()))
+})
+
+test('the commits that release a repository: those its tags name since the year began, through annotated tags, whose changes are a release\'s, each read once', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const commit = (at, day) => ({ __typename: 'Commit', oid: shaOf(at), committedDate: new Date(since + day * DAY).toISOString() })
+  const annotated = target => ({ __typename: 'Tag', oid: shaOf(900), target: { __typename: 'Tag', oid: shaOf(901), target } })
+  // The latest commits' first: the 4th's before the year began, those past it unread.
+  const refs = [{ target: commit(1, 5) }, { target: annotated(commit(2, 4)) }, { target: commit(3, 3) }, { target: { __typename: 'Tree', oid: shaOf(902) } }, null,
+    { target: commit(4, -1) }, { target: commit(5, -2) }]
+  const asked = github(t, { graphql: body => body.query.includes('refs/tags/')
+    ? { data: { repository: { refs: { pageInfo: { hasNextPage: true, endCursor: 'next' }, nodes: refs } } } } : { data: {} },
+  files: { [shaOf(1)]: ['package.json', 'CHANGELOG.md'], [shaOf(2)]: ['package.json', 'package-lock.json'], [shaOf(3)]: ['package.json', 'src/index.js'], [shaOf(4)]: ['package.json'] } })
+  const store = new Map()
+  const kept = { read: shas => Promise.resolve(new Map(shas.flatMap(sha => store.has(sha) ? [[sha, store.get(sha)]] : []))),
+    write: (sha, changes) => { store.set(sha, changes); return Promise.resolve() } }
+  assert.deepEqual(await releaseCommits('org/repo', 'token', since, kept), [shaOf(1), shaOf(2)].toSorted())
+  assert.equal(asked.filter(item => typeof item === 'object').length, 1, 'no page past the year read')
+  assert.deepEqual(asked.filter(item => typeof item === 'string').toSorted(), [1, 2, 3].map(at => `files ${shaOf(at)}`).toSorted())
+  assert.deepEqual(await releaseCommits('org/repo', 'token', since, kept), [shaOf(1), shaOf(2)].toSorted())
+  assert.equal(asked.filter(item => typeof item === 'string').length, 3, 'their files kept')
+})
+
+test('a year counts the commits that release the repository apart, none of them with agents whoever made them', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const claude = { name: 'Claude', login: null, id: null, agent: 'claude' }
+  const commit = (sha, more) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: first + DAY, coauthors: [], ...more })
+  const read = commitStats([commit('release', { coauthors: [claude] }), commit('with Claude', { coauthors: [claude] }), commit('alone')], first, new Set(['release']),
+    new Set(['release']))
+  assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1], read.weeks[0].releaseDays[1]], [3, 1, 1])
+  assert.deepEqual(read.contributors[0].days, [[first + DAY, 3, 0, 0, 1, 1]])
+})
+
+test('a commit tagged a release after its year was counted, the head where it was: read again once what was read is no longer fresh, the year counted again, the release apart', async t => {
+  const request = await fixture(t)
+  const commits = chain(50, Date.now())
+  const tags = []
+  github(t, { commits, graphql: body => body.query.includes('refs/tags/') ? { data: { repository: { refs: { pageInfo: { hasNextPage: false }, nodes: tags } } } } : { data: {} },
+    files: { [commits[3].oid]: ['package.json', 'CHANGELOG.md'], [commits[4].oid]: ['package.json', 'src/index.js'] } })
+  const releases = async () => (await request({ repoId: '1' })).body.stats.weeks.flatMap(week => week.releaseDays).reduce((sum, count) => sum + count, 0)
+  const store = repositoryReadStore(request.db)
+  const key = `1\0pulse-merges\0${PULSE_YEAR_VERSION}`
+  const age = async () => {
+    const { value } = await store.read(key)
+    await store.remove(key)
+    await store.write(key, value, Date.now() - 3 * 60_000)
+  }
+  assert.equal(await releases(), 0)
+  tags.push(...[3, 4].map(at => ({ target: { __typename: 'Commit', oid: commits[at].oid, committedDate: commits[at].committedDate } })))
+  assert.equal(await releases(), 0, 'what was read fresh, not read again')
+  await age()
+  await releases()
+  await request.settled()
+  assert.equal(await releases(), 1, 'the tagged commit changing no code a release; the other, changing code, not')
 })
 
 test('an agent\'s pull request merged with a merge commit brings its own commits, the merge itself counting none; one squashed, its merge commit alone', async t => {

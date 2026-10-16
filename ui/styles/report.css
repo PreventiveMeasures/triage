@@ -3948,23 +3948,25 @@ repository-agents { --claude: #d97757; }
    under them; two a row where narrower, one where narrower still. The
    activity is the period alone, a column each: commits in blue, those
    without agents in amber at their foot, those with them in blue over
-   them, a gap of the surface between; under them
+   them, releases in magenta atop, a gap of the surface between; under them
    lines added above a baseline and removed below it, green and red as every
    diff's are (--green, --critical), which way from the line telling them
    apart where their hues don't; a month's weekends lightly shaded, a week's
    figures written on its bars. The column pointed at washed across both,
    its figures in a card beside it, the one picked in the accent. The punch
    card one blue, a step lighter for more in the dark, darker in the light,
-   an hour of none the gridlines' gray. Blue and amber, and each step of the
-   punch card's, are told apart by every kind of color vision. */
+   an hour of none the gridlines' gray. Blue, amber and a release's magenta,
+   and each step of the punch card's, are told apart by every kind of color
+   vision. */
 repository-pulse {
-  --pulse-accent: #3987e5; --pulse-without: #c98500; --pulse-added: var(--green); --pulse-removed: var(--critical);
+  --pulse-accent: #3987e5; --pulse-without: #c98500; --pulse-release: #c552d4;
+  --pulse-added: var(--green); --pulse-removed: var(--critical);
   --pulse-zero: #2c2c2a; --pulse-grid: #2c2c2a; --pulse-axis: #4a4a47;
   --pulse-1: #0d366b; --pulse-2: #184f95; --pulse-3: #256abf; --pulse-4: #3987e5; --pulse-5: #6da7ec; --pulse-6: #9ec5f4;
   container: pulse / inline-size;
 }
 body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
-  --pulse-accent: #2a78d6;
+  --pulse-accent: #2a78d6; --pulse-release: #a83cb8;
   --pulse-zero: #e1e0d9; --pulse-grid: #e1e0d9; --pulse-axis: #c3c2b7;
   --pulse-1: #cde2fb; --pulse-2: #9ec5f4; --pulse-3: #6da7ec; --pulse-4: #3987e5; --pulse-5: #256abf; --pulse-6: #184f95;
 }
@@ -4022,6 +4024,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   width: .65rem; height: .65rem; border-radius: 2px; background: var(--pulse-accent);
   &:not(:first-child) { margin-left: .5rem; }
   &.is-without { background: var(--pulse-without); }
+  &.is-release { background: var(--pulse-release); }
   &.is-added { background: var(--pulse-added); }
   &.is-removed { background: var(--pulse-removed); }
 }
@@ -4075,12 +4078,13 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-added { background: var(--pulse-added); }
   &.is-removed { border-radius: 0 0 4px 4px; background: var(--pulse-removed); }
   /* Commits without agents at the foot, those with them over them, each
-     its share of the bar, the surface between. */
+     its share of the bar, the surface between; releases atop. */
   &.is-split { display: flex; flex-direction: column; gap: 2px; overflow: hidden; background: none; }
 }
 .pulse-part {
   flex: var(--part) 1 0; min-height: 0; background: var(--pulse-accent);
   &.is-without { background: var(--pulse-without); }
+  &.is-release { background: var(--pulse-release); }
 }
 .pulse-figure {
   flex: none; padding: 0 0 .2rem;
@@ -4116,6 +4120,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
 .pulse-tip-key {
   flex: none; width: .75rem; height: 2px; border-radius: 1px; background: var(--pulse-accent);
   &.is-none { background: none; }
+  &.is-release { background: var(--pulse-release); }
   &.is-added { background: var(--pulse-added); }
   &.is-removed { background: var(--pulse-removed); }
 }

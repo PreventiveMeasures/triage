@@ -71,12 +71,13 @@ const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { 
 
 test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
   const read = pulse()
-  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, additions: 40, deletions: 8, authors: 3 })
+  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, releases: null, previousReleases: null, additions: 40,
+    deletions: 8, authors: 3 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')
   const large = pulseSummary({ ...read, stats: stats({ lines: false }) }, NOW)
   assert.deepEqual([large.additions, large.deletions], [null, null])
-  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, additions: null,
-    deletions: null, authors: null })
+  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, releases: null,
+    previousReleases: null, additions: null, deletions: null, authors: null })
 })
 
 test('the period\'s contributors, or a day\'s, the most commits first, and a scale\'s round ticks', () => {
@@ -93,21 +94,21 @@ test('the period\'s contributors, or a day\'s, the most commits first, and a sca
 })
 
 test('a contributor\'s year: their commits and lines each week, and each day and those with agents where their days are counted', () => {
-  const people = [{ login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1]], days: [[SINCE, 3, 30, 4, 1], [SINCE + WEEK + DAY, 2, 5, 1, 2]] },
-    { login: 'grace', name: null, weeks: [[SINCE, 4, 1, 0]], days: [[SINCE, 4, 1, 0, 0]] }]
-  const ada = contributorStats(stats({ agents: true, contributors: people }), '@ada')
+  const people = [{ login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1]], days: [[SINCE, 3, 30, 4, 1, 1], [SINCE + WEEK + DAY, 2, 5, 1, 2, 0]] },
+    { login: 'grace', name: null, weeks: [[SINCE, 4, 1, 0]], days: [[SINCE, 4, 1, 0, 0, 0]] }]
+  const ada = contributorStats(stats({ agents: true, releases: true, contributors: people }), '@ada')
   const none = Array.from({ length: 7 }, () => 0)
-  assert.deepEqual([ada.byDays, ada.agents, ada.weeks.length], [true, true, 52])
+  assert.deepEqual([ada.byDays, ada.agents, ada.releases, ada.weeks.length], [true, true, true, 52])
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE), { week: SINCE, days: [3, ...none.slice(1)], dayLines: [[30, 4], ...none.slice(1).map(() => [0, 0])],
-    agentDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
+    agentDays: [1, ...none.slice(1)], releaseDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE + WEEK).agentDays, [0, 2, 0, 0, 0, 0, 0])
   assert.equal(ada.weeks.reduce((sum, row) => sum + row.commits, 0), 5, 'none of anyone else\'s')
   assert.deepEqual(pulseColumns({ ...pulse(), stats: ada }, NOW).slice(0, 9).map(column => [column.commits, column.agents]),
     [[3, 1], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [2, 2]])
   const weekly = contributorStats(counted(), '@ada')
   assert.deepEqual([weekly.byDays, weekly.agents], [false, false])
-  assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, commits: 3, additions: 30,
-    deletions: 4 }, 'by their weeks where their days aren\'t counted')
+  assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, releaseDays: none,
+    commits: 3, additions: 30, deletions: 4 }, 'by their weeks where their days aren\'t counted')
   assert.equal(contributorStats(stats({ agents: true }), '@ada').agents, false, 'their commits with agents not counted where their days hold none')
   assert.ok(contributorStats(stats(), '@nobody').weeks.every(row => row.commits === 0))
 })
@@ -365,6 +366,32 @@ test('commits with agents counted, the year holding some: a period, or a contrib
   view.showPerson('@ada')
   text = templateText(view.render())
   assert.doesNotMatch(text, /pulse-legend"><span\s+class="pulse-key"><\/span>With agents|pulse-part/u, 'a contributor whose commits with agents aren\'t counted, unsplit')
+})
+
+test('releases apart: atop each column\'s commits in their own color, named in the legend, its figures and words; the share with agents of the rest alone', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const week = Date.UTC(2026, 9, 11)
+  // This week's Monday's commit a release, its Tuesday's made with an agent;
+  // last week's Monday's a release too.
+  const release = row => row.days.map((count, day) => (row.week === week || row.week === week - WEEK) && day === 1 ? count : 0)
+  const agents = stats({ weeks: year().map(row => ({ ...row, releaseDays: release(row), agentDays: row.days.map((count, day) => row.week === week && day === 2 ? count : 0) })) })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: week, stats: agents }))
+  const view = shown()
+  view.pick(1)
+  view.render()
+  await setImmediate()
+  view.point(1)
+  const text = templateText(view.render())
+  view.pick(4)
+  assert.match(text, /<span class="pulse-legend"><span\s+class="pulse-key"><\/span>With agents<span class="pulse-key is-without"><\/span>Without<span\s+class="pulse-key is-release"><\/span>Releases<\/span>/u)
+  const columns = text.split('class=pulse-column').slice(1)
+  assert.match(columns[1], /aria-label=Mon, Oct 12: 1 commit, 0 with agents, 1 release, \+0 −0 lines [^]*<span class=pulse-bar is-split style=--value: 1><span class=pulse-part is-release style=--part: 1><\/span><\/span>/u)
+  assert.match(columns[2], /aria-label=Tue, Oct 13: 1 commit, 1 with agents, 0 releases[^]*<span class=pulse-part style=--part: 1><\/span><\/span>/u)
+  assert.match(columns[3], /<span class=pulse-part is-without style=--part: 1><\/span><\/span>/u)
+  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>[^]*<strong>0<\/strong> with agents[^]*<span class="pulse-tip-row"><span class="pulse-tip-key is-release"><\/span><strong>1<\/strong> release<\/span>/u)
+  // Five commits, one a release: one of the other four with agents; the week
+  // before's (Sunday to Thursday) five, one a release, none of the other four.
+  assert.match(text, /With agents<\/span><\/span>\s*<span class="pulse-tile-value">25%<\/span>\s*<span class="pulse-tile-note">↑ from 0% the week before<\/span>\s*<span class="pulse-tile-note">1 of 4 commits, 1 release apart</u)
 })
 
 test('a contributor or a column picked narrows the pull requests and issues to theirs, so said, the rest on GitHub narrowed alike; one whose commits name no account, none', async t => {

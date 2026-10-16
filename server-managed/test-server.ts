@@ -592,7 +592,8 @@ function pulseFixture(url: URL, res: ServerResponse, narrowed = false): void {
 // The default branch's statistics over the year to `now`, as
 // repository-pulse.ts commitStats counts them and periodStats answers them
 // for a period of `span` weeks: each day's lines, the commits agents made or
-// co-authored and each contributor's days too, and when the period's commits
+// co-authored, the releases (every other week one of Linus's) and each
+// contributor's days too, and when the period's commits
 // are made: the agents' own all theirs, a share of everyone else's, a tenth
 // at the year's start, over half by its end.
 function pulseStats(now: number, span: number) {
@@ -601,7 +602,7 @@ function pulseStats(now: number, span: number) {
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number][] }]))
+  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
     const week = first + index * WEEK_MS
     const holiday = index >= 10 && index <= 11
@@ -611,6 +612,7 @@ function pulseStats(now: number, span: number) {
     const total = days.reduce((sum, day) => sum + day, 0)
     const dayLines = days.map(() => [0, 0] as [number, number])
     const agentDays = days.map(() => 0)
+    const releaseDays = days.map(() => 0)
     let additions = 0, deletions = 0
     for (const [at, login] of people.entries()) {
       const theirCommits = Math.min(total, Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2)))
@@ -631,16 +633,23 @@ function pulseStats(now: number, span: number) {
         agentDays[busy[slot]!]!++
         withAgents[slot]!++
       }
+      // Every other week, one of Linus's commits without agents a release.
+      const released = busy.map(() => 0)
+      const releasing = login === 'linus' && index % 2 === 0 ? made.findIndex((count, slot) => count > withAgents[slot]!) : -1
+      if (releasing >= 0) {
+        released[releasing] = 1
+        releaseDays[busy[releasing]!]!++
+      }
       for (const [slot, day] of busy.entries()) {
         if (made[slot] === 0) continue
         const share = made[slot]! / theirCommits
         const [dayAdded, dayRemoved] = [Math.round(added * share), Math.round(removed * share)]
         dayLines[day]![0] += dayAdded
         dayLines[day]![1] += dayRemoved
-        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!])
+        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!, released[slot]!])
       }
     }
-    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)) }
+    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)), releaseDays }
   })
   // One whose commits name no GitHub account, by name.
   const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, ...theirs.get(login)! }))

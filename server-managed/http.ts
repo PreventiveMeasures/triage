@@ -203,6 +203,7 @@ import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, sameMerges } from './agent-merges.ts'
+import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -2059,23 +2060,39 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     return kept?.first === first ? kept.stats : null
   }
   const sha = head.value.sha
-  // A year kept by its head, the merged pull requests read again as an
-  // answer kept is (keptAnswer), a label changing whose one is without moving
-  // the head: counted again from its pages kept where what agents' bring
-  // changed, or a read of them left unfinished is finished; the year as kept
-  // answered meanwhile, and where reading them fails.
+  // What tells whose the year's commits are, kept as read: the agents' pull
+  // requests merged (agentMerges), and the commits that release the
+  // repository (`releases`, release-commits.ts releaseCommits).
+  type Attribution = AgentMerges & { releases?: string[] }
+  const keptAttribution = async () => ((await store.read(mergesKey))?.value as Attribution | undefined) ?? null
+  const attribution = async (kept: Attribution | null): Promise<Attribution> => {
+    const [merges, releases] = await Promise.all([agentMerges(fullName, token, first, kept), releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
+    return { ...merges, releases }
+  }
+  // The year counted from `commits` as `read` tells whose they are, kept by
+  // its head and as the year last counted.
+  const count = async (commits: HistoryCommit[], read: Attribution) => {
+    const stats = commitStats(commits, first, agentCommits(read, commits), new Set(read.releases))
+    await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
+    return stats
+  }
+  // A year kept by its head, what tells whose its commits are read again as
+  // an answer kept is (keptAnswer), a label or a tag changing it without
+  // moving the head: counted again from its pages kept where what agents'
+  // pull requests bring, or the releases, changed, or a read of the pull
+  // requests left unfinished is finished; the year as kept answered
+  // meanwhile, and where reading them fails.
   const relabelled = async (stats: PulseStats) => {
     const recounted: { stats?: PulseStats } = {}
     await keptAnswer(deps, mergesKey, async () => {
-      const kept = ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null
-      const merges = await agentMerges(fullName, token, first, kept)
-      if (merges.next || (kept && !kept.next && sameMerges(merges, kept))) return merges
+      const kept = await keptAttribution()
+      const read = await attribution(kept)
+      const same = kept && !kept.next && sameMerges(read, kept) && read.releases!.join() === (kept.releases ?? []).join()
+      if (read.next || same) return read
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
-      if (!year.complete) return merges
-      recounted.stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
-      await Promise.all([store.write(key, recounted.stats, Date.now()), store.write(lastKey, { first, stats: recounted.stats }, Date.now())])
-      return merges
-    }, () => true).catch((err: unknown) => { console.warn('managed: pulse merges read failed:', err) })
+      if (year.complete) recounted.stats = await count(year.commits, read)
+      return read
+    }, () => true).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
     return recounted.stats ?? stats
   }
   const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
@@ -2083,12 +2100,10 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   if (!held) {
     const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
     if (year.complete) {
-      const merges = await agentMerges(fullName, token, first, ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null)
-      await store.write(mergesKey, merges, Date.now())
-      if (merges.next) return { stats: await last(), reading: null, pulls: merges.next.read, pending: false, kept: false }
-      const stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
-      await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
-      return { stats, reading: null, pulls: null, pending: false, kept: false }
+      const read = await attribution(await keptAttribution())
+      await store.write(mergesKey, read, Date.now())
+      if (read.next) return { stats: await last(), reading: null, pulls: read.next.read, pending: false, kept: false }
+      return { stats: await count(year.commits, read), reading: null, pulls: null, pending: false, kept: false }
     }
     if (!year.tooMany) return { stats: await last(), reading: year.read, pulls: null, pending: false, kept: false }
     await store.write(key, { tooMany: true }, Date.now())
