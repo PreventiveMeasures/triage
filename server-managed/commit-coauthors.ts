@@ -41,22 +41,26 @@ const makerAgent = ({ name, email, account }: Maker): GithubAgentId | null => gi
 // (agent-tasks.ts agentSignals: their sessions' and tasks' links, Claude's
 // co-author and "Generated with" lines), the app agents' by their
 // fingerprints, Cursor's by its agents' links. Each the agent it is where
-// known, and once, the author none of them (by any of its agent, account,
-// name and address the two name), as many as MAX_COAUTHORS.
+// known, and once, the author none of them, as many as MAX_COAUTHORS: two
+// are one by the first of their agent, account, address and name both name,
+// two people of one name with accounts or addresses of their own two.
 export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | null = null): Coauthor[] {
   const text = typeof message === 'string' ? message.replaceAll('\r\n', '\n') : ''
   const named = listed ?? [...text.matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name, email, account: commitAccount({ email }) }))
   const signals = agentSignals([text], FINGERPRINTED)
   const marked = [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 ? ['codex'] : [],
     ...CURSOR_AGENT.test(text) ? ['cursor'] : [], ...signals.agents]
-  const keysOf = (agent: string | null, login: string | null, name: string | null, email: unknown = null) => [...agent ? [`agent:${agent}`] : [],
-    ...login ? [`login:${login.toLowerCase()}`] : [], ...name ? [`name:${name.toLowerCase()}`] : [], ...typeof email === 'string' ? [`email:${email.trim().toLowerCase()}`] : []]
-  const seen = new Set(keysOf(makerAgent(author), author.account.login, textOf(author.name, MAX_NAME), author.email))
+  type Identity = { agent: string | null; login: string | null; email: string | null; name: string | null }
+  const identity = (agent: string | null, login: string | null, name: string | null, email: unknown = null): Identity => ({ agent, login: login?.toLowerCase() ?? null,
+    email: typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null, name: name?.toLowerCase() ?? null })
+  const same = (a: Identity, b: Identity) => a.agent && b.agent ? a.agent === b.agent : a.login && b.login ? a.login === b.login
+    : a.email && b.email ? a.email === b.email : a.name !== null && a.name === b.name
+  const seen = [identity(makerAgent(author), author.account.login, textOf(author.name, MAX_NAME), author.email)]
   const coauthors: Coauthor[] = []
   const add = (coauthor: Coauthor, email: unknown = null) => {
-    const keys = keysOf(coauthor.agent ?? null, coauthor.login, coauthor.name, email)
-    if (keys.some(key => seen.has(key)) || coauthors.length >= MAX_COAUTHORS || (!coauthor.login && !coauthor.name && !coauthor.agent)) return
-    for (const key of keys) seen.add(key)
+    const who = identity(coauthor.agent ?? null, coauthor.login, coauthor.name, email)
+    if (seen.some(other => same(other, who)) || coauthors.length >= MAX_COAUTHORS || (!coauthor.login && !coauthor.name && !coauthor.agent)) return
+    seen.push(who)
     coauthors.push(coauthor)
   }
   for (const maker of named) {

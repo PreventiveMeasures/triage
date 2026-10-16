@@ -28,4 +28,10 @@ test('the agents a commit\'s message marks come after its trailers\', each once,
   assert.deepEqual(coauthorsOf(`Fix\n\n${claudeSession}\nCo-Authored-By: Claude <noreply@anthropic.com>`, { name: 'Claude', email: 'noreply@anthropic.com', account: nobody }), [])
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Ada <ada@example.com>', { name: 'Ada', account: { login: 'ada', id: 1 } }), [], 'the author by their name')
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: A. L. <ADA@example.com>', { name: 'Ada', email: 'ada@example.com', account: nobody }), [], 'the author by their address')
+  // People of one name, by addresses or accounts of their own, are each themselves.
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Ada <ada2@example.com>\nCo-authored-by: Sam <sam@one.example>\nCo-authored-by: Sam <sam@two.example>',
+    { name: 'Ada', email: 'ada@example.com', account: { login: 'ada', id: 1 } }), [
+    { name: 'Ada', login: null, id: null }, { name: 'Sam', login: null, id: null }, { name: 'Sam', login: null, id: null },
+  ])
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Sam <sam@one.example>\nCo-authored-by: Sam <SAM@one.example>', ada), [{ name: 'Sam', login: null, id: null }], 'one address, once')
 })
