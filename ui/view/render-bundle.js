@@ -50,6 +50,7 @@ import './repository-history.js'
 import './repository-agents.js'
 import './repository-pulse.js'
 import './repository-replay.js'
+import './repository-treemap.js'
 import './repository-issues.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
@@ -2074,18 +2075,22 @@ export function renderNpmOpening({ name, spec, tab }) {
 // body what opens, or why it didn't, with the directories it lists to open
 // instead where it has any. Its Commits, which read none of its files,
 // shows at its commit alone (`historyOnly`), or where its files failed to
-// open, its tabs then opening each.
+// open, its tabs then opening each; and its Treemap, while its files are read
+// or where they are too many to open, drawn from their sizes as its tree
+// lists them (repository-treemap.js).
 export function renderRepositoryCodeOpening(opening) {
-  const { repoId, commit, path, tab, repo, revision, error, historyOnly = false } = opening
+  const { repoId, commit, path, tab, repo, revision, error, code, historyOnly = false } = opening
   const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
   const at = commit ? ` at ${commit.slice(0, 7)}` : ''
   const repository = { repoId, repo, commit, path, revision }
   const tabsOpen = Boolean(commit && (historyOnly || error))
   return bundleSlideView({ repository }, tab, repositoryCodeTabs(tab), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
     ? repositoryFilelessTab(repository, tab)
-    : error
-      ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
-      : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
+    : tab === 'treemap' && commit && (!error || code === 'directory-too-large')
+      ? html`<repository-treemap .repository=${repository}></repository-treemap>`
+      : error
+        ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`
+        : html`<div class="bundles-slide-placeholder" role="status">Opening ${what}${at}…</div>`,
   { opening: !historyOnly, onTab: tabsOpen ? key => openRepositoryCodeTab(opening, key) : null })
 }
 

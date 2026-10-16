@@ -1650,6 +1650,20 @@ disk cache with them. Readers asking for the same directory meanwhile share
 one load, among the npm viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
 
+A directory's **Treemap**, while its files are read, or where they are too
+many to open, is drawn from their sizes alone, as its commit's tree lists
+them (`GET /api/admin/repositories/tree`, as Replay reads its files, below),
+which is read sooner: none of their text is read, so a file's cell opens
+nothing and its packages are told by their paths alone, and where the
+listing leaves files out (past 75,000, the deepest), it says the files drawn
+are those nearest its root. A directory opening on its Treemap shows so in
+place of one shown, at its commit, which listing the repository's root reads
+where its route names none, while its files are read; once they are, its
+Treemap is drawn from them, their packages told and each file opening its
+source, and a directory whose files are read already reads no tree. A
+directory too large to open says why on its Code, Search and Compare,
+listing its directories to open instead.
+
 ## Compare
 
 The **Compare** tab compares the directory with itself at another revision,
@@ -2284,8 +2298,10 @@ reader's own GitHub access, only within their grants (a directory they
 reach all of), and access checked again before they are sent.
 
 `GET /api/admin/repositories/tree?repoId=…&path=…&commit=…` answers
-`{ commit, path, files, cut }`: the files the commit holds within `path`,
-by their paths, as GitHub lists its tree and every tree under it at once
+`{ commit, path, files, sizes, cut }`: the files the commit holds within
+`path`, by their paths, and their bytes (`sizes`, in the same order, a
+directory's Treemap drawn by them while its files are read, or where they are
+too many), as GitHub lists its tree and every tree under it at once
 (`GET /repos/:owner/:repo/git/trees/:commit?recursive=1`), its blobs, not
 its directories nor submodules, as many as 75,000. Where GitHub cuts that
 listing short (past 100,000 entries or 7 MB, as it does a large
@@ -2296,10 +2312,13 @@ as 400 trees, each round of trees read whole, every tree beside another,
 but for trees no file of which could be kept (as deep as the 75,000 files
 nearest the root read, or deeper). Past 75,000, those nearest the root
 are kept; `cut` where some are left out,
-which the summary then says; `files` null for a commit GitHub has none of.
-Kept by the commit, and the rules it is read by, as the changes are
-(`repository/trees`), a tree kept by older rules read again, and read as
-they are.
+which the summary then says; `files` and `sizes` null for a commit GitHub
+has none of. A directory below the root of a tree cut short so, its files
+perhaps among those left out, is read itself: its tree's id read a level at
+a time, then its tree as the commit's is, kept by its id, the files nearest
+it kept. Kept by the commit, and the rules it is read by, as the changes
+are (`repository/trees`), a tree kept by older rules (without sizes, the
+last) read again, and read as they are.
 
 # npm package viewer
 

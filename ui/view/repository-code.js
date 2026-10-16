@@ -206,6 +206,19 @@ async function listDirectories(opening, err) {
   } catch {}
 }
 
+// The commit a directory opening on its Treemap names none of, as listing
+// the repository's root reads it, for its Treemap to draw its files' sizes
+// at while they are read (openRepositoryCodeRoute).
+async function sizeAt(opening) {
+  try {
+    const listed = await fetchRepositoryContents(opening.repoId, routeRef(opening), '', { signal: currentViewSignal() })
+    if (state.repositoryCodeOpening === opening && COMMIT.test(listed?.commit ?? '')) {
+      state.repositoryCodeOpening = { ...opening, commit: listed.commit.toLowerCase() }
+      render({ animate: false })
+    }
+  } catch {}
+}
+
 // Opens the directory a failed opening names on another tab, as its tabs
 // do, those of a directory too large to open its History alone can show.
 export function openRepositoryCodeTab({ repoId, repo, commit, ref, path, revision }, bundleTab) {
@@ -274,9 +287,13 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
     // Its branches and tags as they are now, for its header.
     rereadHeader(`refs\0${repoId}`)
-    // Another directory, or revision, keeps the one shown, dimmed, until it
-    // opens, its header naming it meanwhile (repositoryCodePending).
-    const pending = shown ? { integrity: shown.integrity, generation: currentViewGeneration(), repository: { repoId, repo: opening.repo, commit, path, revision } } : null
+    // Its Treemap draws its files' sizes as its tree lists them while its
+    // files are read, the sooner (repository-treemap.js), at its commit,
+    // which listing the repository's root reads where its route names none.
+    // Another directory, or revision, otherwise keeps the one shown, dimmed,
+    // until it opens, its header naming it meanwhile (repositoryCodePending).
+    const sizing = tab === 'treemap'
+    const pending = shown && !sizing ? { integrity: shown.integrity, generation: currentViewGeneration(), repository: { repoId, repo: opening.repo, commit, path, revision } } : null
     if (pending) {
       state.repositoryCodePending = pending
       render({ animate: false })
@@ -284,6 +301,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       showOpening(opening)
       renderSidebar()
     }
+    if (sizing && !commit) void sizeAt(opening)
     // Its header names it from now on: so does the address bar.
     managedHistory?.showing(route)
     let data

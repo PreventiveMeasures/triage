@@ -856,13 +856,26 @@ function replayChangesOf(asked: string) {
   return replayChanges.get(asked) ?? [[REPLAY_TREE[createHash('sha1').update(asked).digest()[0]! % 12]!, 'M']]
 }
 
-function treeFixture(url: URL, res: ServerResponse): void {
+// `vendor`, the directory too large to open, holds a few packages' files,
+// each as large as its path's hash draws, for its Treemap to draw.
+const VENDOR_TREE = ['left-pad', 'lodash', 'react', 'typescript', 'zod'].flatMap(name => ['index.js', 'package.json', 'README.md', 'lib/core.js', 'lib/util.js', 'dist/bundle.min.js']
+  .map(file => `vendor/${name}/${file}`))
+const fixtureSize = (path: string) => 200 + createHash('sha1').update(path).digest().readUInt32BE(0) % (path.endsWith('.min.js') ? 400_000 : 40_000)
+
+// The files the code viewer's directories hold, as its reads below give them.
+const codeFixtureFiles = (repoId: number) => repoId === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
+  : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol',
+    'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md']
+
+// A commit of History's its files as Replay plays them; any other, the code
+// viewer's, those its directories hold.
+function treeFixture(url: URL, res: ServerResponse, repoId: number): void {
   const commit = url.searchParams.get('commit') ?? ''
   const path = url.searchParams.get('path') ?? ''
   if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   replayChangesOf(commit)
-  const files = replayTrees.get(commit)?.filter(file => path === '' || file.startsWith(`${path}/`)) ?? null
-  setTimeout(() => sendJson(res, 200, { commit, path, files, cut: false }), 400)
+  const files = path === 'vendor' ? VENDOR_TREE : (replayTrees.get(commit) ?? codeFixtureFiles(repoId)).filter(file => path === '' || file.startsWith(`${path}/`))
+  setTimeout(() => sendJson(res, 200, { commit, path, files, sizes: files.map(fixtureSize), cut: false }), 400)
 }
 
 function changesFixture(url: URL, res: ServerResponse): void {
@@ -901,7 +914,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   if (url.pathname.endsWith('/changes')) { changesFixture(url, res); return }
-  if (url.pathname.endsWith('/tree')) { treeFixture(url, res); return }
+  if (url.pathname.endsWith('/tree')) { treeFixture(url, res, repo.id); return }
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
@@ -915,8 +928,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
   const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'
-  const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
-    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md']
+  const files = codeFixtureFiles(repo.id)
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
   const commit = /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40)
