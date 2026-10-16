@@ -423,6 +423,12 @@ describe('listSegments', () => {
     ])
   })
 
+  it('ends at a heading or a rule at the margin, which no item wraps onto', () => {
+    assert.deepEqual(listSegments('- [x] done\n## Notes'), [{ ordered: false, start: null, items: ['[x] done'] }, '## Notes'])
+    assert.deepEqual(listSegments('- item\n---\nafter'), [{ ordered: false, start: null, items: ['item'] }, '---\nafter'])
+    assert.deepEqual(listSegments('- item\n  ## inside'), [{ ordered: false, start: null, items: ['item\n## inside'] }], 'indented to the item, it is the item\'s')
+  })
+
   it('leaves a nested list inside its item, to be rendered there', () => {
     assert.deepEqual(listSegments('1. Outer\n   - Inner a\n   - Inner b\n2. Next'), [
       { ordered: true, start: 1, items: ['Outer\n- Inner a\n- Inner b', 'Next'] },

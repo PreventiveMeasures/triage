@@ -794,8 +794,9 @@ export function listSegments(text) {
         }
         // Back at the margin after a blank line: the list is over. Without
         // the blank it's a wrapped item, which markdown reads as part of
-        // the item however far left the report wrapped it to.
-        if (indent < item.column && afterBlank) break
+        // the item however far left the report wrapped it to — unless the
+        // line is a heading or a rule, which no item wraps onto.
+        if (indent < item.column && (afterBlank || HEADING_RE.test(line) || HRULE_RE.test(line))) break
       }
       item.lines.push(shedIndent(line, item.column))
       afterBlank = false

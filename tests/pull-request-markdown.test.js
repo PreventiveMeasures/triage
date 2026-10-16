@@ -43,12 +43,17 @@ test('a pull request\'s headings, test plan and sign-off are drawn as such', () 
   assert.doesNotMatch(text, /##|\[x\]|\[ \]|---|_Generated/u)
 })
 
+test('a heading or a rule right after a list item ends the list', () => {
+  assert.match(shown('- [x] done\n## Notes'), /<\/li><\/ul><div class="md-heading" role="heading" aria-level=2>Notes<\/div>$/u)
+  assert.match(shown('- item\n---\nafter'), /<\/li><\/ul><hr class="md-rule"><div class="para">after<\/div>$/u)
+})
+
 test('each emphasis ends at its own closing underscore', () => {
   assert.equal(shown('_a_ and _b_, _one_ and _two_'), '<em>a</em> and <em>b</em>, <em>one</em> and <em>two</em>')
 })
 
 test('what isn\'t one of those shapes stays as written', () => {
-  for (const text of ['snake_case_name and __init__', '#972 and #hashtag', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
+  for (const text of ['snake_case_name and __init__', 'café_monde_ and 東京_駅_', '#972 and #hashtag', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
     assert.equal(shown(text), text, text)
   }
 })
