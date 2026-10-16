@@ -530,44 +530,60 @@ function pulseFixture(url: URL, res: ServerResponse): void {
     pulseReads++
     sendJson(res, 200, { weeks, ...activity, stats: null, reading: pulseReads * 500, pending: false }); return
   }
-  sendJson(res, 200, { weeks, ...activity, stats: pulseStats(now), reading: null, pending: false })
+  sendJson(res, 200, { weeks, ...activity, stats: pulseStats(now, weeks), reading: null, pending: false })
 }
 
 // The default branch's statistics over the year to `now`, as
-// repository-pulse.ts repositoryStats gives them.
-function pulseStats(now: number) {
+// repository-pulse.ts commitStats counts them and periodStats answers them
+// for a period of `span` weeks: each day's lines and each contributor's days
+// too, and when the period's commits are made.
+function pulseStats(now: number, span: number) {
   let seed = 7
   const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const theirs = new Map(people.map(login => [login, [] as [number, number, number, number][]]))
+  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
     const week = first + index * WEEK_MS
     const holiday = index >= 10 && index <= 11
     const commits = holiday ? Math.round(random() * 4) : Math.round(12 + index * 0.6 + random() * 18 + (index % 9 === 4 ? 25 : 0))
-    const days = [0.03, 0.22, 0.24, 0.2, 0.19, 0.1, 0.02].map(share => Math.round(commits * share * (0.7 + random() * 0.6)))
+    // None yet on the days of this week to come.
+    const days = [0.03, 0.22, 0.24, 0.2, 0.19, 0.1, 0.02].map((share, day) => week + day * 86_400_000 > now ? 0 : Math.round(commits * share * (0.7 + random() * 0.6)))
     const total = days.reduce((sum, day) => sum + day, 0)
+    const dayLines = days.map(() => [0, 0] as [number, number])
     let additions = 0, deletions = 0
     for (const [at, login] of people.entries()) {
-      const theirCommits = Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2))
+      const theirCommits = Math.min(total, Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2)))
       if (theirCommits === 0) continue
       const added = theirCommits * Math.round(20 + random() * 140), removed = Math.round(added * (index % 13 === 7 && at === 1 ? 3.2 : 0.2 + random() * 0.5))
       additions += added
       deletions += removed
-      theirs.get(login)!.push([week, theirCommits, added, removed])
+      theirs.get(login)!.weeks.push([week, theirCommits, added, removed])
+      // Their commits on the week's days that had any, their lines with them.
+      const busy = days.flatMap((count, day) => count > 0 ? [day] : [])
+      const made = busy.map(() => 0)
+      for (let commit = 0; commit < theirCommits; commit++) made[Math.floor(random() * busy.length)]!++
+      for (const [slot, day] of busy.entries()) {
+        if (made[slot] === 0) continue
+        const share = made[slot]! / theirCommits
+        const [dayAdded, dayRemoved] = [Math.round(added * share), Math.round(removed * share)]
+        dayLines[day]![0] += dayAdded
+        dayLines[day]![1] += dayRemoved
+        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved])
+      }
     }
-    return { week, days, commits: total, additions, deletions }
+    return { week, days, commits: total, additions, deletions, dayLines }
   })
   // One whose commits name no GitHub account, by name.
-  const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, weeks: theirs.get(login)! }))
+  const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, ...theirs.get(login)! }))
     .filter(person => person.weeks.length > 0)
   const punch = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (__, hour) => {
     const weekday = day >= 1 && day <= 5
     const working = hour >= 9 && hour <= 18 ? (hour === 12 ? 0.6 : 1) : hour >= 19 && hour <= 23 ? 0.35 : hour <= 1 ? 0.15 : 0.02
-    return Math.round((weekday ? 40 : 9) * working * (0.6 + random() * 0.8))
+    return Math.round((weekday ? 40 : 9) * working * (0.6 + random() * 0.8) * span / 52)
   }))
-  return { weeks, contributors, punch, lines: true }
+  return { weeks, contributors, punch, periodPunch: true, lines: true }
 }
 
 // What a repository's agents left, for its Agents tab: Claude Code sessions,

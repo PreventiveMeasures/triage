@@ -5,7 +5,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore } from '../server-managed/npm-kept.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
-import { StatsPending, YEAR_COMMITS, commitStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
+import { StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -151,15 +151,32 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
     commit('undated', { committedAt: null }),
   ], first)
   assert.equal(read.weeks.length, 52)
-  assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1 })
-  assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1 })
+  const none = [0, 0]
+  assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1, dayLines: [none, [3, 1], none, none, none, none, none] })
+  assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1,
+    dayLines: [[1, 1], none, [10, 0], none, none, none, none] })
   assert.deepEqual(read.contributors, [
-    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
-    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]] },
+    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
+    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0]] },
   ])
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
   assert.equal(read.lines, true)
+})
+
+test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const at = (sha, committedAt) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt, additions: 1, deletions: 0,
+    authoredAt: committedAt, authorZone: 0 })
+  // Mondays at 10:00: one in the year's first week, one four weeks from its
+  // end, one in its last week.
+  const read = commitStats([at('a', first + DAY + 10 * HOUR), at('b', first + 48 * WEEK + DAY + 10 * HOUR), at('c', first + 51 * WEEK + DAY + 10 * HOUR)], first)
+  const monday = weeks => periodStats(read, weeks).punch[1][10]
+  assert.deepEqual([monday(1), monday(4), monday(13), monday(52)], [1, 2, 2, 3])
+  assert.deepEqual(Object.keys(periodStats(read, 4)).toSorted(), ['contributors', 'lines', 'periodPunch', 'punch', 'weeks'], 'the other periods\' not sent')
+  assert.equal(periodStats(read, 4).periodPunch, true)
+  const counted = { weeks: [], contributors: [], punch: read.punch, lines: null }
+  assert.deepEqual(periodStats(counted, 4), { ...counted, periodPunch: false })
 })
 
 test('a year\'s contributors are its authors\' accounts, whatever they were renamed from: a login GitHub named two by, each apart; one\'s commits read before ids were, its one account\'s', () => {
@@ -283,6 +300,11 @@ test('the pulse counts the year from the default branch\'s commits as Commits ke
   const month = await request({ repoId: '1' })
   assert.equal(month.body.stats.weeks.length, 52, 'the year kept by its head, for every period')
   assert.equal(asked.length, reads + 1, 'the month\'s pull requests and issues alone read')
+  // When each period's commits are made, its own, the others' not sent.
+  const made = body => body.stats.punch.flat().reduce((sum, count) => sum + count, 0)
+  const last = (body, weeks) => body.stats.weeks.slice(-weeks).reduce((sum, week) => sum + week.commits, 0)
+  assert.deepEqual([made(month.body), made(second.body)], [last(month.body, 4), last(second.body, 13)])
+  assert.deepEqual([month.body.stats.periodPunch, 'punches' in month.body.stats], [true, false])
 })
 
 test('pages kept without lines, as GitHub\'s REST API lists them, are read again for the pulse', async t => {
