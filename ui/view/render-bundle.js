@@ -2008,9 +2008,9 @@ const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['s
 function repositoryFilelessTab(repository, tab) {
   return tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
     .refs=${repositoryRefs(repository.repoId)}></repository-history>`
-    : tab === 'agents' ? html`<repository-agents .repository=${repository}></repository-agents>`
-    : tab === 'pulse' ? html`<repository-pulse .repository=${repository}></repository-pulse>`
-    : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
+    : tab === 'agents' ? html`<repository-agents .repository=${repository} .repo=${repositoryFullName(repository)}></repository-agents>`
+    : tab === 'pulse' ? html`<repository-pulse .repository=${repository} .repo=${repositoryFullName(repository)}></repository-pulse>`
+    : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`
 }
 
 // The bundle slide: its header, with the bundle's name, or an npm version's

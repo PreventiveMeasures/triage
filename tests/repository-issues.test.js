@@ -116,6 +116,9 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   assert.match(text, /aria-label=Checks passed /u)
   const unnamed = shown('pulls', null)
   assert.doesNotMatch(templateText(unnamed.render()), /href=/u)
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5/u)
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

@@ -130,6 +130,11 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   assert.match(text, /Closed issues<span class="issues-count">0<\/span><\/h3>\s*<p class="pulse-note">None in the period\.<\/p>/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/3\s/u)
   assert.deepEqual(text.match(/All \d+ on GitHub/gu), ['All 12 on GitHub', 'All 2 on GitHub'], 'a list of all GitHub found holds no link to more')
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  const unnamed = shown(null)
+  assert.doesNotMatch(templateText(unnamed.render()), /github\.com\/org/u)
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5\s/u)
 })
 
 test('another period is read for itself, the last one shown faded meanwhile; read, it is kept', async t => {

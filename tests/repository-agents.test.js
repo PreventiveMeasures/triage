@@ -79,6 +79,11 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.doesNotMatch(text, /Pull 4/u)
   assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  const unnamed = shown(null)
+  assert.doesNotMatch(templateText(unnamed.render()), /href=https:\/\/github\.com/u)
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/9/u)
 })
 
 test('a tile says how many tasks only where its chips don\'t count them all: not for pull requests\' or commits\' alone, or both', async () => {

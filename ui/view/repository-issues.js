@@ -129,15 +129,18 @@ function labelChips(item) {
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an
-// entry's) is in: its issues, or its pull requests (`kind` 'pulls').
+// entry's) is in, by its full name (`repo`, repository-code.js
+// repositoryFullName, once known): its issues, or its pull requests (`kind`
+// 'pulls').
 class RepositoryIssues extends LitElement {
-  static properties = { repository: { attribute: false }, kind: {}, _filter: { state: true } }
+  static properties = { repository: { attribute: false }, repo: { attribute: false }, kind: {}, _filter: { state: true } }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.repository = null
+    this.repo = null
     this.kind = 'issues'
     this._filter = ''
     this._moreButton = null
@@ -215,7 +218,7 @@ class RepositoryIssues extends LitElement {
 
   renderTiles(entry, shown, more, what) {
     if (entry.items.length === 0) return html`<div class="bundles-slide-placeholder">No ${what}.</div>`
-    const repo = this.repository.repo
+    const repo = this.repo ?? this.repository.repo
     const path = this.kind === 'pulls' ? 'pull' : 'issues'
     return html`<div class="issues-scroll">
       ${shown.length === 0 ? html`<p class="history-note">None of the ${what} read match.</p>` : html`<ol class="issues-grid" aria-label=${what}>${shown.map(item => {
