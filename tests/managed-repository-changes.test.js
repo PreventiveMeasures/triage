@@ -178,6 +178,28 @@ test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at
   assert.equal(kept.size, 2)
 })
 
+test('each of a cut-short tree\'s trees is read, past as many files as are answered, those nearest the root kept, whichever answers first', async t => {
+  const store = { read: () => Promise.resolve(null), write: () => Promise.resolve() }
+  // Twelve trees of thirteen thousand files deep in them, six of them more than are answered, then one of ten files of its own, answering soonest.
+  const names = [...'abcdefghijkl', 'z']
+  const sha = at => at.toString(16).padStart(2, '0').repeat(20)
+  const trees = { [`${a}:1`]: { tree: [], truncated: true },
+    [`${a}:`]: { tree: names.map((name, at) => ({ path: name, type: 'tree', sha: sha(at) })), truncated: false } }
+  for (const [at, name] of names.entries()) {
+    trees[`${sha(at)}:1`] = { tree: name === 'z' ? Array.from({ length: 10 }, (_, file) => ({ path: `f${file}`, type: 'blob' }))
+      : Array.from({ length: 13_000 }, (_, file) => ({ path: `x/y/f${file}`, type: 'blob' })), truncated: false }
+  }
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const key = `${url.pathname.split('/').at(-1)}:${url.searchParams.get('recursive') ?? ''}`
+    if (!key.startsWith(sha(names.length - 1))) await new Promise(resolve => { setTimeout(resolve, 5) })
+    return Response.json(trees[key])
+  })
+  const read = await repositoryTree('org/repo', null, a, store)
+  assert.deepEqual([read.files.length, read.cut], [MAX_TREE_FILES, true])
+  assert.deepEqual(read.files.filter(path => path.startsWith('z/')).length, 10, 'the last tree\'s files, nearest the root, kept')
+})
+
 test('a commit\'s files are read a hundred a page while each page is full, as many as three hundred, before what it changes is kept', async t => {
   // Commits of 250 and 420 files, and one of exactly a page.
   const counts = { [a]: 250, [b]: 420, [c]: FILES_PAGE }

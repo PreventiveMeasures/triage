@@ -116,11 +116,11 @@ export async function repositoryChanges(fullName: string, token: string | null, 
 // (GET /repos/:owner/:repo/git/trees/:tree?recursive=1); where GitHub cuts
 // that listing short (past 100,000 entries or 7 MB, as a large repository's
 // is), as GitHub advises: the tree's own entries listed alone, and each tree
-// in it read so in turn, as many at once as TREES_PARALLEL. Its blobs, not
-// its directories nor submodules, sorted by path; past MAX_TREE_FILES those
-// nearest its root (the trees they are in, whole, before any tree's deepest
-// files), `cut` where some are left out: more files than MAX_TREE_FILES, a
-// tree's own entries cut short, or more trees to read than MAX_TREE_READS.
+// in it read so in turn, as many at once as TREES_PARALLEL (treeByTrees).
+// Its blobs, not its directories nor submodules, sorted by path; past
+// MAX_TREE_FILES those nearest its root of those read, `cut` where some are
+// left out: more files than MAX_TREE_FILES, a tree's own entries cut short,
+// or more trees to read than MAX_TREE_READS.
 // Null for a commit GitHub has none of. Kept by the commit and the rules it
 // is read by (TREES_READ), a tree kept by older ones read again.
 export const MAX_TREE_FILES = 75_000
@@ -173,34 +173,38 @@ function blobsOf(entries: TreeEntry[], prefix: string, files: string[]) {
 // The files under the commit's tree, `commit`, onto `files`, its trees read
 // a round at a time, those nearest the root first: its own entries, then
 // each tree in it whole, or, where that is cut short, alone in turn, and so
-// on. Whether some were left out.
+// on. Each round read whole, every tree of it, whatever answers first, so
+// that none beside another is left out for it; the next begun only while
+// the files are fewer than MAX_TREE_FILES, and only as many trees read in
+// all as MAX_TREE_READS, those of a round first in its order. Whether some
+// were left out.
 async function treeByTrees(commit: string, listing: TreeListing, files: string[]): Promise<boolean> {
-  const read = { trees: 1, cut: false }
-  let round = [{ tree: commit, prefix: '', recursive: false }]
+  let cut = false, reads = 1, round = [{ tree: commit, prefix: '', recursive: false }]
   while (round.length > 0) {
+    if (files.length >= MAX_TREE_FILES) return true
+    const asked = round.slice(0, Math.max(0, MAX_TREE_READS - reads))
+    cut ||= asked.length < round.length
+    reads += asked.length
+    const listed: Awaited<ReturnType<TreeListing>>[] = []
+    await eachOf([...asked.keys()], TREES_PARALLEL, async at => { listed[at] = await listing(asked[at]!.tree, asked[at]!.recursive) })
     const next: typeof round = []
-    await eachOf(round, TREES_PARALLEL, async ({ tree, prefix, recursive }) => {
-      if (files.length >= MAX_TREE_FILES || read.trees >= MAX_TREE_READS) {
-        read.cut = true
-        return
-      }
-      read.trees++
-      const { entries, truncated } = await listing(tree, recursive)
+    for (const [at, { tree, prefix, recursive }] of asked.entries()) {
+      const { entries, truncated } = listed[at]!
       if (truncated && recursive) {
         next.push({ tree, prefix, recursive: false })
-        return
+        continue
       }
-      read.cut ||= truncated
+      cut ||= truncated
       blobsOf(entries, prefix, files)
-      if (recursive) return
+      if (recursive) continue
       for (const item of entries) {
         const path = pathOf(item?.path)
         if (item?.type === 'tree' && path && typeof item.sha === 'string' && SHA.test(item.sha)) next.push({ tree: item.sha, prefix: `${prefix}${path}/`, recursive: true })
       }
-    })
+    }
     round = next
   }
-  return read.cut
+  return cut
 }
 
 // The files of a tree within the directory `path` ('' the whole repository).

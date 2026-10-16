@@ -2274,8 +2274,9 @@ listing short (past 100,000 entries or 7 MB, as it does a large
 repository's, nodejs/node's among them), it is read as GitHub advises, a
 tree at a time: the tree's own entries, then each tree in it whole, or,
 where that is cut short too, its own entries in turn, six at once, as many
-as 400 trees. Past 75,000 files, those nearest the root are kept (each
-tree's files before any tree's deepest); `cut` where some are left out,
+as 400 trees, each round of trees read whole, every tree beside another,
+and the next begun only while there are fewer than 75,000 files. Past
+75,000, those nearest the root are kept; `cut` where some are left out,
 which the summary then says; `files` null for a commit GitHub has none of.
 Kept by the commit, and the rules it is read by, as the changes are
 (`repository/trees`), a tree kept by older rules read again, and read as
