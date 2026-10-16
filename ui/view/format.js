@@ -733,7 +733,7 @@ export function codeBlockSegments(text) {
 // it unchanged, the same fast path codeBlockSegments offers.
 const LIST_ITEM_RE = /^( *)(?:[-*+]|(\d{1,9})[.)]) +(?=\S)/u
 // `* * *` and `- - -` are horizontal rules, not one-item lists.
-const HRULE_RE = /^ {0,3}([-*_])(?: *\1){2,} *$/u
+const HRULE_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u
 
 function leadingSpaces(line) { return /^ */u.exec(line)[0].length }
 
