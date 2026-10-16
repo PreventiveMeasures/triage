@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { CHANGES_ASKED, FILES_PAGE, MAX_FILES, MAX_TREE_FILES, changesAsked, changesWithin, commitChanges, repositoryChanges, repositoryTree }
+import { CHANGES_ASKED, FILES_PAGE, MAX_FILES, MAX_TREE_FILES, changesAsked, changesWithin, commitChanges, directoryFiles, repositoryChanges, repositoryTree }
   from '../server-managed/repository-changes.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -148,6 +148,40 @@ test('a tree of more files than are answered keeps those nearest the root, told 
   assert.deepEqual([many.files.length, many.sizes.length, many.cut, many.files.includes('a/d.js'), many.files.includes('a/b/c.js')], [MAX_TREE_FILES, MAX_TREE_FILES, true, true, false])
   assert.deepEqual([many.files.slice(0, 2), many.sizes.slice(0, 2)], [['a/d.js', 'f0'], [9, 1]], 'by path, each with its bytes')
   assert.equal(kept.size, 1)
+})
+
+test('a directory of a commit whose whole tree is cut short is read itself, kept by its id, its files nearest it kept; of one not cut, from the whole', async t => {
+  const kept = new Map()
+  const store = { read: sha => Promise.resolve(kept.get(sha) ?? null), write: (sha, tree) => { kept.set(sha, tree); return Promise.resolve() } }
+  const [x, y] = ['5', '6'].map(digit => digit.repeat(40))
+  // As many files nearest the root as are answered, past which those of x/y, deeper, are left out of the whole.
+  const trees = {
+    [`${a}:1`]: { tree: [...Array.from({ length: MAX_TREE_FILES }, (_, at) => ({ path: `f${at}`, type: 'blob', size: 1 })), { path: 'x/y/a.js', type: 'blob', size: 3 },
+      { path: 'x/y/lib/b.js', type: 'blob', size: 4 }], truncated: false },
+    [`${a}:`]: { tree: [{ path: 'f0', type: 'blob' }, { path: 'x', type: 'tree', sha: x }], truncated: false },
+    [`${x}:`]: { tree: [{ path: 'y', type: 'tree', sha: y }], truncated: false },
+    [`${y}:1`]: { tree: [{ path: 'a.js', type: 'blob', size: 3 }, { path: 'lib', type: 'tree' }, { path: 'lib/b.js', type: 'blob', size: 4 }], truncated: false },
+    [`${b}:1`]: { tree: [{ path: 'x/y/a.js', type: 'blob', size: 3 }, { path: 'z.js', type: 'blob', size: 1 }], truncated: false },
+  }
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const key = `${url.pathname.split('/').at(-1)}:${url.searchParams.get('recursive') ?? ''}`
+    asked.push(`${key.slice(0, 1)}${key.slice(40)}`)
+    return Promise.resolve(trees[key] ? Response.json(trees[key]) : Response.json({ message: 'Not Found' }, { status: 404 }))
+  })
+  assert.deepEqual(await directoryFiles('org/repo', null, a, 'x/y', store), { files: ['x/y/a.js', 'x/y/lib/b.js'], sizes: [3, 4], cut: false })
+  assert.deepEqual(asked, ['a:1', 'a:', '5:', '6:1'], 'the whole, then a level at a time down to it, then it whole')
+  assert.deepEqual([...kept.keys()], [a, y], 'kept by the commit and the tree')
+  asked.length = 0
+  assert.deepEqual((await directoryFiles('org/repo', null, a, 'x/y', store)).files, ['x/y/a.js', 'x/y/lib/b.js'])
+  assert.deepEqual(asked, ['a:', '5:'], 'read again of neither, its id read again alone')
+  // A directory the commit has none at answers the whole's within it: none.
+  assert.deepEqual(await directoryFiles('org/repo', null, a, 'nowhere', store), { files: [], sizes: [], cut: true })
+  // Of a commit whose whole tree isn't cut, nothing more is read.
+  asked.length = 0
+  assert.deepEqual(await directoryFiles('org/repo', null, b, 'x/y', store), { files: ['x/y/a.js'], sizes: [3], cut: false })
+  assert.deepEqual(asked, ['b:1'])
 })
 
 test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at a time: each tree\'s own entries, and each tree in it whole', async t => {

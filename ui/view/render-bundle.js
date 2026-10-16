@@ -2075,9 +2075,9 @@ export function renderNpmOpening({ name, spec, tab }) {
 // body what opens, or why it didn't, with the directories it lists to open
 // instead where it has any. Its Commits, which read none of its files,
 // shows at its commit alone (`historyOnly`), or where its files failed to
-// open, its tabs then opening each; and where they are too many to open, its
-// Treemap, drawn from their sizes as its tree lists them
-// (repository-treemap.js).
+// open, its tabs then opening each; and its Treemap, while its files are read
+// or where they are too many to open, drawn from their sizes as its tree
+// lists them (repository-treemap.js).
 export function renderRepositoryCodeOpening(opening) {
   const { repoId, commit, path, tab, repo, revision, error, code, historyOnly = false } = opening
   const what = repo ? repositoryCodeName({ repo, path }) : path || 'the repository'
@@ -2086,7 +2086,7 @@ export function renderRepositoryCodeOpening(opening) {
   const tabsOpen = Boolean(commit && (historyOnly || error))
   return bundleSlideView({ repository }, tab, repositoryCodeTabs(tab), tabsOpen && REPOSITORY_FILELESS_TABS.has(tab)
     ? repositoryFilelessTab(repository, tab)
-    : tabsOpen && tab === 'treemap' && code === 'directory-too-large'
+    : tab === 'treemap' && commit && (!error || code === 'directory-too-large')
       ? html`<repository-treemap .repository=${repository}></repository-treemap>`
       : error
         ? html`<div class="bundles-slide-placeholder is-error repository-code-failed"><p role="alert">Couldn't open ${what}${at}: ${error}</p>${repositoryCodeListing(opening)}</div>`

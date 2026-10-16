@@ -53,7 +53,7 @@ test('Activity\'s picker: an icon each, Replay\'s a play button, its name to rea
   assert.doesNotMatch(text, /tooltip|title=/u)
 })
 
-test('a directory too large to open draws its Treemap from its files\' sizes as its tree lists them; its Code, and any other failure, say why', () => {
+test('a directory too large to open, or opening, draws its Treemap from its files\' sizes as its tree lists them; its Code, and any other failure, say why', () => {
   const tooLarge = { repoId: 7, repo: 'org/repo', commit: 'a'.repeat(40), path: 'vendor', revision: null, error: 'This directory is too large to open here.', code: 'directory-too-large' }
   let text = templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap' }))
   assert.match(text, /<repository-treemap \.repository=\[object Object\]><\/repository-treemap>/u)
@@ -64,6 +64,13 @@ test('a directory too large to open draws its Treemap from its files\' sizes as 
   text = templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap', error: 'GitHub couldn’t be reached.', code: 'github-unreachable' }))
   assert.match(text, /<p role="alert">Couldn't open org\/repo at aaaaaaa: GitHub couldn’t be reached\.<\/p>/u)
   assert.doesNotMatch(text, /<repository-treemap/u)
-  // Still opening, it says so.
-  assert.match(templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap', error: null, code: null })), /Opening org\/repo at aaaaaaa…/u)
+  // Still opening, its Treemap draws them at its commit meanwhile; at none
+  // known yet, or on another tab, it says it opens.
+  const opening = { ...tooLarge, error: null, code: null }
+  assert.match(templateText(renderRepositoryCodeOpening({ ...opening, tab: 'treemap' })), /<repository-treemap /u)
+  for (const shown of [{ ...opening, tab: 'treemap', commit: null }, { ...opening, tab: 'code' }]) {
+    text = templateText(renderRepositoryCodeOpening(shown))
+    assert.match(text, /role="status">Opening org\/repo(?: at aaaaaaa)?…/u, shown.tab)
+    assert.doesNotMatch(text, /<repository-treemap/u, shown.tab)
+  }
 })

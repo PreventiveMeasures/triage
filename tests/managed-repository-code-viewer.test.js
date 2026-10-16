@@ -224,7 +224,7 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.equal(state.repositoryCodeOpening.commit, commit)
   assert.equal(state.repositoryCodeOpening.code, 'directory-too-large')
   await setImmediate()
-  assert.deepEqual(contentsRequests, [[7, commit, '']])
+  assert.deepEqual(contentsRequests, [[7, '', ''], [7, commit, '']], 'its root listed for the commit its Treemap draws at as it opened, then its directories')
   assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
   // Another of its tabs fails as it did, its Commits showing, nothing read again.
   assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {}),
@@ -236,7 +236,7 @@ test('a directory that fails to open says why at its route, and lists its direct
   answer = () => Promise.reject(Object.assign(new Error('GitHub couldn’t be reached.'), { status: 502, code: 'github-unreachable' }))
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'src', bundleTab: 'code' }, () => true, () => {})
   await setImmediate()
-  assert.equal(contentsRequests.length, 1)
+  assert.equal(contentsRequests.length, 2)
   assert.equal(state.repositoryCodeOpening.listing, undefined)
 
   answer = () => Promise.resolve({ ...data, path: 'elsewhere' })
@@ -247,6 +247,44 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.notEqual(state.currentView, 'bundles')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app' }, () => true, () => {}), false)
+})
+
+test('opening on its Treemap, a directory shows at its commit while its files are read, for its Treemap to draw their sizes meanwhile, in place of one shown', async () => {
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'code' }, () => true, () => {})
+  let finish
+  const develop = 'e'.repeat(40)
+  answer = (repoId, ref, path) => new Promise(resolve => { finish = () => resolve({ ...data, commit: develop, path }) })
+  const opening = openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'treemap' }, () => true, () => {})
+  assert.equal(state.repositoryCodePending, null, 'the one shown not kept')
+  assert.equal(state.currentView, 'repository-code')
+  assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.path, state.repositoryCodeOpening.tab], [develop, 'packages/app', 'treemap'])
+  assert.equal(contentsRequests.length, 0, 'its commit named, none listed')
+  finish()
+  await opening
+  assert.equal(state.currentView, 'bundles')
+  assert.equal(state.bundles[0].repository.commit, develop, 'its files read, drawn by them')
+
+  // Its route naming none, listing the repository's root reads it, as its
+  // files are read.
+  contents = () => Promise.resolve({ commit: develop.toUpperCase(), entries: [] })
+  answer = (repoId, ref, path) => new Promise(resolve => { finish = () => resolve({ ...data, commit: develop, path }) })
+  const named = openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
+    path: '', bundleTab: 'treemap' }, () => true, () => {})
+  assert.equal(state.repositoryCodeOpening.commit, null)
+  await setImmediate()
+  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']])
+  assert.equal(state.repositoryCodeOpening.commit, develop)
+  assert.deepEqual(requests.at(-1), [7, 'heads/develop', ''], 'its files read all the while')
+  finish()
+  await named
+  assert.equal(state.currentView, 'bundles')
+
+  // On another tab, none is listed.
+  contentsRequests.length = 0
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/main', path: 'src', bundleTab: 'code' }, () => true, () => {})
+  await setImmediate()
+  assert.equal(contentsRequests.length, 0)
 })
 
 test('a repository\'s branches and tags read again as its code opens anew show those read before meanwhile, kept where that read fails', async () => {

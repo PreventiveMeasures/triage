@@ -193,7 +193,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
-import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, repositoryChanges, repositoryTree, treeWithin } from './repository-changes.ts'
+import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
 import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
@@ -1688,7 +1688,8 @@ async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDep
 
 // GET /api/admin/repositories/tree: the files commit `commit` holds within
 // `path` and their bytes (`sizes`), which Replay starts from and the Treemap
-// of a directory too large to open draws (repository-changes.ts repositoryTree),
+// of a directory too large to open draws (repository-changes.ts
+// directoryFiles: the directory's own tree where the commit's is cut short),
 // kept whole by the commit and the rules it is read by (historyTreeStore,
 // TREES_READ); none (null) for one GitHub has none of. Read as Replay's
 // reads are (readForReplay).
@@ -1701,8 +1702,8 @@ async function handleRepositoryTree(res: ServerResponse, deps: ManagedHttpDeps, 
       const value = (await store.read(`${repoId}\0${TREES_READ}\0${sha}`))?.value
       return value && Array.isArray(value.files) && Array.isArray(value.sizes) && value.sizes.length === value.files.length ? value : null
     }, write: (sha: string, tree: CommitTree) => store.write(`${repoId}\0${TREES_READ}\0${sha}`, tree, Date.now()) }
-    const tree = await repositoryTree(fullName, token, commit, kept)
-    return { commit, path, ...tree ? treeWithin(tree, path) : { files: null, sizes: null, cut: false } }
+    const tree = await directoryFiles(fullName, token, commit, path, kept)
+    return { commit, path, ...tree ?? { files: null, sizes: null, cut: false } }
   })
 }
 

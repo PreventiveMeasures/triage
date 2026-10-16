@@ -111,7 +111,7 @@ export async function repositoryChanges(fullName: string, token: string | null, 
   return new Map(asked.map(sha => [sha, found.get(sha) ?? null]))
 }
 
-// The files a commit holds, as many as MAX_TREE_FILES, each by its path and
+// The files a commit (or a tree) holds, as many as MAX_TREE_FILES, each by its path and
 // its bytes (`sizes`, in the same order), as
 // GitHub lists its tree and every tree under it at once
 // (GET /repos/:owner/:repo/git/trees/:tree?recursive=1); where GitHub cuts
@@ -230,6 +230,42 @@ async function treeByTrees(commit: string, listing: TreeListing, files: Blob[]):
     round = next
   }
   return cut
+}
+
+// The files commit `commit` holds within the directory `path` ('' the whole
+// repository), as repositoryTree reads them: its whole tree's within it; where
+// that is cut short, some of the directory's perhaps among those left out,
+// the directory's own tree read so (directoryTree), kept by its id, the files
+// nearest it kept. Null for a commit GitHub has none of.
+export async function directoryFiles(fullName: string, token: string | null, commit: string, path: string, kept: TreeStore,
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<CommitTree | null> {
+  const whole = await repositoryTree(fullName, token, commit, kept, fetchImpl)
+  if (!whole || path === '' || !whole.cut) return whole && treeWithin(whole, path)
+  const id = await directoryTree(fullName, token, commit, path, fetchImpl)
+  const own = id ? await repositoryTree(fullName, token, id, kept, fetchImpl) : null
+  return own ? { ...own, files: own.files.map(file => `${path}/${file}`) } : treeWithin(whole, path)
+}
+
+// The id of the tree at `path` in commit `commit`, read a level at a time
+// (GET /repos/:owner/:repo/git/trees/:tree, its own entries alone); null
+// where it has none there, or GitHub has no such commit.
+async function directoryTree(fullName: string, token: string | null, commit: string, path: string, fetchImpl: typeof fetch): Promise<string | null> {
+  const repo = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
+  let tree = commit
+  for (const name of path.split('/')) {
+    let data: { tree?: unknown }
+    try {
+      data = await githubJson(`${repo}/git/trees/${tree}`, token, fetchImpl) as typeof data
+    } catch (err) {
+      if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) return null
+      throw err
+    }
+    if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
+    const entry = (data.tree as TreeEntry[]).find(item => item?.path === name && item.type === 'tree')
+    if (typeof entry?.sha !== 'string' || !SHA.test(entry.sha)) return null
+    tree = entry.sha
+  }
+  return tree
 }
 
 // The files of a tree within the directory `path` ('' the whole repository).
