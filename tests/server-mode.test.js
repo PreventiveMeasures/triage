@@ -237,7 +237,7 @@ test('managed URL prefixes select managed only when the deployment offers it', (
   t.after(() => Object.assign(state, previous))
   for (const mode of ['managed', 'managed+e2e', 'e2e+managed', 'e2e']) {
     for (const path of ['/team', '/team/team/report/report/finding/issue', '/manage', '/manage/report', '/manage/unknown',
-      '/npm', '/npm/axios', '/npm/@scope/pkg@1.0.0/compare/0.9.0/diff', '/my', '/my/reviews', '/my/unknown']) {
+      '/npm', '/npm/axios', '/npm/@scope/pkg@1.0.0/compare/0.9.0/diff', '/my', '/my/reviews', '/my/unknown', '/repo', `/repo/7/${'a'.repeat(40)}/commits`]) {
       state.serverModeSelection = 'e2e'
       state.localMode = true
       configureClientMode(mode, path)
@@ -246,7 +246,7 @@ test('managed URL prefixes select managed only when the deployment offers it', (
       assert.equal(clientModeLabel(), mode === 'e2e' ? 'e2e' : 'managed', 'discovery retains the selected protocol after navigation')
     }
   }
-  for (const path of ['/', '/teams/a', '/management', '/teamwork', '/TEAM/a', '/unknown', '/npmjs', '/npm-viewer', '/NPM/axios', '/myself', '/mystery/reviews', '/reviews']) {
+  for (const path of ['/', '/teams/a', '/management', '/teamwork', '/TEAM/a', '/unknown', '/npmjs', '/npm-viewer', '/NPM/axios', '/myself', '/mystery/reviews', '/reviews', '/repos', '/repository/7', '/REPO/7']) {
     state.serverModeSelection = null
     configureClientMode('e2e+managed', path)
     assert.equal(clientModeLabel(), 'e2e', path)
@@ -262,7 +262,7 @@ test('cached combined mode selects managed before startup and fresh discovery ca
     else globalThis.location = previousLocation
     localStorage.removeItem(SERVER_MODE_KEY)
   })
-  for (const path of ['/team/example/finding/issue', '/manage/report', '/npm/axios', '/my/reviews']) {
+  for (const path of ['/team/example/finding/issue', '/manage/report', '/npm/axios', '/my/reviews', '/repo/7']) {
     globalThis.location = new URL(path, 'https://triage.test')
     writeCachedServerInfo({ mode: 'e2e+managed', managed: null })
     const fresh = await import(`../client/state.ts?managed-link=${path}`)

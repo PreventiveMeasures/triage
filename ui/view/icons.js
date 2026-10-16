@@ -73,6 +73,9 @@ export const LINKS_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width=
 // Scan and report glyphs shared by setup, management, and landing actions.
 export const SCAN_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 1.5H2.5a1 1 0 0 0-1 1V5m9.5-3.5h2.5a1 1 0 0 1 1 1V5M1.5 11v2.5a1 1 0 0 0 1 1H5m6 0h2.5a1 1 0 0 0 1-1V11"/><circle cx="7.25" cy="7.25" r="2.75"/><path d="m9.25 9.25 2.25 2.25"/></svg>'
 export const REPORT_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5L9 1.5ZM9 1.5v4h4M5.5 8h5m-5 3h3.5"/></svg>'
+// A repository, as a team's Repositories list and a repository's code viewer
+// show one.
+export const REPO_ICON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>'
 export const CODE_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 4.5-3 3.5 3 3.5m7-7 3 3.5-3 3.5M9.5 2l-3 12"/></svg>'
 export const AGENTIC_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 3.5 1.6 3.9L12 9l-3.9 1.6-1.6 3.9-1.6-3.9L1 9l3.9-1.6 1.6-3.9ZM12 1.5v4m-2-2h4"/></svg>'
 

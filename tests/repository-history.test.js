@@ -39,11 +39,11 @@ beforeEach(() => {
 
 test('Commits have a route of their own beside the code viewer\'s others, which History\'s links still open', () => {
   const route = { view: 'repository-code', repoId: 7, commit: a, path: 'src', bundleTab: 'commits' }
-  assert.equal(managedRoutePath(route), `/manage/code/7/${a}/commits?path=src`)
+  assert.equal(managedRoutePath(route), `/repo/7/${a}/commits?path=src`)
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
-  assert.deepEqual(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/history?path=src`)), route)
+  assert.deepEqual(parseManagedRoute(new URL(`https://triage.test/repo/7/${a}/history?path=src`)), route)
   assert.equal(managedRoutePath({ ...route, bundleTab: 'history' }), null, 'no route names History')
-  assert.equal(parseManagedRoute(new URL(`https://triage.test/manage/code/7/${a}/commits/2`)), null, 'only Code names a file')
+  assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${a}/commits/2`)), null, 'only Code names a file')
 })
 
 test('commits list newest first, but never a parent before a child of it, whatever its clock says', () => {

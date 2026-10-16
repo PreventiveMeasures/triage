@@ -36,7 +36,7 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, CODE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, REPO_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { lockfileFormat, lockfileTooltip, viewedLockfile } from './lockfile-view.js'
 import './lockfile-graph.js'
 import { overviewColumn } from './bundle-overview-column.js'
@@ -2045,11 +2045,7 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
         <button type="button" @click=${() => navigateToNpm()}>npm</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      ${repository && state.managedSession?.role === 'admin' ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-repos' }, bubbles: true, composed: true }))}>Repositories</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? CODE_ICON_SVG : BUNDLE_ICON_SVG)}</span>
+      <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? REPO_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>
           <npm-version-select .name=${npm.name} .version=${npm.version} .tab=${tab} .list=${opening ? null : npmVersionList(npm.name)}></npm-version-select>`

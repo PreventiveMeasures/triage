@@ -143,18 +143,21 @@ test('managed landing omits empty teams and handles all-empty accounts', () => {
   assert.match(managedText(), /No team reports are available yet/u)
 })
 
-test('managed landing rows show the App finding count the server classified', () => {
+test('managed landing rows count the findings the server classified, and the reports, bundles and repositories a team has', () => {
+  const repos = [{ repoId: 1, fullName: 'o/a', path: 'x' }, { repoId: 1, fullName: 'o/a', path: 'y' }, { repoId: 2, fullName: 'o/b', path: null }]
   updateManagedLanding({ serverMode: 'managed', session, teams: [
-    { id: 'app', name: 'App team', reports: ['a', 'b'], app: { appMode: true, appFindings: 1234 } },
-    { id: 'one', name: 'One finding', reports: ['a'], app: { appMode: true, appFindings: 1 } },
-    { id: 'plain', name: 'Plain team', reports: ['a'], app: { appMode: false } },
+    { id: 'app', name: 'App team', reports: ['a', 'b'], bundles: ['b'], repos, app: { appMode: true, appFindings: 1234 } },
+    { id: 'one', name: 'One finding', reports: ['a', { id: 'links', analyzer: 'links' }], repos: repos.slice(2), app: { appMode: true, appFindings: 1 } },
+    { id: 'plain', name: 'Plain team', reports: ['a'], bundles: ['a', 'b'], app: { appMode: false, findings: 0 } },
     { id: 'unknown', name: 'Unknown team', reports: ['a', 'b', 'c'] },
+    { id: 'bundles', name: 'Bundle team', reports: [], bundles: ['b'], repos },
   ] })
   const text = managedText()
-  assert.match(text, /App team<\/strong>\s*<span>1,234 findings · 2 reports · Open findings/u)
-  assert.match(text, /One finding<\/strong>\s*<span>1 finding · 1 report · Open findings/u)
-  assert.match(text, /Plain team<\/strong>\s*<span>1 report · Open findings/u)
-  assert.match(text, /Unknown team<\/strong>\s*<span>3 reports · Open findings/u)
+  assert.match(text, /App team<\/strong>\s*<span>1,234 findings · 2 reports · 1 bundle · 2 repositories<\/span>/u)
+  assert.match(text, /One finding<\/strong>\s*<span>1 finding · 1 report · 1 repository<\/span>/u, 'a links document is no report')
+  assert.match(text, /Plain team<\/strong>\s*<span>0 findings · 1 report · 2 bundles<\/span>/u)
+  assert.match(text, /Unknown team<\/strong>\s*<span>3 reports<\/span>/u, 'an unknown count shows none')
+  assert.match(text, /Bundle team<\/strong>\s*<span>1 bundle · 2 repositories<\/span>/u)
 })
 
 test('workspace quick links omit empty workspaces and retain bundle-only workspaces', () => {

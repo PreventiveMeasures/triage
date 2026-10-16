@@ -473,10 +473,10 @@
 }
 
 /* A team's header (workspace-content.js teamHeaderTemplate): its title,
-   its findings' severities between it and its tabs, and the tabs, each
-   counting what it opens (toolbar.css .team-slide-tab .n). Where they don't
-   fit side by side, the tabs wrap under them, at the right, as a
-   repository's do. */
+   its findings' severities a little way after it (3rem with the bar's gap),
+   and its tabs at the right, each counting what it opens (toolbar.css
+   .team-slide-tab .n). Where they don't fit side by side, the tabs wrap
+   under them, at the right, as a repository's do. */
 .team-slide-name {
   flex: 0 1 auto; min-width: 0;
   margin: 0;
@@ -485,7 +485,7 @@
 }
 .team-slide-bar {
   flex-wrap: wrap; row-gap: .4rem;
-  & > .status-bar { flex: 0 1 auto; min-width: 3rem; margin-inline: auto; }
+  & > .status-bar { flex: 0 1 auto; min-width: 3rem; margin-left: 2.5rem; }
   & > .bundles-slide-tabs { margin-left: auto; }
 }
 .team-slide-tab { display: inline-flex; align-items: center; gap: .35rem; }
@@ -1838,6 +1838,8 @@ bundle-search {
 }
 
 .workspace-content-icon { flex-shrink: 0; color: var(--muted); }
+/* A repository's (icons.js REPO_ICON_SVG), as large as a report's or a bundle's. */
+span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .workspace-content-label { display: flex; flex-direction: column; gap: .125rem; min-width: 0; }
 .workspace-content-name { font-size: .875rem; font-weight: 500; overflow-wrap: anywhere; }
 .workspace-content-repo { font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }

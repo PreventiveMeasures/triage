@@ -2,7 +2,7 @@
 // opens in the bundle view, as a bundle whose files are the directory's, with
 // the Code, Search and Treemap tabs, as an npm version opens (npm-package.js).
 // Its header picks the repository and the revision (RepositoryCodeSource);
-// `/manage/code/<repo id>` opens the default branch's head. The server reads
+// `/repo/<repo id>` opens the default branch's head. The server reads
 // it with the reader's own GitHub access, within their grants of it
 // (GET /api/admin/repositories/code). What it answered is kept in memory only
 // while it is shown.
@@ -246,6 +246,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     let at = commit
     if (!at) {
       showOpening(opening)
+      managedHistory?.showing(route)
       renderSidebar()
       try {
         const listed = await fetchRepositoryContents(repoId, routeRef(route), '', { signal: currentViewSignal() })
@@ -283,6 +284,8 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       showOpening(opening)
       renderSidebar()
     }
+    // Its header names it from now on: so does the address bar.
+    managedHistory?.showing(route)
     let data
     try {
       data = await fetchRepositoryCode(repoId, routeRef(route), path, { signal: currentViewSignal() })

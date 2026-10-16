@@ -76,7 +76,7 @@ export function createManagedHistory(browser) {
     let path = managedRoutePath(route)
     if (path === null) return false
     const request = ++revision
-    const pending = restoring = { route, findingRoute: null, codeRoute: null }
+    const pending = restoring = { route, path, push: !pop && !replacing, shown: false, findingRoute: null, codeRoute: null }
     const isCurrent = () => active && request === revision && !shareChanged()
     let ok = false
     try { ok = await restore(route, isCurrent) }
@@ -100,7 +100,8 @@ export function createManagedHistory(browser) {
     }
     if (sameBundleCode(pending.codeRoute, typeof ok === 'object' ? ok : route)) path = managedRoutePath(pending.codeRoute)
     restoring = null
-    if (pop || replacing) replace(path)
+    // One its page showed early has its entry already (showing).
+    if (pop || replacing || pending.shown) replace(path)
     else if (publicSharePath(path, publicShare) !== currentPath) {
       path = publicSharePath(path, publicShare)
       browser.history.pushState({ [KEY]: generation }, '', path)
@@ -208,6 +209,21 @@ export function createManagedHistory(browser) {
       }
       if (!sameBundleCode(route, parseManagedRoute(new URL(browser.location.href)))) return
       if (publicSharePath(path, publicShare) !== currentPath) replace(path)
+    },
+    // The page a navigation still loading opens (`route`, the one it was
+    // given) shows itself now, its header naming it as it loads: its URL
+    // with it, a new entry where the navigation adds one, which the URL it
+    // ends on replaces.
+    showing(route) {
+      const pending = restoring
+      if (!active || shareChanged() || !pending || pending.route !== route || pending.shown) return
+      pending.shown = true
+      const path = publicSharePath(pending.path, publicShare)
+      if (!pending.push || path === currentPath) replace(pending.path)
+      else {
+        browser.history.pushState({ [KEY]: generation }, '', path)
+        currentPath = path
+      }
     },
     replaceRoute(route) {
       if (!active || !route || shareChanged()) return

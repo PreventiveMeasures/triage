@@ -3,8 +3,22 @@ import { repeat } from 'lit/directives/repeat.js'
 import { appMarkup } from './markup.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, NPM_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
+import { managedTeamFindings } from './managed-sidebar.js'
 
 let pendingLanding = null
+
+// A team's card counts what its header does (workspace-content.js): its
+// findings, where its catalog counts them, then each of its reports (links
+// documents aside), bundles and repositories it has.
+function teamStats(team) {
+  const count = (n, noun, nouns = `${noun}s`) => `${n.toLocaleString()} ${n === 1 ? noun : nouns}`
+  const findings = managedTeamFindings(team.app)
+  const reports = team.reports.filter(report => report?.analyzer !== 'links').length
+  const bundles = team.bundles?.length ?? 0
+  const repositories = new Set((team.repos ?? []).map(repo => repo.repoId)).size
+  return [findings == null ? null : count(findings, 'finding'), reports ? count(reports, 'report') : null,
+    bundles ? count(bundles, 'bundle') : null, repositories ? count(repositories, 'repository', 'repositories') : null].filter(Boolean).join(' · ')
+}
 
 export function updateManagedLanding(options) {
   const { serverMode, session, sessionPending = false, teamsPending = false, teams = [], alternateMode = 'local', onSwitchMode } = options
@@ -69,7 +83,7 @@ export function updateManagedLanding(options) {
             <span class="managed-team-icon" aria-hidden="true">${appMarkup(WORKSPACE_ICON_SVG)}</span>
             <span class="managed-team-copy">
               <strong>${team.name}</strong>
-              <span>${team.app?.appMode ? `${team.app.appFindings.toLocaleString()} ${team.app.appFindings === 1 ? 'finding' : 'findings'} · ` : ''}${team.reports.length} ${team.reports.length === 1 ? 'report' : 'reports'} · Open findings</span>
+              <span>${teamStats(team)}</span>
             </span>
             <svg class="managed-team-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
           </button>
