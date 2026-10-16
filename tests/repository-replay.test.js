@@ -102,7 +102,7 @@ test('a directory\'s replay starts from its files within it, and one starting fr
   assert.deepEqual(trees, [[7, 'packages/app', sha(101)]])
   assert.deepEqual([...view.replay.scene.files.keys()].slice(0, 1), ['src/old.js'])
   assert.equal(view.replay.scene.files.has('elsewhere.js'), false)
-  assert.match(text, /, from 1 of its files<\/span>/u)
+  assert.match(text, /, drawn in part: more files than are read<\/span>/u)
   view.pickCount(300)
 })
 
@@ -129,6 +129,18 @@ test('a commit whose files were more than the server read is made whole by the f
   view.seek(4)
   assert.deepEqual([...view.replay.scene.files.keys()].toSorted(), ['big/a.js', 'big/b.js', `src/${sha(26).slice(-2)}.js`, `src/${sha(28).slice(-2)}.js`],
     'the commits after it on what it left')
+})
+
+test('a cut commit whose files left are more than are read says the replay is drawn in part', async () => {
+  const cut = sha(27)
+  const base = changes
+  changes = (shas, path) => base(shas, path).then(answer => ({ ...answer, changes: answer.changes.map(item => item.sha === cut ? { ...item, more: true } : item) }))
+  tree = (path, commit) => Promise.resolve({ path, files: commit === cut ? ['big/a.js'] : [], cut: commit === cut })
+  const view = shown()
+  const text = await settle(view)
+  assert.match(text, /class="history-summary">29 commits by 3, Jan 2, 1970 – Jan 31, 1970, drawn in part: more files than are read</u)
+  view.seek(3)
+  assert.ok(view.replay.scene.files.has(`src/${sha(29).slice(-2)}.js`), 'none removed by a tree cut short')
 })
 
 test('a cut commit whose files the server has none of removes nothing', async () => {

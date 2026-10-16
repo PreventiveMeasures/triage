@@ -693,11 +693,14 @@ class RepositoryReplay extends LitElement {
     const buffered = bufferedOf(replay)
     const last = replay.next > 0 ? replay.commits[replay.next - 1] : null
     const people = replay.commits ? replay.people ??= new Set(replay.commits.flatMap(commit => makersOf(commit).map(maker => maker.key))).size : 0
-    // Where the files it starts from are more than are read, how many are.
+    // Drawn in part where the files it starts from, or those a cut commit
+    // leaves, are more than are read: files past them neither drawn nor, of
+    // those a cut commit removes past its own read, removed.
     const start = replay.commits ? startOf(replay) : null
+    const inPart = start?.cut || replay.commits?.some(commit => isCut(replay, commit.sha) && treeOf(replay, commit.sha)?.cut)
     const summary = replay.commits && total > 0
       ? `${number(total)} commit${total === 1 ? '' : 's'} by ${number(people)}, ${day(replay.commits[0].committedAt)} – ${day(replay.commits.at(-1).committedAt)}${
-        start?.cut ? `, from ${number(start.files.length)} of its files` : ''}` : ''
+        inPart ? ', drawn in part: more files than are read' : ''}` : ''
     return html`<div class="history-bar">
         ${activityPicker('replay')}
         <div class="history-modes" role="group" aria-label="Commits played">

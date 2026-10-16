@@ -6,16 +6,19 @@
 // the time it is given: the commits played and when each plays, the scene
 // they make, and where everything in it sits and moves to.
 
+import { historyOrder } from './history-graph.js'
+
 const DAY_MS = 86_400_000
 
 // How many of the latest commits Replay plays, as the reader picks.
 export const REPLAY_COUNTS = [100, 300, 1000]
 
 // The commits played of those listed: the latest `count` with a time but
-// merges (whose files their other parents' commits change), oldest first.
+// merges (whose files their other parents' commits change), oldest first,
+// as Commits orders them (history-graph.js historyOrder): by their times,
+// but never a commit before its parent, whatever a clock off dates them.
 export function playedCommits(commits, count) {
-  return commits.filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt))
-    .toSorted((a, b) => b.committedAt - a.committedAt).slice(0, count).toReversed()
+  return historyOrder(commits).filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)).slice(0, count).toReversed()
 }
 
 // When each commit plays, in seconds of replay at 1×: the first at once,

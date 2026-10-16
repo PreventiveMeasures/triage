@@ -12,6 +12,13 @@ test('the commits played: the latest of those listed with a time, but merges, ol
   assert.deepEqual(playedCommits(listed, 10).map(item => item.sha), ['a', 'b', 'c', 'd'])
 })
 
+test('the commits played keep a commit after its parent, whatever a clock off dates it', () => {
+  // c2 committed by a clock behind c1's, its parent.
+  const listed = [commit('c2', 5 * DAY, ['c1']), commit('c1', 6 * DAY, ['c0']), commit('x', 4 * DAY), commit('c0', 1 * DAY, [])]
+  assert.deepEqual(playedCommits(listed, 10).map(item => item.sha), ['c0', 'x', 'c1', 'c2'])
+  assert.deepEqual(playedCommits(listed, 2).map(item => item.sha), ['c1', 'c2'], 'the latest, the parent with its child')
+})
+
 test('each commit plays a day a second after the one before, quiet spells skipped, bursts spread', () => {
   const times = playTimes([commit('a', 0), commit('b', DAY / 4), commit('c', DAY / 4 + 60_000), commit('d', 40 * DAY)])
   assert.deepEqual(times, [0, 0.25, 0.25 + MIN_GAP, 0.25 + MIN_GAP + MAX_GAP])

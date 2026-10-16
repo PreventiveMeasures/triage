@@ -2091,7 +2091,9 @@ id, subject and who made it, as Commits shows them) along the foot, and what is 
 
 **Last 100**, **300** (at first) or **1,000** picks how many of the latest
 commits play, merges left out (their other parents' commits change their
-files), the oldest first: read as Commits reads This revision (a
+files), the oldest first, ordered as Commits orders them (by their times,
+but never a commit before its parent, whatever a clock off dates it): read
+as Commits reads This revision (a
 directory's, below the root), as many pages as hold them. Each plays a day
 of its time a second after the one before at 1×, but no sooner than 0.08s
 nor later than 0.6s, quiet spells skipped as Gource's `--auto-skip-seconds`
@@ -2106,7 +2108,10 @@ at first, then fifty at a time, the oldest first from where it plays, as a
 video buffers, while it shows; it waits at a commit not read yet, saying
 so. A commit of more files than are read (`more`, below) is made whole by
 the files it leaves, read as those it starts from are, before it plays:
-what it changes past them is made as it plays, or as a seek passes it. A
+what it changes past them is made as it plays, or as a seek passes it.
+Where the files it starts from, or those a cut commit leaves, are more
+than are read, the summary says it is drawn in part: files past them are
+neither drawn nor, where a cut commit removes them, removed. A
 page of the history failing to read is said, with **Retry**, and no
 replay is taken from the commits read so far. Each replay, where it is and
 what was read, is kept for the session, paused when another view or count
