@@ -1,5 +1,7 @@
-/* W95 — easter-egg theme: Windows 95 on its teal desktop, reached in the
-   unlocked theme cycle and through `DeepView.setTheme('w95')`.
+/* W95 — easter-egg theme: Windows 95 on its teal desktop. It joins the
+   unlocked theme cycle, after pink, once the toggle has turned green into
+   pink three times on the page (view/theme.js), and is always there for
+   `DeepView.setTheme('w95')`.
 
    The app is one window on the desktop, laid out as Explorer is: a navy
    title bar, a sunken white tree pane on the left (the sidebar), the page
@@ -20,6 +22,22 @@
 
    Screen only: print keeps the default theme's pinned palette
    (print.css) and none of the window. */
+
+/* On a screen of exactly 2 or 3 device pixels to the CSS pixel, the grain
+   filter (ui/w95-grain.svg) draws the page in whole CSS pixels, each one
+   device-pixel sample copied across its square, as coarse as Windows 95
+   was on its screens. Other ratios have no whole grain to give, and keep
+   their sharp pixels. Popovers take it too, and dialogs (dialog-base.css):
+   they show in the top layer, out of the page's reach. */
+@media screen and (resolution: 2dppx) {
+  :root:has(> body.theme-w95),
+  body.theme-w95 :popover-open { filter: url('../w95-grain.svg#w95-grain-2'); }
+}
+@media screen and (resolution: 3dppx) {
+  :root:has(> body.theme-w95),
+  body.theme-w95 :popover-open { filter: url('../w95-grain.svg#w95-grain-3'); }
+}
+
 @media screen {
   :root:has(> body.theme-w95) {
     background: #008080;

@@ -3,7 +3,8 @@
 /* Default = dark. Other themes are opt-in via `body.theme-${name}`,
    set by view/theme.js from a localStorage flag. The `<theme-toggle>`
    button initially cycles between dark and light; the first press from dark
-   on or after the eighth press unlocks green, pink, w95, and paper until reload. All themes
+   on or after the eighth press unlocks green, pink, and paper until reload, and the
+   toggle's third turn from green into pink adds w95 after pink. All themes
    remain available through `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
    `prefers-color-scheme`:
    dark-by-default is part of the product's identity (the report

@@ -1,4 +1,4 @@
-// The selected theme persists; the press counter and bonus-theme unlock live
+// The selected theme persists; the press counters and bonus-theme unlocks live
 // only in this module and reset on reload. Dark remains the default.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { ensureHostAria } from './host-aria.js'
@@ -15,6 +15,10 @@ const THEME_KEY = 'deepview.theme'
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
 const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'w95', 'paper'])
 const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'w95', 'paper', 'light'])
+// W95 joins the unlocked cycle, after pink, once the toggle itself has
+// turned green into pink this many times on the page. Landing on pink any
+// other way (a reload, the API) doesn't count.
+const W95_PINK_TURNS = 3
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -56,10 +60,16 @@ let themePresses = 0
 let themesUnlocked = false
 let themeUnlocking = false
 let themeSelectionVersion = 0
+let pinkTurns = 0
+let w95Unlocked = false
 
+// The next theme of the cycle, without w95 while it is locked; w95 chosen
+// through the API meanwhile steps on as from pink, to what follows it.
 function nextTheme() {
   if (!themesUnlocked) return currentTheme === 'light' ? 'dark' : 'light'
-  return UNLOCKED_CYCLE[(UNLOCKED_CYCLE.indexOf(currentTheme) + 1) % UNLOCKED_CYCLE.length]
+  const cycle = w95Unlocked ? UNLOCKED_CYCLE : UNLOCKED_CYCLE.filter(theme => theme !== 'w95')
+  const from = cycle.includes(currentTheme) ? currentTheme : 'pink'
+  return cycle[(cycle.indexOf(from) + 1) % cycle.length]
 }
 
 function announceTheme() {
@@ -184,7 +194,9 @@ class ThemeToggle extends LitElement {
       }
       return
     }
-    applyTheme(nextTheme())
+    const next = nextTheme()
+    if (currentTheme === 'green' && next === 'pink' && ++pinkTurns >= W95_PINK_TURNS) w95Unlocked = true
+    applyTheme(next)
   }
 
   _onKeydown = (e) => {

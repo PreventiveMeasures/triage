@@ -102,7 +102,9 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   await setImmediate()
   assert.equal(page.button.getAttribute('aria-disabled'), 'false')
   assert.equal(page.button.render(), '🕶️', 'the active green theme shows the sunglasses glyph')
-  for (const expected of ['pink', 'w95', 'paper', 'light', 'dark', 'green', 'pink', 'w95', 'paper', 'light', 'dark', 'green']) {
+  // W95 waits for the toggle's third turn from green into pink, then stays.
+  for (const expected of ['pink', 'paper', 'light', 'dark', 'green', 'pink', 'paper', 'light', 'dark', 'green',
+    'pink', 'w95', 'paper', 'light', 'dark', 'green', 'pink', 'w95']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
   }
@@ -128,6 +130,17 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
     resolveAnimation()
     await setImmediate()
     assert.equal(page.api.getTheme(), 'green')
+  }
+  page.api.setTheme('w95')
+  click(page.button)
+  assert.equal(page.api.getTheme(), 'paper', 'w95 chosen through the API steps on to paper while it is locked')
+  page.api.setTheme('pink')
+  click(page.button)
+  assert.equal(page.api.getTheme(), 'paper', 'pink chosen through the API is no turn from green')
+  for (const expected of ['light', 'dark', 'green', 'pink', 'paper', 'light', 'dark', 'green', 'pink', 'paper',
+    'light', 'dark', 'green', 'pink', 'w95', 'paper']) {
+    click(page.button)
+    assert.equal(page.api.getTheme(), expected, 'a reload locks w95 again, until three more turns into pink')
   }
   assert.equal(plays, 3)
   page.api.setTheme('pink')
