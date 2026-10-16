@@ -19,12 +19,14 @@ export function noTab(line) {
 }
 
 // An anchor a node starts with, `&name` and the spaces after it, and what
-// follows it.
+// follows it, which YAML holds to be no alias.
 export function readAnchor(text, line) {
   if (!text.startsWith('&')) return { anchor: null, rest: text }
   const m = /^&([^ ,[\]{}]+)(?: +|$)/u.exec(text)
   if (m === null) throw new YamlError(`expected an anchor's name, found ${excerpt(text)}`, line)
-  return { anchor: m[1], rest: text.slice(m[0].length) }
+  const rest = text.slice(m[0].length)
+  if (rest.startsWith('*')) throw new YamlError('an alias with an anchor is not supported', line)
+  return { anchor: m[1], rest }
 }
 
 // What an alias names: the very value its anchor's node is, not a copy, as
@@ -121,8 +123,10 @@ export function readPlainLines(doc, first, indent) {
 // (-1 where a quoted scalar doesn't close on its line), its text without a
 // comment (`kept`), whether a comment ended it (`comment`), what its last
 // token is (`last`: `plain` where it is a plain scalar's text, which a quote
-// is part of too), and what follows where it closes (`after`).
+// is part of too), what follows where it closes (`after`), and whether a
+// plain scalar the text before it goes on in is a key (`keyed`).
 function flowScan(text, open, last) {
+  let continued = last === 'plain'
   for (let at = 0; at < text.length; at++) {
     const char = text[at]
     if (char === ' ') continue
@@ -136,8 +140,11 @@ function flowScan(text, open, last) {
     else if (char === ']' || char === '}') {
       last = 'close'
       if (--open === 0) return { open, kept: text.slice(0, at + 1), after: text.slice(at + 1), last, comment: false }
-    } else if (char === ',' || (char === ':' && /^(?:[ ,[\]{}]|$)/u.test(text[at + 1] ?? ''))) last = 'indicator'
-    else last = 'plain'
+    } else if (char === ',' || (char === ':' && /^(?:[ ,[\]{}]|$)/u.test(text[at + 1] ?? ''))) {
+      if (char === ':' && continued) return { open, kept: text, last, comment: false, keyed: true }
+      last = 'indicator'
+    } else last = 'plain'
+    continued &&= last === 'plain'
   }
   return { open, kept: text, last, comment: false }
 }
@@ -145,19 +152,25 @@ function flowScan(text, open, last) {
 // A flow collection's text from its owner's line (`first`) to where it
 // closes, its lines joined by a space, comments off; but a plain scalar's
 // lines folded as YAML folds them, an empty line among them a break, and
-// one a comment ended refused where it goes on, as js-yaml refuses it.
+// one a comment ended refused where it goes on, as js-yaml refuses it, as
+// is a key over more than one line, or its `:` on a line after it. A tab
+// is read in a comment line and a line of nothing but spaces and tabs, as
+// parse.js's peek reads them, but not in one a plain scalar folds into its
+// text, as YAML has it.
 export function readFlowLines(doc, first, owner) {
-  let breaks = 0, ended = false, plain = false, scan = flowScan(first, 0, null), text = ''
+  let breaks = 0, ended = false, last = null, plain = false, scan = flowScan(first, 0, null), text = ''
   for (let line = owner; ;) {
     if (scan.open === -1) throw new YamlError('a quoted scalar in a flow collection does not close on its line', line.number)
     const kept = scan.kept.replace(/ +$/u, '')
     if (kept !== '') {
       const goesOn = plain && !/^(?:[,\]}]|:(?:[ ,[\]{}]|$))/u.test(kept)
       if (goesOn && ended) throw new YamlError('a plain scalar in a flow collection goes on past a comment', line.number)
+      if (scan.keyed || (kept.startsWith(':') && !goesOn && (last === 'plain' || last === 'quoted'))) throw new YamlError('a key over more than one line is not supported', line.number)
       if (text !== '') text += goesOn && breaks > 1 ? '\n'.repeat(breaks - 1) : ' '
       text += kept
       breaks = 0
-      plain = scan.last === 'plain'
+      last = scan.last
+      plain = last === 'plain'
       ended = false
     }
     ended ||= plain && scan.comment
@@ -168,9 +181,10 @@ export function readFlowLines(doc, first, owner) {
     }
     line = line === owner ? doc.line : doc.advance()
     if (line === undefined || doc.isMarker(line)) throw new YamlError('a flow collection that does not close', owner.number)
-    noTab(line)
+    const blank = /^[\t ]*$/u.test(line.text)
+    if (blank ? plain && !ended : !line.text.startsWith('#')) noTab(line)
     breaks++
-    scan = flowScan(line.text, scan.open, plain && !ended ? 'plain' : null)
+    scan = flowScan(blank ? '' : line.text, scan.open, plain && !ended ? 'plain' : null)
   }
 }
 

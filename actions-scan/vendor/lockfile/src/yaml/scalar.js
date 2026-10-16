@@ -105,10 +105,13 @@ function readFlow(src, closer) {
   if (src.text[src.pos] !== closer) {
     do {
       if (src.workflow && src.text[src.pos] === closer) break
-      const item = readItem(src)
-      if (closer === ']') collection.push(item)
-      else if (take(src, PAIR) === null) throw new YamlError(`expected ": " after the key, found ${found(src)}`, src.line)
-      else setKey(collection, item, readItem(src), src.line)
+      if (src.workflow) readEntry(src, collection, closer)
+      else {
+        const item = readItem(src)
+        if (closer === ']') collection.push(item)
+        else if (take(src, PAIR) === null) throw new YamlError(`expected ": " after the key, found ${found(src)}`, src.line)
+        else setKey(collection, item, readItem(src), src.line)
+      }
       take(src, SPACES)
     } while (take(src, COMMA) !== null)
   }
@@ -124,6 +127,27 @@ function readItem(src) {
   const char = src.text[src.pos]
   if (src.workflow && (char === '[' || char === '{')) return readFlow(src, char === '[' ? ']' : '}')
   return readScalar(src, 'flow')
+}
+
+// A key's `:`, spaces before it too (`{a : 1}`); right before its value
+// after a quoted key (`{"a":1}`), as JSON writes it.
+const COLON = / *:(?=[ ,\]}]|$)/uy
+const QUOTED_COLON = / *:/uy
+
+// An entry of a flow collection as `workflow` reads it, as YAML has it: a
+// mapping's key with its value left empty, or its `:` too (`{a: , b}`),
+// null, and a sequence's `a: 1` a mapping of that one key.
+function readEntry(src, collection, closer) {
+  const quoted = src.text[src.pos] === '"' || src.text[src.pos] === "'"
+  const item = readItem(src)
+  const colon = take(src, quoted ? QUOTED_COLON : COLON) !== null
+  if (closer === ']' && !colon) { collection.push(item); return }
+  take(src, SPACES)
+  const value = colon && src.text[src.pos] !== ',' && src.text[src.pos] !== closer ? readItem(src) : null
+  if (closer === '}') { setKey(collection, item, value, src.line); return }
+  const pair = Object.create(null)
+  setKey(pair, item, value, src.line)
+  collection.push(pair)
 }
 
 export function parseInline(text, line, workflow = false) {
