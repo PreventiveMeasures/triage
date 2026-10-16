@@ -23,7 +23,7 @@ mock.module('../ui/view/repository-code.js', { exports: {
   navigateToRepositoryCode(route) { navigations.push(route) },
   shownRevision: ({ revision, commit }) => revision?.name ? revision : { kind: 'commit', name: commit },
 } })
-const { compactTime, historyRefs, plantedCommits, revisionFromAll, unmergedCommits } = await import('../ui/view/repository-history.js')
+const { compactTime, historyRefs, plantedCommits, unmergedCommits } = await import('../ui/view/repository-history.js')
 const History = customElements.get('repository-history')
 
 const [a, b, c, d, e, x] = ['a', 'b', 'c', 'd', 'e', 'f'].map(char => char.repeat(40))
@@ -133,7 +133,7 @@ test('Unmerged shows the branches every branch\'s holds not merged, read as ever
   const view = shownAt(main)
   view.render()
   await setImmediate()
-  assert.match(templateText(view.render()), /aria-pressed=true [^\n]*>All branches<[^]*>This revision<[^]*>Unmerged</u)
+  assert.match(templateText(view.render()), /aria-pressed=true [^\n]*>All branches<\/button>\s*<button [^\n]*>Unmerged<\/button>\s*<\/div>/u, 'every branch\'s or those not merged alone')
   view.pick('unmerged')
   const text = templateText(view.render())
   assert.match(text, /aria-pressed=true [^\n]*>Unmerged</u)
@@ -211,7 +211,7 @@ test('the tab reads every branch at the root, marks the commit shown, and opens 
   ])
   // A commit older than those listed offers its own history.
   const older = shownAt(x)
-  assert.match(templateText(older.render()), /fffffff<\/code> isn’t among these commits\.[^]*Show its history/u)
+  assert.match(templateText(older.render()), /fffffff<\/code> isn’t among these commits\.<\/p>/u)
   // Opened by none, its name is the one its repositories list it by, once
   // they arrive: its ids are only text until then.
   const unnamed = Object.assign(shownAt(a), { repository: { ...shownAt(a).repository, repo: null } })
@@ -232,7 +232,7 @@ test('this revision\'s history reads a page at a time, from the commit shown; ev
   await setImmediate()
   text = templateText(view.render())
   assert.deepEqual(requests.map(request => [request[1], request[3]]), [['', { page: 1, all: true }], [a, { page: 1, all: false }]])
-  assert.match(text, /aria-pressed=true [^\n]*>This revision</u)
+  assert.doesNotMatch(text, /history-modes/u, 'nothing to pick: the revision\'s alone')
   assert.match(text, /Every branch needs your GitHub sign-in/u)
   assert.match(text, /1\+ commit</u)
   // Held long, it reads its next page all the same, not its first again, on
@@ -246,45 +246,6 @@ test('this revision\'s history reads a page at a time, from the commit shown; ev
   assert.deepEqual(requests.slice(2), [[7, a, '', { page: 2, all: false, from: [b] }]])
   assert.match(text, /2 commits</u)
   assert.doesNotMatch(text, /Older commits/u, 'the last page read')
-})
-
-test('this revision\'s history comes from every branch\'s where that holds its commit: those it reaches, going on where a parent is missing', () => {
-  const all = { status: 'ready', until: 1, commits: [commit(a, [b, c], 40), commit(c, [d], 30), commit(b, [d], 20), commit(d, [x], 10)],
-    branches: [{ name: 'main', sha: a }], tags: [], defaultBranch: 'main', more: true }
-  const fromB = revisionFromAll(all, b)
-  assert.deepEqual(fromB.commits.map(item => item.sha[0]), ['b', 'd'])
-  assert.equal(fromB.more, true, 'd\'s parent is not among them')
-  assert.deepEqual([fromB.page, fromB.next], [1, [x]], 'older commits read on from where those it holds stop')
-  assert.deepEqual(revisionFromAll({ ...all, commits: [commit(a, [b], 20), commit(b, [], 10)] }, a).more, false, 'a root reached is all of it')
-  assert.equal(revisionFromAll(all, e), null, 'a commit every branch\'s doesn\'t hold')
-})
-
-test('switching from every branch to this revision reads nothing again where every branch\'s holds it; back again reads every branch', async () => {
-  answer = (repoId, ref, path, { all, page }) => all ? Promise.resolve({ ...allAnswer, commits: [commit(a, [b], 20, 'Merge work'), commit(b, [x], 10, 'First')] })
-    : Promise.resolve({ commit: b, path, page, commits: [commit(x, [], 5, 'Older')], more: false })
-  const view = shownAt(b)
-  view.render()
-  await setImmediate()
-  view.pick('revision')
-  let text = templateText(view.render())
-  assert.deepEqual(requests.map(request => request[3]), [{ page: 1, all: true }], 'no request for this revision')
-  assert.match(text, /aria-pressed=true [^\n]*>This revision</u)
-  assert.match(text, /1\+ commit</u, 'b alone, its parent beyond those every branch read')
-  view.history('revision').more()
-  await setImmediate()
-  text = templateText(view.render())
-  assert.deepEqual(requests.at(-1), [7, b, '', { page: 2, all: false, from: [x] }], 'older commits read on from where every branch\'s stop')
-  assert.match(text, /2 commits</u)
-  // From this revision, every branch's is read: this one's says nothing of
-  // the others.
-  state.managedSession = { id: `s-${++session}`, role: 'admin' }
-  const fromRevision = shownAt(b)
-  fromRevision.render()
-  await setImmediate()
-  assert.deepEqual(requests.at(-1), [7, b, '', { page: 1, all: false }])
-  fromRevision.pick('all')
-  fromRevision.render()
-  assert.deepEqual(requests.at(-1), [7, '', '', { page: 1, all: true }])
 })
 
 test('every branch\'s older commits read on from where those listed stop and from the branches not read, the newest first, naming those reached', async () => {

@@ -3467,10 +3467,9 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
   display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
   & > button {
     display: inline-flex; align-items: center; gap: .3rem;
-    padding: .2rem .65rem; border: 0; background: none; color: var(--muted); font: inherit; cursor: default;
+    padding: .2rem .5rem; border: 0; background: none; color: var(--muted); font: inherit; cursor: default;
     &:hover:not(:disabled) { color: var(--text); }
     &[aria-pressed=true] { background: var(--surface-active); color: var(--text); }
-    &:disabled { opacity: .5; }
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   }
   & > button + button { border-left: 1px solid var(--border); }
@@ -3568,9 +3567,10 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
 }
 .history-refs { display: inline-flex; flex: 0 1 auto; gap: .25rem; min-width: 0; max-width: 45%; margin-left: .55rem; overflow: hidden; }
 .history-ref {
-  display: inline-flex; flex: none; align-items: center; gap: .3rem; max-width: 12rem; height: 1.15rem; padding: 0 .45rem;
+  display: inline-flex; flex: none; align-items: center; gap: .3rem; max-width: 16rem; height: 1.15rem; padding: 0 .45rem;
   border: 1px solid var(--border); border-radius: 999px; font-size: .72rem; line-height: 1;
-  & > span { overflow: hidden; text-overflow: ellipsis; }
+  /* One line, a long name elided: the chips are outside the line's button, and its nowrap. */
+  & > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   & > svg { flex: none; width: .7rem; height: .7rem; color: var(--muted); }
   &.is-branch::before { content: ''; flex: none; width: .45rem; height: .45rem; border-radius: 50%; background: var(--ref); }
   &.is-default { font-weight: 600; }

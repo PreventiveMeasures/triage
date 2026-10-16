@@ -1,6 +1,7 @@
 // The code viewer's Commits (render-bundle.js): a repository's commits as
-// `git log --oneline --decorate --graph` lists them, from the revision shown,
-// or, at its root, across its branches as `--all` does. One compact line a
+// `git log --oneline --decorate --graph` lists them, across its branches as
+// `--all` does, or those not merged; from the revision shown where reading
+// every branch needs the reader's GitHub sign-in. One compact line a
 // commit: its short id, the branches and tags naming it, its subject, author
 // and time, beside the graph of the lines its parents make (history-graph.js),
 // the commit shown marked. A directory's history lists the commits touching
@@ -38,10 +39,10 @@ const ALL_STARTS = 25
 const histories = new Map()
 const shownElements = new Set()
 let keptFor = null
-// What the reader asked for, `--all` at first: every branch ('all'), the
-// revision's own history ('revision'), or the branches not merged
-// ('unmerged'); and the repositories reading every branch was refused for
-// want of a sign-in, which show the revision's.
+// What the reader asked for, `--all` at first: every branch ('all') or the
+// branches not merged ('unmerged'); and the repositories reading every
+// branch was refused for want of a sign-in, which show the revision's own
+// history ('revision').
 let preferred = 'all'
 const allRefused = new Set()
 
@@ -83,26 +84,6 @@ function historyRead(key, ask, settle) {
     return null
   }).finally(repaint)
   return loading
-}
-
-// This revision's history from every branch's, where that holds the commit
-// shown, read again of none: the commits it reaches among them, its history
-// going on where one has a parent not among them, its older commits read on
-// from there (settleFrontier).
-export function revisionFromAll(all, commit) {
-  const bySha = new Map(all.commits.map(item => [item.sha, item]))
-  if (!bySha.has(commit)) return null
-  const reached = new Set()
-  for (const queue = [commit]; queue.length > 0;) {
-    const sha = queue.pop()
-    if (reached.has(sha) || !bySha.has(sha)) continue
-    reached.add(sha)
-    queue.push(...bySha.get(sha).parents)
-  }
-  const commits = all.commits.filter(item => reached.has(item.sha))
-  return settleFrontier({ status: 'ready', until: all.until, page: 1, commits, more: commits.some(item => item.parents.some(parent => !bySha.has(parent))),
-    branches: all.branches, tags: all.tags, defaultBranch: all.defaultBranch, unread: [], pulls: (all.pulls ?? []).filter(pull => reached.has(pull.merge)),
-    openPulls: all.openPulls ?? [], loadingMore: false, moreError: null })
 }
 
 // A whole repository's history read on (`settle`, as a page is read), every
@@ -369,12 +350,13 @@ class RepositoryHistory extends LitElement {
   }
 
   // What it lists: a directory's commits ('path'), every branch's ('all'),
-  // the revision's ('revision'), or every branch's not merged ('unmerged').
+  // every branch's not merged ('unmerged'), or, where every branch's needs a
+  // sign-in, the revision's ('revision').
   mode() {
     const { repoId, path } = this.repository
     if (path) return 'path'
     sessionHistories()
-    return preferred !== 'revision' && !allRefused.has(repoId) ? preferred : 'revision'
+    return allRefused.has(repoId) ? 'revision' : preferred
   }
 
   // The branches not merged are every branch's, read as those are.
@@ -387,13 +369,6 @@ class RepositoryHistory extends LitElement {
       if (!every && answer?.commit !== commit) throw new Error('The server answered with another revision\'s history.')
       return checked(answer)
     })
-    // This revision's history, where All branches' holds its commit, comes
-    // from that, unread again; All branches' own is read all the same.
-    const held = sessionHistories()
-    const fresh = entry => entry && Date.now() < entry.until
-    const all = mode === 'revision' && !fresh(held.get(key)) ? held.get(`all\0${repoId}`) : null
-    const derived = all?.status === 'ready' && fresh(all) ? revisionFromAll(all, commit) : null
-    if (derived) held.set(key, derived)
     const settle = mode === 'path' ? null : settleFrontier
     const entry = historyRead(key, ask, settle)
     if (every && entry.status === 'error' && entry.code === 'github-token-required') {
@@ -466,12 +441,11 @@ class RepositoryHistory extends LitElement {
     return html`<div class="history-bar">
         ${activityPicker('commits')}
         ${mode === 'path' ? html`<span class="history-scope">Commits touching <code>${this.repository.path}</code></span>`
+          : refused ? html`<span class="history-scope">Every branch needs your GitHub sign-in.</span>`
           : html`<div class="history-modes" role="group" aria-label="Branches">
-            <button type="button" aria-pressed=${String(mode === 'all')} ?disabled=${refused} @click=${() => this.pick('all')}>All branches</button>
-            <button type="button" aria-pressed=${String(mode === 'revision')} @click=${() => this.pick('revision')}>This revision</button>
-            <button type="button" aria-pressed=${String(mode === 'unmerged')} ?disabled=${refused} @click=${() => this.pick('unmerged')}>Unmerged</button>
-          </div>
-          ${allRefused.has(this.repository.repoId) ? html`<span class="history-scope">Every branch needs your GitHub sign-in.</span>` : nothing}`}
+            <button type="button" aria-pressed=${String(mode === 'all')} @click=${() => this.pick('all')}>All branches</button>
+            <button type="button" aria-pressed=${String(mode === 'unmerged')} @click=${() => this.pick('unmerged')}>Unmerged</button>
+          </div>`}
         ${ready ? html`<span class="history-summary">${count}${branches > 0 ? ` on ${branches} branch${branches === 1 ? '' : 'es'}` : ''}</span>` : nothing}
       </div>
       ${ready ? this.renderCommits(mode, entry, more, layout, defaultBranch)
@@ -497,8 +471,7 @@ class RepositoryHistory extends LitElement {
     const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">
       ${mode === 'all' && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
-        <code>${shown.slice(0, 7)}</code> isn’t among these commits.
-        <button type="button" class="history-link" @click=${() => this.pick('revision')}>Show its history</button></p>` : nothing}
+        <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
       <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth}px` })}>
         ${historyGraph(layout, shown)}
         <ol class="history-list" aria-label="Commits" @keydown=${this.keydown}>${layout.rows.map(({ commit, color }, row) => {
