@@ -19,7 +19,9 @@ test('a tile\'s reviews mark each reviewer by how their latest review stands, di
   assert.match(text, /class=review-mark is-requested>[^]*aria-label=Review requested[^]*linus/u)
   assert.match(text, /@security/u, 'a team by its slug')
   assert.doesNotMatch(text, /Unreviewed/u, 'Codex reviewed the latest commit')
-  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviews: 1, moreRequests: 2 })), /class="review-more" data-tooltip=3 more reviewers>\+3</u)
+  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviews: 1, moreRequests: 2 })),
+    /class="review-more" data-tooltip=1 more review and 2 more review requests, on GitHub>\+3</u, 'each counted apart, a reviewer perhaps in both')
+  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviews: 0, moreRequests: 1 })), /data-tooltip=1 more review request, on GitHub>\+1</u)
 })
 
 test('a tile says its open threads, the gravest by its badge, and that the latest commit is unreviewed where no review is on it', () => {
@@ -78,5 +80,6 @@ test('a popup lists each review, Codex\'s code and security reviews apart, on wh
   assert.match(unreviewed, /on <code>bbbbbbb<\/code>, an earlier commit/u, 'unlinked where the repository is unnamed')
   const unknown = templateText(reviewSections({ head, codex: codex({ commit: earlier, status: 'done' }), reviewers: [], moreReviews: 20, threads: counted() }, null))
   assert.match(unknown, /No review read is on the latest commit, <code>eeeeeee<\/code>; one of those on GitHub may be\./u)
+  assert.match(unknown, /And 20 more reviews, on GitHub\./u)
   assert.doesNotMatch(unknown, /No review is on the latest commit/u)
 })

@@ -1884,7 +1884,8 @@ id, team?, state, requested, commit, at }], moreReviews, moreRequests, threads: 
 resolved, more, severity }, codex: { login, id, code: { commit, status },
 security, requested, failed } | null }`, read from each reviewer's latest
 review (twenty, and ten reviews requested, how many more GitHub counts in
-`moreReviews` and `moreRequests` apart, the tile saying `+N` of both, the
+`moreReviews` and `moreRequests` apart, the tile saying `+N` of both, each
+told apart rather than as reviewers, one perhaps in both, the
 latest commit unknown, rather than unreviewed, where a review is unread), the latest fifty threads (open ones
 being, mostly, those lately opened), the first five comments and the last
 twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which

@@ -61,8 +61,12 @@ export function reviewStandings(reviews) {
   ]
 }
 
-// How many reviewers more than those read: their reviews and requests.
+// How many reviews and how many review requests more than those read, all
+// told: GitHub counts each apart, a reviewer perhaps in both, so they are
+// no count of reviewers.
 const moreReviewers = reviews => (reviews.moreReviews ?? 0) + (reviews.moreRequests ?? 0)
+const moreSaid = reviews => [reviews.moreReviews > 0 ? plural(reviews.moreReviews, 'more review') : null,
+  reviews.moreRequests > 0 ? plural(reviews.moreRequests, 'more review request') : null].filter(Boolean).join(' and ')
 
 // Whether a review is on the latest commit: one that reviewed it, or Codex,
 // done with it; null, unknown, where none read is but more reviews are than
@@ -96,7 +100,7 @@ export function reviewLine(reviews) {
       return html`<span class=${`review-mark is-${state}${stale ? ' is-stale' : ''}`}><span class="review-glyph" role="img" aria-label=${said}
         data-tooltip=${said}>${glyph}</span><span class="review-who">${who}</span></span>`
     })}
-    ${moreReviewers(reviews) > 0 ? html`<span class="review-more" data-tooltip=${plural(moreReviewers(reviews), 'more reviewer')}>+${moreReviewers(reviews)}</span>` : nothing}
+    ${moreReviewers(reviews) > 0 ? html`<span class="review-more" data-tooltip=${`${moreSaid(reviews)}, on GitHub`}>+${moreReviewers(reviews)}</span>` : nothing}
     ${threads ? html`<span class="review-threads" role="img" aria-label=${threads} data-tooltip=${threads}>${THREAD}<span>${open}${more ? '+' : ''}</span>${severity(gravest)}</span>` : nothing}
     ${onHead === false ? html`<span class="review-unreviewed" data-tooltip=${standings.length > 0 ? 'No review is on the latest commit' : 'No reviews yet'}>Unreviewed</span>`
       : onHead === null ? html`<span class="review-unreviewed" data-tooltip="No review read is on the latest commit; more on GitHub">Unreviewed?</span>` : nothing}
@@ -132,7 +136,7 @@ export function reviewSections(reviews, repo) {
   const { open, resolved, more, list = [] } = reviews.threads
   return html`<section class="repo-item-section"><h4>Reviews</h4>
       ${rows.length > 0 ? html`<ul>${rows}</ul>` : html`<p class="repo-item-quiet">No reviews yet.</p>`}
-      ${moreReviewers(reviews) > 0 ? html`<p class="repo-item-quiet">And ${plural(moreReviewers(reviews), 'more reviewer')}, on GitHub.</p>` : nothing}
+      ${moreReviewers(reviews) > 0 ? html`<p class="repo-item-quiet">And ${moreSaid(reviews)}, on GitHub.</p>` : nothing}
       ${headReviewed(reviews) === null ? html`<p class="repo-item-quiet">No review read is on the latest commit, <code>${short(head)}</code>; one of those on GitHub may be.</p>`
         : rows.length > 0 && !headReviewed(reviews) ? html`<p class="repo-item-quiet">No review is on the latest commit, <code>${short(head)}</code>.</p>` : nothing}
     </section>
