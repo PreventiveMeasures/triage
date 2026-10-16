@@ -158,23 +158,26 @@ test('a tile shows its item as read latest: one its popup read since as merged s
   view.pick('open')
 })
 
-test('counts read with a later page count one read before it, moved since its list was: moved once', async () => {
+test('counts move by those moved after they were read: once, though a later page\'s count one, or it is read again', async () => {
   const { knowItems } = await import('../ui/view/repository-items.js')
-  const pages = [{ items: [pull(31), pull(30)], counts: { open: 11, closed: 967 }, more: true, after: 'next', readAt: 1000 },
+  const pages = [{ items: [pull(32), pull(31), pull(30)], counts: { open: 11, closed: 967 }, more: true, after: 'next', readAt: 1000 },
     { items: [pull(29)], counts: { open: 10, closed: 968 }, more: true, after: 'last', readAt: 3000 },
     { items: [pull(28)], counts: { open: 12, closed: 966 }, more: false, readAt: 500 }]
   answer = () => Promise.resolve(pages.shift())
   const view = shown('pulls')
   view.render()
   await setImmediate()
-  knowItems(7, [{ ...pull(30, { state: 'merged' }), kind: 'pulls' }], 2000)
+  knowItems(7, [{ ...pull(30, { state: 'merged', closedAt: 1500, mergedAt: 1500 }), kind: 'pulls' }], 2000)
   assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
-  // More, read since #30 was: its counts count it merged already.
+  // More, read since #30 was merged: its counts count it merged already, and read merged again, still.
   view.list('open').more()
   await setImmediate()
   assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
-  // One merged since that page, moved.
-  knowItems(7, [{ ...pull(31, { state: 'merged' }), kind: 'pulls' }], 4000)
+  knowItems(7, [{ ...pull(30, { state: 'merged', closedAt: 1500, mergedAt: 1500, title: 'Again' }), kind: 'pulls' }], 5000)
+  assert.match(templateText(view.render()), /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // One merged after that page was read, moved; one whose merge may have been before it, not.
+  knowItems(7, [{ ...pull(31, { state: 'merged', closedAt: 3500, mergedAt: 3500 }), kind: 'pulls' }], 4000)
+  knowItems(7, [{ ...pull(32, { state: 'closed', closedAt: 2500 }), kind: 'pulls' }], 4000)
   assert.match(templateText(view.render()), /Open<span class="n">9<\/span>[^]*Closed<span class="n">969<\/span>/u)
   // The last page, kept on the server from before the first: its counts older than those held.
   view.list('open').more()

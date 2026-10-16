@@ -12,9 +12,10 @@ import { store } from '@rray/frontend/state-management'
 import { state } from '#client/index.js'
 
 // By the session, the repository and the number, which an issue and a pull
-// request of one repository never share: `{ item, readAt, was }`, the item
-// with its `kind`, 'issues' or 'pulls', and the state a read before knew it in
-// where one knew it in another (`was`, else null); and how many times they changed, which what
+// request of one repository never share: `{ item, readAt, moved }`, the item
+// with its `kind`, 'issues' or 'pulls', and, where a read before knew it in
+// the other of open and closed, which (`from`) and when the latest read that
+// knew it so was (`before`): it moved after then (`moved`, else null); and how many times they changed, which what
 // reads them all observes, the store telling those that iterate them of none
 // replaced.
 const known = store({ items: new Map(), changes: 0 })
@@ -40,15 +41,16 @@ export function knowItems(repoId, items, readAt, kind = null) {
     const key = keyOf(session, repoId, item.number)
     const held = known.items.get(key)
     if (held && held.readAt > readAt) continue
-    const was = held ? (held.item.state === item.state ? held.was : held.item.state) : null
-    known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt, was })
+    const from = held && (held.item.state === 'open' ? 'open' : 'closed')
+    const moved = !from || from === (item.state === 'open' ? 'open' : 'closed') ? held?.moved ?? null : { from, before: held.readAt }
+    known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt, moved })
     changed = true
   }
   if (changed) known.changes++
 }
 
 // The latest read of issue or pull request `number` of repository `repoId`,
-// `{ item, readAt, was }`, else null.
+// `{ item, readAt, moved }`, else null.
 export const knownItem = (repoId, number) => known.items.get(keyOf(sessionOf(), repoId, number)) ?? null
 
 // Those of `kind` known of repository `repoId`, each its latest read.

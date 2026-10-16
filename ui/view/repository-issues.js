@@ -65,11 +65,12 @@ function checked(answer) {
 // as now known (repository-items.js): each it lists as read latest, one read
 // since in the other state left where it was, as it shows now; where the list
 // reaches them, those read since it was that are now in its state, among them
-// by when each was last updated; and its counts, those read since the page
-// its counts came with was (`countsAt`) moving between open and closed moved,
-// a later page's counting those read before it: one it lists, in its state as
-// it was read, and one arriving that a read before knew in the other; one
-// arriving that none did, perhaps only updated since, moves none.
+// by when each was last updated; and its counts, those that moved between
+// open and closed since the page its counts came with was read (`countsAt`)
+// moved: known so where a read knew one as it was no earlier than then, or
+// GitHub closed one now closed after it, a later page's counts counting one
+// moved before; one arriving that no read knew in the other, perhaps only
+// updated since, moves none, nor one whose move then is unknown.
 export function listedNow(repoId, kind, listState, entry) {
   const belongs = item => (item.state === 'open') === (listState === 'open')
   const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
@@ -82,9 +83,12 @@ export function listedNow(repoId, kind, listState, entry) {
     const at = items.findIndex(other => (other.updatedAt ?? 0) < (item.updatedAt ?? 0))
     items.splice(at === -1 ? items.length : at, 0, item)
   }
-  const since = ({ readAt }) => readAt > (entry.countsAt ?? entry.readAt)
-  const moved = latest.filter(held => !belongs(held.item) && since(held)).length
-    - arrived.filter(held => since(held) && held.was !== null && !belongs({ state: held.was })).length
+  const countsAt = entry.countsAt ?? entry.readAt
+  const group = listState === 'open' ? 'open' : 'closed'
+  const since = ({ item, moved }) => Boolean(moved)
+    && (moved.before >= countsAt || (item.state !== 'open' && (item.closedAt ?? item.mergedAt ?? Number.NEGATIVE_INFINITY) > countsAt))
+  const moved = latest.filter(held => !belongs(held.item) && held.moved?.from === group && since(held)).length
+    - arrived.filter(held => held.moved?.from !== group && since(held)).length
   const other = listState === 'open' ? 'closed' : 'open'
   const counts = { [listState]: Math.max(0, entry.counts[listState] - moved), [other]: Math.max(0, entry.counts[other] + moved) }
   return { items, counts }
