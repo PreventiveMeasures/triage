@@ -31,6 +31,8 @@ const MAX_REFS = 3
 // What keys reach in a line: its links on GitHub, then its button.
 const LINE_KEYS = 'a[href], .history-commit'
 const KEEP_MS = 5 * 60_000
+// The longest a read again of every branch, answered as the server kept them, waits to ask once more.
+const RETRY_FRESH_MS = 15_000
 const RETRY_MS = 30_000
 // Where every branch's next page reads on from, as many as the server reads
 // branches at first (repository-history.ts ALL_BRANCHES).
@@ -92,12 +94,21 @@ function historyRead(key, ask, settle) {
 
 // Every branch's history read again, afresh (`ask`'s third argument), its
 // branches read now rather than as the server kept them: the one held shown
-// meanwhile, `refreshing`, and kept where that read fails; once each.
+// meanwhile, `refreshing`, and kept where that read fails; once each, and
+// once more where the server, having read them just before, answered as it
+// kept them, when it may read them again (`retryIn`, `retryAt`).
 function refreshHistory(key, held, ask, settle) {
   held.fresh = true
   held.refreshing = true
   ask(1, null, true).then(answer => {
-    if (sessionHistories().get(key) === held) sessionHistories().set(key, readEntry(answer, settle, true))
+    if (sessionHistories().get(key) !== held) return null
+    const retryIn = held.retried ? 0 : Math.min(Number(answer.retryIn) || 0, RETRY_FRESH_MS)
+    const entry = readEntry(answer, settle, !(retryIn > 0))
+    if (retryIn > 0) {
+      Object.assign(entry, { retried: true, retryAt: Date.now() + retryIn })
+      setTimeout(repaint, retryIn)
+    }
+    sessionHistories().set(key, entry)
     return null
   }, () => null).finally(() => {
     held.refreshing = false
@@ -338,7 +349,8 @@ function readHistory(repository, mode) {
   // Every branch's, as the server kept them, missing the commit shown, those
   // of the pull requests squashed into them planted among them too, as they
   // do once a branch reaches it since: read again, afresh.
-  if (every && entry.status === 'ready' && !entry.fresh && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
+  if (every && entry.status === 'ready' && !entry.fresh && !(entry.retryAt > Date.now())
+    && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
     refreshHistory(key, entry, ask, settle)
   }
   if (every && entry.status === 'error' && entry.code === 'github-token-required') {
@@ -517,7 +529,7 @@ class RepositoryHistory extends LitElement {
     const repo = this.repo ?? this.repository.repo
     const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">
-      ${mode === 'all' && !entry.refreshing && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
+      ${mode === 'all' && !entry.refreshing && !(entry.retryAt > Date.now()) && !layout.rows.some(row => row.commit.sha === shown) ? html`<p class="history-note">
         <code>${shown.slice(0, 7)}</code> isn’t among these commits.</p>` : nothing}
       <div class="history-lines" style=${styleMap({ '--history-graph': `${graphWidth}px` })}>
         ${historyGraph(layout, shown)}

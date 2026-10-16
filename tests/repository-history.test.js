@@ -258,6 +258,29 @@ test('every branch\'s history as the server kept it, missing the commit a branch
   await setImmediate()
   assert.equal(requests.filter(request => request[3].fresh).length, 1, 'not read again for it')
   assert.match(templateText(planted.render()), /Squashed work/u)
+  // Read again where the server read them just before, answered as kept:
+  // asked once more when it may read them again.
+  state.managedSession = { id: 'soon', role: 'admin' }
+  const later = '7'.repeat(40)
+  let freshReads = 0
+  answer = (repoId, ref, path, options) => {
+    if (!options.fresh) return Promise.resolve(allAnswer)
+    freshReads++
+    return Promise.resolve(freshReads === 1 ? { ...allAnswer, retryIn: 5 }
+      : { ...allAnswer, commits: [commit(later, [a], 50, 'Later'), ...allAnswer.commits], branches: [{ name: 'main', sha: later }] })
+  }
+  const soon = shownAt(later)
+  soon.render()
+  await setImmediate()
+  soon.render()
+  await setImmediate()
+  assert.equal(freshReads, 1)
+  assert.doesNotMatch(templateText(soon.render()), /isn’t among these commits/u, 'not while it waits to ask again')
+  await new Promise(resolve => { setTimeout(resolve, 10) })
+  soon.render()
+  await setImmediate()
+  assert.equal(freshReads, 2)
+  assert.match(templateText(soon.render()), /id=history-subject-7{40}>Later</u)
   // A read again that fails keeps those listed, and says what they miss.
   answer = (repoId, ref, path, options) => options.fresh ? Promise.reject(new Error('GitHub is down.')) : Promise.resolve(allAnswer)
   state.managedSession = { id: 'another', role: 'admin' }

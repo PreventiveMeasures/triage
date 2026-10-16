@@ -1602,9 +1602,12 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
       // What a later page reads on from, the client knows; whether one may
       // follow, the deepest page says.
+      // Asked for afresh, those kept answered as just read: how long till
+      // they may be read again (`retryIn`), for the client to ask then.
+      const heads = starts ? null : await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, fresh)
+      const retryIn = heads && fresh && heads.kept ? heads.at + REPOSITORY_READ_FLOOR_MS - Date.now() : 0
       body = starts ? { all: true, page, commits: (await historyFrom(repo, token, starts, pages)).commits, more: page < MAX_HISTORY_PAGE }
-        : { all: true, ...await repositoryAllHistory(repo, token,
-          (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, fresh)).value, pages) }
+        : { all: true, ...await repositoryAllHistory(repo, token, heads!.value, pages), ...retryIn > 0 ? { retryIn } : {} }
     } else {
       const commit = await reader.commit(ref)
       // The branches and tags naming commits: with a token, every branch All
@@ -1752,9 +1755,10 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // failed as `keepThrough` lets it. One asked for afresh (`fresh`) is read
 // now, unless it was read REPOSITORY_READ_FLOOR_MS since, what was kept
 // answered where that read fails. One GitHub refuses to read again is no
-// longer kept: the next to ask is refused as GitHub refused it.
+// longer kept: the next to ask is refused as GitHub refused it. `at` is when
+// what it answers was read.
 async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
-  keepThrough: (err: unknown) => boolean = () => false, fresh = false): Promise<{ value: T; kept: boolean }> {
+  keepThrough: (err: unknown) => boolean = () => false, fresh = false): Promise<{ value: T; kept: boolean; at: number }> {
   const store = repositoryReadStore(deps.db, deps.config.debug)
   // One kept longer than a day, not yet removed (pruneKept removes them as
   // others are written), is none.
@@ -1785,12 +1789,12 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
       // Its failure leaves the kept answer sent until it is a day old, so it is said.
       deps.track(reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) }))
     }
-    return { value: held.value as T, kept: true }
+    return { value: held.value as T, kept: true, at: held.at }
   }
   try {
-    return { value: now ? await reread() : await readKept(), kept: false }
+    return { value: now ? await reread() : await readKept(), kept: false, at: Date.now() }
   } catch (err) {
-    if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true }
+    if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true, at: held.at }
     throw err
   }
 }
