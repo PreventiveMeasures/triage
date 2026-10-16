@@ -1668,10 +1668,11 @@ time, beside the graph of the lines its parents make
 a child of it; a merge's other parent takes a lane of its own, and lanes waiting
 on one parent join where it comes; each line keeps a color of its own, unlike
 its neighbors' where it can, the default branch's first lane and color its
-own; a parent not listed is a short dotted line on. **All branches**,
-**This revision** and **Unmerged** pick what it lists: at the repository's
-root it reads All branches, as `--all` adds them, else This revision's, the
-commit shown first. Unmerged lists, of the branches All branches read, those
+own; a parent not listed is a short dotted line on. **All branches** and
+**Unmerged** pick what it lists: All branches at first, as `--all` adds them;
+where reading every branch needs the reader's GitHub sign-in, the revision
+shown's own history instead, the commit shown first, with nothing to pick.
+Unmerged lists, of the branches All branches read, those
 not merged: the commits the default branch doesn't reach, as `git log --all
 --not <default>` does, a squash merge reaching its pull request's (below),
 each branch down to where it began, those newer than the oldest of the
@@ -1694,7 +1695,7 @@ hundred. Older
 commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
-it, a link shows its own history. A directory lists the commits touching it, in a
+it, a note says so. A directory lists the commits touching it, in a
 line, as GitHub doesn't rewrite their parents to those listed. A line opens its
 commit's code, named by the branch, else the tag, naming it. The view reads
 none of the directory's files: its route at a commit opens it alone, its other
