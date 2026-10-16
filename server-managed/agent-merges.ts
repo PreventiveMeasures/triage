@@ -35,13 +35,14 @@ const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, first: ${MERGED_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { updatedAt mergedAt headRefName mergeCommit { oid parents { totalCount } } commits(last: ${MERGED_COMMITS}) { nodes { commit { oid messageHeadline } } } }
+      nodes { updatedAt mergedAt headRefName mergeCommit { oid parents { totalCount } } commits(last: ${MERGED_COMMITS}) {
+        nodes { commit { oid messageHeadline changedFilesIfAvailable } } } }
     }
   }
 }`
 type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }
   nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown; parents?: { totalCount?: unknown } | null } | null
-    commits?: { nodes?: ({ commit?: { oid?: unknown; messageHeadline?: unknown } | null } | null)[] } | null } | null)[] } | null } | null }
+    commits?: { nodes?: ({ commit?: { oid?: unknown; messageHeadline?: unknown; changedFilesIfAvailable?: unknown } | null } | null)[] } | null } | null)[] } | null } | null }
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
 
 // The commits the pull requests merged since `since` from an agent's branch
@@ -49,7 +50,8 @@ const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_
 // merged with a merge commit, which a year counts none of, its own commits,
 // its latest MERGED_COMMITS; and of one of more commits whose merge commit
 // has one parent, its commits' subjects, for those it was rebased as to be
-// told by (agentCommits). Those merged are read the most recently updated
+// told by (agentCommits), those of its empty commits left out, as a rebase
+// leaves them. Those merged are read the most recently updated
 // first (a pull request is updated when merged, or after), on from what was
 // `kept`: till one updated before the year, or before the newest read before
 // was, as many queries an answer as MERGED_QUERIES, a read not finished
@@ -77,8 +79,9 @@ export async function agentMerges(fullName: string, token: string, since: number
       const own = (node?.commits?.nodes ?? []).map(item => item?.commit)
       const merging = count(node?.mergeCommit?.parents?.totalCount) > 1
       for (const oid of [merge, ...merging ? own.map(commit => commit?.oid) : []]) if (typeof oid === 'string' && SHA.test(oid)) merges.set(oid, merged)
-      if (!merging && own.length > 1 && own.every(commit => typeof commit?.messageHeadline === 'string')) {
-        rebases.set(merge, [merged, own.map(commit => commit!.messageHeadline as string)])
+      const rebased = own.filter(commit => commit?.changedFilesIfAvailable !== 0)
+      if (!merging && rebased.length > 1 && rebased.every(commit => typeof commit?.messageHeadline === 'string')) {
+        rebases.set(merge, [merged, rebased.map(commit => commit!.messageHeadline as string)])
       }
     }
     if (done) return result(from ?? stop, null)

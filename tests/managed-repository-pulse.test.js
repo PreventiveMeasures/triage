@@ -233,12 +233,13 @@ test('an agent\'s pull request merged with a merge commit brings its own commits
   assert.deepEqual([counted.weeks[0].days[1], counted.weeks[0].agentDays[1]], [3, 2], 'the merge itself left out')
 })
 
-test('an agent\'s pull request rebased brings its commits\' copies, told by their subjects from its last back; one squashed, its own commit alone', async t => {
+test('an agent\'s pull request rebased brings its commits\' copies, told by their subjects from its last back, its empty commits, left out of a rebase, passed over; one squashed, its own commit alone', async t => {
   const since = Date.UTC(2025, 9, 19)
   const when = new Date(since + DAY).toISOString()
   const pull = (merge, headlines) => ({ updatedAt: when, mergedAt: when, headRefName: 'codex/work', mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } },
-    commits: { nodes: headlines.map((messageHeadline, at) => ({ commit: { oid: shaOf(merge * 100 + at), messageHeadline } })) } })
-  github(t, { graphql: mergedPulls([pull(10, ['First', 'Second', `${'Third, its subject long '.repeat(3)}…`]), pull(30, ['One', 'Two'])]) })
+    commits: { nodes: headlines.map((messageHeadline, at) => ({ commit: { oid: shaOf(merge * 100 + at), messageHeadline,
+      changedFilesIfAvailable: messageHeadline === 'Retrigger CI' ? 0 : 1 } })) } })
+  github(t, { graphql: mergedPulls([pull(10, ['First', 'Retrigger CI', 'Second', `${'Third, its subject long '.repeat(3)}…`]), pull(30, ['One', 'Two'])]) })
   const read = await agentMerges('org/repo', 'token', since, null)
   assert.deepEqual(read.rebases.map(([sha, , subjects]) => [sha, subjects.length]), [[shaOf(10), 3], [shaOf(30), 2]])
   // The default branch, newest first: the rebase's copies, then one of
