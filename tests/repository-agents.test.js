@@ -22,6 +22,7 @@ mock.module('../ui/view/lazy-render.js', { exports: {
 } })
 const { agentStats, filterSessions, pullsReadShare, sessionLink } = await import('../ui/view/repository-agents.js')
 const { agentIcon } = await import('../ui/view/repository-tiles.js')
+const { forgetGithubUsers, knowGithubUsers } = await import('../ui/view/github-users.js')
 const Agents = customElements.get('repository-agents')
 
 let session = 0
@@ -96,6 +97,33 @@ test('a tile says how many tasks only where its chips don\'t count them all: not
   // The bar's counts none of none, more to read or not: Codex's commit alone.
   assert.match(text, /role="group" aria-label=Codex>[^]*?aria-label=1 commit to the default branch without a pull request[^]*?<\/span>\s*<\/span>/u)
   assert.doesNotMatch(text, /aria-label=0\+? /u)
+})
+
+test('a tile names its author where a user is one, none where only an agent\'s own account is; a single task\'s age and lines are beside its chip', async () => {
+  knowGithubUsers({ users: { claude: { agent: 'claude' } } })
+  const pushed = (char, id, author) => ({ oid: char.repeat(40), title: `Pushed ${char}`, at: Date.now(), author, additions: 3, deletions: 2, signals: claude(id) })
+  answer = () => Promise.resolve({ pulls: [pull(9, 'claude/one', claude('session_P')), pull(7, 'claude/two', claude('session_M'), { author: 'claude' })],
+    commits: [pushed('d', 'session_C', 'claude'), pushed('e', 'session_M', 'claude'), pushed('f', 'session_U', 'claude'), pushed('a', 'session_U', 'ada')],
+    issues: [], branches: [], more: false, after: null })
+  const view = shown('org/repo')
+  view.render()
+  await setImmediate()
+  const tiles = Object.fromEntries(templateText(view.render()).split('<li ').slice(1).map(tile => [tile.match(/claude\.ai\/code\/(session_\w)/u)[1], tile]))
+  forgetGithubUsers()
+  const metas = tile => tile.match(/class="issue-meta"/gu)?.length ?? 0
+  // Claude's commit alone, by its own account: no line above its chip, its age and lines beside it.
+  assert.doesNotMatch(tiles.session_C, /issue-author/u)
+  assert.equal(metas(tiles.session_C), 1)
+  assert.match(tiles.session_C, /class="agent-task-row"><span class="agent-chips">[^]*<code>ddddddd<\/code><\/a><\/span><span class="issue-meta"><time [^>]*>now<\/time><span class="issue-diff"><span class="is-added">\+3<\/span>\s*<span class="is-deleted">−2</u)
+  // A user's pull request alone: its author above, its age and lines beside its chip.
+  assert.match(tiles.session_P, /class="issue-meta"><span class="issue-author">ada<\/span><\/span>\s*<span class="agent-task-row">[^]*>#9<\/a><\/span><span class="issue-meta"><time [^>]*>[^<]+<\/time><span class="issue-diff">[^]*\+1,000/u)
+  // Tasks of Claude's own alone: their age and lines above their chips, no author.
+  assert.doesNotMatch(tiles.session_M, /issue-author/u)
+  assert.equal(metas(tiles.session_M), 1)
+  assert.match(tiles.session_M, /class="issue-meta"><time [^>]*>now<\/time><span class="issue-diff">[^]*<\/span><\/span>\s*<span class="agent-task-row"><span class="agent-chips">[^]*>#7<[^]*<code>eeeeeee<\/code><\/a><\/span><\/span>/u)
+  // A user among its authors is named, Claude's account before them or not.
+  assert.match(tiles.session_U, /class="issue-meta"><span class="issue-author">ada<\/span><time /u)
+  assert.equal(metas(tiles.session_U), 1)
 })
 
 test('more read on from the cursors a page ended at, each pull request and commit once, the sessions made again of all read', async () => {

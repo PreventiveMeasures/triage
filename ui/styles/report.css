@@ -3771,6 +3771,13 @@ repository-agents { --claude: #d97757; }
 }
 .agent-tile .issue-meta > span:not(.issue-author) { flex: none; font-variant-numeric: tabular-nums; }
 .agent-tile .issue-branch code { max-width: none; flex: 0 1 auto; }
+/* A tile's chips, a single task's age and size at their row's end, no
+   taller than the chips. */
+.agent-task-row {
+  display: flex; align-items: center; gap: .4rem; min-width: 0;
+  & .agent-chips { flex: 1; min-width: 0; }
+  & .issue-meta { flex: none; line-height: 1; }
+}
 /* The chips in one line, those that fit whole, the rest wrapped out of
    sight, and room kept at its end for how many are not seen: each chip's
    count of those after it sits past its end, where the next chip, drawn
