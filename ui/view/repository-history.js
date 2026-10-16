@@ -27,6 +27,8 @@ const ROW = 24
 const EDGE = 9
 const LANE_COLORS = 8
 const MAX_REFS = 3
+// What keys reach in a line: its links on GitHub, then its button.
+const LINE_KEYS = 'a[href], .history-commit'
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 // Where every branch's next page reads on from, as many as the server reads
@@ -249,13 +251,15 @@ export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = 
 
 // A subject, the pull requests it names by number (`#12`, as GitHub links
 // them: on their own or after a space or bracket) opening them on GitHub
-// (`github`, the repository's page there), in a new tab.
+// (`github`, the repository's page there), in a new tab: by the issue's
+// address, as an issue's number is one too, GitHub sending a pull
+// request's on to it.
 function subjectLinks(subject, github) {
   if (!github) return subject
   const parts = []
   let at = 0
   for (const match of subject.matchAll(/(?<=^|[\s([])#(\d+)\b/gu)) {
-    parts.push(subject.slice(at, match.index), html`<a href=${`${github}/pull/${match[1]}`} target="_blank" rel="noopener noreferrer"
+    parts.push(subject.slice(at, match.index), html`<a href=${`${github}/issues/${match[1]}`} target="_blank" rel="noopener noreferrer"
       tabindex="-1">${match[0]}</a>`)
     at = match.index + match[0].length
   }
@@ -427,16 +431,23 @@ class RepositoryHistory extends LitElement {
     navigateToRepositoryCode({ repoId, repo, path, commit: commit.sha, bundleTab: 'code', ...ref ? { revision: { kind: ref.kind, name: ref.name } } : {} })
   }
 
-  // Up and down move between lines, Home and End to the first and last.
+  // Up and down move between lines' buttons, Home and End to the first's and
+  // the last's; left and right along a line, through its links on GitHub and
+  // its button. Whichever is reached is the list's one stop for Tab.
   keydown(event) {
-    const rows = [...this.querySelectorAll('.history-commit')]
-    const at = rows.indexOf(event.target)
+    const lines = [...this.querySelectorAll('.history-row')]
+    const line = event.target.closest('.history-row')
+    const own = line ? [...line.querySelectorAll(LINE_KEYS)] : []
+    const at = own.indexOf(event.target)
     if (at === -1) return
-    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[event.key]
-    if (to == null || !rows[to]) return
+    const along = { ArrowLeft: -1, ArrowRight: 1 }[event.key]
+    const across = { ArrowUp: -1, ArrowDown: 1 }[event.key]
+    const to = along ? own[at + along]
+      : (across ? lines[lines.indexOf(line) + across] : { Home: lines[0], End: lines.at(-1) }[event.key])?.querySelector('.history-commit')
+    if (!to) return
     event.preventDefault()
-    for (const row of rows) row.tabIndex = row === rows[to] ? 0 : -1
-    rows[to].focus()
+    for (const item of this.querySelectorAll(`.history-row :is(${LINE_KEYS})`)) item.tabIndex = item === to ? 0 : -1
+    to.focus()
   }
 
   render() {
@@ -479,9 +490,9 @@ class RepositoryHistory extends LitElement {
     const focused = Math.max(0, layout.rows.findIndex(row => row.commit.sha === shown))
     const graphWidth = EDGE * 2 + (layout.width - 1) * LANE
     // Each line's short id, pull requests and the pull requests its subject
-    // names open them on GitHub, in a new tab, out of the lines' own keys'
-    // way; the rest of it, its code, its button named by its subject, then
-    // its author and time.
+    // names open them on GitHub, in a new tab, reached by keys along the line
+    // (keydown); the rest of it, its code, its button named by its subject,
+    // then its author and time.
     const repo = this.repo ?? this.repository.repo
     const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
     return html`<div class="history-scroll">

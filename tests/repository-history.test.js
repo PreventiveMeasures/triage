@@ -168,7 +168,7 @@ test('the tab draws the pull requests squashed into the history it reads, their 
   assert.match(text, /2 commits on 1 branch</u, 'those of the branches read counted')
   // Its chip opens it on GitHub, in a new tab, as a line's id does its
   // commit, and so does the subject naming it.
-  assert.match(text, new RegExp(`>Feature \\(<a href=https://github.com/org/repo/pull/2 target="_blank" rel="noopener noreferrer"\\s+tabindex="-1">#2</a>\\)</span>`
+  assert.match(text, new RegExp(`>Feature \\(<a href=https://github.com/org/repo/issues/2 target="_blank" rel="noopener noreferrer"\\s+tabindex="-1">#2</a>\\)</span>`
     + `\\s*<button type="button" class="history-commit" id=history-commit-${squash}`, 'u'))
   assert.match(text, new RegExp('>2222222</a>\\s*<span class="history-refs"[^]*<a class=[^>]* href=https://github.com/org/repo/pull/2 target="_blank" '
     + 'rel="noopener noreferrer" tabindex="-1"\\s+aria-label=Pull request #2 on GitHub>[^]*<span>#2</span></a>[^]*>Started the feature</span>', 'u'))
@@ -380,4 +380,32 @@ test('a directory\'s history lists the commits touching it, in a line, and says 
   denied.render()
   await setImmediate()
   assert.match(templateText(denied.render()), /role="alert">This directory’s history is not available to you\.[^]*Retry/u)
+})
+
+test('keys move up and down between lines\' buttons, and along a line through its links on GitHub to its button, the one reached the list\'s stop for Tab', () => {
+  let focused = null
+  const key = name => ({ name, tabIndex: -1, focus() { focused = name } })
+  const lines = [['sha 1', 'pull 1', 'open 1'], ['sha 2', 'open 2'], ['sha 3', 'subject 3', 'open 3']].map(names => {
+    const items = names.map(key)
+    const line = { items, querySelectorAll: () => items, querySelector: () => items.at(-1) }
+    for (const item of items) item.closest = () => line
+    return line
+  })
+  const view = Object.assign(new History(), { querySelectorAll: selector => selector === '.history-row' ? lines : lines.flatMap(line => line.items) })
+  const press = (from, name) => {
+    let prevented = false
+    view.keydown({ key: name, target: lines.flatMap(line => line.items).find(item => item.name === from), preventDefault() { prevented = true } })
+    return prevented ? focused : null
+  }
+  assert.equal(press('open 1', 'ArrowDown'), 'open 2')
+  assert.equal(press('open 2', 'ArrowLeft'), 'sha 2')
+  assert.equal(press('sha 2', 'ArrowLeft'), null, 'none before a line\'s first')
+  assert.equal(press('sha 2', 'ArrowDown'), 'open 3', 'a line\'s button, from any of its keys')
+  assert.equal(press('open 3', 'ArrowLeft'), 'subject 3')
+  assert.equal(press('subject 3', 'ArrowRight'), 'open 3')
+  assert.equal(press('open 3', 'ArrowRight'), null, 'none after its button')
+  assert.equal(press('open 3', 'Home'), 'open 1')
+  assert.equal(press('pull 1', 'End'), 'open 3')
+  assert.equal(press('open 3', 'ArrowDown'), null, 'none past the last line')
+  assert.deepEqual(lines.flatMap(line => line.items).filter(item => item.tabIndex === 0).map(item => item.name), ['open 3'])
 })
