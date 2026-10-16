@@ -165,7 +165,7 @@ function dependencyLine(entry) {
   const reviewed = pkg => {
     const review = reviewOf(pkg, entry.review)
     return review === 'unsupported' ? `, can’t be reviewed: ${UNSUPPORTED[pkg.unsupported]}` : review === 'baseline' ? ', needs no review'
-      : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
+      : pkg.reviewed ? ', reviewed' : pkg.patched && review ? ', patched, unreviewed' : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
   }
   const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
   const rest = versions.length - TOLD_PACKAGES

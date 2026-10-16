@@ -34,7 +34,7 @@ const external = (href, label, primary = false) => href
 const SOURCES = { mirror: 'mirror', git: 'git', tarball: 'tarball', file: 'file' }
 const UNSUPPORTED = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
   integrity: 'Locked with no integrity, which its reviews are held to' }
-const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
+const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'lockfile-unsupported': 'Bun’s lockfile here isn’t read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
 
 class RepositoryItemDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
@@ -173,13 +173,17 @@ class RepositoryItemDialog extends AppDialog {
       ${cut ? html`<p class="repo-item-quiet">It changes more files, or lockfiles in more directories, than are read; those past them aren’t told.</p>` : nothing}`
   }
 
-  // A review's terms: the reviews each version needs, and the commit at whose
-  // lockfiles' versions none is needed, where it is set; where those couldn't
-  // be read, that every version wants its reviews.
-  renderReviewTerms({ required, since, baselineError }) {
-    return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')}${since
+  // A review's terms: the reviews each version needs, by as many reviewers,
+  // or the server's reviewed dependencies passing it, where they are
+  // registered, else the commit at whose lockfiles' versions none is needed,
+  // where it is set; where those couldn't be read, or the reviewed
+  // dependencies answer, that the versions they would pass want reviews.
+  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError }) {
+    return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
+      ? ', or the server’s reviewed dependencies to pass it; a patched one, those alone' : since
       ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
-      ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}`
+      ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
+      ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}`
   }
 
   // What fails a review (reviewFailures), where anything does: each version
@@ -203,15 +207,16 @@ class RepositoryItemDialog extends AppDialog {
   // the highest other version it was (none for a version that was installed
   // from elsewhere alone, which a comparison of versions can't show), or,
   // where its review is in effect and the reader reviews, reviewed against
-  // it, one that can be; its review; whether only devDependencies need it;
-  // and where one not of npm's registry is from. Another its lockfiles lock
+  // it, one that can be, unpatched; its review; whether only devDependencies
+  // need it, whether it is patched; and where one not of npm's registry is
+  // from. Another its lockfiles lock
   // (`other`), wanting reviews or failing them, by its version alone,
   // reviewed whole.
   renderPackage(pkg, review = null, other = false) {
     const { name, version, source, from, dev, was } = pkg
     const npm = (source === 'registry' || source === 'mirror') && version
     const before = other ? undefined : was?.find(prior => prior !== version)
-    const reviewed = npm && review?.canReview && reviewOf(pkg, review) !== 'unsupported' ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'review',
+    const reviewed = npm && !pkg.patched && review?.canReview && reviewOf(pkg, review) !== 'unsupported' ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'review',
       ...before ? { reviewPackage: name, reviewSpec: before } : {} }) : null
     const href = npm ? reviewed || (before && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: before }))
       || managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
@@ -220,17 +225,25 @@ class RepositoryItemDialog extends AppDialog {
         : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
       ${this.renderReview(pkg, review)}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
+      ${pkg.patched ? html`<span class="repo-item-tag" data-tooltip="pnpm patches it as it installs it">patched</span>` : nothing}
       ${SOURCES[source] ? html`<span class="repo-item-tag" data-tooltip=${from ?? nothing}>${SOURCES[source]}</span>` : nothing}`
     return href ? html`<a class="repo-item-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="repo-item-row">${label}</span>`
   }
 
   // A version's review, where its pull request's is in effect: that it can't
   // be reviewed, and why; none needed, its repository's lockfiles having
-  // locked it at the commit reviewed since; passed, with how many reviews;
+  // locked it at the commit reviewed since; passed by the server's reviewed
+  // dependencies; a patched one wanting them; passed, with how many reviews;
   // or wanting them.
   renderReview(pkg, review) {
     const state = reviewOf(pkg, review)
     if (state === 'unsupported') return html`<span class="repo-item-review is-failed" data-tooltip=${UNSUPPORTED[pkg.unsupported]}>can’t review</span>`
+    if (pkg.reviewed && state === 'passed') {
+      return html`<span class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it">${CHECKS.success[1]}reviewed</span>`
+    }
+    if (pkg.patched && state === 'wanted') {
+      return html`<span class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch: it needs the server’s reviewed dependencies to pass it">unreviewed</span>`
+    }
     if (state === 'baseline') return html`<span class="repo-item-tag" data-tooltip="Locked at the commit reviews are counted since: it needs none">baseline</span>`
     if (!state) return nothing
     const told = `${plural(pkg.reviews, 'full, accepting review')} of ${review.required} required`

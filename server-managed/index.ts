@@ -11,6 +11,7 @@ import { initializeApp } from '../server-common/initialize.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { setNpmTarballCache } from './npm-loads.ts'
+import { assembledReviewedDependencies } from './reviewed-dependencies.ts'
 import { setNpmDocumentCache } from './npm-packages.ts'
 import { loadManagedStatic } from './static.ts'
 import { openManagedStorage } from './storage.ts'
@@ -21,7 +22,7 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 const REAP_INTERVAL_MS = 3_600_000
 const REAP_RETRY_MS = 60_000
 
-type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>>
+type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown' | 'reviewedDependencies'>>
 
 export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
   // Audits keep upstream's records on disk where the config has a cache
@@ -34,7 +35,10 @@ export async function createManagedApp(config: ManagedConfig, options: ManagedAp
   // Load the optional peer only for serverless managed deployments. Embedding
   // hosts can discard listener promises, so retain maintenance inside the app.
   const waitUntil = config.serverless ? (await import('@vercel/functions')).waitUntil : undefined
-  return await initializeApp(rollback => assembleManagedApp(config, options, rollback, waitUntil))
+  // The host's reviewed dependencies, registered before; none after.
+  const reviewedDependencies = assembledReviewedDependencies()
+  const assembled = { ...options, ...reviewedDependencies ? { reviewedDependencies } : {} }
+  return await initializeApp(rollback => assembleManagedApp(config, assembled, rollback, waitUntil))
 }
 
 async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOptions, rollback: AsyncDisposableStack, waitUntil?: (promise: Promise<unknown>) => void) {

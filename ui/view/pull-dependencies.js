@@ -47,21 +47,24 @@ export const readsDependencies = item => item?.touchesLockfile === true || item?
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
 const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
 
-// A version as an answer names it: the versions it was, those it names, and
-// its review, where it tells one: why it can't be reviewed (`unsupported`),
-// needing none (`baseline`), or how many pass it (`reviews`).
+// A version as an answer names it: the versions it was, those it names,
+// whether it is patched, and its review, where it tells one: why it can't be
+// reviewed (`unsupported`), needing none (`baseline`), passed by the
+// server's reviewed dependencies (`reviewed`), or how many pass it
+// (`reviews`).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, baseline, unsupported, ...version } = pkg
-  return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
-    ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline: true } : count(reviews) === null ? {} : { reviews } }]
+  const { was, reviews, baseline, reviewed, unsupported, patched, ...version } = pkg
+  return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {}, ...patched === true ? { patched } : {},
+    ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed } : count(reviews) === null ? {} : { reviews } }]
 }
 const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : []
 
 // A server's answer, its directories those it names by their lockfiles'
 // paths, each's versions those it names (checkedVersion), and its review's
 // terms, where it tells them, with how many versions across its directories
-// want reviews and can't be reviewed.
+// want reviews and can't be reviewed, whether the server's reviewed
+// dependencies pass them, and how many those failed to answer.
 function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
@@ -72,6 +75,7 @@ function checked(answer) {
   return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
     ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },
+    ...review.reviewedDependencies === true ? { reviewedDependencies: true } : {}, ...count(review.unasked) > 0 ? { unasked: review.unasked } : {},
     ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {} } } : {} }
 }
 
@@ -126,8 +130,8 @@ export function addedVersions({ lockfiles, review }) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
-    const { reviews: _reviews, baseline: _baseline, unsupported: _unsupported, ...version } = had
-    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg) })
+    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, patched: _patched, ...version } = had
+    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
@@ -135,25 +139,30 @@ export function addedVersions({ lockfiles, review }) {
     toReview: versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
 }
 
-// The review of a version two directories lock, the less passing of theirs:
-// one that can't be reviewed, else the fewer reviews, needing none only
-// where both do.
-function bothReviewed(had, pkg) {
-  const unsupported = had.unsupported ?? pkg.unsupported
-  if (unsupported) return { unsupported }
-  if (had.baseline && pkg.baseline) return { baseline: true }
-  const counts = [had, pkg].filter(one => !one.baseline && one.reviews != null).map(one => one.reviews)
-  return counts.length > 0 ? { reviews: Math.min(...counts) } : had.baseline || pkg.baseline ? { baseline: true } : {}
+// The review of a version two directories lock, the less passing of theirs
+// (reviewOf, one that can't be reviewed the least), of the fewer reviews
+// where both want them; patched where either is.
+const PASSING = { unsupported: 0, wanted: 1, passed: 2, baseline: 3 }
+function bothReviewed(had, pkg, review) {
+  const passing = one => PASSING[reviewOf(one, review)] ?? 4
+  const less = passing(pkg) < passing(had) || (passing(pkg) === passing(had) && (pkg.reviews ?? Infinity) < (had.reviews ?? Infinity)) ? pkg : had
+  const { unsupported, baseline, reviewed, reviews } = less
+  return { ...had.patched || pkg.patched ? { patched: true } : {}, ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
+    : reviews == null ? {} : { reviews } }
 }
 
 // A version's review, where its pull request's is in effect (`review`):
 // 'unsupported', where it can't be reviewed, 'baseline', needing none,
-// 'passed', having as many reviews as required, or 'wanted'; null where it
-// tells none, a file of the project's, which isn't reviewed.
+// 'passed', having as many reviews as required or the server's reviewed
+// dependencies passing it, or 'wanted', as a patched one is that they
+// don't, reviews here passing none; null where it tells none, a file of the
+// project's, which isn't reviewed.
 export function reviewOf(pkg, review) {
   if (!review) return null
   if (pkg.unsupported) return 'unsupported'
   if (pkg.baseline) return 'baseline'
+  if (pkg.reviewed) return 'passed'
+  if (pkg.patched && pkg.source === 'registry') return 'wanted'
   if (pkg.reviews == null) return null
   return pkg.reviews >= review.required ? 'passed' : 'wanted'
 }

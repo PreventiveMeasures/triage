@@ -5,8 +5,9 @@
 // lockfile of npm's ecosystem that @preventive/lockfile reads
 // (package-lock.json and npm-shrinkwrap.json of `lockfileVersion: 3`,
 // pnpm-lock.yaml of pnpm 9 to 12 and Yarn 1's yarn.lock, locked-packages.ts),
-// none under a node_modules nor a test's fixtures (isTestFixture), which no
-// install takes. Its files are GitHub's comparison of its base with its head
+// and Bun's, which it doesn't (bun.lock and bun.lockb, its directory told
+// `lockfile-unsupported`); none under a node_modules nor a test's fixtures
+// (isTestFixture), which no install takes. Its files are GitHub's comparison of its base with its head
 // (GET /repos/:owner/:repo/compare/:base...:head), which names where its
 // branch left its base, its merge base, as GitHub's own Files changed
 // compares from it, and lists as many as a commit's files are read
@@ -49,17 +50,20 @@ const READ_PARALLEL = 4
 export const PULL_DEPENDENCIES_READ = 3
 const SHA = /^[a-f\d]{40}$/u
 
-type Format = 'npm' | 'pnpm' | 'yarn'
+type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
-// The format of the lockfile at `path` that is read here, as findRepoLockfiles
-// names it (with pnpm's of a branch, pnpm-lock.<branch>.yaml); null for
-// another file, and for one under a node_modules or of a test's fixtures.
+// The format of the lockfile of npm's ecosystem at `path`, as
+// findRepoLockfiles names it (with pnpm's of a branch,
+// pnpm-lock.<branch>.yaml, and of before pnpm 3, shrinkwrap.yaml, which its
+// reader refuses); null for another file, and for one under a node_modules or
+// of a test's fixtures. Bun's alone isn't read.
 export function lockfileFormat(path: string): Format | null {
   const dirs = path.split('/')
   const name = dirs.pop() ?? ''
   if (dirs.includes('node_modules') || isTestFixture(path)) return null
   if (name === 'package-lock.json' || name === 'npm-shrinkwrap.json') return 'npm'
-  if (/^pnpm-lock(?:\..+)?\.yaml$/u.test(name)) return 'pnpm'
+  if (/^pnpm-lock(?:\..+)?\.yaml$/u.test(name) || name === 'shrinkwrap.yaml') return 'pnpm'
+  if (name === 'bun.lock' || name === 'bun.lockb') return 'bun'
   return name === 'yarn.lock' ? 'yarn' : null
 }
 
@@ -81,8 +85,8 @@ export type AddedPackage = LockedPackage & { was?: string[] }
 // lock new to it, as many as MAX_ADDED, by name and version, how many more
 // (`more`), and all they lock (`locked`, as many as MAX_LOCKED, how many more
 // `moreLocked`); or why they couldn't be told, a lockfile's reader refusing one
-// (`lockfile-unreadable`, with what it said) or GitHub having none at a
-// commit compared.
+// (`lockfile-unreadable`, with what it said), one of a format not read
+// (`lockfile-unsupported`, Bun's) or GitHub having none at a commit compared.
 export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number; locked: LockedPackage[]; moreLocked: number }
   | { error: string; detail?: string })
 // What a pull request's lockfiles add: the commits compared (`base`, its
@@ -165,6 +169,7 @@ function lockfilesChanged(files: ChangedFile[]) {
 // a lockfile its reader refuses, why. Any failure to read it of GitHub but
 // its having none there is the whole answer's, as it would be every file's.
 export async function readLockfile(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }): Promise<LockfileRead> {
+  if (format === 'bun') return { error: 'lockfile-unsupported' }
   const key = `${fullName}\0${ref}\0${path}`
   const known = lockfileReads.get(key)
   if (known) return known
@@ -176,7 +181,7 @@ export async function readLockfile(fullName: string, token: string, ref: string,
     throw err
   }
   let read: LockfileRead
-  try { read = { packages: lockedPackages(format, text, { integrities: true }) } } catch (error) {
+  try { read = { packages: lockedPackages(format, text, { review: true }) } } catch (error) {
     read = { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
   }
   lockfileReads.set(key, read)
@@ -205,10 +210,11 @@ function byVersion(a: string, b: string) {
   return exactA ? -1 : 1
 }
 const byName = (a: AddedPackage, b: AddedPackage) => a.name < b.name ? -1 : a.name > b.name ? 1 : -byVersion(a.version ?? '', b.version ?? '')
-// A package as it is installed: its name and version, and where from; and
-// as it is locked, with its integrity too.
-export const lockedAs = (pkg: LockedPackage) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
-export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integrity ?? ''}`
+// A package as it is installed: its name and version, where from, and its
+// patch, a patched version's new where its patch is; and as it is locked,
+// with what its reviews are held to too.
+export const lockedAs = (pkg: LockedPackage) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}\0${pkg.patchHash ?? ''}`
+export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integrity ?? ''}\0${pkg.shasum ?? ''}\0${pkg.lockfile ?? ''}`
 
 // What a directory's lockfiles add, from each read before and after: the
 // package versions after none before has, each once, by name and version,

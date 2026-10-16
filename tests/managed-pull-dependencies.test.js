@@ -139,19 +139,21 @@ function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headA
 }
 
 // A pull request's directories as what they add, without the versions they
-// lock at its head, nor the integrity of each, as the client is told them.
+// lock at its head, nor what the reviews of each are held to, as the client
+// is told them.
 const withoutLocked = lockfiles => lockfiles.map(({ locked: _locked, moreLocked: _moreLocked, ...dir }) =>
-  dir.added ? { ...dir, added: dir.added.map(({ integrity: _integrity, ...pkg }) => pkg) } : dir)
+  dir.added ? { ...dir, added: dir.added.map(({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, ...pkg }) => pkg) } : dir)
 
 const memory = () => {
   const kept = new Map()
   return { kept, read: key => Promise.resolve(kept.get(key) ?? null), write: (key, value) => { kept.set(key, value); return Promise.resolve() } }
 }
 
-test('the lockfiles read are npm\'s, pnpm\'s and Yarn\'s, by name, none under a node_modules nor a test\'s fixtures', () => {
-  assert.deepEqual(['package-lock.json', 'a/npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-lock.feature.yaml', 'b/yarn.lock', 'bun.lock', 'Cargo.lock', 'package.json',
-    'node_modules/x/package-lock.json', 'test/fixtures/app/yarn.lock', 'fixtures/yarn.lock', 'my-yarn.lock'].map(lockfileFormat),
-  ['npm', 'npm', 'pnpm', 'pnpm', 'yarn', null, null, null, null, null, 'yarn', null], 'fixtures outside a test directory are a project\'s')
+test('the lockfiles read are npm\'s ecosystem\'s, by name, Bun\'s told apart, none under a node_modules nor a test\'s fixtures', () => {
+  assert.deepEqual(['package-lock.json', 'a/npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-lock.feature.yaml', 'shrinkwrap.yaml', 'b/yarn.lock', 'bun.lock', 'c/bun.lockb',
+    'Cargo.lock', 'deno.lock', 'package.json', 'node_modules/x/package-lock.json', 'test/fixtures/app/yarn.lock', 'fixtures/yarn.lock', 'my-yarn.lock'].map(lockfileFormat),
+  ['npm', 'npm', 'pnpm', 'pnpm', 'pnpm', 'yarn', 'bun', 'bun', null, null, null, null, null, 'yarn', null], 'fixtures outside a test directory are a project\'s')
+  assert.equal(touchesLockfile(['bun.lock'], 1), true, 'Bun\'s, which isn\'t read, too')
   assert.equal(touchesLockfile(['src/a.js', 'pnpm-lock.yaml'], 2), true)
   assert.equal(touchesLockfile(['src/a.js'], 1), false)
   assert.equal(touchesLockfile(['src/a.js'], 101), null, 'none among those listed, of more: it may')

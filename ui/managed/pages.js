@@ -742,9 +742,12 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   // Its dependency review: on or off at once; the reviews each version needs
-  // and the commit whose lockfiles' versions need none, saved together.
+  // and the commit whose lockfiles' versions need none, saved together; no
+  // commit where the server registers reviewed dependencies, which replace it.
   _dependencyReviewSection(repo) {
-    const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
+    const registered = this._data?.reviewedDependencies === true
+    const stored = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
+    const saved = registered ? { ...stored, since: null } : stored
     const draft = this._reviewDraft ?? { required: String(saved.required), since: saved.since ?? '' }
     const changed = draft.required !== String(saved.required) || draft.since.trim() !== (saved.since ?? '')
     const busy = this._busy != null
@@ -760,10 +763,12 @@ class ManagedAdminRepos extends ManagedPage {
         @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, { enabled: true, required: Number(draft.required), since: draft.since.trim().toLowerCase() || null }) }}>
         <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
-        <label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none" autocomplete="off" spellcheck="false"
-          pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy} @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>
+        ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none"
+          autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy}
+          @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>`}
         <button type="submit" class="btn" ?disabled=${busy || !changed}>Save</button>
-        <p class="dependency-review-hint">${draft.since.trim() ? 'Versions the repository’s lockfiles locked at this commit need no review.'
+        <p class="dependency-review-hint">${registered ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
+          : draft.since.trim() ? 'Versions the repository’s lockfiles locked at this commit need no review.'
           : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>
       </form>` : nothing}
     </section>`

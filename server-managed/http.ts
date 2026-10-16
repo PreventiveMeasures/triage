@@ -204,6 +204,7 @@ import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } 
 import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
+import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
@@ -419,6 +420,9 @@ export interface ManagedHttpDeps {
   serveStatic?: (req: IncomingMessage, res: ServerResponse) => boolean
   next?: Handler
   serverInfo?: ServerInfo
+  // The reviewed dependencies the host registered, as the server was
+  // assembled (reviewed-dependencies.ts).
+  reviewedDependencies?: ReviewedDependencies
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
@@ -828,6 +832,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     inactiveCount: allRows.filter((r) => !r.active).length,
     total,
     tokenMissing,
+    ...deps.reviewedDependencies ? { reviewedDependencies: true } : {},
   })
 }
 
@@ -966,7 +971,8 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
 // review (repository-dependency-reviews.ts): `enabled`, the published reviews
 // each version its pull requests' lockfiles lock needs (`required`, 1 to
 // MAX_REQUIRED_REVIEWS), and the commit whose lockfiles' versions need none
-// (`since`, a full commit id, or null). Admin, CSRF.
+// (`since`, a full commit id, or null; none, `400 since-unsupported`, where
+// the host registered reviewed dependencies, which replace it). Admin, CSRF.
 async function handleRepositoryDependencyReview(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie)
@@ -982,6 +988,7 @@ async function handleRepositoryDependencyReview(req: IncomingMessage, res: Serve
     || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since)))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
+  if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
   const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
   if (!repo || !await deps.db.setRepoDependencyReview(repoId, { enabled, required, since: since as string | null })) { sendJson(res, 404, { error: 'no-repository' }); return }
   await activity(deps, s.user, 'repository', enabled ? 'enabled dependency review' : 'disabled dependency review', { repo: repo.fullName })
@@ -1996,7 +2003,8 @@ function itemNumber(query: URLSearchParams): number | null {
 // as its popup's item is, its head moving with each push. With `review=1`,
 // as an open one's are asked, where the repository reviews dependencies,
 // each version's review (pull-dependency-reviews.ts), read afresh as each
-// asks, reviews being published meanwhile; its baseline kept.
+// asks, reviews being published meanwhile; its baseline kept, where the host
+// registered no reviewed dependencies, which are asked in its place.
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const number = itemNumber(query)
@@ -2007,8 +2015,9 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
       async () => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }))
     const told = answered.value
     const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
-    const { baseline, error } = state ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, error: null }
-    return { value: { number: told.number, ...reviewedDependencies(told, state, baseline, error) }, kept: answered.kept }
+    const reviewed = deps.reviewedDependencies ?? null
+    const { baseline, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, error: null }
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineError: error, reviewed }) }, kept: answered.kept }
   })
 }
 

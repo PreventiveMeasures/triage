@@ -162,7 +162,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   await setImmediate()
   const text = templateText(dialog.render())
   assert.deepEqual(dependencyOptions, [[31, { review: true }]], 'an open one\'s asked with their review')
-  assert.match(text, /Each version needs 2 full, accepting reviews; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
+  assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
   assert.match(text, /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: 3 versions its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are\.<\/p>/u)
   const failed = text.slice(text.indexOf('repo-item-failed'), text.indexOf('repo-item-lockfiles'))
   assert.match(failed, /mirrored<span class="repo-item-version">@1\.0\.0<\/span>[^]*is-failed" data-tooltip=A tarball not npm’s registry’s of its version, which isn’t reviewed>can’t review<[^]*>mirror</u)
@@ -187,6 +187,26 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   templateText(cut.render())
   await setImmediate()
   assert.match(templateText(cut.render()), /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: not every lockfile it changes was read\.<\/p>/u)
+})
+
+test('where the server registers reviewed dependencies, its terms say so, a version they pass is reviewed, and a patched one wants them, unlinked to reviewing it', async () => {
+  dependencies = number => Promise.resolve({ number, cut: false, review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1 }, lockfiles: [
+    { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, added: [
+      { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patched: true }] },
+    { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] })
+  answer = () => new Promise(() => {})
+  const dialog = shown()
+  dialog.open({ number: 41, preview: { ...tile, number: 41, touchesLockfile: true } })
+  templateText(dialog.render())
+  await setImmediate()
+  const text = templateText(dialog.render())
+  assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers, or the server’s reviewed dependencies to pass it; a patched one, those alone\./u)
+  assert.match(text, /role="alert">The server’s reviewed dependencies didn’t answer for 1 version, so it wants reviews\./u)
+  assert.match(text, /href=\/npm\/vouched@1\.0\.0\/review [^]*class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it"><svg[^]*<\/svg>reviewed</u)
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/patched@1\.0\.0 [^]*class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch[^>]*>unreviewed<[^]*data-tooltip="pnpm patches it as it installs it">patched</u,
+    'a patched one opens its version, reviews here passing none of it')
+  assert.match(text, /<code>web\/bun\.lock<\/code><\/p>\s*<p class="repo-item-quiet" role="alert">Bun’s lockfile here isn’t read\.</u)
+  assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'which fails its review')
 })
 
 test('a pull request whose lockfiles add none says so; one changing none, or an issue, shows nothing of them; one failing says why', async () => {

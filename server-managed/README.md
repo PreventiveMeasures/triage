@@ -1977,8 +1977,10 @@ highest version it was; one from git, a tarball, a file or a mirror tagged
 so, and one only devDependencies need tagged **dev**. The lockfiles are those
 of npm's ecosystem that repository risk reads (`package-lock.json` and
 `npm-shrinkwrap.json` of `lockfileVersion: 3`, `pnpm-lock.yaml` of pnpm 9 to
-12 and Yarn 1's `yarn.lock`), none under a `node_modules` nor in a test's
-fixtures, which no install takes. Whether a pull request changes one is told
+12 and Yarn 1's `yarn.lock`), and Bun's (`bun.lock`, `bun.lockb`), which
+aren't read, their directory told so; none under a `node_modules` nor in a
+test's fixtures, which no install takes. A version pnpm patches is new where
+its patch is. Whether a pull request changes one is told
 by the files GitHub lists of it, a hundred at most: `touchesLockfile` is
 `true` where one of them is a lockfile, `false` where none is, and `null`
 where none of a hundred is but it changes more, which it may yet; omitted
@@ -2002,12 +2004,13 @@ tells it, its integrity left out, with the versions of its name they locked
 before (`was`, the highest first; none of a package new to them), by name and
 version, two hundred at most, the rest counted (`more`); or, where a
 lockfile there couldn't be read, its
-`error` (`lockfile-unreadable`, with its reader's `detail`, or
-`github-not-found`). `cut` is set where it changes more files than are
+`error` (`lockfile-unreadable`, with its reader's `detail`,
+`lockfile-unsupported`, Bun's, or `github-not-found`). `cut` is set where it changes more files than are
 listed, or lockfiles in more directories than are read. With them is kept
-every version its head's lockfiles lock, each with its integrity (twenty
-thousand a directory at most, the rest counted), for its review (below);
-neither is told. What a pull
+every version its head's lockfiles lock, each with its integrity, Yarn 1's
+sha1 and pnpm's patch hash where they have them, and the lockfile's format
+(twenty thousand a directory at most, the rest counted), for its review
+(below); none of it is told, but whether a version is `patched`. What a pull
 request's base's and head's commits tell is kept in the database (under
 `repository/pull-dependencies`, a month), as what they hold never changes;
 each lockfile read, in the instance's memory by its commit, so that pull
@@ -2032,7 +2035,8 @@ where a visible team that reviews dependencies has the repository; the
 reviews that count are those published to such a team
 (`repository-dependency-reviews.ts`): full, every file checked (a partial
 review counts for nothing yet), accepting (**Accept** or **Accept with
-nits**), not revoked, each reviewer once.
+nits**), not revoked, each reviewer once: one person's several reviews of a
+version count as one.
 
 An open pull request's tile and popup ask its dependencies with their review
 (`review=1`, `pull-dependency-reviews.ts`). A version is reviewed as npm's
@@ -2043,8 +2047,11 @@ where its integrity is one it is locked with. One from git, a tarball another
 host serves (a mirror's too) or a link with a query, or one locked with no
 integrity can't be, and fails the pull request's review, wherever its
 lockfiles locked it before; so do a lockfile it changes that couldn't be read,
-lockfiles left unread (`cut`), and a directory locking more versions than are
-checked. A file of the project's isn't reviewed. A version it adds passes
+lockfiles left unread (`cut`), a directory locking more versions than are
+checked, and a lockfile of Bun's. A file of the project's isn't reviewed. A
+version pnpm patches (`patched`) passes by no review here, the app reviewing
+no patch yet: only by the reviewed dependencies the host registers (below),
+or, without them, locked so, its patch too, at the commit reviewed since. A version it adds passes
 with as many reviews as required, of it whole or compared with a version it
 was; and apart from them, every other version its lockfiles lock wants its
 reviews as well, of it whole or compared with any version of its package.
@@ -2065,13 +2072,42 @@ past those checked (`moreLocked`); and the answer, its terms (`review`:
 `required`, `since`, `canReview`, how many versions across its directories
 want reviews and can't be reviewed, each once, `unreviewed` and
 `unsupported`, and `baselineError` where the commit's versions couldn't be
-read). The tile shows a check where every version
-passes, how many want reviews (`1 to review · 4 unreviewed`), or, in red,
+read). Where the host registered reviewed dependencies, a version
+they pass is `reviewed`, the terms tell `reviewedDependencies` and how many
+versions they failed to answer (`unasked`), and `since` is none. The tile
+shows a check where every version passes, how many want reviews (`1 to review · 4 unreviewed`), or, in red,
 that its review fails; the popup its terms, what fails it, each version's
 review (`2/2`, **baseline** or **can't review**), and the other versions
 folded under them. For one who publishes reviews to a team that counts
 (`canReview`), each version links to its review, an update's against the
-version it was, in place of a comparison.
+version it was, in place of a comparison; a patched one never.
+
+#### Reviewed dependencies of the host
+
+A host that keeps reviewed dependencies of its own registers them before
+`init()`, once (`reviewed-dependencies.ts`; registering after, or again,
+throws):
+
+```js
+import { init, registerReviewedDependencies } from '@preventive/triage/server'
+registerReviewedDependencies(async ({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) => isReviewed(...))
+const server = await init('managed')
+```
+
+It is asked of each version an open pull request's lockfiles lock that its
+teams' reviews don't pass, as the lockfile locks it: `ecosystem` (`npm`),
+`lockfile` (`npm`, `pnpm` or `yarn1`), `name`, `version` and `integrity`,
+always, as a version locked with none fails the review instead; `shasum`, the
+hex sha1 Yarn 1 writes after a tarball's `#`, and `patchHash`, pnpm's, where
+the lockfile has them. A version it answers `true` of passes; one it fails to
+answer wants its reviews and is counted (`unasked`, its error logged). Each is
+asked once a request, sixteen at once, its answer kept in the instance a
+minute. Registered, it replaces the commit a repository is reviewed since:
+the repository's page shows none, `POST
+/api/admin/repositories/dependency-review` refuses one (`400
+since-unsupported`), one stored before is left unread, and the connected
+repositories' list tells `reviewedDependencies`. Every version that neither
+it nor as many reviewers' reviews as required pass is unreviewed.
 
 
 ## Agents
