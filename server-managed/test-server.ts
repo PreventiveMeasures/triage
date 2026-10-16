@@ -446,7 +446,40 @@ function issuesFixture(url: URL, res: ServerResponse): void {
   const from = Number(/^page_(\d+)$/u.exec(url.searchParams.get('after') ?? '')?.[1] ?? '0')
   const end = from + ISSUES_FIXTURE_PAGE
   sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
-    more: end < listed.length, after: end < listed.length ? `page_${end}` : null })
+    more: end < listed.length, after: end < listed.length ? `page_${end}` : null, users: REVIEW_USERS })
+}
+
+// An open pull request's reviews, as server-managed/pull-reviews.ts reads
+// them, one of six ways by `index`: Codex done on the latest commit; Codex
+// and an approval on an earlier one, a P1 open; Codex asked again, changes
+// requested, P2s open and some resolved; none yet, a user and a team asked;
+// Codex and an approval on the latest, a question open; Codex failed, a
+// comment. Its popup's (`detail`) lists its open threads.
+const CODEX_ACCOUNT = { login: 'chatgpt-codex-connector', id: 199175422 }
+const REVIEW_USERS = { 'chatgpt-codex-connector': { agent: 'codex' } }
+function reviewsFixture(index: number, number: number, now: number, detail = false) {
+  const earlier = number.toString(16).padStart(40, 'b'), head = number.toString(16).padStart(40, 'e')
+  const at = (hours: number) => now - hours * 3_600_000
+  const codex = (code: string, status: string, security = code, more = {}) => ({ ...CODEX_ACCOUNT, code: { commit: code, status }, security: { commit: security, status: 'done' },
+    requested: false, failed: false, ...more })
+  const finding = (severity: string | null, title: string, path: string, line: number, author: { login: string; id: number } = CODEX_ACCOUNT) => ({ severity, title, path, line,
+    outdated: false, author: author.login, authorId: author.id, url: `https://github.com/example/managed-fixtures/pull/${number}#discussion_r${number}${line}` })
+  const variants = [
+    { reviewers: [], threads: [], resolved: 0, codex: codex(head, 'done') },
+    { reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: earlier, at: at(30) }], resolved: 1, codex: codex(earlier, 'done'),
+      threads: [finding('p1', 'Paginate commit files before caching the result', 'server-managed/repository-history.ts', 212)] },
+    { reviewers: [{ login: 'grace', id: 3, state: 'changes', requested: false, commit: head, at: at(5) }], resolved: 3, codex: codex(earlier, 'done', earlier, { requested: true }),
+      threads: [finding('p2', 'Keep the cached year when crossing the threshold', 'server-managed/repository-pulse.ts', 88),
+        finding('p2', 'Read the next page from where the last one stopped', 'ui/view/repository-history.js', 404)] },
+    { reviewers: [{ login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
+      { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null }], threads: [], resolved: 0, codex: null },
+    { reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: head, at: at(2) }], resolved: 0, codex: codex(head, 'done', earlier),
+      threads: [finding(null, 'Why not a Set here?', 'ui/view/pull-reviews.js', 61, { login: 'ada', id: 2 })] },
+    { reviewers: [{ login: 'kay', id: 6, state: 'commented', requested: false, commit: head, at: at(1) }], threads: [], resolved: 0, codex: codex(earlier, 'done', earlier, { failed: true }) },
+  ]
+  const { reviewers, threads, resolved, codex: summary } = variants[index % variants.length]!
+  const counted = { open: threads.length, resolved, more: false, severity: threads.map(thread => thread.severity).filter(Boolean).toSorted()[0] ?? null }
+  return { head, reviewers, codex: summary, threads: detail ? { ...counted, list: threads } : counted }
 }
 
 // The issues' or pull requests' tiles, as of `now`.
@@ -461,6 +494,7 @@ function issueTiles(kind: 'issues' | 'pulls', now: number) {
     if (kind === 'issues') return { ...common, state: closed ? 'closed' : 'open', closedAt: closed ? common.updatedAt : null, reason: closed ? index % 2 ? 'not-planned' : 'completed' : null }
     const state = closed ? index % 2 ? 'closed' : 'merged' : 'open'
     return { ...common, state, closedAt: closed ? common.updatedAt : null, mergedAt: state === 'merged' ? common.updatedAt : null, draft: state === 'open' && index % 5 === 3,
+      ...state === 'open' ? { reviews: reviewsFixture(index, common.number, now) } : {},
       review: state === 'open' ? (['approved', 'changes', 'required', null] as const)[index % 4]! : null, checks: (['success', 'failure', 'pending', null] as const)[(index * 3) % 4]!,
       additions: (index * 37) % 400 + 2, deletions: (index * 19) % 150, head: `feature/${common.title.toLowerCase().replaceAll(/[^a-z\d]+/gu, '-').slice(0, 24).replace(/-$/u, '')}`, base: 'main' }
   })
@@ -480,7 +514,9 @@ function itemFixture(url: URL, res: ServerResponse): void {
   if (pull) {
     sendJson(res, 200, { kind: 'pulls', ...pull, ...shared, closedAt: pull.state === 'open' ? null : pull.updatedAt, mergedAt: pull.state === 'merged' ? pull.updatedAt : null,
       review: pull.state === 'open' ? 'required' : 'approved', checks: 'success', base: 'main', files: number % 9 + 1, mergedBy: pull.state === 'merged' ? 'ChristopherTuring' : null,
-      closes: pull.closes.flatMap(closed => agents.issues.filter(item => item.number === closed).map(item => ({ number: item.number, title: item.title, state: item.state, reason: 'completed' }))) })
+      closes: pull.closes.flatMap(closed => agents.issues.filter(item => item.number === closed).map(item => ({ number: item.number, title: item.title, state: item.state, reason: 'completed' }))),
+      // Its reviews as the Pull requests tab's tile of its number has them.
+      reviews: reviewsFixture(Math.max(0, issueTiles('pulls', now).findIndex(item => item.number === number)), number, now, true), users: REVIEW_USERS })
     return
   }
   if (issue) {
@@ -491,7 +527,9 @@ function itemFixture(url: URL, res: ServerResponse): void {
   for (const kind of ['pulls', 'issues'] as const) {
     const tile = issueTiles(kind, now).find(item => item.number === number)
     if (tile) {
-      sendJson(res, 200, kind === 'pulls' ? { kind, ...tile, ...shared, labels: tile.labels, closes: [], commits: number % 5 + 1, files: number % 9 + 1, mergedBy: tile.state === 'merged' ? 'ada' : null }
+      const index = issueTiles(kind, now).indexOf(tile)
+      sendJson(res, 200, kind === 'pulls' ? { kind, ...tile, ...shared, labels: tile.labels, closes: [], commits: number % 5 + 1, files: number % 9 + 1, mergedBy: tile.state === 'merged' ? 'ada' : null,
+        reviews: reviewsFixture(index, number, now, true), users: REVIEW_USERS }
         : { kind, ...tile, ...shared, labels: tile.labels, closedBy: [] })
       return
     }

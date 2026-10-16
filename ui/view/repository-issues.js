@@ -18,6 +18,7 @@ import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
+import { reviewLine } from './pull-reviews.js'
 
 export { issueState }
 
@@ -247,7 +248,8 @@ class RepositoryIssues extends LitElement {
 
   // A tile: its state's icon, and under it a pull request's review and
   // checks and how many comments, as a rail beside its title, number, author
-  // and age, labels, and a pull request's branches and size.
+  // and age, labels, and a pull request's branches and size; an open one's
+  // reviews (pull-reviews.js).
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
     const time = item.updatedAt == null ? null : new Date(item.updatedAt)
@@ -270,6 +272,7 @@ class RepositoryIssues extends LitElement {
         ${item.labels.length > 0 || item.moreLabels > 0 ? html`<span class="issue-labels">${labelChips(item)}</span>` : nothing}
         ${pulls && item.head ? html`<span class="issue-branch"><code>${item.head}</code>${item.base ? html`<span aria-hidden="true">→</span><code>${item.base}</code>` : nothing}
           <span class="issue-diff"><span class="is-added">+${item.additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${item.deletions.toLocaleString('en-US')}</span></span></span>` : nothing}
+        ${pulls && item.state === 'open' ? reviewLine(item.reviews) : nothing}
       </span>`
   }
 }

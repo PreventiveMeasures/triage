@@ -3,13 +3,17 @@
 // closed (a pull request's merged among them), the most recently updated
 // first, a page at a time, each as one tile has room for, with how many are
 // open and closed. A pull request's tile names its branches, its size, its
-// review and its checks, which GraphQL alone gives, so it needs a token. A
+// review and its checks, which GraphQL alone gives, so it needs a token; an
+// open one's, its reviews too (pull-reviews.ts), each reviewer's. A
 // nonpublic repository's are read with its GitHub App's installation, which
 // reads pull requests only with their own permission (README).
 import { GithubApiError } from './github-app.ts'
 import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
+import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
 
 export const ISSUES_PAGE = 50
+// What a kept page or item was read as: kept ones read before differ.
+export const ISSUES_READ_VERSION = 2
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
@@ -32,19 +36,19 @@ const connection = { issues: 'issues', pulls: 'pullRequests' }
 const states = { issues: { open: '[OPEN]', closed: '[CLOSED]' }, pulls: { open: '[OPEN]', closed: '[CLOSED, MERGED]' } }
 
 // A page of `kind`, those in `state`, after the page `after` ends, and how
-// many of each state there are.
+// many of each state there are; open pull requests with their reviews.
 const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     open: ${connection[kind]}(states: ${states[kind].open}) { totalCount }
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
     page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { ${fields[kind]} }
+      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` ${reviewFields(TILE_THREADS, false)}` : ''} }
     }
   }
 }`
 
-type Node = { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
+type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
   comments?: { totalCount?: unknown }; labels?: { totalCount?: unknown; nodes?: { name?: unknown; color?: unknown }[] }; state?: unknown; stateReason?: unknown
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] } }
@@ -85,6 +89,7 @@ function item(kind: IssuesKind, node: Node | null) {
 // Commit statuses permissions, refused: its tile then shows none. Any other
 // field refused, the list is, as one without Pull requests: read is.
 const checksRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path) && error.path.includes('statusCheckRollup')
+const partRefused = (error: GraphqlError) => checksRefused(error) || reviewsRefused(error)
 
 // One issue or pull request, as its popup shows it (GET
 // /api/admin/repositories/item): as its tile does, with its description, its
@@ -103,7 +108,8 @@ const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
         closedByPullRequestsReferences(first: ${LINKED}, includeClosedPrs: true) { totalCount nodes { number title pullState: state isDraft } } }
       ... on PullRequest { ${shared} pullState: state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName body changedFiles
         commits(last: 1) { totalCount nodes { commit { statusCheckRollup { state } } } } mergedBy { ${ACTOR} }
-        closingIssuesReferences(first: ${LINKED}) { totalCount nodes { number title issueState: state stateReason } } }
+        closingIssuesReferences(first: ${LINKED}) { totalCount nodes { number title issueState: state stateReason } }
+        ${reviewFields(ITEM_THREADS, true)} }
     }
   }
 }`
@@ -123,7 +129,7 @@ const linked = (kind: IssuesKind, nodes: Linked[] | undefined) => (nodes ?? []).
 // The issue or pull request numbered `number`, its `kind` with it.
 export async function repositoryItem(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(ITEM_QUERY, { owner, name, number }, token, fetchImpl, checksRefused) as { repository?: { item?: ItemNode | null } | null }
+  const data = await githubGraphql(ITEM_QUERY, { owner, name, number }, token, fetchImpl, partRefused) as { repository?: { item?: ItemNode | null } | null }
   const node = data?.repository?.item
   const kind: IssuesKind | null = node?.__typename === 'Issue' ? 'issues' : node?.__typename === 'PullRequest' ? 'pulls' : null
   const tile = kind && node ? item(kind, { ...node, state: kind === 'issues' ? node.issueState : node.pullState }) : null
@@ -137,7 +143,7 @@ export async function repositoryItem(fullName: string, token: string, number: nu
   const merger = actorOf(node.mergedBy)
   return kind === 'issues' ? { kind, ...tile, ...described, closedBy: named }
     : { kind, ...tile, ...described, closes: named, commits: count(node.commits?.totalCount), files: count(node.changedFiles),
-      mergedBy: merger.login, mergedById: merger.id }
+      mergedBy: merger.login, mergedById: merger.id, reviews: pullReviews(node, tile.author, true) }
 }
 
 // A page of the repository's issues or pull requests in `state`, after the
@@ -145,13 +151,17 @@ export async function repositoryItem(fullName: string, token: string, number: nu
 // closed (`counts`), and, where more follow, the cursor reading them (`after`).
 export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, checksRefused) as Page
+  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, partRefused) as Page
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const info = repository.page?.pageInfo
   const next = info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
   return {
-    items: (repository.page?.nodes ?? []).flatMap(node => item(kind, node) ?? []),
+    items: (repository.page?.nodes ?? []).flatMap(node => {
+      const tile = item(kind, node)
+      if (!tile) return []
+      return kind === 'pulls' && state === 'open' && node ? [{ ...tile, reviews: pullReviews(node, tile.author) }] : [tile]
+    }),
     counts: { open: count(repository.open?.totalCount), closed: count(repository.closed?.totalCount) },
     more: next !== null, after: next,
   }

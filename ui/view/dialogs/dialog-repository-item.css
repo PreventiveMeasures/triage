@@ -88,6 +88,36 @@ svg .dotted { stroke-dasharray: 1 2.2; }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 }
 .repo-item-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Its reviews (pull-reviews.js): a row a reviewer, who, how their review
+   stands, on which commit and when; its open threads, each by its badge,
+   title and place. */
+.review-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .7rem; padding: .35rem .6rem;
+  & time { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+}
+.review-state {
+  display: inline-flex; align-items: center; gap: .25rem;
+  & svg { width: 12px; height: 12px; }
+  &.is-approved > svg { color: var(--green); }
+  &:is(.is-changes, .is-failed) > svg { color: var(--critical); }
+  &.is-running > svg { color: var(--medium); }
+  &:is(.is-commented, .is-dismissed, .is-requested) { color: var(--muted); }
+}
+.review-on {
+  color: var(--muted);
+  & a { color: var(--text); text-decoration: none; &:hover { color: var(--accent); } }
+}
+.review-path {
+  flex: none; max-width: 45%; margin-left: auto; overflow: hidden;
+  color: var(--muted); text-overflow: ellipsis; white-space: nowrap;
+}
+.review-severity {
+  flex: none; padding: 0 .35rem; border-radius: 999px; background: var(--low); color: #fff;
+  font-size: .68rem; font-weight: 600; line-height: 1.5;
+  &.is-p0 { background: var(--critical); }
+  &.is-p1 { background: var(--high); }
+  &.is-p2 { background: var(--medium); color: #000; }
+}
 .repo-item-description {
   padding-top: .75rem; border-top: 1px solid var(--border);
   white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;

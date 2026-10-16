@@ -158,6 +158,7 @@
     "server-managed/npm-packages.ts",
     "server-managed/package-entry-points.ts",
     "server-managed/pretty-print.ts",
+    "server-managed/pull-reviews.ts",
     "server-managed/rename-diff.ts",
     "server-managed/rename-diff-worker.js",
     "server-managed/public-workspace.ts",

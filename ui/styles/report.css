@@ -3729,6 +3729,47 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   & code:last-of-type { flex: none; max-width: 40%; }
 }
 .issue-diff { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+/* An open pull request's reviews (pull-reviews.js), a line: each reviewer's
+   mark and name, an agent's by its mark alone, dimmed where their review was
+   on an earlier commit than the latest, names shortened before the marks;
+   its open threads and the gravest one's badge; and, where no review is on
+   the latest commit, that it isn't. Its icons drawn as the rail's are. */
+.issue-reviews {
+  display: flex; align-items: center; gap: .4rem; min-width: 0; overflow: hidden; white-space: nowrap;
+  color: var(--muted); font-size: .72rem;
+  & .app-user { min-width: 0; }
+  & .app-user-name { overflow: hidden; text-overflow: ellipsis; }
+  & .app-user-mark + .app-user-name { display: none; }
+  & :is(.review-glyph, .review-threads) svg {
+    fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+    & .fill { fill: currentcolor; stroke: none; }
+    & .dotted { stroke-dasharray: 1 2.2; }
+  }
+}
+.review-mark {
+  display: inline-flex; align-items: center; gap: .2rem; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text);
+  &:has(.app-user-avatar), &:not(:has(.app-user)) { min-width: 2.25rem; }
+  &:has(.app-user-mark) { flex: none; }
+  &.is-stale { opacity: .55; }
+}
+.review-glyph { display: inline-flex; flex: none; & svg { width: 12px; height: 12px; } }
+:is(.review-mark, .review-state) {
+  &.is-approved .review-glyph, &.is-approved > svg { color: var(--green); }
+  &:is(.is-changes, .is-failed) .review-glyph, &:is(.is-changes, .is-failed) > svg { color: var(--critical); }
+  &.is-running .review-glyph, &.is-running > svg { color: var(--medium); }
+  &:is(.is-commented, .is-dismissed, .is-requested) .review-glyph { color: var(--muted); }
+}
+.review-threads { display: inline-flex; align-items: center; gap: .2rem; flex: none; & svg { width: 12px; height: 12px; } }
+.review-severity {
+  padding: 0 .3rem; border-radius: 999px; background: var(--low); color: #fff;
+  font-size: .62rem; font-weight: 600; line-height: 1.45;
+  &.is-p0 { background: var(--critical); }
+  &.is-p1 { background: var(--high); }
+  &.is-p2 { background: var(--medium); color: #000; }
+}
+.review-unreviewed {
+  flex: none; padding: 0 .35rem; border: 1px dashed var(--border); border-radius: 999px; font-size: .66rem; line-height: 1.4;
+}
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
 /* A label's dot in its padding, its name clipped to its content, so that the
