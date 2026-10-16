@@ -431,6 +431,7 @@ test('commits pushed directly listed where there are any, between the pull reque
   assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'the period\'s issue beside them')
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>/u, 'each Monday\'s')
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/commit\/b{40} [^]*Bump the version[^]*bbbbbbb[^]*linus[^]*Fix by hand[^]*ccccccc[^]*Alan Kay/u)
+  assert.match(text, /<p class="pulse-note">2 older commits not listed\.<\/p>/u, 'the two the server doesn\'t list, so said')
   view.showPerson('=Alan Kay')
   text = templateText(view.render())
   assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'no issue of theirs, left out')
@@ -450,6 +451,32 @@ test('commits pushed directly listed where there are any, between the pull reque
   await setImmediate()
   text = templateText(view.render())
   assert.deepEqual(panels(), ['Pull requests', 'Issues'], 'none pushed directly: the issues, none of them, shown')
+})
+
+test('commits pushed directly the server doesn\'t list said, a shorter period\'s listed while a longer one reads, or all of them', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const week = Date.UTC(2026, 9, 11)
+  // Each Monday's commit pushed directly; the week's alone listed, as the
+  // server lists a week's, then none.
+  const direct = directCommits => stats({ weeks: year().map(row => ({ ...row, directDays: row.days.map((count, day) => day === 1 ? count : 0) })), directCommits })
+  let month
+  answer = (repoId, weeks) => weeks === 1
+    ? Promise.resolve(pulse({ weeks, since: week, stats: direct([{ sha: 'b'.repeat(40), at: week + DAY, subject: 'Fix by hand', login: 'ada', id: null, name: 'Ada' }]) }))
+    : new Promise(resolve => { month = resolve })
+  const view = shown()
+  view.pick(1)
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /Direct commits<\/h3><span class="pulse-count">1<\/span>[^]*Fix by hand/u)
+  assert.doesNotMatch(text, /not listed/u)
+  view.pick(4)
+  text = templateText(view.render())
+  assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>[^]*Fix by hand[^]*<p class="pulse-note">3 older commits not listed\.<\/p>/u,
+    'the week\'s, the month\'s older ones counted as it reads')
+  month(pulse({ stats: direct([]) }))
+  await setImmediate()
+  assert.match(templateText(view.render()), /Direct commits<\/h3><span class="pulse-count">4<\/span><\/div>\s*<ol><\/ol>\s*<p class="pulse-note">4 commits not listed\.<\/p>/u)
 })
 
 test('a contributor or a column picked narrows the pull requests and issues to theirs, so said, the rest on GitHub narrowed alike; one whose commits name no account, none', async t => {

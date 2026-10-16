@@ -875,12 +875,15 @@ class RepositoryPulse extends LitElement {
   // The latest commits pushed to the branch directly, of the period or as
   // it is narrowed, so said beside the title, how many beside: each its
   // subject, short id, author and when, linking to it on GitHub; as many as
-  // DIRECT_SHOWN, the rest a click away.
+  // DIRECT_SHOWN, the rest a click away; those older than the server lists
+  // (the year's latest, as many as it lists, or a shorter period's while
+  // this one reads), how many.
   renderDirect(direct, narrowing) {
     const repo = this.repo ?? this.repository.repo
     const who = narrowing?.who ? commitAuthorName(narrowing.who.login, narrowing.who.name) : null
     const narrowedTo = narrowing ? [who && `by ${who}`, narrowing.when].filter(Boolean).join(' ') : ''
     const shown = this._allDirect ? direct.items : direct.items.slice(0, DIRECT_SHOWN)
+    const unlisted = Math.max(0, direct.count - direct.items.length)
     return html`<section class="pulse-panel pulse-list" aria-label="Direct commits">
       <div class="pulse-head"><h3 data-tooltip="Commits pushed to the default branch, not merged from a pull request">Direct commits</h3>${narrowing
         ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}<span class="pulse-count">${number(direct.count)}</span></div>
@@ -891,6 +894,8 @@ class RepositoryPulse extends LitElement {
       </a></li>`)}</ol>
       ${direct.items.length > DIRECT_SHOWN ? html`<button type="button" class="history-link pulse-more" @click=${() => { this._allDirect = !this._allDirect }}>${this._allDirect
         ? 'Fewer' : `and ${plural(direct.items.length - DIRECT_SHOWN, 'more', 'more')}`}</button>` : nothing}
+      ${unlisted > 0 ? html`<p class="pulse-note">${direct.items.length > 0 ? plural(unlisted, 'older commit', 'older commits') : plural(unlisted, 'commit')} not listed.</p>`
+        : nothing}
     </section>`
   }
 
