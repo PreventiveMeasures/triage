@@ -5,16 +5,18 @@
 // beside what the same days of the week a period earlier gave, where
 // counted by the day: the default branch's commits, who made them, the pull
 // requests merged and the issues closed, the lines added and removed, and
-// the share of commits an agent made or co-authored, where counted. Then
-// the period alone, a column a day in a week or a month, else a week:
-// commits, those with agents apart, and lines added over removed, a week's
+// the share of commits an agent made or co-authored, or merged from an
+// agent's pull request, where counted. Then the period alone, a column a
+// day in a week or a month, else a week: commits, those with agents apart,
+// and lines added over removed, a week's
 // days each its figures written on it, a column's figures and who made its
 // commits shown as it is hovered or read with the keyboard, a click picking
 // it for its contributors; the period's contributors ranked by their
 // commits; the pull requests merged or opened and the issues closed or
 // opened in it, each opening its popup; and when in the week its commits are
 // made. A year whose commits are not all read yet is asked for again, a
-// second apart, as long as each answer reads more; statistics GitHub is
+// second apart, as long as each answer reads more, and so the pull requests
+// merged in it, for those from agents' branches; statistics GitHub is
 // still computing, a few times, a while apart. What was read is kept a
 // while, for the session that read it. Every answer holds the whole year,
 // so a period read anew, or one whose year is being read again, is shown
@@ -105,7 +107,8 @@ function checked(answer) {
     agents: weeks.length > 0 && weeks.every(week => week.agentDays !== null),
   } : null
   return { weeks: answer.weeks, since: answer.since, merged: told('merged'), opened: told('opened'), closed: told('closed'), created: told('created'),
-    stats, reading: Number.isSafeInteger(answer.reading) ? answer.reading : null, pending: answer.pending === true }
+    stats, reading: Number.isSafeInteger(answer.reading) ? answer.reading : null, pulls: Number.isSafeInteger(answer.pulls) ? answer.pulls : null,
+    pending: answer.pending === true }
 }
 
 // A period read, the last shown of its repository, and its year the last
@@ -115,9 +118,12 @@ function keep(repoId, entry) {
   if (entry.answer.stats) lastYear.set(repoId, entry.answer)
 }
 
+// How far the year is read: its commits, or the pull requests merged in it,
+// read so far; null, read whole.
+const progress = answer => answer.reading ?? answer.pulls
 // How long after an answer to ask again, and how many times: while the year
 // is read, while GitHub computes its statistics; null, not again.
-const waitFor = answer => answer.reading === null ? answer.pending ? [PENDING_MS, PENDING_TRIES] : null : [READING_MS, READING_STALLS]
+const waitFor = answer => progress(answer) === null ? answer.pending ? [PENDING_MS, PENDING_TRIES] : null : [READING_MS, READING_STALLS]
 
 // The pulse of repository `repoId` over `weeks` weeks, as held, else read:
 // `{ status }` 'loading', then 'ready' with its `answer`, or 'error' with its
@@ -156,7 +162,7 @@ function askAgain(key, entry, repoId, weeks, wait) {
     if (sessionReads().get(key) !== entry) return
     fetchRepositoryPulse(repoId, weeks).then(checked).then(answer => {
       if (sessionReads().get(key) !== entry) return null
-      const further = answer.reading !== null && entry.answer.reading !== null && answer.reading > entry.answer.reading
+      const further = progress(answer) !== null && progress(entry.answer) !== null && progress(answer) > progress(entry.answer)
       entry.answer = answer
       entry.until = Date.now() + KEEP_MS
       entry.tries = further ? 0 : entry.tries + 1
@@ -192,7 +198,8 @@ export function periodSince(weeks, now = Date.now()) {
 // other period's, said so (`otherPunch`).
 export function withYear(own, year, weeks, now = Date.now()) {
   return { weeks, since: own?.since ?? periodSince(weeks, now), merged: own?.merged ?? null, opened: own?.opened ?? null, closed: own?.closed ?? null,
-    created: own?.created ?? null, stats: { ...year.stats, otherPunch: year.weeks !== weeks }, reading: own?.reading ?? null, pending: own?.pending ?? false }
+    created: own?.created ?? null, stats: { ...year.stats, otherPunch: year.weeks !== weeks }, reading: own?.reading ?? null, pulls: own?.pulls ?? null,
+    pending: own?.pending ?? false }
 }
 
 // The period's figures, `now` in its last day: its commits, and those of the
@@ -318,6 +325,20 @@ const versus = (count, previous, before) => previous === null || count === null 
   : `${count > previous ? '↑' : '↓'}${previous > 0 ? ` ${Math.max(1, Math.round(Math.abs(count - previous) / previous * 100))}%` : ''} from ${number(previous)} ${before}`
 // `part` of `whole`, in whole percents: none and all alone 0 and 100.
 const share = (part, whole) => part === 0 ? 0 : part === whole ? 100 : Math.min(99, Math.max(1, Math.round(part / whole * 100)))
+// What a year being read, or counted by GitHub, says as it is asked again
+// and after: its commits read so far, or the pull requests merged in it;
+// `latest`, the year shown meanwhile as it was before.
+function waitingTexts(answer, latest = false) {
+  const [what, shown] = latest ? ['latest ', ': the year shown is as it was before.'] : ['', '.']
+  if (answer.reading !== null) {
+    return [`Reading this repository’s ${what}commits… ${number(answer.reading)} of the last year so far`,
+      `${number(answer.reading)} of this repository’s commits of the last year read so far${shown}`, 'Read on']
+  }
+  return answer.pulls === null
+    ? [`GitHub is still counting this repository’s ${what}commits…`, `GitHub hasn’t counted this repository’s ${what}commits yet.`, 'Ask again']
+    : [`Reading the pull requests merged in this repository… ${number(answer.pulls)} so far`,
+      `${number(answer.pulls)} of the pull requests merged in this repository read so far${shown}`, 'Read on']
+}
 // A share beside the one the same days a period earlier gave.
 const versusShare = (now, then, before) => now === then ? `Same as ${before}` : `${now > then ? '↑' : '↓'} from ${then}% ${before}`
 const profile = login => login.endsWith('[bot]') ? `https://github.com/apps/${encodeURIComponent(login.slice(0, -5))}` : `https://github.com/${encodeURIComponent(login)}`
@@ -424,7 +445,7 @@ class RepositoryPulse extends LitElement {
     const { answer } = entry
     const before = PERIODS.find(([weeks]) => weeks === answer.weeks)[2]
     const summary = pulseSummary(answer, now)
-    const counting = answer.stats ? null : answer.reading === null ? 'Counting…' : 'Reading commits…'
+    const counting = answer.stats ? null : answer.reading === null ? answer.pulls === null ? 'Counting…' : 'Reading pull requests…' : 'Reading commits…'
     const linesCounting = counting ?? (answer.stats?.lines === null ? 'Counting…' : null)
     // Pull requests merged or issues closed, beside those opened; none while
     // the period reads.
@@ -439,21 +460,16 @@ class RepositoryPulse extends LitElement {
           : html`<span class="is-added">+${number(summary.additions)}</span> <span class="is-removed">−${number(summary.deletions)}</span>`, linesCounting,
         'added and removed', summary.additions === null ? nothing : this.renderRatio(summary.additions, summary.deletions))}
         ${summary.agents === null || !answer.stats.weeks.some(week => week.agentDays.some(count => count > 0)) ? nothing
-          : this.renderTile(html`<span data-tooltip="Commits an agent made or co-authored">With agents</span>`,
+          : this.renderTile(html`<span data-tooltip="Commits an agent made or co-authored, or merged from an agent’s branch">With agents</span>`,
             summary.commits === 0 ? '–' : `${share(summary.agents, summary.commits)}%`, summary.previousAgents === null || summary.commits === 0 || summary.previous === 0
               ? null : versusShare(share(summary.agents, summary.commits), share(summary.previousAgents, summary.previous), before),
             summary.commits === 0 ? 'no commits' : `${number(summary.agents)} of ${plural(summary.commits, 'commit')}`)}
       </section>
-      ${answer.stats && (answer.reading !== null || answer.pending) ? html`<p class="pulse-note pulse-updating" role="status">${this.renderWaiting(entry,
-        answer.reading === null
-          ? ['GitHub is still counting this repository’s latest commits…', 'GitHub hasn’t counted this repository’s latest commits yet.', 'Ask again']
-          : [`Reading this repository’s latest commits… ${number(answer.reading)} of the last year so far`,
-            `${number(answer.reading)} of this repository’s commits of the last year read so far: the year shown is as it was before.`, 'Read on'])}</p>` : nothing}
+      ${answer.stats && (progress(answer) !== null || answer.pending) ? html`<p class="pulse-note pulse-updating" role="status">${this.renderWaiting(entry,
+        waitingTexts(answer, true))}</p>` : nothing}
       <div class="pulse-grid">
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
-          : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, answer.reading === null
-            ? ['GitHub is still counting this repository’s commits…', 'GitHub hasn’t counted this repository’s commits yet.', 'Ask again']
-            : [`Reading this repository’s commits… ${number(answer.reading)} of the last year so far`, `${number(answer.reading)} of this repository’s commits of the last year read so far.`, 'Read on'])}</div>`}
+          : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, waitingTexts(answer))}</div>`}
         ${this.renderList(answer, 'pulls')}
         ${this.renderList(answer, 'issues')}
         ${answer.stats ? this.renderPunch(answer.stats) : nothing}
