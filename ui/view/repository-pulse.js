@@ -309,6 +309,16 @@ class RepositoryPulse extends LitElement {
     shownElements.delete(this)
   }
 
+  // Another repository's pulse, none of its columns pointed at or picked,
+  // its contributors the first of them: the element is kept as the reader
+  // goes from one repository's to another's.
+  willUpdate(changed) {
+    if (!changed.has('repository') || changed.get('repository')?.repoId === this.repository?.repoId) return
+    this._column = null
+    this._picked = null
+    this._everyone = false
+  }
+
   pick(weeks) {
     shownWeeks = weeks
     this._column = null

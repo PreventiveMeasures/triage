@@ -221,6 +221,21 @@ test('a column pointed at, or read with the arrow keys, shows its figures and wh
   view.pick(4)
 })
 
+test('another repository\'s pulse in the same element: none of its columns pointed at or picked, its contributors the first of them', () => {
+  const view = shown()
+  const picked = () => Object.assign(view, { _column: 3, _picked: SINCE, _everyone: true })
+  picked()
+  view.repository = { ...view.repository, commit: 'b'.repeat(40) }
+  view.willUpdate(new Map([['repository', { repoId: 7 }]]))
+  assert.deepEqual([view._column, view._picked, view._everyone], [3, SINCE, true], 'the same repository\'s kept')
+  view.repository = { ...view.repository, repoId: 8 }
+  view.willUpdate(new Map([['repository', { repoId: 7 }]]))
+  assert.deepEqual([view._column, view._picked, view._everyone], [null, null, false])
+  picked()
+  view.willUpdate(new Map([['_column', null]]))
+  assert.equal(view._picked, SINCE, 'its own state changed alone, kept')
+})
+
 test('a quarter, a column a week, every other one named; this week\'s figures so far', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW })
   answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: SINCE - 9 * WEEK }))
