@@ -65,23 +65,22 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.match(text, /role="group" aria-label=Codex>[^]*aria-label=1\+ pull requests[^]*aria-label=2\+ branches[^]*<\/span>\s*<\/span><\/span>/u)
   assert.doesNotMatch(text, /aria-label=0 commits/u, 'none pushed without a pull request, none counted')
   // The session: its two pull requests and its commit to main, the issue it names.
-  assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*3 tasks[^]*\+2,001[^]*−11/u)
+  assert.match(text, /aria-label=Claude[^]*href=https:\/\/claude\.ai\/code\/session_A[^>]*>Pull 8<[^]*ada[^]*now<\/time>[^]*\+2,001[^]*−11/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/9[^]*?>#9<[^]*pull\/8[^]*?>#8<[^]*commit\/c{40}[^]*?><code>ccccccc<\/code>[^]*issues\/3[^]*?><span class="sr-only">Issue <\/span>#3</u)
   assert.match(text, /<code>claude\/one<\/code>/u)
   // Each chip with how many follow it, seen past the last that fits.
   assert.match(text, /data-rest=3>#9<[^]*data-rest=2>#8<[^]*data-rest=1><code>[^]*issues\/3[^]*?data-rest=>/u)
   // A Codex branch's pull request, one left without any; work no agent did is none.
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pull\/5[^>]*>Pull 5</u)
-  // A tile's tasks counted only where its chips don't: one, or as many as its pull requests' or its commits' alone, not.
-  assert.doesNotMatch(text, /\b1 task\b/u)
-  assert.equal(text.match(/\d+ tasks?\b/gu)?.length, 1, 'the session of pull requests and a commit alone')
+  // A tile's tasks counted only where its chips don't count them all: its pull requests' and commits' do.
+  assert.doesNotMatch(text, /\d+ tasks?\b/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/tree\/codex\/left[^>]*>codex\/left<[^]*no pull request/u)
   assert.doesNotMatch(text, /Pull 4/u)
   assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
 })
 
-test('a tile says how many tasks only where its chips don\'t: not as many as its pull requests\' or its commits\' alone', async () => {
+test('a tile says how many tasks only where its chips don\'t count them all: not for pull requests\' or commits\' alone, or both', async () => {
   const pushed = (char, id) => ({ oid: char.repeat(40), title: `Pushed ${char}`, at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude(id) })
   // And a Codex task's commit, more pull requests to read.
   answer = () => Promise.resolve({ pulls: [pull(9, 'claude/one', claude('session_P')), pull(8, 'claude/one', claude('session_P'))],
@@ -111,7 +110,7 @@ test('more read on from the cursors a page ended at, each pull request and commi
   const text = templateText(view.render())
   assert.match(text, /aria-valuenow=100 aria-label=5 pull requests read[^]*class="read-gauge-check"/u, 'all read, a check')
   assert.doesNotMatch(text, />100<\/span>/u)
-  assert.match(text, />Pull 2<[^]*4 tasks/u, 'an older one on its branch, its first task now')
+  assert.match(text, />Pull 2</u, 'an older one on its branch, its first task now')
   assert.match(text, /codex\/old[^]*no pull request/u, 'all read, a branch without one shows')
   assert.doesNotMatch(text, />More</u)
 })
