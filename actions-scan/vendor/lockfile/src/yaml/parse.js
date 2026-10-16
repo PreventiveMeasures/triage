@@ -284,7 +284,7 @@ function workflowValue(doc, text, indent, depth, owner) {
 function workflowNode(doc, rest, indent, depth, owner) {
   if (rest.startsWith('*')) return readAlias(doc, rest, owner.number)
   if (isBlockScalar(rest)) return readLiteral(doc, rest, indent, owner)
-  if (rest.startsWith('[') || rest.startsWith('{')) return parseInline(readFlowLines(doc, rest, owner), owner.number, true)
+  if (rest.startsWith('[') || rest.startsWith('{')) return parseInline(readFlowLines(doc, rest, owner, indent), owner.number, true)
   const quoted = rest.startsWith("'") || rest.startsWith('"')
   if (quoted && closingQuote(rest) === -1) return readQuotedLines(doc, rest, owner, unescapeDouble)
   if (rest !== '') return parseInline(quoted ? rest : readPlainLines(doc, rest, indent), owner.number, true)
