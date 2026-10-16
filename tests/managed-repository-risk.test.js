@@ -212,7 +212,8 @@ function sourceOf(repos, assess, { advisories = {}, advisoriesFail = false, gone
             : Promise.resolve(repo.lockfiles.map(lockfile => ({ sha: `${repoId}:${lockfile.path}`, ...lockfile })))
         },
         recheck: () => repo.revoked ? Promise.reject(repo.revoked instanceof Error ? repo.revoked : new GithubApiError(404, 'no-repository')) : Promise.resolve(),
-        ...'dependabot' in repo && { dependabot: () => repo.dependabot instanceof Error ? Promise.reject(repo.dependabot) : Promise.resolve(repo.dependabot) } }
+        ...'dependabot' in repo && { dependabot: () => repo.dependabot instanceof Error ? Promise.reject(repo.dependabot)
+          : Promise.resolve({ alerts: repo.dependabot, recheck: () => repo.dependabotRevoked ? Promise.reject(repo.dependabotRevoked) : Promise.resolve() }) } }
     },
     teamScoped: name => Promise.resolve(scoped.has(name)),
     version(name, version) {
@@ -799,6 +800,15 @@ test('a repository\'s Dependabot alerts that couldn\'t be had are told so, the r
   assert.match(unreachable.detail, /^asking its Dependabot alerts: TypeError: fetch failed, after/u, 'while doing what, as a repository\'s failure says')
   assert.equal(lines.filter(line => line.type === 'lockfile').length, 3)
   assert.deepEqual(lines.at(-1), { type: 'done' }, 'none told of the one not asked')
+})
+
+test('a repository\'s Dependabot alerts are told only where access to them, checked again just before, holds; where it was withdrawn since, why not, the rest of it told', async () => {
+  const revoked = new GithubApiError(403, 'dependabot-forbidden', null, '@ada\'s access to this repository (read) doesn\'t let them see its Dependabot alerts on GitHub')
+  const source = sourceOf({ 1: { ...onePnpmRepo[1], dependabot: [alertOf(1, 'left-pad', 'GHSA-left-pad', 'pnpm-lock.yaml')], dependabotRevoked: revoked } }, () => Promise.resolve(noneFound))
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(lines.find(line => line.type === 'dependabot'), { type: 'dependabot', repo: 1, error: 'dependabot-forbidden',
+    detail: 'checking access to its Dependabot alerts again: @ada\'s access to this repository (read) doesn\'t let them see its Dependabot alerts on GitHub' })
+  assert.deepEqual(lines.filter(line => line.type !== 'risk').map(line => line.type), ['repos', 'repo', 'lockfile', 'advisories', 'dependabot', 'done'])
 })
 
 test('a team\'s repository tells the Dependabot alerts of its directories, or above them, as its lockfiles', async () => {

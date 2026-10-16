@@ -23,13 +23,18 @@ export interface AlertsReader {
   permission(): string | null
 }
 
+// Alerts read, and their `recheck`: the user's access to them checked again,
+// asked of GitHub afresh, just before they are told (repository-risk.ts), as
+// access to the repository is, as it may be withdrawn meanwhile.
+export interface AlertsRead { alerts: DependabotAlert[]; recheck(): Promise<void> }
+
 // `repo`'s Dependabot alerts (dependabot-alerts.ts), read with the App's
 // installation token, the reader's, else the one GitHub tells the App of now,
 // once the user's own permission on it lets them see them; else refused, the
 // alerts not asked: `dependabot-not-installed`, `dependabot-unverified`, or
 // `dependabot-forbidden`, naming their permission.
 export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<SelectedRepo, 'repoId' | 'fullName'>, reader: AlertsReader,
-  fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<AlertsRead> {
   let token = await reader.installationToken()
   if (token == null) {
     const id = await repositoryInstallation(config, repo.repoId, repo.fullName, fetchImpl)
@@ -40,9 +45,12 @@ export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<Sele
   try { who = await reader.identity() } catch (error) {
     throw error instanceof GithubApiError && UNVERIFIED.has(error.message) ? new GithubApiError(403, 'dependabot-unverified') : error
   }
-  const permission = reader.permission() ?? await githubRepoPermission(repo.fullName, token, who, fetchImpl)
-  if (!SEES_ALERTS.has(permission)) {
-    throw new GithubApiError(403, 'dependabot-forbidden', null, `@${who.login}'s access to this repository (${permission}) doesn't let them see its Dependabot alerts on GitHub`)
+  const seen = (permission: string) => {
+    if (!SEES_ALERTS.has(permission)) {
+      throw new GithubApiError(403, 'dependabot-forbidden', null, `@${who.login}'s access to this repository (${permission}) doesn't let them see its Dependabot alerts on GitHub`)
+    }
   }
-  return dependabotAlerts(repo.fullName, token, fetchImpl)
+  seen(reader.permission() ?? await githubRepoPermission(repo.fullName, token, who, fetchImpl))
+  const alerts = await dependabotAlerts(repo.fullName, token, fetchImpl)
+  return { alerts, recheck: async () => { seen(await githubRepoPermission(repo.fullName, token, who, fetchImpl)) } }
 }

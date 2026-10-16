@@ -43,12 +43,12 @@ const ALERTS = '/repos/org/one/dependabot/alerts', PERMISSION = '/repos/org/one/
 test('a repository\'s alerts are read with its installation\'s token once the admin\'s own access lets them see them on GitHub: admin, or write, maintain\'s among it', async () => {
   for (const permission of ['admin', 'write']) {
     const { asked, fetchImpl } = github({ permission })
-    const alerts = await appDependabotAlerts(config, repo, readerOf(), fetchImpl)
+    const { alerts } = await appDependabotAlerts(config, repo, readerOf(), fetchImpl)
     assert.deepEqual(alerts.map(({ number, dismissed }) => [number, dismissed]), [[1, { reason: 'tolerable_risk' }]], permission)
     assert.deepEqual([tokensFor(asked, PERMISSION), tokensFor(asked, ALERTS)], [['kept-token'], ['kept-token']], 'the access asked by the installation, the alerts read with its token')
   }
   const { asked, fetchImpl } = github({ permission: 'read' })
-  assert.equal((await appDependabotAlerts(config, repo, readerOf({ permission: 'admin' }), fetchImpl)).length, 1)
+  assert.equal((await appDependabotAlerts(config, repo, readerOf({ permission: 'admin' }), fetchImpl)).alerts.length, 1)
   assert.deepEqual(tokensFor(asked, PERMISSION), [], 'the level the reader\'s gate asked of a private repository used, not asked again')
 })
 
@@ -75,10 +75,24 @@ test('an admin whose sign-in can\'t be verified is refused so, nothing more aske
 
 test('where the reader has no installation\'s token, the one GitHub tells the App of now is used; none, refused so', async () => {
   const unkept = github({ installed: 8 })
-  assert.equal((await appDependabotAlerts(config, repo, readerOf({ token: null }), unkept.fetchImpl)).length, 1)
+  assert.equal((await appDependabotAlerts(config, repo, readerOf({ token: null }), unkept.fetchImpl)).alerts.length, 1)
   assert.deepEqual(tokensFor(unkept.asked, '/repos/org/one/installation'), ['jwt'], 'asked with the App\'s JWT')
   assert.deepEqual(tokensFor(unkept.asked, ALERTS), ['token-8'])
   const none = github({ installed: null })
   await assert.rejects(appDependabotAlerts(config, repo, readerOf({ token: null }), none.fetchImpl), { message: 'dependabot-not-installed' })
   assert.deepEqual(tokensFor(none.asked, PERMISSION), [])
+})
+
+test('access to the alerts is checked again before they are told, asked of GitHub afresh, never as the reader kept it: withdrawn since, refused so', async () => {
+  let permission = 'admin'
+  const { asked, fetchImpl } = github()
+  const counted = (url, init) => {
+    if (new URL(url).pathname === PERMISSION) return Promise.resolve(Response.json({ permission, user: { id: ada.id, login: 'ada' } }))
+    return fetchImpl(url, init)
+  }
+  const read = await appDependabotAlerts(config, repo, readerOf({ permission: 'admin' }), counted)
+  await read.recheck()
+  permission = 'read'
+  await assert.rejects(read.recheck(), { message: 'dependabot-forbidden', detail: /\(read\)/u })
+  assert.deepEqual(tokensFor(asked, ALERTS), ['kept-token'], 'the alerts read once')
 })

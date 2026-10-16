@@ -10,6 +10,7 @@
 // SCAN_READ_KEPT_MS, so that only opening a repository and checking access
 // to it again ask GitHub where all else is kept.
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
+import type { AlertsRead } from './dependabot-access.ts'
 import type { DependabotAlert } from './dependabot-alerts.ts'
 import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import type { Lru } from './lru.ts'
@@ -28,9 +29,10 @@ export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
 
 export type ListedLockfile = Pick<RepoLockfile, 'path' | 'format' | 'sha'>
 export type LockfileRead = { packages: LockedPackage[] } | RiskFailure
-// A repository's Dependabot alerts, those of its `paths` alone, or why they
-// couldn't be had.
-export type DependabotRead = { alerts: DependabotAlert[] } | RiskFailure
+// A repository's Dependabot alerts, those of its `paths` alone, with access to
+// them to check again before they are told (`recheck`), or why they couldn't
+// be had.
+export type DependabotRead = { alerts: DependabotAlert[]; recheck?(): Promise<void> } | RiskFailure
 type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 export type RepositoryFailure = Extract<RepositoryRiskLine, { type: 'repo'; error: string }>
 
@@ -38,13 +40,13 @@ export type RepositoryFailure = Extract<RepositoryRiskLine, { type: 'repo'; erro
 // as findRepoLockfiles lists them, each with its blob's id, and a file's
 // text; `recheck` checks access to it again, throwing where it is gone; and
 // `dependabot`, where asked, its Dependabot alerts of npm's, open or dismissed, as GitHub
-// has them now.
+// has them now, with access to them to check again before they are told.
 export interface OpenedRepository {
   commit: string
   lockfiles(): Promise<ListedLockfile[]>
   file(path: string): Promise<string>
   recheck(): Promise<void>
-  dependabot?(): Promise<DependabotAlert[]>
+  dependabot?(): Promise<AlertsRead>
 }
 
 // What a repository is read with: the scan's source and caches, and its
@@ -123,7 +125,10 @@ async function listLockfiles<R extends RepositoryRiskRepo>(reading: RepositoryRe
 // asked.
 async function readDependabot(opened: OpenedRepository, paths: readonly string[] | undefined): Promise<DependabotRead | null> {
   if (!opened.dependabot) return null
-  try { return { alerts: (await opened.dependabot()).filter(alert => lockfileOf(alert.manifest, paths)) } } catch (error) {
+  try {
+    const { alerts, recheck } = await opened.dependabot()
+    return { alerts: alerts.filter(alert => lockfileOf(alert.manifest, paths)), recheck }
+  } catch (error) {
     return failureOf(error, 'asking its Dependabot alerts')
   }
 }
