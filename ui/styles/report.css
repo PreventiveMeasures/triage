@@ -4025,6 +4025,16 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   .pulse-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .pulse-activity, .pulse-wide { grid-column: span 2; }
 }
+/* Three lists, the commits pushed directly and the issues both shown, and
+   room for them a row with when commits are made: the plots twice the
+   contributors, as before; each list a third of the plots, when commits
+   are made as wide as the contributors, under them. Nine columns. */
+@container pulse (width >= 104rem) {
+  .pulse-grid.is-lists { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+  .pulse-grid.is-lists > * { grid-column: span 3; }
+  .pulse-grid.is-lists > :is(.pulse-activity, .pulse-wide) { grid-column: span 6; }
+  .pulse-grid.is-lists > .pulse-list { grid-column: span 2; }
+}
 .pulse-head {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .5rem; margin-bottom: .6rem; color: var(--muted);
   & h3 { margin: 0; color: var(--text); font-size: .85rem; font-weight: 600; }

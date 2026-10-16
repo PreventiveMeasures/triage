@@ -587,6 +587,9 @@ class RepositoryPulse extends LitElement {
     // the period reads.
     const told = (label, kind, opened) => answer[kind] ? this.renderTile(label, number(answer[kind].count), versus(answer[kind].count, answer[kind].previous, before),
       `${number(answer[opened].count)} opened`) : this.renderTile(label, '–', 'Reading…', '')
+    // The lists, three of them (commits pushed directly, and issues) a row
+    // with when commits are made where the pulse is wide enough.
+    const lists = this.renderLists(answer, narrowing, now)
     return html`<section class="pulse-tiles" aria-label="Figures">
         ${this.renderTile('Commits', summary.commits === null ? '–' : number(summary.commits), counting ?? versus(summary.commits, summary.previous, before), 'to the default branch')}
         ${this.renderTile('Contributors', summary.authors === null ? '–' : number(summary.authors), counting, 'who made them')}
@@ -597,10 +600,10 @@ class RepositoryPulse extends LitElement {
         'added and removed', summary.additions === null ? nothing : this.renderRatio(summary.additions, summary.deletions))}
         ${summary.agents === null || !withAgents(answer.stats) ? nothing : this.renderAgentsTile(summary, before)}
       </section>
-      <div class="pulse-grid">
+      <div class=${`pulse-grid${lists.length > 2 ? ' is-lists' : ''}`}>
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
           : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, waitingTexts(answer))}</div>`}
-        ${this.renderLists(answer, narrowing, now)}
+        ${lists}
         ${answer.stats ? this.renderPunch(answer.stats) : nothing}
       </div>`
   }
@@ -865,7 +868,8 @@ class RepositoryPulse extends LitElement {
 
   // The pull requests, the commits pushed to the branch directly where there
   // are any, and the issues, two at least: the issues, where there are none,
-  // left out beside commits pushed directly; still read, shown.
+  // left out beside commits pushed directly; still read, shown. Each a panel
+  // of its own, for the grid to lay out by how many.
   renderLists(answer, narrowing, now) {
     const direct = answer.stats ? directIn(answer.stats, narrowing?.since ?? answer.since, narrowing?.until ?? Number.POSITIVE_INFINITY, narrowing?.person ?? null, now)
       : null
@@ -873,8 +877,8 @@ class RepositoryPulse extends LitElement {
       : answer
     const issues = told?.closed && told.created ? told.closed.count + told.created.count : null
     const commits = direct !== null && direct.count > 0
-    return html`${this.renderList(answer, 'pulls', narrowing)}${commits ? this.renderDirect(direct, narrowing) : nothing}${commits && issues === 0 ? nothing
-      : this.renderList(answer, 'issues', narrowing)}`
+    return [this.renderList(answer, 'pulls', narrowing), ...commits ? [this.renderDirect(direct, narrowing)] : [],
+      ...commits && issues === 0 ? [] : [this.renderList(answer, 'issues', narrowing)]]
   }
 
   // The latest commits pushed to the branch directly, of the period or as
