@@ -46,6 +46,10 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   assert.deepEqual([agentSignals(['Tidy\n\nCo-authored-by: Codex <codex@openai.com>']), agentSignals(['Tidy\n\nco-authored-by: codex <Codex@OpenAI.com>'])],
     [{ ...none, codex: true }, { ...none, codex: true }])
   assert.deepEqual(agentSignals(['Credit it as `Co-authored-by: Codex <codex@openai.com>`', 'Co-authored-by: Codex Fan <fan@example.com>']), none)
+  // A trailer of its trailers, its last paragraph's: not a line before them showing one, nor one going on past the address.
+  assert.deepEqual([agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com>\n\nMore docs']), agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com> is the syntax']),
+    agentSignals(['Co-authored-by: Codex <codex@openai.com>'])], [none, none, none])
+  assert.deepEqual(agentSignals(['Tidy\r\n\r\nCo-authored-by: Codex <codex@openai.com>\r\n']), { ...none, codex: true }, 'after carriage returns')
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [

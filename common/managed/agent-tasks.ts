@@ -84,9 +84,18 @@ const CODEX_TASK = /https:\/\/chatgpt\.com\/codex\/tasks\/(task_[a-z]_[A-Za-z\d]
 // its "Generated with" line, its session trailer.
 const CLAUDE_MARK = /^co-authored-by: claude\b|generated with \[claude code\]|^claude-session:/imu
 // Codex's: its co-author trailer, by its address, as Codex names itself
-// co-author of the commits it makes as whoever ran it.
-const CODEX_MARK = /^co-authored-by:[^\n<]*<codex@openai\.com>/imu
+// co-author of the commits it makes as whoever ran it; a trailer of a text's
+// trailers (trailerBlock), not a line before them that shows one.
+const CODEX_MARK = /^co-authored-by:[ \t]*[^<\n]*<codex@openai\.com>[ \t]*$/imu
 const MAX_LINKS = 8
+
+// A message's trailers, as git and GitHub read them: its last paragraph's,
+// where it has one past its subject's, not lines a description or example
+// before it holds.
+export function trailerBlock(text: string): string {
+  const paragraphs = text.replaceAll('\r\n', '\n').trim().split(/\n[ \t]*\n/u)
+  return paragraphs.length > 1 ? paragraphs.at(-1)! : ''
+}
 
 // The sessions and tasks `texts` link, whether they carry Claude's marks and
 // Codex's, and the agents of `apps` whose fingerprints start a line of them
@@ -101,7 +110,7 @@ export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = 
   const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
     && account.logins.some(name => name.toLowerCase() === login)
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
-    codex: strings.some(text => CODEX_MARK.test(text)),
+    codex: strings.some(text => CODEX_MARK.test(trailerBlock(text))),
     agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
       || authored(app) || branch?.startsWith(app.prefix)).map(app => app.id) }
 }

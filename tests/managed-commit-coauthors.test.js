@@ -28,6 +28,7 @@ test('Codex is its trailer\'s address, not the account GitHub names for that add
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Claude <noreply@anthropic.com>', ada, [{ name: 'Claude', email: 'noreply@anthropic.com',
     account: { login: 'claude', id: 81847 } }]), [{ name: 'Claude', login: 'claude', id: 81847, agent: 'claude' }], 'an agent\'s own account, its')
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Codex <codex@openai.com>', ada, []), [codex], 'by its trailer, GitHub listing none')
+  assert.deepEqual(coauthorsOf('Docs\n\nCo-authored-by: Codex <codex@openai.com> is the syntax\n\nMore docs', ada, []), [], 'not a line before its trailers showing one')
 })
 
 test('the agents a commit\'s message marks come after its trailers\', each once, none the author', () => {
