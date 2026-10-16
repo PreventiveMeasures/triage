@@ -592,8 +592,9 @@ function pulseFixture(url: URL, res: ServerResponse, narrowed = false): void {
 // The default branch's statistics over the year to `now`, as
 // repository-pulse.ts commitStats counts them and periodStats answers them
 // for a period of `span` weeks: each day's lines, the commits agents made or
-// co-authored, the releases (every other week one of Linus's) and each
-// contributor's days too, and when the period's commits
+// co-authored, the releases (every other week one of Linus's), the commits
+// pushed directly (Margaret's and the releases) and each contributor's days
+// too, and when the period's commits
 // are made: the agents' own all theirs, a share of everyone else's, a tenth
 // at the year's start, over half by its end.
 function pulseStats(now: number, span: number) {
@@ -602,7 +603,9 @@ function pulseStats(now: number, span: number) {
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number, number][] }]))
+  const directCommits: { sha: string; at: number; subject: string; login: string | null; id: null; name: string | null }[] = []
+  const shaFor = (at: number) => at.toString(16).padStart(40, 'd')
+  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
     const week = first + index * WEEK_MS
     const holiday = index >= 10 && index <= 11
@@ -613,6 +616,7 @@ function pulseStats(now: number, span: number) {
     const dayLines = days.map(() => [0, 0] as [number, number])
     const agentDays = days.map(() => 0)
     const releaseDays = days.map(() => 0)
+    const directDays = days.map(() => 0)
     let additions = 0, deletions = 0
     for (const [at, login] of people.entries()) {
       const theirCommits = Math.min(total, Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2)))
@@ -640,16 +644,27 @@ function pulseStats(now: number, span: number) {
         released[releasing] = 1
         releaseDays[busy[releasing]!]!++
       }
+      // Margaret's commits pushed to the branch directly, and the releases.
+      const direct = made.map((count, slot) => login === 'margaret' ? count : released[slot]!)
+      for (const [slot, count] of direct.entries()) {
+        directDays[busy[slot]!]! += count
+        for (let nth = 0; nth < count; nth++) {
+          directCommits.push({ sha: shaFor(directCommits.length), at: week + busy[slot]! * 86_400_000 + (10 + nth) * 3_600_000,
+            subject: released[slot] && nth === 0 ? `Release v1.${index}.0` : `Tidy ${['the sidebar', 'the README', 'a test', 'the styles'][(index + nth) % 4]}`,
+            login: login.startsWith('=') ? null : login, id: null, name: login.startsWith('=') ? login.slice(1) : null })
+        }
+      }
       for (const [slot, day] of busy.entries()) {
         if (made[slot] === 0) continue
         const share = made[slot]! / theirCommits
         const [dayAdded, dayRemoved] = [Math.round(added * share), Math.round(removed * share)]
         dayLines[day]![0] += dayAdded
         dayLines[day]![1] += dayRemoved
-        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!, released[slot]!])
+        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!, released[slot]!, direct[slot]!])
       }
     }
-    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)), releaseDays }
+    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)), releaseDays,
+      directDays: directDays.map((count, day) => Math.min(count, days[day]!)) }
   })
   // One whose commits name no GitHub account, by name.
   const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, ...theirs.get(login)! }))
@@ -659,7 +674,9 @@ function pulseStats(now: number, span: number) {
     const working = hour >= 9 && hour <= 18 ? (hour === 12 ? 0.6 : 1) : hour >= 19 && hour <= 23 ? 0.35 : hour <= 1 ? 0.15 : 0.02
     return Math.round((weekday ? 40 : 9) * working * (0.6 + random() * 0.8) * span / 52)
   }))
-  return { weeks, contributors, punch, periodPunch: true, lines: true }
+  const since = weeks.at(-span)!.week
+  return { weeks, contributors, punch, periodPunch: true, lines: true,
+    directCommits: directCommits.filter(item => item.at >= since && item.at <= now).toSorted((a, b) => b.at - a.at).slice(0, 500) }
 }
 
 // What a repository's agents left, for its Agents tab: Claude Code sessions,

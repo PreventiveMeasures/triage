@@ -4145,6 +4145,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-person { margin-left: 0; }
 }
 .pulse-more { align-self: flex-start; margin-top: .5rem; font-size: .72rem; }
+/* How many commits a list of them holds, at its head's end. */
+.pulse-count { flex: none; margin-left: auto; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
 /* What a list is narrowed to, beside its title, cut short before it would
    wrap the head and shift the list. */
 .pulse-narrowed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4223,7 +4225,9 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
 /* A list's kinds, a toggle at its title's end, each its count in a bubble. */
 .pulse-list {
   display: flex; flex-direction: column;
-  & .pulse-head { flex-wrap: nowrap; align-items: center; }
+  /* As tall as its kinds' switch, where it has none, so every list starts
+     level. */
+  & .pulse-head { flex-wrap: nowrap; align-items: center; min-height: 1.65rem; }
   & h3 { flex: none; }
   & .history-modes { flex: none; margin-left: auto; font-size: .75rem; }
   & ol { margin: 0 -.3rem; padding: 0; list-style: none; }
@@ -4238,6 +4242,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-merged, &.is-completed { --state: var(--issue-merged); }
   &.is-closed { --state: var(--issue-closed); }
   &.is-draft, &.is-not-planned { --state: var(--issue-quiet); }
+  &.is-commit { --state: var(--muted); }
   & .issue-state { margin: 0; }
   & svg { fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   & .fill { fill: currentcolor; stroke: none; }

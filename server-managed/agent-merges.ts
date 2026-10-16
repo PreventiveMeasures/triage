@@ -34,9 +34,12 @@ const timeOf = (value: unknown) => {
 // read was last updated, those updated since read again (`through`, null
 // till all are read once); and a read not finished: where it goes on
 // (`after`), when the newest it began with was updated (`from`), the oldest
-// it reads to (`stop`) and how many it has read (`read`).
+// it reads to (`stop`) and how many it has read (`read`). And of every pull
+// request merged, an agent's or not, its merge commit and when (`pulls`),
+// and one rebased so (`pullRebases`), for the commits pushed to the branch
+// directly to be told (directCommits).
 export interface AgentMerges { merges: [string, number][]; rebases: [string, number, string[]][]; through: number | null
-  next: { after: string; from: number; stop: number; read: number } | null }
+  next: { after: string; from: number; stop: number; read: number } | null; pulls?: [string, number][]; pullRebases?: [string, number, string[]][] }
 
 const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -74,9 +77,12 @@ export async function agentMerges(fullName: string, token: string, since: number
   const [owner, name] = fullName.split('/') as [string, string]
   const merges = new Map((kept?.merges ?? []).filter(([, at]) => at >= since))
   const rebases = new Map((kept?.rebases ?? []).filter(([, at]) => at >= since).map(([sha, at, subjects]) => [sha, [at, subjects] as const]))
+  const pulls = new Map((kept?.pulls ?? []).filter(([, at]) => at >= since))
+  const pullRebases = new Map((kept?.pullRebases ?? []).filter(([, at]) => at >= since).map(([sha, at, subjects]) => [sha, [at, subjects] as const]))
   const stop = kept?.next?.stop ?? Math.max(since, kept?.through ?? since)
-  const result = (through: number | null, next: AgentMerges['next']): AgentMerges => ({ merges: [...merges],
-    rebases: [...rebases].map(([sha, [at, subjects]]) => [sha, at, subjects]), through, next })
+  const listed = (map: typeof rebases) => [...map].map(([sha, [at, subjects]]) => [sha, at, subjects] as [string, number, string[]])
+  const result = (through: number | null, next: AgentMerges['next']): AgentMerges => ({ merges: [...merges], rebases: listed(rebases), through, next,
+    pulls: [...pulls], pullRebases: listed(pullRebases) })
   let { after = null, from = null, read = 0 }: { after?: string | null; from?: number | null; read?: number } = kept?.next ?? {}
   for (let queries = 0; queries < MERGED_QUERIES; queries++) {
     const page = (await githubGraphql(MERGED_QUERY, { owner, name, after }, token, fetchImpl) as MergedPage | null)?.repository?.pullRequests
@@ -92,6 +98,11 @@ export async function agentMerges(fullName: string, token: string, since: number
       const own = (node.commits?.nodes ?? []).map(item => item?.commit)
       const merging = count(node.mergeCommit?.parents?.totalCount) > 1
       const brought = [merge, ...merging ? own.map(commit => commit?.oid) : []].filter((oid): oid is string => typeof oid === 'string' && SHA.test(oid))
+      const copied = own.filter(commit => commit?.changedFilesIfAvailable !== 0)
+      const subjects = !merging && copied.length > 1 && copied.every(commit => typeof commit?.messageHeadline === 'string')
+        ? copied.map(commit => commit!.messageHeadline as string) : null
+      pulls.set(merge, merged)
+      if (subjects) pullRebases.set(merge, [merged, subjects])
       // One an agent's no more, its label taken off (which updates it), what
       // it was read to bring none of an agent's.
       if (!agentPull(node)) {
@@ -100,10 +111,7 @@ export async function agentMerges(fullName: string, token: string, since: number
         continue
       }
       for (const oid of brought) merges.set(oid, merged)
-      const rebased = own.filter(commit => commit?.changedFilesIfAvailable !== 0)
-      if (!merging && rebased.length > 1 && rebased.every(commit => typeof commit?.messageHeadline === 'string')) {
-        rebases.set(merge, [merged, rebased.map(commit => commit!.messageHeadline as string)])
-      }
+      if (subjects) rebases.set(merge, [merged, subjects])
     }
     if (done) return result(from ?? stop, null)
     after = page!.pageInfo!.endCursor as string
@@ -144,4 +152,19 @@ export function agentCommits(read: AgentMerges, commits: HistoryCommit[]): Set<s
     }
   }
   return shas
+}
+
+// The commits of `commits` (a year's, from the branch's `head`) pushed to
+// it directly: on its first parents from the head, none a merge, none a
+// pull request brought (`read.pulls`: its merge commit, a squash's one
+// commit, or the copies of one rebased onto it, as agentCommits tells
+// them); those a merge brought from its other parents, not.
+export function directCommits(read: AgentMerges, commits: HistoryCommit[], head: string): Set<string> {
+  const pulled = agentCommits({ ...read, merges: read.pulls ?? [], rebases: read.pullRebases ?? [] }, commits)
+  const bySha = new Map(commits.map(commit => [commit.sha, commit]))
+  const direct = new Set<string>()
+  for (let commit = bySha.get(head); commit; commit = bySha.get(commit.parents[0] ?? '')) {
+    if (commit.parents.length <= 1 && !pulled.has(commit.sha)) direct.add(commit.sha)
+  }
+  return direct
 }

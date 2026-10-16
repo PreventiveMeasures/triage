@@ -202,7 +202,7 @@ import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } 
 import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
-import { type AgentMerges, agentCommits, agentMerges, sameMerges } from './agent-merges.ts'
+import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
 import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
@@ -2070,10 +2070,10 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     const [merges, releases] = await Promise.all([agentMerges(fullName, token, first, kept), releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
     return { ...merges, releases }
   }
-  // The year counted from `commits` as `read` tells whose they are, kept by
-  // its head and as the year last counted.
+  // The year counted from `commits` as `read` tells whose they are and which
+  // were pushed directly, kept by its head and as the year last counted.
   const count = async (commits: HistoryCommit[], read: Attribution) => {
-    const stats = commitStats(commits, first, agentCommits(read, commits), new Set(read.releases))
+    const stats = commitStats(commits, first, agentCommits(read, commits), new Set(read.releases), directCommits(read, commits, sha))
     await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
     return stats
   }

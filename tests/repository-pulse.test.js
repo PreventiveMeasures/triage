@@ -100,7 +100,7 @@ test('a contributor\'s year: their commits and lines each week, and each day and
   const none = Array.from({ length: 7 }, () => 0)
   assert.deepEqual([ada.byDays, ada.agents, ada.releases, ada.weeks.length], [true, true, true, 52])
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE), { week: SINCE, days: [3, ...none.slice(1)], dayLines: [[30, 4], ...none.slice(1).map(() => [0, 0])],
-    agentDays: [1, ...none.slice(1)], releaseDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
+    agentDays: [1, ...none.slice(1)], releaseDays: [1, ...none.slice(1)], directDays: none, commits: 3, additions: 30, deletions: 4 })
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE + WEEK).agentDays, [0, 2, 0, 0, 0, 0, 0])
   assert.equal(ada.weeks.reduce((sum, row) => sum + row.commits, 0), 5, 'none of anyone else\'s')
   assert.deepEqual(pulseColumns({ ...pulse(), stats: ada }, NOW).slice(0, 9).map(column => [column.commits, column.agents]),
@@ -108,7 +108,7 @@ test('a contributor\'s year: their commits and lines each week, and each day and
   const weekly = contributorStats(counted(), '@ada')
   assert.deepEqual([weekly.byDays, weekly.agents], [false, false])
   assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, releaseDays: none,
-    commits: 3, additions: 30, deletions: 4 }, 'by their weeks where their days aren\'t counted')
+    directDays: none, commits: 3, additions: 30, deletions: 4 }, 'by their weeks where their days aren\'t counted')
   assert.equal(contributorStats(stats({ agents: true }), '@ada').agents, false, 'their commits with agents not counted where their days hold none')
   assert.ok(contributorStats(stats(), '@nobody').weeks.every(row => row.commits === 0))
 })
@@ -411,6 +411,45 @@ test('a column\'s commits top to bottom as the legend names them left to right: 
   view.pick(4)
   assert.match(text, /With agents<span class="pulse-key is-without"><\/span>Without<span\s+class="pulse-key is-release"><\/span>Releases/u)
   assert.match(text.split('class=pulse-column').slice(1)[3], /<span class=pulse-bar is-split style=--value: 1><span class=pulse-part style=--part: 1><\/span><span class=pulse-part is-without style=--part: 1><\/span><span class=pulse-part is-release style=--part: 1><\/span><\/span>/u)
+})
+
+test('commits pushed directly listed where there are any, between the pull requests and the issues, narrowed alike; the issues left out where none are beside them, two lists at least', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const hour = 3_600_000
+  // Each Monday's commit pushed directly: Alan Kay's of Sep 28 and one of Oct 12 listed.
+  const direct = stats({ weeks: year().map(row => ({ ...row, directDays: row.days.map((count, day) => day === 1 ? count : 0) })),
+    contributors: stats().contributors.map(person => ({ ...person, days: person.days.map(row => [...row, 0, 0, person.name === 'Alan Kay' ? row[1] : 0]) })),
+    directCommits: [{ sha: 'b'.repeat(40), at: Date.UTC(2026, 9, 12, 9), subject: 'Bump the version', login: 'linus', id: null, name: 'Linus' },
+      { sha: 'c'.repeat(40), at: SINCE + WEEK + DAY + hour, subject: 'Fix by hand', login: null, id: null, name: 'Alan Kay' }] })
+  answer = () => Promise.resolve(pulse({ stats: direct }))
+  narrowedAnswer = () => Promise.resolve({ merged: { count: 0, items: [] }, opened: { count: 0, items: [] }, closed: { count: 0, items: [] }, created: { count: 0, items: [] } })
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  const panels = () => [...text.matchAll(/class="pulse-panel pulse-list" aria-label=([^>]+)>/gu)].map(([, label]) => label.replaceAll('"', ''))
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'the period\'s issue beside them')
+  assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>/u, 'each Monday\'s')
+  assert.match(text, /href=https:\/\/github\.com\/org\/repo\/commit\/b{40} [^]*Bump the version[^]*bbbbbbb[^]*linus[^]*Fix by hand[^]*ccccccc[^]*Alan Kay/u)
+  view.showPerson('=Alan Kay')
+  text = templateText(view.render())
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'no issue of theirs, left out')
+  assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">by Alan Kay<\/span><span class="pulse-count">1<\/span>/u)
+  assert.doesNotMatch(text, /Bump the version/u)
+  view.showPerson('=Alan Kay')
+  view.pickColumn(pulseColumns(pulse({ stats: direct }), NOW), 22)
+  assert.match(templateText(view.render()), /aria-label=Issues>[^]*Reading…/u, 'the day\'s issues shown as they read')
+  await setImmediate()
+  text = templateText(view.render())
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'none on the day')
+  assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">on Mon, Oct 12<\/span><span class="pulse-count">1<\/span>[^]*Bump the version/u)
+  assert.doesNotMatch(text, /Fix by hand/u)
+  view.pickColumn(pulseColumns(pulse({ stats: direct }), NOW), 22)
+  view.showPerson('@ada')
+  view.render()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.deepEqual(panels(), ['Pull requests', 'Issues'], 'none pushed directly: the issues, none of them, shown')
 })
 
 test('a contributor or a column picked narrows the pull requests and issues to theirs, so said, the rest on GitHub narrowed alike; one whose commits name no account, none', async t => {
