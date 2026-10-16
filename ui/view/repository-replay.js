@@ -20,7 +20,7 @@ import { LitElement, html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
 import { activityPicker } from './repository-activity.js'
-import { rereadHistory, revisionHistory, unwatchHistories, watchHistories } from './repository-history.js'
+import { rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
 import { appUser, commitAgent, commitAuthors } from './github-users.js'
 import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
@@ -251,15 +251,18 @@ const PLAY_ICON = svg`<path d="M5 3.25v9.5L12.75 8z" fill="currentColor"/>`
 const PAUSE_ICON = svg`<path d="M5.25 3.5v9M10.75 3.5v9"/>`
 const AGAIN_ICON = svg`<path d="M3.25 8a4.75 4.75 0 1 0 1.4-3.36M3.25 2.5v2.75H6"/>`
 
-// The tab's body, for the directory shown (`repository`, an entry's).
+// The tab's body, for the directory shown (`repository`, an entry's) and its
+// repository's full name (`repo`, repository-code.js repositoryFullName,
+// once known), which its commit line links to GitHub by.
 class RepositoryReplay extends LitElement {
-  static properties = { repository: { attribute: false } }
+  static properties = { repository: { attribute: false }, repo: { attribute: false } }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.repository = null
+    this.repo = null
     this.replay = null
     this._frame = null
     this._last = 0
@@ -676,8 +679,7 @@ class RepositoryReplay extends LitElement {
           @pointermove=${this.pointer} @pointerleave=${this.pointer}></canvas>
         ${last ? html`<div class="replay-day"><time datetime=${new Date(last.committedAt).toISOString()}>${day(last.committedAt)}</time>
           <span>${number(replay.next)} of ${number(total)}</span></div>
-          <p class="replay-commit"><code>${last.sha.slice(0, 7)}</code><span class="replay-commit-subject">${last.subject || '(no message)'}</span>
-            <span class="replay-commit-author">${commitAuthors(last.authorLogin, last.authorName, last.coauthors)}</span></p>` : nothing}
+          ${this.renderCommit(last)}` : nothing}
         ${this.renderKey(replay)}
         ${this.renderStatus(replay, history, buffered)}
         ${this._hovered ? html`<div class="replay-tip" style=${styleMap({ left: `${this._hovered.x}px`, top: `${this._hovered.y}px` })}>${this._hovered.text}</div>` : nothing}
@@ -686,6 +688,20 @@ class RepositoryReplay extends LitElement {
         </div>
       </div>
       ${this.renderControls(replay, total, buffered)}`
+  }
+
+  // The commit last played, as Commits lists it: its short id and the pull
+  // requests its subject names opening them on GitHub, in a new tab, where
+  // the repository's name is known; who made it, their avatars and marks
+  // stacked, all of them named on hover.
+  renderCommit(commit) {
+    const repo = this.repo ?? this.repository.repo
+    const github = repo ? `https://github.com/${repo.split('/').map(encodeURIComponent).join('/')}` : null
+    const short = commit.sha.slice(0, 7)
+    return html`<p class="replay-commit">${github ? html`<a class="replay-sha" href=${`${github}/commit/${commit.sha}`} target="_blank" rel="noopener noreferrer"
+        aria-label=${`Commit ${short} on GitHub`}>${short}</a>` : html`<code class="replay-sha">${short}</code>`}
+      <span class="replay-commit-subject">${subjectLinks(commit.subject || '(no message)', github)}</span>
+      <span class="replay-commit-author">${commitAuthors(commit.authorLogin, commit.authorName, commit.coauthors)}</span></p>`
   }
 
   // The kinds of files colored, the most counted first, then Other; and

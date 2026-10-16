@@ -17,7 +17,7 @@ const sha = at => at.toString(16).padStart(40, '0')
 // them, and one Claude made with Grace.
 const HEAD = sha(1000)
 const history = (count = 30) => Array.from({ length: count }, (_, at) => ({ sha: at === 0 ? HEAD : sha(at), parents: at === 3 ? [sha(at + 1), sha(999)] : at === count - 1 ? [] : [sha(at + 1)],
-  subject: `Work ${count - at}`, authorName: at % 2 ? 'Ada' : 'Grace', authorLogin: at % 2 ? 'ada' : null,
+  subject: `Work ${count - at}${at === 6 ? ' (#42)' : ''}`, authorName: at % 2 ? 'Ada' : 'Grace', authorLogin: at % 2 ? 'ada' : null,
   coauthors: at === 6 ? [{ login: null, name: 'Claude', agent: 'claude' }] : [], committedAt: (count - at) * DAY }))
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryHistory: (repoId, ref, path) => Promise.resolve({ commit: ref, path, page: 1, commits: history(listed), more: false }),
@@ -124,8 +124,18 @@ test('sought, it stands as its commits left it, paused where it was; ended, it p
   assert.deepEqual([view.replay.next, view.replay.scene.files.size], [12, 12])
   assert.match(templateText(view.render()), /aria-label=Play [^]*\.value=12 [^]*aria-valuetext=12 of 29 commits/u)
   view.seek(24)
-  assert.match(templateText(view.render()), /<span class="replay-commit-author"><span class="app-user commit-authors" data-tooltip=Grace and Claude>[^]*commit-avatar is-claude[^]*Grace</u,
+  const line = templateText(view.render())
+  assert.match(line, /<span class="replay-commit-author"><span class="app-user commit-authors" data-tooltip=Grace and Claude>[^]*commit-avatar is-claude[^]*Grace</u,
     'who made the commit last played as Commits shows them, Claude by its mark')
+  assert.match(line, new RegExp(`<a class="replay-sha" href=https://github\\.com/org/repo/commit/${sha(6)} [^>]*aria-label=Commit ${sha(6).slice(0, 7)} on GitHub>${sha(6).slice(0, 7)}</a>`, 'u'),
+    'its id on GitHub, by the repository\'s name')
+  assert.match(line, /<span class="replay-commit-subject">Work 24 \(<a href=https:\/\/github\.com\/org\/repo\/issues\/42 [^>]*>#42<\/a>\)<\/span>/u, 'the pull request it names')
+  view.repo = 'org/renamed'
+  assert.match(templateText(view.render()), /href=https:\/\/github\.com\/org\/renamed\/commit\//u, 'by the name the tab was handed, where it was')
+  Object.assign(view, { repo: null, repository: { ...view.repository, repo: undefined } })
+  assert.match(templateText(view.render()), /<code class="replay-sha">[\da-f]{7}<\/code>\s*<span class="replay-commit-subject">Work 24 \(#42\)<\/span>/u,
+    'no links where the name isn\'t known yet')
+  view.repository = { ...view.repository, repo: 'org/repo' }
   view.seek(500)
   assert.equal(view.replay.next, 29, 'no further than what is read')
   Object.assign(view.replay, { ended: true })

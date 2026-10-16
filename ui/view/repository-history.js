@@ -234,8 +234,9 @@ export function historyRefs({ branches = [], tags = [], pulls = [], openPulls = 
 // them: on their own or after a space or bracket) opening them on GitHub
 // (`github`, the repository's page there), in a new tab: by the issue's
 // address, as an issue's number is one too, GitHub sending a pull
-// request's on to it.
-function subjectLinks(subject, github) {
+// request's on to it. Replay's commit line links its subject so too
+// (repository-replay.js).
+export function subjectLinks(subject, github) {
   if (!github) return subject
   const parts = []
   let at = 0

@@ -4110,7 +4110,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-replay {
 }
 /* The day of the commit last played, large, how many of them under it; the
    commit itself along the foot, its id, subject and who made it, as Commits
-   shows them (their avatars and marks, all of them named on hover). */
+   shows them (their avatars and marks, all of them named on hover; its id and
+   the pull requests it names opening them on GitHub). */
 .replay-day {
   position: absolute; top: .6rem; left: .75rem; display: flex; flex-direction: column; gap: .1rem; pointer-events: none;
   & time { font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -4119,7 +4120,16 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-replay {
 .replay-commit {
   position: absolute; right: .75rem; bottom: .5rem; left: .75rem; display: flex; align-items: center; gap: .55rem; margin: 0;
   white-space: nowrap; pointer-events: none;
-  & code { flex: none; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
+  /* Its id and the pull requests its subject names, links only once
+     hovered, as Commits' are. */
+  & a {
+    color: inherit; text-decoration: none; cursor: default; pointer-events: auto;
+    &:hover { color: var(--accent); }
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 4px); }
+  }
+}
+.replay-commit .replay-sha {
+  flex: none; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem;
 }
 .replay-commit-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .replay-commit-author { flex: none; max-width: 40%; overflow: hidden; color: var(--muted); text-overflow: ellipsis; pointer-events: auto; }

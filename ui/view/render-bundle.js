@@ -2011,7 +2011,7 @@ function repositoryFilelessTab(repository, tab) {
     .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository} .repo=${repositoryFullName(repository)}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository} .repo=${repositoryFullName(repository)}></repository-pulse>`
-    : tab === 'replay' ? html`<repository-replay .repository=${repository}></repository-replay>`
+    : tab === 'replay' ? html`<repository-replay .repository=${repository} .repo=${repositoryFullName(repository)}></repository-replay>`
     : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`
 }
 
