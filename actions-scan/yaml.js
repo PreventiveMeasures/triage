@@ -2,7 +2,7 @@
 // reads them: @preventive/lockfile's parseYaml with `workflow`, and `lines`
 // set to where each block mapping's and sequence's values are
 // (PreventiveMeasures/libraries#238). Its files are kept here as they are
-// there, in vendor/lockfile/, as of 4bc8088, till a release of it reads
+// there, in vendor/lockfile/, as of 6ddc46a, till a release of it reads
 // workflows; this then imports '@preventive/lockfile/yaml.js', and vendor/
 // goes.
 export { YamlError, parseYaml } from './vendor/lockfile/yaml.js'
