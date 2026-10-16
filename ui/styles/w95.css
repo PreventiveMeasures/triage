@@ -34,11 +34,20 @@
     --w95-light: #dfdfdf;
     --w95-shadow: #808080;
     --w95-title: #000080;
-    --w95-raised: inset -1px -1px #000, inset 1px 1px var(--w95-light), inset -2px -2px var(--w95-shadow), inset 2px 2px #fff;
-    --w95-sunken: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff, inset 2px 2px #000, inset -2px -2px var(--w95-light);
-    /* A status field's, and a group box's etched line. */
-    --w95-shallow: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff;
-    --w95-etched: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff, 1px 1px #fff;
+    /* The bevels, each as Windows draws it: a button's (white outside,
+       pale grey in), a window's (the two swapped), a button held down,
+       the default button's (a black ring inside), a field's, a status
+       field's, a tab's (no foot), a group box's etched groove. */
+    --w95-raised: inset -1px -1px #000, inset 1px 1px #fff, inset -2px -2px var(--w95-shadow), inset 2px 2px var(--w95-light);
+    --w95-window: inset -1px -1px #000, inset 1px 1px var(--w95-light), inset -2px -2px var(--w95-shadow), inset 2px 2px #fff;
+    --w95-pressed: inset -1px -1px #fff, inset 1px 1px #000, inset -2px -2px var(--w95-light), inset 2px 2px var(--w95-shadow);
+    --w95-default:
+      inset -2px -2px #000, inset 1px 1px #000, inset 2px 2px #fff,
+      inset -3px -3px var(--w95-shadow), inset 3px 3px var(--w95-light);
+    --w95-sunken: inset -1px -1px #fff, inset 1px 1px var(--w95-shadow), inset -2px -2px var(--w95-light), inset 2px 2px #000;
+    --w95-status: inset -1px -1px var(--w95-light), inset 1px 1px var(--w95-shadow);
+    --w95-tab: inset -1px 0 #000, inset 1px 1px var(--w95-light), inset -2px 0 var(--w95-shadow), inset 2px 2px #fff;
+    --w95-etched: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff, inset 2px 2px #fff, inset -2px -2px var(--w95-shadow);
     /* Behind a toggle held down, and in a scrollbar's track. */
     --w95-dither: repeating-conic-gradient(#fff 0 25%, var(--w95-face) 0 50%) 0 0 / 2px 2px;
     /* A scrollbar button's arrows, for a 16px button. */
@@ -64,8 +73,8 @@
       linear-gradient(#000, #000) 8px 4px / 1px 4px no-repeat,
       linear-gradient(#000, #000) 9px 3px / 1px 3px no-repeat;
     --w95-gap: 8px;
-    --w95-frame: 4px;
-    --w95-title-height: 20px;
+    --w95-frame: 3px;
+    --w95-title-height: 18px;
     --w95-status-height: 22px;
     --bg: #fff;
     --theme-bar: var(--w95-face);
@@ -108,7 +117,7 @@
     --gradient-stop-a: transparent;
     --gradient-stop-b: transparent;
     --gradient-stop-c: transparent;
-    --shadow-glass: var(--w95-raised);
+    --shadow-glass: var(--w95-window);
     --graph-canvas-bg: #fff;
     --graph-hover-bg: rgb(0 0 128 / .06);
     --graph-divider: var(--w95-shadow);
@@ -139,11 +148,13 @@
       calc(var(--w95-frame) + var(--w95-status-height) + 3px);
     gap: 4px;
     background: var(--w95-face);
-    box-shadow: var(--w95-raised);
+    box-shadow: var(--w95-window);
     color: #000;
     font-family: 'MS Sans Serif', 'Microsoft Sans Serif', Tahoma, Geneva, Verdana, sans-serif;
     font-size: 11px;
     line-height: 1.35;
+    /* Its type was bitmap, unsmoothed. */
+    -webkit-font-smoothing: none;
 
     & app-sidebar { height: auto; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
     & #main-content { border-top: 0; }
@@ -158,7 +169,7 @@
       box-shadow: var(--w95-raised);
       color: #000; font-size: 9px;
 
-      &:active { box-shadow: var(--w95-sunken); opacity: 1; }
+      &:active { box-shadow: var(--w95-pressed); opacity: 1; }
     }
 
     & ::selection { background: var(--w95-title); color: #fff; }
@@ -166,12 +177,12 @@
     /* Type: no tracking and no all-caps anywhere, headings at the
        interface's own size. */
     & *, & *::before, & *::after { letter-spacing: 0 !important; text-transform: none !important; }
-    /* And nothing is rounded but a radio button. */
-    & :not(input[type='radio']), & ::before, & ::after { border-radius: 0 !important; }
+    /* And nothing is rounded but a radio button and a tab's top corners. */
+    & :not(input[type='radio'], .bundles-tab), & ::before, & ::after { border-radius: 0 !important; }
     & :is(h1, h2, h3, h4) { font-size: 1em; font-weight: 700; line-height: 1.35; }
     & #report header.page-head .page-title h1 { font-size: 13px; }
     & :is(.kanban-column-header, .file-group-header, .drop-supported-section h2) { font-size: 11px; }
-    & :focus-visible { outline: 1px dotted #000 !important; outline-offset: -3px !important; }
+    & :focus-visible { outline: 1px dotted #000 !important; outline-offset: -4px !important; }
 
     /* Scrollbars are Windows 95's: 16px, a raised thumb on the dither,
        an arrow button at either end (below). Their own sizes elsewhere
@@ -203,16 +214,19 @@
 
       &:not(:last-child) { border-right: 0; }
       &:hover:not(:disabled) { background: var(--w95-face); color: #000; border-color: transparent; }
-      &:active:not(:disabled) { box-shadow: var(--w95-sunken); opacity: 1; }
+      &:active:not(:disabled) { box-shadow: var(--w95-pressed); opacity: 1; }
       &:disabled { color: var(--w95-shadow); text-shadow: 1px 1px #fff; opacity: 1; }
       &:is(.active, [aria-pressed='true'], .sel-with, .sel-without) {
         background: var(--w95-dither); color: #000;
-        box-shadow: var(--w95-sunken);
+        box-shadow: var(--w95-pressed);
       }
     }
-    /* The default button: ringed in black. */
-    & :is(.drop-prompt-action, .npm-review-primary) { outline: 1px solid #000; outline-offset: -1px; }
-    & :is(.drop-prompt-action, .npm-review-primary):focus-visible { outline: 1px solid #000 !important; outline-offset: -1px !important; }
+    /* The default button: a black ring inside its bevel. */
+    & :is(.drop-prompt-action, .npm-review-primary) {
+      box-shadow: var(--w95-default);
+
+      &:active:not(:disabled) { box-shadow: inset 0 0 0 1px #000, inset 0 0 0 2px var(--w95-shadow); }
+    }
     /* Counts read as plain numbers, not bubbles. */
     & :is(.sev-chip, .triage-state-btn, .team-slide-tab, .history-modes, .kanban-column-header) .n,
     & :is(triage-filter, .kanban-column-header) .count {
@@ -255,10 +269,15 @@
       box-shadow: var(--w95-sunken);
       color: #000;
 
-      &:focus { border-color: transparent; }
+      /* Focused, its text is picked, as a combo box's is. */
+      &:focus { border-color: transparent; background-color: var(--w95-title); color: #fff; }
+      & option { background: #fff; color: #000; }
     }
 
     & .toolbar :is(revalidate-filter, findings-sort)::after { display: none; }
+    /* The confidence range is a labelled trackbar, not a framed box. */
+    & .toolbar conf-filter { border: 0; padding: 0 4px; }
+    & .toolbar conf-filter .conf-range-label { color: #000; font-size: 11px; font-weight: 400; }
 
     /* Check boxes: a sunken white square, its mark drawn pixel by pixel. */
     & input[type='checkbox'] {
@@ -277,9 +296,9 @@
     }
     & .bundles-tab {
       margin: 2px 0 0; padding: 2px 8px 3px;
-      border: 0;
+      border: 0; border-radius: 3px 3px 0 0;
       background: var(--w95-face); color: #000;
-      box-shadow: inset 1px 1px #fff, inset -1px 0 #000, inset -2px 0 var(--w95-shadow), inset 2px 2px var(--w95-light);
+      box-shadow: var(--w95-tab);
 
       &:hover { color: #000; }
       &.active {
@@ -294,7 +313,7 @@
        chips are buttons, and its tags status fields. */
     & :is(.toolbar, .bundles-slide-bar) { border: 0; }
     & #report header.page-head .meta-row .tag {
-      border: 0; background: #fff; box-shadow: var(--w95-shallow);
+      border: 0; background: #fff; box-shadow: var(--w95-status);
       font-family: inherit;
     }
     & #report header.page-head .meta-row .sep { opacity: 1; }
@@ -326,7 +345,7 @@
       --kanban-detail-bg: var(--w95-face);
       padding-top: 22px;
       border: 0;
-      box-shadow: var(--w95-raised);
+      box-shadow: var(--w95-window);
 
       &::before {
         content: 'Finding';
@@ -346,7 +365,7 @@
     & .kanban-detail-side {
       border-left: 0;
       background: #fff;
-      box-shadow: var(--w95-raised);
+      box-shadow: var(--w95-window);
     }
     & .kanban-detail-side-header {
       border-bottom: 0;
@@ -364,7 +383,7 @@
       position: relative;
       padding: 28px 16px 14px;
       background: var(--w95-face);
-      box-shadow: var(--w95-raised);
+      box-shadow: var(--w95-window);
       color: #000;
 
       &::before {

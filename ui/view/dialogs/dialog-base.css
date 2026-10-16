@@ -122,16 +122,16 @@ header h3 {
   &:disabled { opacity: .5; }
 }
 
-/* W95 (styles/theme.css): a dialog is a Windows 95 window — a raised
-   frame over no dimming, its heading lifted into the navy title bar
+/* W95 (styles/w95.css): a dialog is a Windows 95 window — its frame
+   over no dimming, its heading lifted into the navy title bar
    along its top (an empty block making the room for it, whichever
    padding the dialog has), a close × as the bar's caption button,
-   bevelled buttons with the default one ringed in black, and sunken
-   fields. */
+   bevelled buttons at Windows' 75px with the default one ringed in
+   black inside, and sunken fields. */
 :host-context(body.theme-w95) {
   & dialog {
     border: 0;
-    box-shadow: var(--w95-raised);
+    box-shadow: var(--w95-window);
 
     &::before { content: ''; display: block; flex: none; height: 20px; }
     &::backdrop { background: none; backdrop-filter: none; }
@@ -141,7 +141,7 @@ header h3 {
     display: flex; align-items: center; gap: 4px;
     height: 18px; margin: 0; padding: 0 24px 0 4px;
     overflow: hidden; background: var(--w95-title); color: #fff;
-    font-size: 12px; font-weight: 700; line-height: 18px; white-space: nowrap;
+    font-size: 11px; font-weight: 700; line-height: 18px; white-space: nowrap;
 
     & svg { flex: none; width: 14px; height: 14px; }
   }
@@ -155,16 +155,21 @@ header h3 {
     font-size: 13px; line-height: 1;
 
     &:hover { background: var(--w95-face); color: #000; }
-    &:active { box-shadow: var(--w95-sunken); }
+    &:active { box-shadow: var(--w95-pressed); }
   }
   & .nwd-actions button {
+    min-width: 75px; min-height: 23px;
     border-color: transparent;
     background: var(--w95-face); color: #000;
     box-shadow: var(--w95-raised);
+    font-size: 11px;
 
     &:hover:not(:disabled) { border-color: transparent; color: #000; }
-    &:active:not(:disabled) { box-shadow: var(--w95-sunken); }
-    &.primary, &.primary:hover:not(:disabled) { border-color: #000; color: #000; filter: none; }
+    &:active:not(:disabled) { box-shadow: var(--w95-pressed); }
+    &:disabled { color: var(--w95-shadow); text-shadow: 1px 1px #fff; opacity: 1; }
+    &:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+    &.primary, &.primary:hover:not(:disabled) { box-shadow: var(--w95-default); color: #000; filter: none; }
+    &.primary:active:not(:disabled) { box-shadow: inset 0 0 0 1px #000, inset 0 0 0 2px var(--w95-shadow); }
     &.quiet { box-shadow: none; }
     &.danger, &.danger:hover:not(:disabled) { color: var(--critical); }
   }

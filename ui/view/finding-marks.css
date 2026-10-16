@@ -235,7 +235,7 @@
 
     &:not(:last-child) { border-right: 0; }
     &:not(:disabled):hover { background: var(--w95-face); color: #000; border-color: transparent; }
-    &:not(:disabled):active { box-shadow: var(--w95-sunken); }
+    &:not(:disabled):active { box-shadow: var(--w95-pressed); }
     &:disabled { color: var(--w95-shadow); opacity: 1; }
   }
   & .mark-triage-menu .mark-triage-label { font-weight: 400; }

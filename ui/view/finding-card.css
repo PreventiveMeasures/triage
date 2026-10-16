@@ -1412,7 +1412,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     &.active {
       border-color: transparent;
       background: var(--w95-dither); color: #000;
-      box-shadow: var(--w95-sunken);
+      box-shadow: var(--w95-pressed);
     }
     &:not(:disabled):hover { background: var(--w95-face); }
   }
@@ -1420,5 +1420,21 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     border: 0; border-radius: 0;
     background: var(--w95-face); color: #000;
     box-shadow: var(--w95-raised);
+  }
+  /* A snippet sits in a white well, as Notepad's text did, its language
+     on a raised header as a list's column is. */
+  & .code-block:not(.token) {
+    padding: 2px;
+    border: 0; border-radius: 0;
+    background: #fff;
+    box-shadow: var(--w95-sunken);
+
+    & .code-block-lang {
+      padding: 1px 6px;
+      border-bottom: 0;
+      background: var(--w95-face); color: #000;
+      box-shadow: var(--w95-raised);
+      font-size: 11px; font-weight: 400;
+    }
   }
 }
