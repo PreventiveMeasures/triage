@@ -549,12 +549,16 @@ function itemFixture(url: URL, res: ServerResponse): void {
 // Pull requests tabs list, in the last `weeks` weeks and the same days a
 // period earlier.
 // Repository 102's year is read over its first three answers, as one whose
-// commits are not kept yet is, a few pages of GitHub's an answer.
+// commits are not kept yet is, a few pages of GitHub's an answer. Narrowed
+// (`narrowed`, /pulse/items), the pull requests and issues of the days `from`
+// to `to` and of any of `authors` alone.
 let pulseReads = 0
 const WEEK_MS = 7 * 86_400_000
 
-function pulseFixture(url: URL, res: ServerResponse): void {
+function pulseFixture(url: URL, res: ServerResponse, narrowed = false): void {
   const now = Date.now()
+  const day = (name: string) => url.searchParams.has(name) ? Date.parse(`${url.searchParams.get(name)}T00:00:00Z`) : null
+  const authors = (url.searchParams.get('authors') ?? '').split(',').filter(Boolean).map(login => login.toLowerCase())
   const weeks = Number(url.searchParams.get('weeks') ?? '4')
   if (!PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const since = pulseSince(weeks, now)
@@ -564,18 +568,20 @@ function pulseFixture(url: URL, res: ServerResponse): void {
   const listed = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown, from: number, to: number) => {
     const items = (issueTiles(kind, now) as Tile[]).flatMap(item => {
       const when = at(item)
-      return typeof when === 'number' && when >= from && when <= to ? [{ ...item, at: when }] : []
+      return typeof when === 'number' && when >= from && when <= to && (authors.length === 0 || authors.includes(item.author.toLowerCase())) ? [{ ...item, at: when }] : []
     })
     return items.toSorted((a, b) => b.at - a.at)
   }
+  const [from, to] = narrowed ? [day('from') ?? since, (day('to') ?? now) + 86_399_999] : [since, now]
   const told = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown) => {
-    const current = listed(kind, at, since, now)
+    const current = listed(kind, at, from, to)
     return { count: current.length, previous: listed(kind, at, since - back, now - back).length,
       items: current.slice(0, 10).map(({ number, title, author, at: when, createdAt, state, draft, reason }) => ({ number, title, author, at: when, createdAt, kind, state,
         ...kind === 'pulls' ? { draft } : { reason } })) }
   }
   const activity = { since, previousSince: since - back, merged: told('pulls', item => item.mergedAt), opened: told('pulls', item => item.createdAt),
     closed: told('issues', item => item.closedAt), created: told('issues', item => item.createdAt) }
+  if (narrowed) { sendJson(res, 200, { weeks, ...activity }); return }
   if (url.searchParams.get('repoId') === '102' && pulseReads < 2) {
     pulseReads++
     sendJson(res, 200, { weeks, ...activity, stats: null, reading: pulseReads * 500, pending: false }); return
@@ -891,6 +897,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
   if (url.pathname.endsWith('/pulse')) { pulseFixture(url, res); return }
+  if (url.pathname.endsWith('/pulse/items')) { pulseFixture(url, res, true); return }
   // Main's and develop's heads, as the directory's reads below give them, a
   // release tagged at develop's and another at an older commit.
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)],

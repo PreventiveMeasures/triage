@@ -68,6 +68,9 @@ export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor
 // The lines added and removed a week, and each contributor's, as GitHub's
 // statistics count them, `lines` false where it counts none.
 export interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
+// The days (`from`, `to`, both days, UTC; `to` none, on) and the authors (GitHub
+// logins, any of them) a period's pull requests and issues are narrowed to.
+export interface PulseNarrowing { from: number; to: number | null; authors: string[] }
 // The year's commits read so far: all of them (`commits`), else how many
 // (`read`), and whether past YEAR_COMMITS (`tooMany`).
 export type YearCommits = { complete: true; commits: HistoryCommit[] } | { complete: false; read: number; tooMany: boolean }
@@ -356,15 +359,20 @@ function listed(node: SearchNode, at: unknown) {
 // opened as GitHub sorts them, those merged or closed the latest of the
 // SEARCHED most recently updated, which are the latest of all where the
 // period holds no more, or the last listed was merged or closed after the
-// SEARCHED-th was last updated. A search counts by the day (UTC).
-export async function repositoryActivity(fullName: string, token: string, weeks: number, now: number = Date.now(), fetchImpl: typeof fetch = globalThis.fetch) {
+// SEARCHED-th was last updated. A search counts by the day (UTC). Narrowed
+// (`narrowing`), those of its days from `from` to `to` (both days, UTC;
+// none, on), and those its `authors` (GitHub logins) opened, any of them.
+export async function repositoryActivity(fullName: string, token: string, weeks: number, now: number = Date.now(), fetchImpl: typeof fetch = globalThis.fetch,
+  narrowing: PulseNarrowing | null = null) {
   const since = pulseSince(weeks, now)
   const back = weeks * WEEK_MS
   const day = (at: number) => new Date(at).toISOString().slice(0, 10)
-  const current = `>=${day(since)}`
+  const current = narrowing?.to == null ? `>=${day(narrowing?.from ?? since)}` : `${day(narrowing.from)}..${day(narrowing.to)}`
   const previous = `${day(since - back)}..${day(now - back)}`
   const repo = `repo:${fullName}`
-  const asked = (what: string, range: string, sort: string) => `${repo} ${what}${range} sort:${sort}`
+  // An app's login (`name[bot]`) is searched for as GitHub names its app.
+  const by = (narrowing?.authors ?? []).map(login => ` author:${login.endsWith('[bot]') ? `app/${login.slice(0, -5)}` : login}`).join('')
+  const asked = (what: string, range: string, sort: string) => `${repo} ${what}${range}${by} sort:${sort}`
   const kinds = {
     merged: ['is:pr is:merged merged:', 'updated-desc'], opened: ['is:pr created:', 'created-desc'],
     closed: ['is:issue is:closed closed:', 'updated-desc'], created: ['is:issue created:', 'created-desc'],

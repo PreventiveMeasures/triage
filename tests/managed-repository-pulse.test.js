@@ -458,9 +458,9 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   // What is read behind an answer, kept to be waited for.
   const tracked = []
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) } })
-  const request = async (query, { method = 'GET' } = {}) => {
+  const request = async (query, { method = 'GET', path = 'pulse' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
-    await handler({ method, url: `/api/admin/repositories/pulse?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
+    await handler({ method, url: `/api/admin/repositories/${path}?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
   return Object.assign(request, { db, settled: () => Promise.all(tracked.splice(0)) })
@@ -562,6 +562,40 @@ test('GitHub refusing the default branch refuses the pulse as it refused it', as
   })
   const request = await fixture(t)
   assert.equal((await request({ repoId: '1', weeks: '1' })).status, 404)
+})
+
+test('a period\'s pull requests and issues narrowed to some of its days and authors: each searched over those days, by any of those accounts, an app\'s as GitHub names it', async t => {
+  const asked = github(t, { graphql: () => ({ data: {} }) })
+  const now = Date.UTC(2026, 9, 15, 12)
+  await repositoryActivity('org/repo', 'token', 4, now, globalThis.fetch, { from: Date.UTC(2026, 8, 28), to: Date.UTC(2026, 8, 28), authors: ['ada', 'dependabot[bot]'] })
+  assert.equal(asked[0].variables.merged, 'repo:org/repo is:pr is:merged merged:2026-09-28..2026-09-28 author:ada author:app/dependabot sort:updated-desc')
+  assert.equal(asked[0].variables.created, 'repo:org/repo is:issue created:2026-09-28..2026-09-28 author:ada author:app/dependabot sort:created-desc')
+  await repositoryActivity('org/repo', 'token', 4, now, globalThis.fetch, { from: Date.UTC(2026, 8, 20), to: null, authors: ['ada'] })
+  assert.equal(asked[1].variables.opened, 'repo:org/repo is:pr created:>=2026-09-20 author:ada sort:created-desc', 'on from its first day')
+  await repositoryActivity('org/repo', 'token', 4, now, globalThis.fetch, { from: Date.UTC(2026, 8, 27), to: Date.UTC(2026, 9, 3), authors: [] })
+  assert.equal(asked[2].variables.closed, 'repo:org/repo is:issue is:closed closed:2026-09-27..2026-10-03 sort:updated-desc', 'by anyone')
+})
+
+test('the pulse\'s pull requests and issues narrowed to a day or a week and a contributor\'s accounts, each login once whatever its case, kept for each', async t => {
+  const request = await fixture(t)
+  const pull = { number: 5, title: 'Pull 5', pullState: 'MERGED', isDraft: false, createdAt: '2026-09-28T00:00:00Z', mergedAt: '2026-09-28T10:00:00Z', author: { login: 'ada' } }
+  const asked = github(t, { graphql: () => ({ data: { merged: { issueCount: 1, nodes: [pull] } } }) })
+  const searches = () => asked.filter(item => typeof item === 'object')
+  const items = (query, options) => request({ repoId: '1', weeks: '4', ...query }, { path: 'pulse/items', ...options })
+  const answer = await items({ from: '2026-09-28', to: '2026-09-28', authors: 'Ada,ada' })
+  assert.equal(answer.status, 200)
+  assert.deepEqual([answer.body.weeks, answer.body.merged.count, answer.body.merged.items.map(item => item.number)], [4, 1, [5]])
+  assert.equal(searches().at(-1).variables.merged, 'repo:org/repo is:pr is:merged merged:2026-09-28..2026-09-28 author:ada sort:updated-desc')
+  const read = searches().length
+  await items({ from: '2026-09-28', to: '2026-09-28', authors: 'ada' })
+  assert.equal(searches().length, read, 'kept')
+  await items({ from: '2026-09-20' })
+  assert.equal(searches().at(-1).variables.merged, 'repo:org/repo is:pr is:merged merged:>=2026-09-20 sort:updated-desc', 'another narrowing read apart')
+  for (const query of [{}, { from: '2026-9-28' }, { from: '2026-09-28', to: '2026-09-27' }, { from: '2026-09-28', to: '' }, { from: '2026-09-28', authors: 'a b' },
+    { from: '2026-09-28', authors: Array.from({ length: 11 }, (_, at) => `user${at}`).join(',') }, { from: '2026-09-28', weeks: '2' }]) {
+    assert.equal((await items(query)).status, 400, JSON.stringify(query))
+  }
+  assert.equal((await items({ from: '2026-09-28' }, { method: 'POST' })).status, 405)
 })
 
 test('the latest merged are listed of those most recently updated, one merged long ago but updated since giving way to those merged later', async t => {

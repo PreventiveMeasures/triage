@@ -4140,6 +4140,8 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-person { margin-left: 0; }
 }
 .pulse-more { align-self: flex-start; margin-top: .5rem; font-size: .72rem; }
+/* What a list is narrowed to, under its head. */
+.pulse-narrowed { margin: -.3rem 0 .5rem; color: var(--muted); font-size: .72rem; }
 /* The contributors, a row each in the columns all rows share: who, their
    commits' bar and their lines. A row clicked anywhere picks its contributor,
    its name's button stretched over it, their profile's link over that, shown
