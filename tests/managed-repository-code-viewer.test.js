@@ -303,7 +303,8 @@ test('the header opens another repository at its default branch, another revisio
     { view: 'repository-code', repoId: 7, commit: 'f'.repeat(40), path: 'packages/app', bundleTab: 'search', repo: 'org/repo' },
   ], 'a commit that is not hex opens nothing; a full one opens by its own route')
   // Issues, Pull requests, Agents and Pulse, the whole repository's whatever
-  // its revision, pick none, nor link the commit; the others do.
+  // its revision and directory, pick neither, nor link the commit; the
+  // others do.
   for (const tab of ['code', 'treemap', 'search', 'compare', 'commits', 'issues', 'pulls', 'agents', 'pulse']) {
     header.tab = tab
     header._edit = null
@@ -311,6 +312,7 @@ test('the header opens another repository at its default branch, another revisio
     const shown = !['issues', 'pulls', 'agents', 'pulse'].includes(tab)
     assert.equal(text.includes('<revision-select'), shown, tab)
     assert.equal(text.includes('bundles-slide-commit'), shown, tab)
+    assert.equal(text.includes('repository-code-path'), shown, tab)
     assert.match(text, /<repository-selector /u, tab)
   }
 })

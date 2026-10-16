@@ -339,8 +339,8 @@ export function shownRevision({ revision, commit }, refs) {
   return branch ? { kind: 'branch', name: branch } : tag ? { kind: 'tag', name: tag } : { kind: 'commit', name: commit ?? '' }
 }
 
-// The tabs the revision shown changes nothing of, a whole repository's,
-// whose header picks none: another tab keeps it.
+// The tabs the revision and the directory shown change nothing of, a whole
+// repository's, whose header picks neither: another tab keeps them.
 const REVISIONLESS_TABS = new Set(['issues', 'pulls', 'agents', 'pulse'])
 
 // The revision a revision-select's change (`detail`) picks: a name picked or
@@ -357,8 +357,8 @@ export function revisionPicked({ how, kind, name }) {
 // may browse (`repos`, browsableRepositories); the directory's path in it,
 // each part opening that directory; the revision as it was opened, among the
 // repository's branches and tags (`refs`, repositoryRefs), as Create a bundle
-// picks one; and the commit, linking its tree on GitHub, these two on the
-// tabs it changes something of (REVISIONLESS_TABS). Picking another
+// picks one; and the commit, linking its tree on GitHub, all but the
+// repository on the tabs they change something of (REVISIONLESS_TABS). Picking another
 // repository opens its default branch's head, on the same tab; picking another
 // revision, or entering one, opens the same directory there.
 class RepositoryCodeSource extends LitElement {
@@ -402,7 +402,8 @@ class RepositoryCodeSource extends LitElement {
     const options = repos.map(item => ({ value: item.repoId, label: item.fullName }))
     if (!repos.some(item => item.repoId === repoId)) options.unshift({ value: repoId, label: repo ?? `Repository ${repoId}` })
     const revision = this._edit ?? shownRevision(this.repository, this.refs)
-    const parts = path ? path.split('/') : []
+    const whole = REVISIONLESS_TABS.has(this.tab)
+    const parts = path && !whole ? path.split('/') : []
     const name = repo ?? repos.find(item => item.repoId === repoId)?.fullName
     const tree = name && commit ? `https://github.com/${[...name.split('/'), 'tree', commit, ...parts].map(encodeURIComponent).join('/')}` : null
     return html`<repository-selector class="repository-code-repo" label="Repository" .options=${options} .value=${repoId}
@@ -413,9 +414,9 @@ class RepositoryCodeSource extends LitElement {
           ? html`<span aria-current="location">${part}</span>`
           : html`<button type="button" @click=${() => openDirectory(this.repository, parts.slice(0, index + 1).join('/'), this.tab)}>${part}</button><span aria-hidden="true">/</span>`)}
       </nav>` : nothing}
-      ${REVISIONLESS_TABS.has(this.tab) ? nothing : html`<revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null}
+      ${whole ? nothing : html`<revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null}
         .kind=${revision.kind} .name=${revision.name} .installTooltips=${root => installShadowTooltipListener(root)} @revision-change=${this.revisionChanged}></revision-select>`}
-      ${tree && !REVISIONLESS_TABS.has(this.tab) ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
+      ${tree && !whole ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
         aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${appMarkup(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
   }
 }

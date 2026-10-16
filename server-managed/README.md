@@ -1611,9 +1611,9 @@ it, else by its commit: the repository's branches and tags are listed with
 their commits (`branchCommits`, `tagCommits`), the default branch's read
 apart where the first page of a hundred branches by name leaves it out. Between them,
 a directory's path in the repository, each part opening its own directory,
-and after them the commit, linking its tree on GitHub; neither the revision
-nor the commit shows on Issues, Pull requests, Agents or Pulse, which read
-the whole repository whatever its revision, the revision kept for the other
+and after them the commit, linking its tree on GitHub; none of the three
+shows on Issues, Pull requests, Agents or Pulse, which read the whole
+repository whatever its revision and directory, both kept for the other
 tabs. Each file's head links it on GitHub at
 the commit, and admins have a breadcrumb back to the Repositories page. A
 directory too large to read whole, or one the reader's grants reach only part
