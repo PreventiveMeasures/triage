@@ -173,16 +173,31 @@ function blobsOf(entries: TreeEntry[], prefix: string, files: string[]) {
 // The files under the commit's tree, `commit`, onto `files`, its trees read
 // a round at a time, those nearest the root first: its own entries, then
 // each tree in it whole, or, where that is cut short, alone in turn, and so
-// on. Each round read whole, every tree of it, whatever answers first, so
-// that none beside another is left out for it; the next begun only while
-// the files are fewer than MAX_TREE_FILES, and only as many trees read in
-// all as MAX_TREE_READS, those of a round first in its order. Whether some
-// were left out.
+// on. Each round read whole, whatever answers first, but for trees no file
+// of which could be kept: as deep as, or deeper than, the files nearest the
+// root, as many as MAX_TREE_FILES, of those read (files of a tree are at
+// least a level deeper than it is). As many trees read in all as
+// MAX_TREE_READS, those of a round first in its order. Whether some were
+// left out.
 async function treeByTrees(commit: string, listing: TreeListing, files: string[]): Promise<boolean> {
   let cut = false, reads = 1, round = [{ tree: commit, prefix: '', recursive: false }]
+  const atDepth: number[] = []
+  let counted = 0
   while (round.length > 0) {
-    if (files.length >= MAX_TREE_FILES) return true
-    const asked = round.slice(0, Math.max(0, MAX_TREE_READS - reads))
+    for (; counted < files.length; counted++) {
+      const depth = files[counted]!.split('/').length
+      atDepth[depth] = (atDepth[depth] ?? 0) + 1
+    }
+    // The depth no file deeper than is kept.
+    let kept = Number.POSITIVE_INFINITY
+    for (let depth = 0, sum = 0; depth < atDepth.length; depth++) {
+      sum += atDepth[depth] ?? 0
+      if (sum >= MAX_TREE_FILES) {
+        kept = depth
+        break
+      }
+    }
+    const asked = round.filter(({ prefix }) => prefix.split('/').length - 1 < kept).slice(0, Math.max(0, MAX_TREE_READS - reads))
     cut ||= asked.length < round.length
     reads += asked.length
     const listed: Awaited<ReturnType<TreeListing>>[] = []

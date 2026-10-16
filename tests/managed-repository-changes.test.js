@@ -178,6 +178,29 @@ test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at
   assert.equal(kept.size, 2)
 })
 
+test('a tree cut short beside trees of as many files as are answered is read alone still, as are trees in it, its files nearer the root kept', async t => {
+  const store = { read: () => Promise.resolve(null), write: () => Promise.resolve() }
+  const sha = name => name.padEnd(40, '0')
+  // Three trees of 26,000 files three levels down, and one listed whole cut short: ten files of its own, and a tree of five.
+  const trees = { [`${a}:1`]: { tree: [], truncated: true },
+    [`${a}:`]: { tree: [...['1', '2', '3', 'd'].map(name => ({ path: `t${name}`, type: 'tree', sha: sha(name) }))], truncated: false },
+    [`${sha('d')}:1`]: { tree: [], truncated: true },
+    [`${sha('d')}:`]: { tree: [...Array.from({ length: 10 }, (_, file) => ({ path: `f${file}`, type: 'blob' })), { path: 'in', type: 'tree', sha: sha('e') }], truncated: false },
+    [`${sha('e')}:1`]: { tree: Array.from({ length: 5 }, (_, file) => ({ path: `g${file}`, type: 'blob' })), truncated: false } }
+  for (const name of ['1', '2', '3']) trees[`${sha(name)}:1`] = { tree: Array.from({ length: 26_000 }, (_, file) => ({ path: `x/y/f${file}`, type: 'blob' })), truncated: false }
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(typeof input === 'string' ? input : input.url)
+    const key = `${url.pathname.split('/').at(-1)}:${url.searchParams.get('recursive') ?? ''}`
+    asked.push(key)
+    return Promise.resolve(Response.json(trees[key]))
+  })
+  const read = await repositoryTree('org/repo', null, a, store)
+  assert.deepEqual([read.files.length, read.cut], [MAX_TREE_FILES, true])
+  assert.deepEqual(read.files.filter(path => path.startsWith('td/')).length, 15, 'its own files, and those of the tree in it')
+  assert.equal(asked.length, 8, 'each tree read once, alone where cut short')
+})
+
 test('each of a cut-short tree\'s trees is read, past as many files as are answered, those nearest the root kept, whichever answers first', async t => {
   const store = { read: () => Promise.resolve(null), write: () => Promise.resolve() }
   // Twelve trees of thirteen thousand files deep in them, six of them more than are answered, then one of ten files of its own, answering soonest.
