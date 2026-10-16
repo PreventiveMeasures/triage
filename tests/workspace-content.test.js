@@ -67,12 +67,17 @@ test('a team names its linked repositories, with their paths, reports and bundle
   assert.match(list, /data-workspace-repository=2[\s\S]*data-repository-path=>[\s\S]*o\/api[\s\S]*packages\/a, packages\/b[\s\S]*2 reports/u)
   assert.match(list, /data-workspace-repository=1\s+data-repository-name=o\/web data-repository-path=>/u)
   assert.match(list, /1 bundle</u)
-  for (const role of ['view', 'triage', null]) {
+  // Any team member opens them: the server reads only what their grants
+  // reach and their own GitHub account may read.
+  for (const role of ['view', 'triage', 'admin']) {
+    assert.match(text(renderWorkspaceContent(read(role), 'repositories')), /data-workspace-repository=1\s+data-repository-name=o\/web/u, role)
+  }
+  for (const role of ['none', null]) {
     const shown = text(renderWorkspaceContent(read(role), 'repositories'))
     assert.doesNotMatch(shown, /data-workspace-repository|<button type="button" class="workspace-content-row"/u, `${role}: listed, not opened`)
     assert.match(shown, /o\/empty/u)
   }
-  assert.deepEqual(read('view').repositories.map(r => r.available), [false, false, false])
+  assert.deepEqual(read('view').repositories.map(r => r.available), [true, true, true])
   assert.equal(workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedSession: { id: 's', role: 'admin', publicShare: true },
     managedTeams: [team] }, []).repositories.some(r => r.available), false, 'a public share opens no code')
   assert.match(text(renderWorkspaceContent(workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedTeams: [{ id: 'a', name: 'None' }] }, []), 'repositories')),

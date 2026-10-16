@@ -1082,7 +1082,8 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|tree|issues|agents|item|pulse)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
-  if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
+  // The code viewer's reads are any team member's, as the server's are.
+  if (role === 'none' || (!repositoryBrowser && !['admin', 'manage'].includes(role)) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
   if (handleAdminCatalog(url, method, res)) return

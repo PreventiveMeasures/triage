@@ -153,7 +153,7 @@ test('a directory reads at its revision\'s commit, its files as the npm viewer r
   assert.ok(asked.indexOf(`/repos/org/repo/git/trees/${treeAt('src/allowed')}?recursive=1`) < asked.indexOf(`/repos/org/repo/tarball/${treeAt('src/allowed')}`))
 })
 
-test('an admin reads the whole repository; a manager only the directories their teams reach whole', async t => {
+test('an admin reads the whole repository; a manager, or any team member, only the directories their teams reach whole', async t => {
   const admin = await fixture(t, { role: 'admin' })
   github(t)
   const root = await admin({ repoId: '1', ref: 'heads/main' })
@@ -166,6 +166,14 @@ test('an admin reads the whole repository; a manager only the directories their 
     assert.deepEqual(await manager({ repoId: '1', ref: commit, path }), { status: 404, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'no-directory' } }, path)
   }
   assert.equal((await manager({ repoId: '2', ref: commit, path: 'src/allowed' })).body.error, 'no-repository')
+
+  // A member at the view or triage role reads as a manager does; none, nothing.
+  for (const role of ['view', 'triage']) {
+    const member = await fixture(t, { role })
+    assert.deepEqual((await member({ repoId: '1', ref: commit, path: 'src/allowed/lib' })).body.files.map(([path]) => path), ['util.js'], role)
+    assert.equal((await member({ repoId: '1', ref: commit, path: '' })).body.error, 'no-directory', role)
+  }
+  assert.equal((await (await fixture(t, { role: 'none' }))({ repoId: '1', ref: commit, path: 'src/allowed/lib' })).status, 403)
 })
 
 test('a directory too large to hold, or listed short, is refused before its tarball is asked for', async t => {

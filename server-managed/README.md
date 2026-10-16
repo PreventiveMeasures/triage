@@ -956,11 +956,15 @@ the API continues to return only its public error code. A `completed` record
 means the worker returned bundle bytes; authorization and storage follow it.
 
 `GET /api/admin/repositories/browsable` provides the creation page's repository
-picker. A repository must be active, and both access gates must pass: the caller
-is an admin or a manager with a team grant for the repository, and the caller has
-GitHub read permission or the repository is currently public. Public visibility
-is verified with GitHub, not inferred from stored flags; internal repositories
-require a user permission check. Admin status does not bypass the GitHub gate.
+picker, and the code viewer's. It lists the active repositories the caller has
+a team grant for, all of them for an admin, by name alone, without asking
+GitHub. Reading one then needs both access gates to pass, on each read: the
+caller is an admin or a team member (any role from view up) with a team grant
+for the repository, within that grant's paths, and the caller has GitHub read
+permission or the repository is currently public. Public visibility is verified
+with GitHub, not inferred from stored flags; internal repositories require a
+user permission check. Admin status does not bypass the GitHub gate. Building
+a bundle from one stays an admin's or a manager's.
 
 `GET /api/admin/repositories/refs?repoId=…` returns the default branch and up to
 100 branch/tag suggestions; any branch or tag name can also be entered.
@@ -1595,8 +1599,10 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 
 # Repository code viewer
 
-Admins and managers read a connected repository's files in the bundle view,
-as an npm version shows, with the Treemap, Code, Search, Compare and Activity tabs:
+Team members, from the view role up, read a connected repository's files in
+the bundle view, as an npm version shows, with the Treemap, Code, Search,
+Compare and Activity tabs, where their teams' grants reach it and their own
+GitHub account may read it (or it is public); admins read every connected one:
 from the
 `</>` on its row on the Repositories page, or its row on a team's
 Repositories tab, at `/repo/<repo id>`, which
@@ -1621,7 +1627,7 @@ and after them the commit, linking its tree on GitHub; none of the three
 shows on Issues, Pull requests, Agents or Pulse, which read the whole
 repository whatever its revision and directory (Replay plays the revision's), both kept for the other
 tabs. Each file's head links it on GitHub at
-the commit, and admins have a breadcrumb back to the Repositories page. A
+the commit. A
 directory too large to read whole, or one the reader's grants reach only part
 of, says so, and lists its directories to open instead (as browsing lists
 them, `GET /api/admin/repositories/contents`).

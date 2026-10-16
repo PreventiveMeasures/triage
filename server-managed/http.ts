@@ -30,7 +30,8 @@
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
 //   GET /api/admin/repositories/impact → admin attached data summary
-//   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
+//   GET /api/admin/repositories/{browsable,refs,contents} → view or above, within the reader's team grants, + GitHub read access
+//        (browsable: the names alone; these and the reads below are the code viewer's, open to every team member)
 //   GET /api/admin/repositories/code?repoId=&ref=&path= → the files of a directory at a revision, within the reader's grants,
 //        Brotli-encoded | 400/401/403/404/409/413/429/502
 //   GET /api/admin/repositories/history?repoId=&ref=&path=&page=[&all=true[&from=]] → the commits a revision reaches, a page at a time,
@@ -1383,8 +1384,10 @@ async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, mis
 
 // Listing connected repository names uses managed access only. Verify GitHub
 // access after selection, before returning any refs or source directory data.
+// Any team member (view or above) lists those their teams reach, for the code
+// viewer as for Create a bundle, whose builds stay admin|manage.
 async function handleBrowsableRepositories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return
   sendJson(res, 200, { repos: selectableRepos(await bundleRepos(deps, s.user)) })
 }
@@ -1438,9 +1441,11 @@ function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
 // The repository `repoId` as the reader may browse it at `path`: one of their
 // bundle repositories, and what their grants show of that directory
 // (`virtualEntries`, null where they reach all of it: scopedDirectory). Null,
-// answered, where it is none of theirs.
+// answered, where it is none of theirs. Every team member (view or above)
+// reads the repositories their teams reach; the reader then checks their own
+// GitHub read permission (repository-browser.ts), on each read.
 async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
-  const s = await readManageSession(res, deps, cookie)
+  const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return null
   const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
   if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }

@@ -3,6 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { formatBytes } from '../scan/metrics.js'
 import { managedBundleEntry } from './managed-bundle-navigation.js'
 import { managedTeamFindings } from './managed-sidebar.js'
+import { canReadRepositoryCode } from '../../common/managed/roles.ts'
 import { REPO_ICON_SVG } from './icons.js'
 import { appMarkup } from './markup.js'
 
@@ -19,7 +20,7 @@ export function workspaceContent(state, workspaces, reportKind = () => null) {
     }))
     const session = state.managedSession
     return { id: team.id, scope: 'team', title: `Team: ${team.name}`, findings: managedTeamFindings(team.app), reports, bundles,
-      repositories: teamRepositories(team.repos ?? [], reports, bundles, Boolean(session && !session.publicShare && ['admin', 'manage'].includes(session.role))) }
+      repositories: teamRepositories(team.repos ?? [], reports, bundles, canReadRepositoryCode(session)) }
   }
   const workspace = workspaces.find(w => w.id === state.currentWorkspace)
   if (!workspace) return null

@@ -391,7 +391,7 @@ test('SQLite upgrades repository default caches as nullable and preserves select
   assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
 })
 
-test('browser endpoints require manage access, honor path grants, and recheck changes during GitHub reads', async t => {
+test('browser endpoints require a team member\'s access, honor path grants, and recheck changes during GitHub reads', async t => {
   const { db, userId, request } = await fixture(t)
   let duringRead = async () => {}
   let directoryReads = 0
@@ -414,7 +414,14 @@ test('browser endpoints require manage access, honor path grants, and recheck ch
   assert.equal((await request({ ...params, path: 'src/allowed' })).body.entries[0].name, 'entry.ts')
   duringRead = () => db.removeTeamMember('team', userId)
   assert.equal((await request({ ...params, path: 'src/allowed' })).status, 404, 'membership revoked while reading')
+  // A member at the view role reads as a manager does; one with no role, nothing.
+  duringRead = async () => {}
   await db.setUserRole(userId, 'view')
+  assert.equal((await request({ ...params, path: 'src/allowed' })).status, 404, 'not on the team')
+  await db.setTeamMember('team', userId, { dependencies: false, security: false })
+  assert.equal((await request({ ...params, path: 'src/allowed' })).body.entries[0].name, 'entry.ts')
+  assert.equal((await request({ ...params, path: 'private' })).status, 404, 'within their grants alone')
+  await db.setUserRole(userId, 'none')
   assert.equal((await request(params, { route: 'refs' })).status, 403)
 })
 
@@ -583,21 +590,28 @@ for (const [role, member, publicRepo, permission, allowed] of [
   ['manage', true, true, 'none', true],
   ['manage', false, false, 'read', false],
   ['manage', false, true, 'read', false],
-  ['view', true, false, 'read', false],
+  // Any team member reads as a manager does: the code viewer's.
+  ['triage', true, false, 'read', true],
+  ['view', true, false, 'read', true],
+  ['view', true, false, 'none', false],
+  ['view', true, true, 'none', true],
+  ['view', false, false, 'read', false],
+  ['view', false, true, 'read', false],
+  ['none', true, true, 'read', false],
 ]) {
   test(`the dropdown uses managed access and browsing requires both gates: ${role}, team=${member}, public=${publicRepo}, GitHub=${permission}`, async t => {
     const { request } = await fixture(t, { role, member, selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
     const { calls } = githubFixture(t, { publicRepo, permission })
     const listing = await request({}, { route: 'browsable' })
-    assert.equal(listing.status, role === 'view' ? 403 : 200)
-    if (role !== 'view') assert.deepEqual(listing.body.repos, role === 'admin' || member ? [{ repoId: 1, fullName: 'org/repo' }] : [])
+    assert.equal(listing.status, role === 'none' ? 403 : 200)
+    if (role !== 'none') assert.deepEqual(listing.body.repos, role === 'admin' || member ? [{ repoId: 1, fullName: 'org/repo' }] : [])
     assert.equal(calls.length, 0, 'listing repository names never calls GitHub')
     for (const route of ['refs', 'contents']) {
       const result = await request({ repoId: '1', ref: commit, path: 'src/allowed' }, { route })
-      assert.equal(result.status, allowed ? 200 : role === 'view' ? 403 : 404)
+      assert.equal(result.status, allowed ? 200 : role === 'none' ? 403 : 404)
       if (!allowed) assert.ok(!JSON.stringify(result.body).includes('entry.ts'))
     }
-    if (role === 'view' || (role === 'manage' && !member)) assert.equal(calls.length, 0, 'local authorization precedes all GitHub requests')
+    if (role === 'none' || (role !== 'admin' && !member)) assert.equal(calls.length, 0, 'local authorization precedes all GitHub requests')
     if (!allowed) assert.ok(!calls.some(path => /\/(?:contents|branches|tags)(?:\/|$)/u.test(path)), 'denied users never trigger source or ref reads')
   })
 }
