@@ -261,6 +261,7 @@ body.theme-paper {
   --graph-mini-tab-active-decoration: underline;
   --graph-layout-active-shadow: none;
   --selected-icon-ring-content: '';
+  --selected-icon-background: transparent;
   --kanban-column-bg: #fff;
   --mark-red-bg: #fff; --mark-red-tab-border: #000;
   --mark-blue-bg: #fff; --mark-blue-tab-border: #000;

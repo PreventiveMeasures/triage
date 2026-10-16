@@ -103,12 +103,19 @@ export class RevisionSelect extends LitElement {
       display: flex; flex: none; align-self: stretch; padding: 2px; gap: 2px;
     }
     .revision-switch button {
-      display: grid; place-items: center; width: 1.8rem; padding: 0; border: 0; border-radius: var(--ui-radius, 3px);
+      position: relative; display: grid; place-items: center; width: 1.8rem; padding: 0; border: 0; border-radius: var(--ui-radius, 3px);
       background: transparent; color: var(--muted);
     }
     .revision-switch button:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
     .revision-switch button:focus-visible { outline-offset: -2px; }
-    .revision-switch button[aria-pressed=true] { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--bg)); }
+    .revision-switch button[aria-pressed=true] {
+      color: var(--accent); background: var(--selected-icon-background, color-mix(in srgb, var(--accent) 15%, var(--bg)));
+    }
+    /* Paper rings the kind picked instead (theme.css), as its other icon pickers (toolbar.css). */
+    .revision-switch button[aria-pressed=true]::before {
+      content: var(--selected-icon-ring-content, none); position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+      box-sizing: border-box; border: 1px solid currentcolor; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+    }
     .revision-switch svg { width: 1rem; height: 1rem; }
     .revision-expand {
       display: grid; place-items: center; align-self: stretch; flex: none; width: 2rem; padding: 0;

@@ -3513,7 +3513,10 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
     position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 1px 6px;
     border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); cursor: default;
     &:hover { color: var(--text); }
-    &[aria-pressed=true] { background: var(--surface-active); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+    /* Paper drops the box, as for the graph's layouts, its ring (toolbar.css) marking it alone. */
+    &[aria-pressed=true] {
+      background: var(--surface-active); color: var(--text); box-shadow: var(--graph-layout-active-shadow, inset 0 0 0 1px var(--border));
+    }
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     & svg { display: block; }
   }
