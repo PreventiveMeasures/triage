@@ -1716,9 +1716,11 @@ the model in its name), its `🤖 Generated with [Claude Code]` line, its
 (`chatgpt.com/codex/tasks/…`); Cursor by its agents' trailer
 (`Cursor Agent <cursoragent@cursor.com>`) or link (`cursor.com/agents?id=bc-…`);
 an app agent by its fingerprint (as the Agents tab tells them, below). An
-agent shows by its mark (Claude's, OpenAI's for Codex, Copilot's), or its
-avatar (Dependabot's, an app agent's), Cursor, whose mark the app has none
-of, by its letter; the author none of them (`server-managed/commit-coauthors.ts`).
+agent shows by its mark, a solid avatar as its app's icon is (Claude's
+white on its orange, OpenAI's black on white for Codex, Copilot's white on
+GitHub's dark, as Replay draws them), or its avatar (Dependabot's, an app
+agent's), Cursor, whose mark the app has none of, by its letter; the author
+none of them (`server-managed/commit-coauthors.ts`).
 The server reads each commit's message for them, keeping and answering
 those alone, never the message; a page kept before they were read is read
 again.

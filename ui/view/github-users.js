@@ -190,7 +190,8 @@ const agentOf = agent => typeof agent === 'string' && Object.hasOwn(GITHUB_AGENT
 const listed = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] ?? ''
 
 // One who made a commit, on a disc in Commits' stack of them: an agent by its
-// mark or avatar, one the app has neither of by its name's letter; an app
+// mark, solid as its app's icon is (app-user.css), or avatar, one the app
+// has neither of by its name's letter; an app
 // agent by its avatar; a user of the app by theirs, their name's letter under
 // it; anyone else by their name's letter.
 function commitAvatar({ login = null, name = null, agent = null, avatar = null }) {
