@@ -3,6 +3,8 @@ import { classMap } from 'lit/directives/class-map.js'
 import { formatBytes } from '../scan/metrics.js'
 import { managedBundleEntry } from './managed-bundle-navigation.js'
 import { managedTeamFindings } from './managed-sidebar.js'
+import { REPO_ICON_SVG } from './icons.js'
+import { appMarkup } from './markup.js'
 
 // Resolve from the current catalog, so counts and rows share exactly one scope.
 export function workspaceContent(state, workspaces, reportKind = () => null) {
@@ -100,9 +102,7 @@ export function filesButtonTemplate(count, view) {
 function repositoryRowTemplate(item) {
   const stats = [item.reports ? `${item.reports.toLocaleString()} report${item.reports === 1 ? '' : 's'}` : null,
     item.bundles ? `${item.bundles.toLocaleString()} bundle${item.bundles === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
-  const content = html`<svg class="workspace-content-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>
-    </svg>
+  const content = html`<span class="workspace-content-icon">${appMarkup(REPO_ICON_SVG)}</span>
     <span class="workspace-content-label"><span class="workspace-content-name">${item.name}</span>
       ${item.paths.length > 0 ? html`<span class="workspace-content-repo">${item.paths.join(', ')}</span>` : nothing}
     </span>

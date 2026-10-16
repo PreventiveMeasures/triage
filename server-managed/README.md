@@ -233,10 +233,10 @@ window also navigate to their managed page URL.
 | `…/bundle/:bundleSlug/compare[/:otherSlug[/code\|/diff]]` | Its Compare tab, with another bundle, in its Code or Diff mode |
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
-| `/manage/code/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit |
-| `/manage/code/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents`, `pulse` or `replay` (`history`, its earlier name, opens Commits) |
-| `/manage/code/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
-| `/manage/code/:repoId/:commit/compare[/:otherCommit[/code\|/diff]][?path=:directory]` | Its Compare tab, with the directory at another commit, in its Code or Diff mode |
+| `/repo/:repoId[?path=:directory]` | A repository directory at its default branch's head; its route then names the commit. Links under its earlier `/manage/code/` open the same |
+| `/repo/:repoId/:commit[/:tab][?path=:directory]` | A repository directory at a commit, on its Code, Search, Treemap or Compare tab, or a view of its Activity: `commits`, `issues`, `pulls`, `agents`, `pulse` or `replay` (`history`, its earlier name, opens Commits) |
+| `/repo/:repoId/:commit/code/:file[?path=:directory]` | Its Code tab, at a file |
+| `/repo/:repoId/:commit/compare[/:otherCommit[/code\|/diff]][?path=:directory]` | Its Compare tab, with the directory at another commit, in its Code or Diff mode |
 | `/manage/scans` | Scans |
 | `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
@@ -1598,7 +1598,8 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 Admins and managers read a connected repository's files in the bundle view,
 as an npm version shows, with the Treemap, Code, Search, Compare and Activity tabs:
 from the
-`</>` on its row on the Repositories page, at `/manage/code/<repo id>`, which
+`</>` on its row on the Repositories page, or its row on a team's
+Repositories tab, at `/repo/<repo id>`, which
 opens its default branch's head, its route then naming the commit it opened
 (see Page routes), so a link or a reload opens the same files, whatever the
 branch has moved to since. Its header picks the repository, among those the

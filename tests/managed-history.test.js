@@ -591,3 +591,57 @@ test('a write while a navigation loads cannot take the entry it leaves, and a ta
   assert.equal(cancels, 1, 'a tab switch with nothing loading cancels nothing')
 })
 
+
+test('a page showing itself while it loads takes its address then, the one it ends on replacing it', async () => {
+  const { browser, entries, writes } = browserAt('/team/t/repositories')
+  const nav = createManagedHistory(browser)
+  let release, result
+  await nav.start(async route => {
+    if (route.view !== 'repository-code') return true
+    nav.showing(route)
+    nav.showing(route)
+    nav.showing({ ...route })
+    await new Promise(resolve => { release = resolve })
+    return result
+  })
+  const commit = 'c'.repeat(40)
+  const opened = { view: 'repository-code', repoId: 7, commit: null, path: 'services/worker', bundleTab: 'code' }
+  const at = { ...opened, commit }
+  result = at
+  const navigation = nav.navigate(opened)
+  await setImmediate()
+  assert.deepEqual(entries.map(entry => entry.url.pathname + entry.url.search), ['/team/t/repositories', '/repo/7?path=services/worker'], 'its own entry, once, while it loads')
+  release()
+  assert.equal(await navigation, true)
+  assert.deepEqual(entries.map(entry => entry.url.pathname + entry.url.search), ['/team/t/repositories', `/repo/7/${commit}?path=services/worker`], 'the commit it opened replaces it')
+  assert.deepEqual(writes.slice(-2), ['push', 'replace'])
+  await browser.move(-1)
+  assert.equal(browser.location.pathname, '/team/t/repositories')
+  // Back and Forward, and a replacing navigation, add no entry.
+  const count = entries.length
+  result = at
+  const forward = browser.move(1)
+  await setImmediate()
+  release()
+  await forward
+  assert.equal(entries.length, count)
+  assert.equal(browser.location.pathname, `/repo/7/${commit}`)
+  // One that fails goes home in its own entry, the page before it kept.
+  await browser.move(-1)
+  result = false
+  const failed = nav.navigate(opened)
+  await setImmediate()
+  release()
+  assert.equal(await failed, false)
+  assert.deepEqual(entries.map(entry => entry.url.pathname), ['/team/t/repositories', '/'])
+  // A page of a navigation since given up on shows nothing.
+  const first = nav.navigate(opened)
+  await setImmediate()
+  const before = entries.length
+  nav.pushRoute({ view: 'workspace-bundles', teamSlug: 't' })
+  nav.showing(opened)
+  assert.equal(entries.length, before + 1)
+  assert.equal(browser.location.pathname, '/team/t/bundles')
+  release()
+  assert.equal(await first, false)
+})

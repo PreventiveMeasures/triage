@@ -135,15 +135,16 @@ function parseNpmRoute(path, hash) {
 
 // The code viewer: a directory of a repository at a commit, on its Code,
 // Search, Treemap, Compare, Commits, Issues, Pull requests, Agents, Pulse
-// or Replay tab, `/manage/code/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
+// or Replay tab, `/repo/<repo id>/<commit>[/<tab>…][?path=<directory>]`,
 // the repository's root where it names no directory. Code, the tab a bare
 // link opens, names its file by number and its lines in the fragment, as a
 // bundle's Code does: `/code/<file>#L4`. Compare names the commit compared
 // with, then its mode past the Overview, as an npm version's does:
 // `/compare/<commit>/code`. Without a commit,
-// `/manage/code/<repo id>[?path=<directory>]`, it opens on the default
+// `/repo/<repo id>[?path=<directory>]`, it opens on the default
 // branch's head, or on the revision a route held in memory names (`ref`),
-// and its route then names the commit it opened.
+// and its route then names the commit it opened. Links from before it moved
+// name it under `/manage/code/`, and open the same.
 export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'compare', 'commits', 'issues', 'pulls', 'agents', 'pulse', 'replay'])
 // The tabs reading none of the directory's files, which a directory at a
 // commit shows alone.
@@ -166,16 +167,16 @@ function repositoryCodePath(route) {
   if (!isRepoId(route.repoId) || (route.commit != null && !COMMIT.test(route.commit)) || !isRepositoryDirectory(path) || !REPOSITORY_CODE_TABS.has(tab)
       || (route.compareCommit != null && !COMMIT.test(route.compareCommit))) return null
   const directory = path ? `?path=${path.split('/').map(encodeURIComponent).join('/')}` : ''
-  if (route.commit == null) return `/manage/code/${route.repoId}${directory}`
+  if (route.commit == null) return `/repo/${route.repoId}${directory}`
   const file = tab === 'code' && isLineNumber(route.file) ? `/code/${route.file}` : tab === 'code' ? '' : `/${tab}`
   const compare = tab === 'compare' && route.compareCommit != null ? `/${route.compareCommit}${compareModeSuffix(route.compareMode)}` : ''
   const lines = tab === 'code' && isLineNumber(route.file) && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-  return `/manage/code/${route.repoId}/${route.commit}${file}${compare}${directory}${lines}`
+  return `/repo/${route.repoId}/${route.commit}${file}${compare}${directory}${lines}`
 }
 
 function parseRepositoryCodeRoute(url) {
-  const match = /^\/manage\/code\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|compare|commits|history|issues|pulls|agents|pulse|replay)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u
+  const match = /^\/(?:repo|manage\/code)\/([1-9]\d*)(?:\/([a-f\d]{40})(?:\/(code|search|treemap|compare|commits|history|issues|pulls|agents|pulse|replay)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u
     .exec(url.pathname.replace(/\/$/u, ''))
   if (!match) return undefined
   const repoId = Number(match[1])
