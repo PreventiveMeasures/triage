@@ -570,7 +570,7 @@ export function githubRefLabel(url) {
 // they still render as the report wrote them. (The fence alternatives
 // are belt-and-braces: `flowText` carves every FENCED block out before
 // a line reaches here, so a fence line no longer arrives on this path.)
-const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6}[ \t]|\||`{3}|~{3})/u
+const BLOCK_LINE_RE = /^(?:\s+\S|[-*+] |\d+[.)] |>|#{1,6}(?:[ \t]|$)|\||`{3}|~{3})/u
 
 function flowParagraphs(text) {
   // The capturing split keeps the blank-line runs, so paragraph

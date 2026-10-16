@@ -67,7 +67,7 @@ test('emphasis stays linear on a long line of openers that never close (ReDoS gu
 })
 
 test('what isn\'t one of those shapes stays as written', () => {
-  for (const text of ['snake_case_name and __init__', 'café_monde_ and 東京_駅_', 'नमस्ते_दुनिया_ and cafe\u0301_monde_', '#972 and #hashtag', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
+  for (const text of ['snake_case_name and __init__', 'café_monde_ and 東京_駅_', 'नमस्ते_दुनिया_ and cafe\u0301_monde_', '#972 and #hashtag', '##\nDetails', 'a [ ] box mid-line', '1 _ 2 _ 3']) {
     assert.equal(shown(text), text, text)
   }
 })
