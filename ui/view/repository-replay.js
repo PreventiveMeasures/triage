@@ -26,7 +26,7 @@ import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.j
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
 import { styleMap } from './style-map.js'
 import { BEAM_S, FADE_S, FILE_DOT, GLOW_S, IDLE_S, MAX_GAP, REMOVE_S, REPLAY_COUNTS, SPACE, advanceScene, assignColors, clusterRadius, createScene,
-  extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene } from './replay-model.js'
+  extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from './replay-model.js'
 
 // How fast it plays, as the reader picks; the commits read of the server
 // first, so that it starts soon, and then at a time, as many as it answers.
@@ -54,6 +54,7 @@ const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 
 const replays = new Map()
 const changesRead = new Map()
+const cutCommits = new Set()
 const treesRead = new Map()
 const shownElements = new Set()
 const images = new Map()
@@ -67,6 +68,7 @@ function sessionReplays() {
   if (session !== keptFor) {
     replays.clear()
     changesRead.clear()
+    cutCommits.clear()
     treesRead.clear()
     keptFor = session
   }
@@ -87,7 +89,7 @@ function replayOf(repository, count) {
   const key = `${repoId}\0${commit}\0${path}\0${count}`
   const held = sessionReplays().get(key)
   if (held) return held
-  const replay = { key, repoId, path, count, commits: null, times: [], reading: false, startReading: false, error: null, counted: '', counts: new Map(),
+  const replay = { key, repoId, path, count, commits: null, times: [], reading: false, treeReading: false, error: null, counted: '', counts: new Map(),
     colors: new Map(), people: null, scene: createScene(), clock: 0, next: 0, playing: false, waiting: false, ended: false, started: false }
   replays.set(key, replay)
   return replay
@@ -103,14 +105,19 @@ const startKey = replay => `${replay.repoId}\0${replay.path}\0${startCommit(repl
 const startOf = replay => startCommit(replay) ? treesRead.get(startKey(replay)) : NO_FILES
 
 // What a commit of a replay changes, its files' paths from the directory
-// shown, as read; undefined where it isn't yet.
+// shown, as read; undefined where it isn't yet. One whose files were more
+// than the server reads (`more`, repository-changes.ts MAX_FILES) is cut
+// (isCut), and made whole by the files it leaves (treeOf), read too.
 const changesKey = (replay, sha) => `${replay.repoId}\0${replay.path}\0${sha}`
 const changesOf = (replay, sha) => changesRead.get(changesKey(replay, sha))
+const isCut = (replay, sha) => cutCommits.has(changesKey(replay, sha))
+const treeOf = (replay, sha) => treesRead.get(changesKey(replay, sha))
+const readyOf = (replay, commit) => Boolean(changesOf(replay, commit.sha) && (!isCut(replay, commit.sha) || treeOf(replay, commit.sha)))
 
 // How many of its commits, from its first, what each changes is read of.
 function bufferedOf(replay) {
   let count = 0
-  while (count < (replay.commits?.length ?? 0) && changesOf(replay, replay.commits[count].sha)) count++
+  while (count < (replay.commits?.length ?? 0) && readyOf(replay, replay.commits[count])) count++
   return count
 }
 
@@ -140,25 +147,41 @@ function countKinds(replay) {
   assignColors(replay.colors, replay.counts, KINDS)
 }
 
-// The files a replay starts from, read once, as many as the server answers
-// (repository-changes.ts MAX_TREE_FILES), `cut` where there were more; a
-// commit the server has none of, none.
-function readStart(replay) {
-  if (replay.startReading || replay.error || startOf(replay)) return
-  replay.startReading = true
-  const key = startKey(replay)
-  fetchRepositoryTree(replay.repoId, replay.path, startCommit(replay)).then(answer => {
+// The files commits hold that a replay needs, one commit's at a time, each
+// once: those it starts from first, then those each cut commit leaves, from
+// where it plays on; as many as the server answers (repository-changes.ts
+// MAX_TREE_FILES), `cut` where there were more; a commit the server has
+// none of, none.
+function readTrees(replay) {
+  if (replay.treeReading || replay.error) return
+  const order = [...replay.commits.slice(replay.next), ...replay.commits.slice(0, replay.next)]
+  const start = startCommit(replay) && !startOf(replay)
+  const sha = start ? startCommit(replay) : order.find(commit => isCut(replay, commit.sha) && !treeOf(replay, commit.sha))?.sha
+  if (!sha) return
+  replay.treeReading = true
+  const key = changesKey(replay, sha)
+  fetchRepositoryTree(replay.repoId, replay.path, sha).then(answer => {
     if (sessionReplays().get(replay.key) !== replay) return null
+    // A cut commit's the server has none of making nothing whole: as a tree
+    // cut short of every file, removing none.
     const files = Array.isArray(answer?.files) ? answer.files.map(file => fileOf([file, 'A'], replay.path)?.[0]).filter(Boolean) : []
-    treesRead.set(key, { files, cut: answer?.cut === true })
+    treesRead.set(key, { files, cut: answer?.cut === true || (!start && !Array.isArray(answer?.files)) })
     return null
   }, err => {
-    if (err?.name !== 'AbortError') replay.error = err?.message || 'The files the commits start from could not be read.'
+    if (err?.name !== 'AbortError') replay.error = err?.message || (start ? 'The files the commits start from could not be read.' : 'The files a commit leaves could not be read.')
     return null
   }).finally(() => {
-    replay.startReading = false
+    replay.treeReading = false
     repaint()
   })
+}
+
+// What a commit makes of the files, made whole where it was cut: its files'
+// changes, then those making the files the ones it leaves (treeChanges).
+function commitChanges(replay, scene, commit) {
+  const files = changesOf(replay, commit.sha)
+  const tree = isCut(replay, commit.sha) ? treeOf(replay, commit.sha) : null
+  return tree ? [...files, ...treeChanges(scene, tree.files, tree.cut, fileChanges(files))] : files
 }
 
 // A replay's scene at its `at`th commit: the files it starts from, and what
@@ -167,7 +190,7 @@ function sceneAt(replay, at) {
   const scene = createScene()
   scene.start = startOf(replay)
   settleCommit(scene, scene.start.files.map(path => [path, 'A']))
-  for (const commit of replay.commits.slice(0, at)) settleCommit(scene, changesOf(replay, commit.sha))
+  for (const commit of replay.commits.slice(0, at)) settleCommit(scene, commitChanges(replay, scene, commit))
   snapScene(scene)
   return scene
 }
@@ -188,6 +211,7 @@ function readChanges(replay) {
     const told = new Map((Array.isArray(answer?.changes) ? answer.changes : []).filter(item => typeof item?.sha === 'string').map(item => [item.sha, item]))
     for (const sha of asked) {
       changesRead.set(changesKey(replay, sha), Array.isArray(told.get(sha)?.files) ? told.get(sha).files.map(file => fileOf(file, replay.path)).filter(Boolean) : [])
+      if (told.get(sha)?.more === true) cutCommits.add(changesKey(replay, sha))
     }
     return null
   }, err => {
@@ -301,10 +325,11 @@ class RepositoryReplay extends LitElement {
     if (this.replay && ![...shownElements].some(element => element.replay === this.replay)) this.replay.playing = false
   }
 
-  // Its commits, once its history is read as far as they go, the files they
-  // start from, drawn once read, and what they change, read ahead of where it
-  // plays, while it shows; playing as soon as what its first commit changes
-  // is read too, the first time it shows.
+  // Its commits, once its history is read as far as they go (a page of it
+  // failing to read waits for the reader to read on: renderStatus), the
+  // files they start from, drawn once read, and what they change, read ahead
+  // of where it plays, while it shows; playing as soon as what its first
+  // commit changes is read too, the first time it shows.
   updated() {
     const replay = this.replay
     if (!replay) return
@@ -313,14 +338,14 @@ class RepositoryReplay extends LitElement {
       const { entry, more } = revisionHistory(this.repository)
       if (entry.status !== 'ready') return
       const playable = entry.commits.filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)).length
-      if (playable < replay.count && entry.more && !entry.moreError) {
-        if (!entry.loadingMore) more()
+      if (playable < replay.count && entry.more) {
+        if (!entry.loadingMore && !entry.moreError) more()
         return
       }
       replay.commits = playedCommits(entry.commits, replay.count)
       replay.times = playTimes(replay.commits)
     }
-    readStart(replay)
+    readTrees(replay)
     readChanges(replay)
     const start = startOf(replay)
     if (!start) return
@@ -417,15 +442,14 @@ class RepositoryReplay extends LitElement {
     replay.waiting = false
     while (replay.next < replay.commits.length && replay.times[replay.next] <= clock) {
       const commit = replay.commits[replay.next]
-      const files = changesOf(replay, commit.sha)
-      if (!files) {
+      if (!readyOf(replay, commit)) {
         clock = replay.times[replay.next]
         replay.waiting = true
         break
       }
       const at = replay.times[replay.next]
       const span = (replay.times[replay.next + 1] ?? at + MAX_GAP) - at
-      playCommit(replay.scene, makersOf(commit), files, at, span * 0.8)
+      playCommit(replay.scene, makersOf(commit), commitChanges(replay, replay.scene, commit), at, span * 0.8)
       replay.next++
     }
     replay.clock = clock
@@ -737,6 +761,10 @@ class RepositoryReplay extends LitElement {
     if (replay.error) {
       return html`<div class="replay-status is-error"><p role="alert">${replay.error}</p>
         <button type="button" @click=${() => { replay.error = null; repaint() }}>Retry</button></div>`
+    }
+    if (history?.entry.status === 'ready' && history.entry.moreError) {
+      return html`<div class="replay-status is-error"><p role="alert">${history.entry.moreError}</p>
+        <button type="button" @click=${() => history.more()}>Retry</button></div>`
     }
     if (history) {
       const read = history.entry.status === 'ready' ? history.entry.commits.length : 0

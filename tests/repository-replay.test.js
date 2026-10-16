@@ -10,6 +10,7 @@ const trees = []
 let changes = null
 let tree = null
 let listed = 30
+let pages = null
 mock.module('../client/index.js', { exports: { state } })
 const DAY = 86_400_000
 const sha = at => at.toString(16).padStart(40, '0')
@@ -20,13 +21,14 @@ const history = (count = 30) => Array.from({ length: count }, (_, at) => ({ sha:
   subject: `Work ${count - at}${at === 6 ? ' (#42)' : ''}`, authorName: at % 2 ? 'Ada' : 'Grace', authorLogin: at % 2 ? 'ada' : null,
   coauthors: at === 6 ? [{ login: null, name: 'Claude', agent: 'claude' }] : [], committedAt: (count - at) * DAY }))
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchRepositoryHistory: (repoId, ref, path) => Promise.resolve({ commit: ref, path, page: 1, commits: history(listed), more: false }),
+  fetchRepositoryHistory: (repoId, ref, path, options) => pages?.(options, ref, path) ?? Promise.resolve({ commit: ref, path, page: 1, commits: history(listed), more: false }),
   fetchRepositoryChanges(repoId, path, shas) { asked.push([repoId, path, shas]); return changes(shas, path) },
-  fetchRepositoryTree(repoId, path, commit) { trees.push([repoId, path, commit]); return tree(path) },
+  fetchRepositoryTree(repoId, path, commit) { trees.push([repoId, path, commit]); return tree(path, commit) },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const { makersOf } = await import('../ui/view/repository-replay.js')
 const { knowGithubUsers } = await import('../ui/view/github-users.js')
+const { revisionHistory } = await import('../ui/view/repository-history.js')
 const Replay = customElements.get('repository-replay')
 
 let session = 0
@@ -34,6 +36,7 @@ beforeEach(() => {
   asked.length = 0
   trees.length = 0
   listed = 30
+  pages = null
   tree = path => Promise.resolve({ path, files: ['README.md', 'docs/a.md', `${path ? `${path}/` : ''}src/old.js`].filter(file => !path || file.startsWith(`${path}/`)), cut: false })
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
   changes = (shas, path) => Promise.resolve({ path, changes: shas.map(item => ({ sha: item, more: false, files: [[`${path ? `${path}/` : ''}src/${item.slice(-2)}.js`, 'A']] })) })
@@ -101,6 +104,60 @@ test('a directory\'s replay starts from its files within it, and one starting fr
   assert.equal(view.replay.scene.files.has('elsewhere.js'), false)
   assert.match(text, /, from 1 of its files<\/span>/u)
   view.pickCount(300)
+})
+
+test('a commit whose files were more than the server read is made whole by the files it leaves, read before it plays, and sought past so too', async () => {
+  // The third played, sha(27), changed more files than were read: the files it
+  // leaves are its own big ones and the second's, the first's removed.
+  const cut = sha(27)
+  const base = changes
+  changes = (shas, path) => base(shas, path).then(answer => ({ ...answer, changes: answer.changes.map(item => item.sha === cut
+    ? { ...item, more: true, files: [['big/a.js', 'A']] } : item) }))
+  let release
+  tree = (path, commit) => commit === cut ? new Promise(resolve => { release = () => resolve({ path, files: ['big/a.js', 'big/b.js', `src/${sha(28).slice(-2)}.js`], cut: false }) })
+    : Promise.resolve({ path, files: [], cut: false })
+  const view = shown()
+  await settle(view)
+  assert.deepEqual(trees, [[7, '', cut]], 'its files read, none for the repository\'s first commit the replay starts from')
+  view.toggle()
+  view.seek(5)
+  assert.equal(view.replay.next, 2, 'what is read stops short of it till they are')
+  release()
+  await settle(view)
+  view.seek(3)
+  assert.deepEqual([...view.replay.scene.files.keys()].toSorted(), ['big/a.js', 'big/b.js', `src/${sha(28).slice(-2)}.js`])
+  view.seek(4)
+  assert.deepEqual([...view.replay.scene.files.keys()].toSorted(), ['big/a.js', 'big/b.js', `src/${sha(26).slice(-2)}.js`, `src/${sha(28).slice(-2)}.js`],
+    'the commits after it on what it left')
+})
+
+test('a cut commit whose files the server has none of removes nothing', async () => {
+  const cut = sha(27)
+  const base = changes
+  changes = (shas, path) => base(shas, path).then(answer => ({ ...answer, changes: answer.changes.map(item => item.sha === cut ? { ...item, more: true } : item) }))
+  tree = (path, commit) => Promise.resolve({ path, files: commit === cut ? null : [], cut: false })
+  const view = shown()
+  await settle(view)
+  view.seek(3)
+  assert.deepEqual([...view.replay.scene.files.keys()].toSorted(), [sha(29), sha(28), sha(27)].map(item => `src/${item.slice(-2)}.js`).toSorted())
+})
+
+test('a page of the history failing to read is said, the commits played not taken from those read so far, and read again on Retry', async () => {
+  // A first page whose oldest commit's parent is not listed, the next failing.
+  const all = history(31)
+  let fail = true
+  pages = ({ page }, ref, path) => page === 1 ? Promise.resolve({ commit: ref, path, page, commits: all.slice(0, 30), more: true })
+    : fail ? Promise.reject(new Error('GitHub couldn’t be reached.')) : Promise.resolve({ commit: ref, path, page, commits: all.slice(30), more: false })
+  const view = shown()
+  const text = await settle(view)
+  assert.match(text, /<div class="replay-status is-error"><p role="alert">GitHub couldn’t be reached\.<\/p>\s*<button type="button" @click=\(\) => history\.more\(\)>Retry<\/button>/u)
+  assert.equal(view.replay.commits, null, 'none played of a history read in part')
+  assert.deepEqual(asked, [])
+  fail = false
+  revisionHistory(view.repository).more()
+  await settle(view)
+  assert.equal(view.replay.commits.length, 30, 'every commit read on, but the merge')
+  assert.equal(asked[0][2][0], all[30].sha, 'the oldest, from the page read on')
 })
 
 test('another count picked plays its own commits, the kinds of files those read hold colored however they were read', async () => {

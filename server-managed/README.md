@@ -2104,8 +2104,13 @@ files it starts from are read once (`GET /api/admin/repositories/tree`),
 drawn as soon as they are; what each commit changes is read twenty
 at first, then fifty at a time, the oldest first from where it plays, as a
 video buffers, while it shows; it waits at a commit not read yet, saying
-so. Each replay, where it is and what was read, is kept for the session,
-paused when another view or count is picked.
+so. A commit of more files than are read (`more`, below) is made whole by
+the files it leaves, read as those it starts from are, before it plays:
+what it changes past them is made as it plays, or as a seek passes it. A
+page of the history failing to read is said, with **Retry**, and no
+replay is taken from the commits read so far. Each replay, where it is and
+what was read, is kept for the session, paused when another view or count
+is picked.
 
 `GET /api/admin/repositories/changes?repoId=…&path=…&shas=…` answers
 `{ path, changes }` (`repository-changes.ts`): for each of the commits

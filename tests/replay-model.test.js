@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BEAM_S, FADE_S, FILE_DOT, IDLE_S, MAX_GAP, MIN_GAP, REMOVE_S, advanceScene, assignColors, clusterRadius, createScene, extensionOf, fileChanges,
-  layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene } from '../ui/view/replay-model.js'
+import { BEAM_S, FADE_S, FILE_DOT, IDLE_S, MAX_GAP, MIN_GAP, REMOVE_S, advanceScene, assignColors, changeFile, clusterRadius, createScene, extensionOf, fileChanges,
+  layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene, treeChanges } from '../ui/view/replay-model.js'
 
 const DAY = 86_400_000
 const commit = (sha, at, parents = ['p']) => ({ sha, parents, committedAt: at })
@@ -63,6 +63,17 @@ test('a file removed and added back before it is gone stays, and one removed tha
   advanceScene(scene, 5)
   assert.deepEqual([...scene.files.keys()], ['a.js'])
   assert.equal(scene.files.get('a.js').removed, null)
+})
+
+test('what makes the files those a commit leaves, once the changes due and its own are made: those missing added, the rest removed, none where the tree was cut', () => {
+  const scene = createScene()
+  settleCommit(scene, [['a.js', 'A'], ['b.js', 'A'], ['c.js', 'A']])
+  playCommit(scene, [], [['d.js', 'A']], 10, 0)
+  assert.deepEqual(treeChanges(scene, ['b.js', 'e.js', 'f.js'], false, [['e.js', 'A'], ['a.js', 'D']]), [['f.js', 'A'], ['c.js', 'D'], ['d.js', 'D']])
+  assert.deepEqual(treeChanges(scene, ['b.js', 'e.js', 'f.js'], true, [['e.js', 'A'], ['a.js', 'D']]), [['f.js', 'A']])
+  advanceScene(scene, 10)
+  changeFile(scene, 'b.js', 'D', 11)
+  assert.deepEqual(treeChanges(scene, ['b.js'], false), [['b.js', 'A'], ['a.js', 'D'], ['c.js', 'D'], ['d.js', 'D']], 'one going is gone')
 })
 
 // Whether two directories' files overlap where the layout places them.

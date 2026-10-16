@@ -169,6 +169,22 @@ export function settleCommit(scene, files) {
   }
 }
 
+// What makes the scene's files a tree's (`files`, as many as were read,
+// `cut` where more were not), once the changes due and `changes` (a
+// commit's, as fileChanges gives them) are made: each file of the tree it
+// wouldn't hold, added; each it would hold the tree doesn't, removed, but
+// where the tree was cut. As a commit whose files were more than were read
+// is made whole by the files it leaves.
+export function treeChanges(scene, files, cut, changes = []) {
+  const held = new Set([...scene.files.values()].filter(file => file.removed === null).map(file => file.path))
+  for (const [path, kind] of [...scene.due.map(due => [due.path, due.kind]), ...changes]) {
+    if (kind === 'D') held.delete(path)
+    else held.add(path)
+  }
+  const tree = new Set(files)
+  return [...files.filter(path => !held.has(path)).map(path => [path, 'A']), ...cut ? [] : [...held].filter(path => !tree.has(path)).map(path => [path, 'D'])]
+}
+
 // The scene at `now`: the changes due by then made, a beam to each file from
 // each who made its commit; the beams past, the files removed, and those
 // idle past fading, gone.
