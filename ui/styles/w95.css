@@ -165,7 +165,6 @@
     padding:
       calc(var(--w95-frame) + var(--w95-title-height) + 3px) var(--w95-frame)
       calc(var(--w95-frame) + var(--w95-status-height) + 3px);
-    gap: 4px;
     background: var(--w95-face);
     box-shadow: var(--w95-window);
     color: #000;
@@ -175,7 +174,10 @@
     /* Its type was bitmap, unsmoothed. */
     -webkit-font-smoothing: none;
 
-    & app-sidebar { height: auto; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
+    /* The splitter between the panes is the sidebar's own margin, not a
+       gap of the body's: elements appended to the body later (a dialog's
+       host) would each open a gap of their own and squeeze the page. */
+    & app-sidebar { height: auto; margin-right: 4px; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
     & #main-content { border-top: 0; }
 
     /* The theme toggle is the title bar's last button. */
@@ -445,6 +447,22 @@
     }
     & .drop-local-note { border-top-color: var(--w95-shadow); box-shadow: inset 0 1px #fff; }
     & .local-scan-button { padding: 0 10px; }
+    /* Its GitHub link is the status bar's last field, at its right end. */
+    & .landing-github-link {
+      position: fixed; z-index: 2;
+      right: calc(var(--w95-gap) + var(--w95-frame));
+      bottom: calc(var(--w95-gap) + var(--w95-frame));
+      gap: 4px;
+      height: var(--w95-status-height);
+      padding: 0 6px;
+      border-left: 2px solid var(--w95-face);
+      background: var(--w95-face);
+      box-shadow: var(--w95-status);
+      color: #000; font-size: 11px;
+
+      & svg { width: 14px; height: 14px; }
+      &:hover { color: #000; }
+    }
 
     /* Pulse's tiles and panels are group boxes. */
     & :is(.pulse-tile, .pulse-panel) { border: 0; background: var(--w95-face); box-shadow: var(--w95-etched); }

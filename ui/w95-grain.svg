@@ -1,24 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0">
   <!-- The W95 theme's grain (styles/w95.css), for 2 and 3 device pixels to
-       the CSS pixel: one device pixel sampled a CSS pixel apart, then
-       copied a whole device pixel at a time across the rest of its square,
-       so each CSS pixel shows as one solid block. sRGB, so the colours
-       come through unchanged. -->
+       the CSS pixel: the page as a screen of its CSS pixels would show it.
+       Each square of device pixels is averaged — the 2x or 3x rendering
+       scaled down to one sample per CSS pixel — and that average fills the
+       square, laid down at its first device pixel and copied a whole
+       device pixel at a time across the rest. sRGB, so the colours come
+       through unchanged. -->
   <filter id="w95-grain-2" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feConvolveMatrix order="2" kernelMatrix="1 1 1 1" divisor="4" targetX="0" targetY="0" edgeMode="duplicate" result="mean"/>
     <feFlood x="0" y="0" width="0.5" height="0.5"/>
     <feComposite width="1" height="1"/>
     <feTile/>
-    <feComposite in="SourceGraphic" operator="in" result="dot"/>
+    <feComposite in="mean" operator="in" result="dot"/>
     <feOffset in="dot" dx="0.5" result="d1"/>
     <feOffset in="dot" dy="0.5" result="d2"/>
     <feOffset in="dot" dx="0.5" dy="0.5" result="d3"/>
     <feMerge><feMergeNode in="dot"/><feMergeNode in="d1"/><feMergeNode in="d2"/><feMergeNode in="d3"/></feMerge>
   </filter>
   <filter id="w95-grain-3" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feConvolveMatrix order="3" kernelMatrix="1 1 1 1 1 1 1 1 1" divisor="9" targetX="0" targetY="0" edgeMode="duplicate" result="mean"/>
     <feFlood x="0" y="0" width="0.333333" height="0.333333"/>
     <feComposite width="1" height="1"/>
     <feTile/>
-    <feComposite in="SourceGraphic" operator="in" result="dot"/>
+    <feComposite in="mean" operator="in" result="dot"/>
     <feOffset in="dot" dx="0.333333" result="d1"/>
     <feOffset in="dot" dx="0.666667" result="d2"/>
     <feOffset in="dot" dy="0.333333" result="d3"/>
