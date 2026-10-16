@@ -164,11 +164,14 @@ class RepositoryItemDialog extends AppDialog {
   // A package version new to a lockfile: its name and version, and the
   // versions of it the lockfile locked before, else that its package is new
   // to it; npm's opening in the app's npm viewer, a new version compared with
-  // the highest it was; whether only devDependencies need it; and where one
-  // not of npm's registry is from.
+  // the highest other version it was (none for a version that was installed
+  // from elsewhere alone, which a comparison of versions can't show);
+  // whether only devDependencies need it; and where one not of npm's
+  // registry is from.
   renderPackage({ name, version, source, from, dev, was }) {
     const npm = (source === 'registry' || source === 'mirror') && version
-    const href = npm ? (was && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: was[0] }))
+    const before = was?.find(other => other !== version)
+    const href = npm ? (before && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: before }))
       || managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
     const label = html`${PACKAGE_ICON}<span class="repo-item-title">${name}${version ? html`<span class="repo-item-version">@${version}</span>` : nothing}</span>
       ${was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`

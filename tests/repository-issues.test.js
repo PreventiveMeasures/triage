@@ -141,7 +141,8 @@ test('an open pull request changing a lockfile, or that may, shows the package v
   assert.doesNotMatch(templateText(view.render()), /issue-deps/u, 'nothing while they are read')
   assert.deepEqual(dependencyRequests, [[7, 1], [7, 4]], 'two at a time, in the order asked')
   reads.shift()[1]({ number: 1, cut: false, lockfiles: [
-    { paths: ['package-lock.json'], added: [{ name: 'axios', version: '1.14.1', source: 'registry', was: ['1.14.0'] }, ...added(['plain-crypto-js', 'tool'])], more: 0 },
+    { paths: ['package-lock.json'], added: [{ name: 'axios', version: '1.14.1', source: 'registry', was: ['1.14.0'] }, ...added(['plain-crypto-js', 'tool']),
+      { name: 'zod', version: '4.0.0', source: 'registry' }], more: 0 },
     { paths: ['web/pnpm-lock.yaml'], added: [...added(['tool']), { name: 'zod', version: '4.0.0', source: 'registry', was: ['3.25.0', '3.0.0'] }], more: 2 },
     { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' },
   ] })
@@ -155,7 +156,7 @@ test('an open pull request changing a lockfile, or that may, shows the package v
   await setImmediate()
   const tiles = templateText(view.render()).split('<li ').slice(1)
   assert.match(tiles[0], /<span class="issue-deps" data-tooltip=New in its lockfiles: plain-crypto-js@1\.0\.0 \(new\), tool@1\.0\.0 \(new\), axios@1\.14\.1 \(was 1\.14\.0\), zod@4\.0\.0 \(was 3\.25\.0, 3\.0\.0\) and more><svg[^]*<\/svg><span class="issue-deps-names">plain-crypto-js, tool, axios, zod<\/span>\s*<span class="issue-deps-count">2 new, 2 updated\+<\/span>/u,
-    'each version once, across its directories, new packages first, then updates; "+" where more were left unsent')
+    'each version once, across its directories, new packages first, then updates; one new to a directory but an update in another an update; "+" where more were left unsent')
   assert.deepEqual(tiles.map(tile => tile.includes('issue-deps')), [true, false, false, false, false, false, true], 'none where none is new')
   assert.match(tiles[6], /data-tooltip=New in its lockfiles: p0@1\.0\.0 \(new\), [^>]*, p19@1\.0\.0 \(new\) and 2 more>/u, 'as many named on hover as fit, the rest counted')
   assert.match(tiles[6], /<span class="issue-deps-count">22 new<\/span>/u)

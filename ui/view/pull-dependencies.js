@@ -96,12 +96,16 @@ export function pullDependencies(repoId, number) {
 // What an answer tells new: each package version once, across its
 // directories, those of packages new to them first (`fresh`, no `was`), then
 // the new versions of those they locked before; how many of each; and
-// whether it tells more than it sends (`more`).
+// whether it tells more than it sends (`more`). A version new to one
+// directory's lockfiles and an update in another's is an update, with the
+// versions it was in each, whichever directory comes first.
 export function addedVersions({ lockfiles }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
-    if (!all.has(key)) all.set(key, pkg)
+    const had = all.get(key)
+    if (!had) all.set(key, pkg)
+    else if (pkg.was) all.set(key, { ...had, was: [...new Set([...had.was ?? [], ...pkg.was])] })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)

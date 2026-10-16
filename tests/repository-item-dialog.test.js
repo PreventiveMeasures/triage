@@ -119,7 +119,8 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   assert.match(text, /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
   told({ number: 21, cut: true, lockfiles: [
     { paths: ['package-lock.json'], more: 3, added: [{ name: '@preventive/lockfile', version: '1.0.0', source: 'registry', was: ['1.0.0-alpha.7', '0.9.0'] },
-      { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }, { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' }] },
+      { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }, { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' },
+      { name: 'left-pad', version: '1.3.0', source: 'registry', was: ['1.3.0'] }, { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.3', '2.1.2'] }] },
     { paths: ['gone/package-lock.json'], added: [], more: 0 },
     { paths: ['web/pnpm-lock.yaml', 'web/yarn.lock'], error: 'lockfile-unreadable', detail: 'a yarn.lock of Yarn 2 or later, which is not read' },
   ] })
@@ -132,6 +133,9 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   assert.match(text, /<a class="repo-item-row" href=\/npm\/@preventive\/lockfile@1\.0\.0\/compare\/1\.0\.0-alpha\.7 [^>]*>[^]*@1\.0\.0<\/span><\/span>\s*<span class="repo-item-was" [^>]*>from 1\.0\.0-alpha\.7, 0\.9\.0<\/span>/u,
     'an update by the versions it was, compared with the highest of them')
   assert.ok(text.indexOf('@preventive/lockfile@1.0.0') > text.indexOf('@scope/tool@2.0.0'), 'after the packages new to its lockfiles, whatever their names')
+  assert.match(text, /href=\/npm\/left-pad@1\.3\.0 target/u, 'one installed from elsewhere alone opens its version, there being no other to compare')
+  assert.match(text, /href=\/npm\/ms@2\.1\.3\/compare\/2\.1\.2 /u, 'compared with the highest version it was other than itself')
+  assert.doesNotMatch(text, /compare\/(?:1\.3\.0|2\.1\.3)\b/u, 'never with itself')
   const update = text.slice(text.indexOf('@preventive/lockfile'))
   assert.doesNotMatch(update.slice(0, update.indexOf('</li>')), /is-new/u, 'an update is not new')
   assert.match(text, /and 3 more/u)
