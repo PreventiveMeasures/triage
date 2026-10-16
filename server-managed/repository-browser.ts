@@ -1,10 +1,10 @@
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
-import { GithubApiError, githubJson, githubRepoReadPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
+import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
 import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
 import { parseGithubCommit } from './bundle-commits.ts'
-import { dependabotAlerts } from './dependabot-alerts.ts'
+import { appDependabotAlerts } from './dependabot-access.ts'
 
 const REFS_PAGE = 100
 
@@ -20,7 +20,6 @@ export function scopedDirectory(path: string, scopes: (string | null)[]): Reposi
 }
 
 export interface RepositoryBrowserUser { githubUserId: number | null; token: string | null }
-type GithubIdentity = Awaited<ReturnType<typeof githubUserIdentity>>
 
 function credentialFailure(err: unknown): err is GithubApiError {
   return err instanceof GithubApiError && ([401, 404].includes(err.status) || err.message === 'github-status-403')
@@ -54,12 +53,11 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
         if (!cached) tokens.set(repo.installationId, token)
         return token
       }
-      // Its Dependabot alerts of npm's, open or dismissed (dependabot-alerts.ts), once it
-      // is read, asked with the signed-in user's own token alone, never the
-      // App's installation's: GitHub shows them only to those it lets see
-      // them, beyond reading it.
-      return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl)
-        .then(reader => ({ ...reader, dependabotAlerts: () => dependabotAlerts(repo.fullName, user.token, fetchImpl) }))
+      // Its Dependabot alerts, with the token of the installation GitHub tells
+      // covers it, where the user's own access lets them see them
+      // (dependabot-access.ts).
+      return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl).then(reader => ({ ...reader,
+        dependabotAlerts: () => appDependabotAlerts(config, repo, { identity: getIdentity, permission: reader.permission }, fetchImpl) }))
     },
   }
 }
@@ -86,8 +84,9 @@ export async function repositoryTreeFiles(fullName: string, token: string | null
 async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch) {
   const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
   // Public reads can use the signed-in user's quota without repository grants.
-  // Nonpublic reads still require the repository App and the effective-user gate.
-  let token = userToken ?? await installationToken()
+  // Nonpublic reads still require the repository App and the effective-user gate,
+  // whose permission level is kept (`level`).
+  let level: string | null = null, token = userToken ?? await installationToken()
   const read = (suffix: string) => githubJson(base + suffix, token, fetchImpl)
   const metadata = async () => {
     try { return await read('') }
@@ -115,9 +114,8 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     if (!token) throw new GithubApiError(404, 'no-repository')
     const appToken = await installationToken()
     if (!appToken) throw new GithubApiError(404, 'no-repository')
-    if (!(await githubRepoReadPermission(repo.fullName, appToken, await getIdentity(freshIdentity), fetchImpl))) {
-      throw new GithubApiError(404, 'no-repository')
-    }
+    level = await githubRepoPermission(repo.fullName, appToken, await getIdentity(freshIdentity), fetchImpl)
+    if (!READ_PERMISSIONS.has(level)) throw new GithubApiError(404, 'no-repository')
     token = appToken
     return data
   }
@@ -128,6 +126,9 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     // Server-only credential, selected by the same live visibility/permission
     // gate as directory browsing. Never included in an HTTP response.
     readToken: () => token,
+    // The user's permission level on it where the gate asked GitHub of it, as
+    // for a private repository; null for a public one.
+    permission: () => level,
     async refs() {
       // Suggestions are bounded; the input also accepts any branch or tag name.
       const list = async (kind: string) => {

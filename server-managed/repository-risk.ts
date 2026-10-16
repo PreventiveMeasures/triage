@@ -287,6 +287,15 @@ function dependabotLine(repo: number, read: DependabotRead, lockfiles: Repositor
     malware: npmMalwareAdvisory({ id: alert.ghsa, aliases: alert.aliases, cwe: alert.cwe, title: alert.title }) })) }
 }
 
+// A repository's alerts checked again just before they are told, as access to
+// the repository is (DependabotRead `recheck`): why not, where the user's
+// access to them is withdrawn since they were read.
+async function rechecked(read: DependabotRead): Promise<DependabotRead> {
+  if (!('alerts' in read) || !read.recheck) return read
+  try { await read.recheck() } catch (error) { return failureOf(error, 'checking access to its Dependabot alerts again') }
+  return read
+}
+
 // A repository read (repository-risk-read.ts readRepository) told: its
 // line, or why it couldn't be read, then its lockfiles', and their
 // advisories, its packages assessed meanwhile, then its Dependabot alerts.
@@ -312,7 +321,9 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
     if (advisories) scan.lines.add(advisories)
   }
   if (scan.signal.aborted) return
-  if (read.dependabot) scan.lines.add(dependabotLine(repo.repoId, read.dependabot, lockfiles))
+  const dependabot = read.dependabot && await rechecked(read.dependabot)
+  if (scan.signal.aborted) return
+  if (dependabot) scan.lines.add(dependabotLine(repo.repoId, dependabot, lockfiles))
   scan.told.set(repo.repoId, { id: repo.repoId, name: repo.fullName, paths: repo.paths ?? null,
     lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []) })
 }

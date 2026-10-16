@@ -1101,13 +1101,29 @@ lockfiles are, and told in a `dependabot` line once its lockfiles' advisories
 are: each alert with the versions of its package that the lockfile it is of
 locks and its range covers (none where it is of no lockfile read, as a
 `package.json` or bun's lockfile), and whether it is of malware, as an
-advisory is told. They are asked with the admin's own GitHub token alone,
-never the App's installation's, as GitHub shows a repository's alerts only to
-those it lets see them: the App needs **Dependabot alerts: read**, and the
-admin GitHub's leave to see them. Where they can't be had, as the App or the
-admin may not see them (`dependabot-forbidden`), the repository has them off
-(`dependabot-disabled`), or GitHub isn't reached, the line tells why, and the
-scan goes on. The page blends them into its Advisories tab: an alert of an
+advisory is told. They are read with the App's installation token
+(`dependabot-access.ts`), never the admin's own, as sign-in may be through an
+identity-only App (an OAuth App's tokens, `gho_…`, read public data alone), but
+only once the admin's own access to the repository is found to let them see
+them on GitHub: their sign-in verified as for private repositories, and their
+permission on the repository, as the installation asks GitHub of it
+(`GET /repos/:repo/collaborators/:login/permission`, its teams', organization's
+and enterprise's grants among it, the level a private repository's access check
+asked already), admin or write, maintain's among it, as
+GitHub lets those see a repository's Dependabot alerts by default. That is
+stricter than GitHub where a custom role or the security manager role grants
+them on read access: those are refused. That access is checked again, asked of
+GitHub afresh, just before the alerts are told, as access to the repository is:
+where it was withdrawn since, the line tells why rather than them. The installation is the one
+GitHub tells the App covers the repository now, its token checked to read that
+very repository, never the one its connection keeps, which may no longer. The App needs **Dependabot alerts: read**. Where they can't be had,
+the line tells why, and the scan goes on: the App not installed on the
+repository (`dependabot-not-installed`), the admin's sign-in not verified
+(`dependabot-unverified`), their access not letting them see the alerts
+(`dependabot-forbidden`, its tooltip naming their permission), the installation
+not let read them (`dependabot-app-permission`), the repository having them
+off (`dependabot-disabled`), or GitHub not reached. The page blends them into
+its Advisories tab: an alert of an
 advisory npm tells, by its GHSA (its id or one of its aliases) and package, is
 kept with it, where it is used linked to the alert rather than the lockfile,
 and where npm didn't tell it, as a lockfile not read, added among where it is

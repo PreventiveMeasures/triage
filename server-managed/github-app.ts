@@ -304,6 +304,9 @@ async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>
   return results
 }
 
+// A GitHub account, as GitHub's /user tells it.
+export interface GithubIdentity { id: number; login: string }
+
 // The login App and repository App are separate: /user/repos with the login
 // token is not evidence of private-repo access. Ask the repository App for the
 // user's effective GitHub permission (including teams/org/enterprise grants).
@@ -312,21 +315,30 @@ async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>
 // https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user
 // Resolve the current login from /user so renamed handles cannot check someone
 // else's access. All repo paths come from GitHub's installation catalogue.
-export async function githubUserIdentity(userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<{ id: number; login: string }> {
+export async function githubUserIdentity(userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubIdentity> {
   const identity = await githubJson(`${GITHUB_API}/user`, userToken, fetchImpl) as { id?: unknown; login?: unknown }
   if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
   return { id: identity.id, login: identity.login }
 }
 
-export async function githubRepoReadPermission(fullName: string, token: string, identity: { id: number; login: string }, fetchImpl: typeof fetch = globalThis.fetch): Promise<boolean> {
+// The permission's level (`admin`, `write`, `read`), as GitHub tells it of
+// `identity` alone; `none` where it tells of none, or of another account.
+export async function githubRepoPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<string> {
   const path = fullName.split('/').map(encodeURIComponent).join('/')
   try {
     const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
-    return body?.user?.id === identity.id && ['read', 'write', 'admin'].includes(String(body?.permission))
+    return body?.user?.id === identity.id && typeof body.permission === 'string' ? body.permission : 'none'
   } catch (err) {
-    if (err instanceof GithubApiError && err.status === 404) return false
+    if (err instanceof GithubApiError && err.status === 404) return 'none'
     throw err // Never broaden access when GitHub cannot verify permission.
   }
+}
+
+// The levels that read a repository.
+export const READ_PERMISSIONS: ReadonlySet<string> = new Set(['read', 'write', 'admin'])
+
+export async function githubRepoReadPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<boolean> {
+  return READ_PERMISSIONS.has(await githubRepoPermission(fullName, token, identity, fetchImpl))
 }
 
 export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {

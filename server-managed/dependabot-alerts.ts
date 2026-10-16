@@ -3,11 +3,11 @@
 // a dismissed one with who dismissed it, when and why: GitHub's
 // `GET /repos/:repo/dependabot/alerts`, a page of 100 at a time, each found by
 // the cursor the one before's Link header names, MAX_PAGES at most. Asked with
-// the signed-in user's own token (repository-browser.ts), never the App's
-// installation's, as GitHub shows a repository's alerts only to those it lets
-// see them: where the App hasn't Dependabot alerts: read, the user may not see
-// them, or the repository has them off, that is thrown as its code, never
-// GitHub's text, for the scan to tell and go on.
+// the App's installation token, once the admin's own access to the repository
+// is found to let them see the alerts on GitHub (dependabot-access.ts): where
+// the installation hasn't Dependabot alerts: read, or the repository has them
+// off, that is thrown as its code, never GitHub's text, for the scan to tell
+// and go on.
 import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
@@ -112,8 +112,9 @@ function nextPage(link: string | null): [string, string] | null {
 
 // A page asked of GitHub: its alerts and the headers they came with. A 403
 // that isn't a rate limit is told as the alerts being off
-// (`dependabot-disabled`) or not to be seen (`dependabot-forbidden`), as a
-// 404 is, the repository found just before; the rest as githubJson tells them.
+// (`dependabot-disabled`) or not to be read by the App's installation
+// (`dependabot-app-permission`), as a 404 is, the repository found just
+// before; the rest as githubJson tells them.
 async function askPage(url: string, token: string, fetchImpl: typeof fetch): Promise<{ alerts: unknown[]; link: string | null }> {
   const started = Date.now()
   let res: Response
@@ -127,9 +128,9 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
     const message = (await res.clone().json().catch(() => null) as { message?: unknown } | null)?.message
     const limited = res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after')
       || (typeof message === 'string' && /rate limit|abuse detection/iu.test(message))
-    if (!limited) throw new GithubApiError(403, typeof message === 'string' && /disabled/iu.test(message) ? 'dependabot-disabled' : 'dependabot-forbidden')
+    if (!limited) throw new GithubApiError(403, typeof message === 'string' && /disabled/iu.test(message) ? 'dependabot-disabled' : 'dependabot-app-permission')
   }
-  if (res.status === 404) throw new GithubApiError(403, 'dependabot-forbidden')
+  if (res.status === 404) throw new GithubApiError(403, 'dependabot-app-permission')
   if (!res.ok) await throwGithubResponseError(res)
   let body
   try { body = await res.json() } catch (error) {
@@ -160,12 +161,11 @@ async function listAlerts(fullName: string, states: readonly string[], token: st
 }
 
 // `fullName`'s Dependabot alerts of npm's ecosystem, open or dismissed, as
-// `token` may see them, in GitHub's order; none asked without a token. Asked
-// at once, but where they are more than a listing holds, as newer dismissed
-// ones would leave older open ones out, the open ones are listed again on
-// their own, and the dismissed ones had kept after them.
-export async function dependabotAlerts(fullName: string, token: string | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
-  if (!token) throw new GithubApiError(403, 'dependabot-forbidden')
+// `token`, the App's installation's (dependabot-access.ts), may see them, in
+// GitHub's order. Asked at once, but where they are more than a listing holds,
+// as newer dismissed ones would leave older open ones out, the open ones are
+// listed again on their own, and the dismissed ones had kept after them.
+export async function dependabotAlerts(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
   const all = await listAlerts(fullName, STATES, token, fetchImpl)
   if (all.whole) return all.alerts
   const open = await listAlerts(fullName, ['open'], token, fetchImpl)
