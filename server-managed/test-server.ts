@@ -397,6 +397,7 @@ const HISTORY_MESSAGES: Record<string, string> = {
   cv3: 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
   cv2: '🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Linus Torvalds <2+torvalds@users.noreply.github.com>',
   bp2: 'Co-authored-by: Cursor Agent <cursoragent@cursor.com>',
+  m3: 'Co-authored-by: Copilot <198982749+Copilot@users.noreply.github.com>',
   m9: 'https://chatgpt.com/codex/tasks/task_e_fixture123',
   t2: '🤖 Generated with [Neo](https://neo.example)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nCo-authored-by: Ken Thompson <ken@example.com>',
 }
@@ -733,8 +734,8 @@ function historyFixture(url: URL, res: ServerResponse): void {
 // growing from its oldest commit, each commit adding files, more of them
 // early on, modifying those there, now and then removing or renaming one,
 // as a few random draws seeded by its id pick them; a pull request's own
-// commits modify a file or two. Within the directory asked of, as the
-// server answers.
+// commits modify a file or two; and the files each holds after it. Within
+// the directory asked of, as the server answers.
 const REPLAY_TREE = ['src/index.ts', 'src/app.tsx', 'src/view/render.ts', 'src/view/tree.ts', 'src/view/canvas.ts', 'src/view/styles.css',
   'src/view/icons.svg', 'src/server/http.ts', 'src/server/db.ts', 'src/server/auth.ts', 'src/server/routes/history.ts', 'src/server/routes/pulse.ts',
   'src/server/routes/issues.ts', 'src/utils/format.js', 'src/utils/types.d.ts', 'src/utils/time.js', 'src/workers/scan.js', 'src/workers/build.js',
@@ -745,6 +746,7 @@ const REPLAY_TREE = ['src/index.ts', 'src/app.tsx', 'src/view/render.ts', 'src/v
   ...['scan', 'report', 'graph', 'compare', 'npm', 'risk', 'treemap', 'search'].flatMap(part => [`src/${part}/index.ts`, `src/${part}/model.ts`, `src/${part}/view.ts`,
     `src/${part}/${part}.css`, `src/${part}/worker.js`, `src/${part}/fixtures/${part}.json`, `test/${part}.test.ts`, `docs/${part}.md`])]
 let replayChanges: Map<string, [string, string, string?][]> | null = null
+const replayTrees = new Map<string, string[]>()
 function replayChangesOf(asked: string) {
   if (!replayChanges) {
     replayChanges = new Map()
@@ -770,9 +772,19 @@ function replayChangesOf(asked: string) {
         if (files.get(path)![1] === 'R') present.push(files.get(path)![0])
       }
       replayChanges.set(sha, [...files.values()])
+      replayTrees.set(sha, [...present])
     }
   }
   return replayChanges.get(asked) ?? [[REPLAY_TREE[createHash('sha1').update(asked).digest()[0]! % 12]!, 'M']]
+}
+
+function treeFixture(url: URL, res: ServerResponse): void {
+  const commit = url.searchParams.get('commit') ?? ''
+  const path = url.searchParams.get('path') ?? ''
+  if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  replayChangesOf(commit)
+  const files = replayTrees.get(commit)?.filter(file => path === '' || file.startsWith(`${path}/`)) ?? null
+  setTimeout(() => sendJson(res, 200, { commit, path, files, cut: false }), 400)
 }
 
 function changesFixture(url: URL, res: ServerResponse): void {
@@ -811,6 +823,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/history')) { historyFixture(url, res); return }
   if (url.pathname.endsWith('/changes')) { changesFixture(url, res); return }
+  if (url.pathname.endsWith('/tree')) { treeFixture(url, res); return }
   if (url.pathname.endsWith('/issues')) { issuesFixture(url, res); return }
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
@@ -1046,7 +1059,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|issues|agents|item|pulse)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|tree|issues|agents|item|pulse)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

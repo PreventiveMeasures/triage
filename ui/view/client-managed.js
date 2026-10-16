@@ -89,6 +89,10 @@ export async function fetchRepositoryChanges(repoId, path, shas, options) {
   return (await loadManagedBundle()).fetchRepositoryChanges(repoId, path, shas, options)
 }
 
+export async function fetchRepositoryTree(repoId, path, commit, options) {
+  return (await loadManagedBundle()).fetchRepositoryTree(repoId, path, commit, options)
+}
+
 export function fetchRepositoryAgents(repoId, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
 }

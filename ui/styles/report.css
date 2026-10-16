@@ -4109,19 +4109,20 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-replay {
   & .is-kind-7 { color: var(--lane-7); }
 }
 /* The day of the commit last played, large, how many of them under it; the
-   commit itself along the foot, its id, subject and who made it. */
+   commit itself along the foot, its id, subject and who made it, as Commits
+   shows them (their avatars and marks, all of them named on hover). */
 .replay-day {
   position: absolute; top: .6rem; left: .75rem; display: flex; flex-direction: column; gap: .1rem; pointer-events: none;
   & time { font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   & span { color: var(--muted); font-variant-numeric: tabular-nums; }
 }
 .replay-commit {
-  position: absolute; right: .75rem; bottom: .5rem; left: .75rem; display: flex; align-items: baseline; gap: .55rem; margin: 0;
+  position: absolute; right: .75rem; bottom: .5rem; left: .75rem; display: flex; align-items: center; gap: .55rem; margin: 0;
   white-space: nowrap; pointer-events: none;
   & code { flex: none; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; }
 }
 .replay-commit-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.replay-commit-author { flex: none; max-width: 40%; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.replay-commit-author { flex: none; max-width: 40%; overflow: hidden; color: var(--muted); text-overflow: ellipsis; pointer-events: auto; }
 /* The kinds of files, a dot each in its color, then the beams', a line
    each; at the top right, out of the day's way. */
 .replay-key {

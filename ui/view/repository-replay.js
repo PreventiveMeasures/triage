@@ -3,11 +3,14 @@
 // directory's) played as Gource plays a repository's history
 // (replay-model.js), on a canvas: its directories a tree, its files dots
 // about them in their kinds' colors, those who made each commit flying to
-// the files it changes, a beam to each, green where added, yellow modified
-// and red removed. The commits are read as Commits reads them
-// (repository-history.js), what each changes of the server
-// (GET /api/admin/repositories/changes), the oldest first, ahead of where
-// it plays, as a video buffers, and it waits where they aren't read yet.
+// the files it changes, a beam to each, green where added, amber modified
+// and red removed. It starts from the files as they were before the first
+// commit it plays (GET /api/admin/repositories/tree, its parent's), from
+// none where that commit is the repository's first. The commits are read
+// as Commits reads them (repository-history.js), what each changes of the
+// server (GET /api/admin/repositories/changes), the oldest first, ahead of
+// where it plays, as a video buffers, and it waits where they aren't read
+// yet.
 // Over it, the day played, the commit last played, the kinds of files by
 // their colors, and what lies under the pointer; under it, a play button,
 // the commits to seek through, and how fast it plays. It starts playing as
@@ -15,14 +18,15 @@
 // each replay is, is kept for the session that read it.
 import { LitElement, html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
-import { fetchRepositoryChanges } from './client-managed.js'
+import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
 import { activityPicker } from './repository-activity.js'
 import { rereadHistory, revisionHistory, unwatchHistories, watchHistories } from './repository-history.js'
-import { appUser, commitAgent } from './github-users.js'
+import { appUser, commitAgent, commitAuthors } from './github-users.js'
+import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
 import { GITHUB_AGENTS } from '../../common/managed/github-agents.ts'
 import { styleMap } from './style-map.js'
-import { BEAM_S, FADE_S, FILE_DOT, GLOW_S, IDLE_S, MAX_GAP, REMOVE_S, REPLAY_COUNTS, advanceScene, assignColors, clusterRadius, createScene, extensionOf,
-  fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene } from './replay-model.js'
+import { BEAM_S, FADE_S, FILE_DOT, GLOW_S, IDLE_S, MAX_GAP, REMOVE_S, REPLAY_COUNTS, SPACE, advanceScene, assignColors, clusterRadius, createScene,
+  extensionOf, fileChanges, layoutScene, moveScene, playCommit, playTimes, playedCommits, sceneBounds, settleCommit, snapScene } from './replay-model.js'
 
 // How fast it plays, as the reader picks; the commits read of the server
 // first, so that it starts soon, and then at a time, as many as it answers.
@@ -34,18 +38,20 @@ const READ = 50
 const KINDS = 8
 // How near the canvas's edges the tree comes (clear of the day over it and
 // the commit under it), how far it zooms in at most, how many files' names
-// show at once at most, those who made a commit drawn how wide, and how long
-// after the last commit it stops.
+// show at once at most, those who made a commit drawn how wide and how far
+// apart, and how long after the last commit it stops.
 const MARGIN = { side: 40, top: 64, bottom: 40 }
 const MAX_ZOOM = 3
 const NAMES = 10
 const FACE = 11
+const SPREAD = 72
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
 const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 
 const replays = new Map()
 const changesRead = new Map()
+const treesRead = new Map()
 const shownElements = new Set()
 const images = new Map()
 let keptFor = null
@@ -58,6 +64,7 @@ function sessionReplays() {
   if (session !== keptFor) {
     replays.clear()
     changesRead.clear()
+    treesRead.clear()
     keptFor = session
   }
   return replays
@@ -77,11 +84,20 @@ function replayOf(repository, count) {
   const key = `${repoId}\0${commit}\0${path}\0${count}`
   const held = sessionReplays().get(key)
   if (held) return held
-  const replay = { key, repoId, path, count, commits: null, times: [], reading: false, error: null, counted: 0, counts: new Map(), colors: new Map(),
-    people: null, scene: createScene(), clock: 0, next: 0, playing: false, waiting: false, ended: false, started: false }
+  const replay = { key, repoId, path, count, commits: null, times: [], reading: false, startReading: false, error: null, counted: '', counts: new Map(),
+    colors: new Map(), people: null, scene: createScene(), clock: 0, next: 0, playing: false, waiting: false, ended: false, started: false }
   replays.set(key, replay)
   return replay
 }
+
+// The commit a replay starts from: its first commit's parent, the files it
+// holds (their paths from the directory shown) drawn at first, as read
+// (startOf); none for the repository's first commit, which starts from no
+// files; undefined till they are read.
+const NO_FILES = { files: [], cut: false }
+const startCommit = replay => replay.commits[0]?.parents[0] ?? null
+const startKey = replay => `${replay.repoId}\0${replay.path}\0${startCommit(replay)}`
+const startOf = replay => startCommit(replay) ? treesRead.get(startKey(replay)) : NO_FILES
 
 // What a commit of a replay changes, its files' paths from the directory
 // shown, as read; undefined where it isn't yet.
@@ -105,18 +121,52 @@ function fileOf(file, path) {
   return status === 'R' ? [to, status, from] : [to, status]
 }
 
-// The kinds of files a replay's commits hold, of those what they change is
-// read of, counted again as more are, and the kinds counted most colored
-// (replay-model.js assignColors).
+// The kinds of files a replay holds, of the files it starts from and those
+// its commits add and modify, as far as they are read, counted again as more
+// are, and the kinds counted most colored (replay-model.js assignColors).
 function countKinds(replay) {
+  const start = startOf(replay)
   const read = replay.commits.filter(commit => changesOf(replay, commit.sha))
-  if (read.length === replay.counted) return
-  replay.counted = read.length
+  const counted = `${start ? start.files.length : '-'}\0${read.length}`
+  if (counted === replay.counted) return
+  replay.counted = counted
   replay.counts = new Map()
-  for (const commit of read) {
-    for (const [path, kind] of fileChanges(changesOf(replay, commit.sha))) if (kind !== 'D') replay.counts.set(extensionOf(path), (replay.counts.get(extensionOf(path)) ?? 0) + 1)
-  }
+  const count = path => replay.counts.set(extensionOf(path), (replay.counts.get(extensionOf(path)) ?? 0) + 1)
+  for (const path of start?.files ?? []) count(path)
+  for (const commit of read) for (const [path, kind] of fileChanges(changesOf(replay, commit.sha))) if (kind !== 'D') count(path)
   assignColors(replay.colors, replay.counts, KINDS)
+}
+
+// The files a replay starts from, read once, as many as the server answers
+// (repository-changes.ts MAX_TREE_FILES), `cut` where there were more; a
+// commit the server has none of, none.
+function readStart(replay) {
+  if (replay.startReading || replay.error || startOf(replay)) return
+  replay.startReading = true
+  const key = startKey(replay)
+  fetchRepositoryTree(replay.repoId, replay.path, startCommit(replay)).then(answer => {
+    if (sessionReplays().get(replay.key) !== replay) return null
+    const files = Array.isArray(answer?.files) ? answer.files.map(file => fileOf([file, 'A'], replay.path)?.[0]).filter(Boolean) : []
+    treesRead.set(key, { files, cut: answer?.cut === true })
+    return null
+  }, err => {
+    if (err?.name !== 'AbortError') replay.error = err?.message || 'The files the commits start from could not be read.'
+    return null
+  }).finally(() => {
+    replay.startReading = false
+    repaint()
+  })
+}
+
+// A replay's scene at its `at`th commit: the files it starts from, and what
+// the commits before it change, made at once, everything where it sits.
+function sceneAt(replay, at) {
+  const scene = createScene()
+  scene.start = startOf(replay)
+  settleCommit(scene, scene.start.files.map(path => [path, 'A']))
+  for (const commit of replay.commits.slice(0, at)) settleCommit(scene, changesOf(replay, commit.sha))
+  snapScene(scene)
+  return scene
 }
 
 // The next of a replay's commits what each changes is read of: those from
@@ -149,9 +199,10 @@ function readChanges(replay) {
 // Who made a commit, as the app tells them apart: its author, and those who
 // made it with them, each once; a user of the app by their account
 // whichever of theirs, with their avatar; an agent whichever of its accounts
-// or the name it gives, with its avatar where the app has one; anyone else
-// by their login, else name. Each by the name the app shows them by, and the
-// letter it draws them by where it has no avatar.
+// or the name it gives, by its mark (`mark`, as Commits draws it), else its
+// avatar where the app has one; anyone else by their login, else name. Each
+// by the name the app shows them by, and the letter it draws them by where
+// it has no mark or avatar.
 export function makersOf(commit) {
   const makers = new Map()
   for (const { login = null, name = null, agent = null, avatar = null } of [{ login: commit.authorLogin, name: commit.authorName }, ...commit.coauthors ?? []]) {
@@ -161,12 +212,23 @@ export function makersOf(commit) {
     const key = drawn ? `agent:${drawn}` : user ? `user:${user.id}` : typeof login === 'string' ? `login:${login.toLowerCase()}` : `name:${name.toLowerCase()}`
     if (makers.has(key)) continue
     const label = drawn ? GITHUB_AGENTS[drawn].name : user ? user.name ?? user.login : name ?? login
-    const image = drawn ? GITHUB_AGENTS[drawn].avatar ? `/api/avatar/${GITHUB_AGENTS[drawn].avatar}` : null
+    const mark = drawn ? GITHUB_AGENTS[drawn].mark ?? null : null
+    const image = drawn ? !mark && GITHUB_AGENTS[drawn].avatar ? `/api/avatar/${GITHUB_AGENTS[drawn].avatar}` : null
       : user ? `/api/avatar/${encodeURIComponent(user.id)}` : typeof avatar === 'string' && AGENT_AVATAR.test(avatar) ? `/api/avatar/${avatar}` : null
-    makers.set(key, { key, label, letter: label.trim()[0]?.toUpperCase() ?? '?', image })
+    makers.set(key, { key, label, letter: label.trim()[0]?.toUpperCase() ?? '?', agent: drawn, mark, image })
   }
   return [...makers.values()]
 }
+
+// The agents' marks, as Commits draws them (provider-icons.js): each its
+// path and the square of it drawn (its left, top and side), made once drawn.
+const MARKS = { anthropic: [CLAUDE_MARK_PATH, 4, 5, 8], openai: [OPENAI_MARK_PATH, 4, 5, 8], 'github-copilot': [COPILOT_MARK_PATH, 0, 0, 24] }
+// The agents' discs as their apps' icons are, whatever the theme: Claude's
+// mark white on its orange, OpenAI's black on white, Copilot's white on
+// GitHub's dark.
+const BADGES = { claude: ['#d97757', '#fff'], codex: ['#fff', '#000'], copilot: ['#0d1117', '#fff'] }
+const markPaths = new Map()
+const markPath = mark => markPaths.get(mark) ?? markPaths.set(mark, new Path2D(MARKS[mark][0])).get(mark)
 
 // An avatar to draw, once it has loaded; null till it has, or where it
 // failed to.
@@ -203,7 +265,7 @@ class RepositoryReplay extends LitElement {
     this._last = 0
     this._camera = null
     this._colors = null
-    this._colorsRead = 0
+    this._themes = null
     this._restless = 0
     this._pointer = null
     this._hovered = null
@@ -214,6 +276,9 @@ class RepositoryReplay extends LitElement {
     super.connectedCallback()
     shownElements.add(this)
     watchHistories(this)
+    // A theme picked, drawn in its colors at once, as the other graphs are.
+    this._themes = new AbortController()
+    globalThis.addEventListener('deepview-theme-changed', () => this.themeChanged(), { signal: this._themes.signal })
     this._last = performance.now()
     this._frame = requestAnimationFrame(time => this.frame(time))
   }
@@ -222,15 +287,17 @@ class RepositoryReplay extends LitElement {
     super.disconnectedCallback()
     shownElements.delete(this)
     unwatchHistories(this)
+    this._themes?.abort()
     cancelAnimationFrame(this._frame)
     this._frame = null
     // Paused where it was, to play on from there when shown again.
     if (this.replay && ![...shownElements].some(element => element.replay === this.replay)) this.replay.playing = false
   }
 
-  // Its commits, once its history is read as far as they go, and what they
-  // change, read ahead of where it plays, while it shows; playing as soon as
-  // what its first commit changes is read, the first time it shows.
+  // Its commits, once its history is read as far as they go, the files they
+  // start from, drawn once read, and what they change, read ahead of where it
+  // plays, while it shows; playing as soon as what its first commit changes
+  // is read too, the first time it shows.
   updated() {
     const replay = this.replay
     if (!replay) return
@@ -246,8 +313,13 @@ class RepositoryReplay extends LitElement {
       replay.commits = playedCommits(entry.commits, replay.count)
       replay.times = playTimes(replay.commits)
     }
-    countKinds(replay)
+    readStart(replay)
     readChanges(replay)
+    const start = startOf(replay)
+    if (!start) return
+    countKinds(replay)
+    // The files it starts from drawn as soon as they are read.
+    if (replay.scene.start !== start) this.seek(replay.next)
     if (!replay.started && bufferedOf(replay) > 0) {
       replay.started = true
       replay.playing = !reducedMotion()
@@ -281,18 +353,23 @@ class RepositoryReplay extends LitElement {
   // scene of those before it made at once, as they stand after them.
   seek(to) {
     const replay = this.replay
-    if (!replay?.commits) return
+    if (!replay?.commits || !startOf(replay)) return
     const at = Math.max(0, Math.min(to, bufferedOf(replay)))
-    const scene = createScene()
-    for (const commit of replay.commits.slice(0, at)) settleCommit(scene, changesOf(replay, commit.sha))
-    snapScene(scene)
-    Object.assign(replay, { scene, next: at, clock: at > 0 ? replay.times[at - 1] : -1e-3, ended: false, waiting: false })
+    Object.assign(replay, { scene: sceneAt(replay, at), next: at, clock: at > 0 ? replay.times[at - 1] : -1e-3, ended: false, waiting: false })
     this._camera = null
     this.requestUpdate()
   }
 
   restless() {
     this._restless = performance.now() + 3000
+  }
+
+  // Another theme picked: its colors read, and the scene drawn in them now,
+  // not on the next frame, however still it is.
+  themeChanged() {
+    this.readColors()
+    this.restless()
+    if (this.replay) this.draw(this.replay, 0)
   }
 
   // A frame: the replay played on as far as its clock goes, the scene moved
@@ -309,11 +386,13 @@ class RepositoryReplay extends LitElement {
       this._shownNext = replay.next
       this.requestUpdate()
     }
-    if (time - this._colorsRead > 500) this.readColors()
+    if (!this._colors) this.readColors()
     if (replay.playing || time < this._restless) {
       advanceScene(replay.scene, replay.clock)
       if (replay.scene.layout) layoutScene(replay.scene)
-      moveScene(replay.scene, dt)
+      // Those who made commits kept apart on the canvas as far as their names
+      // need, however far it is zoomed out.
+      moveScene(replay.scene, dt, Math.max(SPACE, SPREAD / (this._camera?.zoom ?? 1)))
       this.draw(replay, dt)
     }
   }
@@ -346,16 +425,14 @@ class RepositoryReplay extends LitElement {
     if (waiting !== replay.waiting || replay.ended) this.requestUpdate()
   }
 
-  // The colors it draws in, as the page's theme gives them (its swatches'),
-  // read again a while apart; told apart, drawn again.
+  // The colors it draws in, as the page's theme gives them (its swatches'):
+  // read once it shows, and again as another theme is picked.
   readColors() {
-    this._colorsRead = performance.now()
     const swatches = this.querySelector('.replay-swatches')
     if (!swatches) return
     const color = name => getComputedStyle(swatches.querySelector(`.is-${name}`)).color
     const colors = { background: color('background'), text: color('text'), muted: color('muted'), surface: color('surface'), added: color('added'), modified: color('modified'),
       removed: color('removed'), kinds: Array.from({ length: KINDS }, (_, kind) => color(`kind-${kind}`)), font: getComputedStyle(this).fontFamily }
-    if (JSON.stringify(colors) !== JSON.stringify(this._colors)) this.restless()
     this._colors = colors
   }
 
@@ -464,19 +541,33 @@ class RepositoryReplay extends LitElement {
       }
     }
 
-    // Those who made commits, each on a disc, its avatar or letter, its
-    // name under it; fading once idle.
+    // Those who made commits, each on a disc, solid as an avatar is: an
+    // agent with a mark as its app's icon is (BADGES), else their avatar or
+    // letter; their name under it; fading once idle.
     context.textAlign = 'center'
     for (const user of scene.users.values()) {
       if (Number.isNaN(user.x)) continue
       const [x, y] = [sx(user.x), sy(user.y)]
       context.globalAlpha = Math.max(0, Math.min(1, 1 - (clock - user.active - IDLE_S) / FADE_S))
-      context.fillStyle = colors.surface
+      const [face, ink] = Object.hasOwn(BADGES, user.agent) ? BADGES[user.agent] : [colors.surface, colors.text]
+      context.fillStyle = face
       context.beginPath()
       context.arc(x, y, FACE, 0, 2 * Math.PI)
       context.fill()
       const image = user.image ? imageOf(user.image) : null
-      if (image) {
+      if (user.mark && Object.hasOwn(MARKS, user.mark)) {
+        const [, left, top, side] = MARKS[user.mark]
+        const size = FACE * 2 * 0.62
+        context.save()
+        context.translate(x - size / 2, y - size / 2)
+        context.scale(size / side, size / side)
+        context.translate(-left, -top)
+        context.fillStyle = ink
+        context.fill(markPath(user.mark))
+        context.restore()
+        context.beginPath()
+        context.arc(x, y, FACE, 0, 2 * Math.PI)
+      } else if (image) {
         context.save()
         context.clip()
         context.drawImage(image, x - FACE, y - FACE, FACE * 2, FACE * 2)
@@ -567,8 +658,11 @@ class RepositoryReplay extends LitElement {
     const buffered = bufferedOf(replay)
     const last = replay.next > 0 ? replay.commits[replay.next - 1] : null
     const people = replay.commits ? replay.people ??= new Set(replay.commits.flatMap(commit => makersOf(commit).map(maker => maker.key))).size : 0
+    // Where the files it starts from are more than are read, how many are.
+    const start = replay.commits ? startOf(replay) : null
     const summary = replay.commits && total > 0
-      ? `${number(total)} commit${total === 1 ? '' : 's'} by ${number(people)}, ${day(replay.commits[0].committedAt)} – ${day(replay.commits.at(-1).committedAt)}` : ''
+      ? `${number(total)} commit${total === 1 ? '' : 's'} by ${number(people)}, ${day(replay.commits[0].committedAt)} – ${day(replay.commits.at(-1).committedAt)}${
+        start?.cut ? `, from ${number(start.files.length)} of its files` : ''}` : ''
     return html`<div class="history-bar">
         ${activityPicker('replay')}
         <div class="history-modes" role="group" aria-label="Commits played">
@@ -583,7 +677,7 @@ class RepositoryReplay extends LitElement {
         ${last ? html`<div class="replay-day"><time datetime=${new Date(last.committedAt).toISOString()}>${day(last.committedAt)}</time>
           <span>${number(replay.next)} of ${number(total)}</span></div>
           <p class="replay-commit"><code>${last.sha.slice(0, 7)}</code><span class="replay-commit-subject">${last.subject || '(no message)'}</span>
-            <span class="replay-commit-author">${makersOf(last).map(maker => maker.label).join(', ')}</span></p>` : nothing}
+            <span class="replay-commit-author">${commitAuthors(last.authorLogin, last.authorName, last.coauthors)}</span></p>` : nothing}
         ${this.renderKey(replay)}
         ${this.renderStatus(replay, history, buffered)}
         ${this._hovered ? html`<div class="replay-tip" style=${styleMap({ left: `${this._hovered.x}px`, top: `${this._hovered.y}px` })}>${this._hovered.text}</div>` : nothing}
@@ -625,6 +719,7 @@ class RepositoryReplay extends LitElement {
       return html`<div class="replay-status" role="status">${read > 0 ? `Reading commits… ${number(read)} so far` : 'Reading the history…'}</div>`
     }
     if (replay.commits.length === 0) return html`<div class="replay-status">No commits to play.</div>`
+    if (!startOf(replay)) return html`<div class="replay-status" role="status">Reading the files as they were before ${day(replay.commits[0].committedAt)}…</div>`
     if (buffered === 0) return html`<div class="replay-status" role="status">Reading what the commits changed…</div>`
     if (replay.waiting) return html`<div class="replay-status is-waiting" role="status">Reading what the next commits changed…</div>`
     return nothing
@@ -634,14 +729,15 @@ class RepositoryReplay extends LitElement {
   // as far as what they change is read, which shows behind them; how fast.
   renderControls(replay, total, buffered) {
     const name = replay.ended ? 'Play again' : replay.playing ? 'Pause' : 'Play'
+    const ready = buffered > 0 && Boolean(replay.commits && startOf(replay))
     const share = count => `${total > 0 ? count / total * 100 : 0}%`
     return html`<div class="replay-controls">
-      <button type="button" class="replay-play" aria-label=${name} ?disabled=${buffered === 0} @click=${() => this.toggle()}>
+      <button type="button" class="replay-play" aria-label=${name} ?disabled=${!ready} @click=${() => this.toggle()}>
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
           aria-hidden="true">${replay.ended ? AGAIN_ICON : replay.playing ? PAUSE_ICON : PLAY_ICON}</svg>
       </button>
       <div class="replay-track" style=${styleMap({ '--buffered': share(buffered), '--played': share(replay.next) })}>
-        <input type="range" min="0" max=${total} step="1" .value=${String(replay.next)} aria-label="Commits played" ?disabled=${buffered === 0}
+        <input type="range" min="0" max=${total} step="1" .value=${String(replay.next)} aria-label="Commits played" ?disabled=${!ready}
           aria-valuetext=${`${number(replay.next)} of ${number(total)} commits`} @input=${event => this.seek(Number(event.target.value))}>
       </div>
       <div class="history-modes" role="group" aria-label="Speed">

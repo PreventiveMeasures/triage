@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { CHANGES_ASKED, MAX_FILES, changesAsked, changesWithin, commitChanges } from '../server-managed/repository-changes.ts'
+import { CHANGES_ASKED, MAX_FILES, MAX_TREE_FILES, changesAsked, changesWithin, commitChanges, repositoryTree } from '../server-managed/repository-changes.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -20,13 +20,22 @@ const FILES = {
     { filename: 'src/allowed/copy.js', status: 'copied', previous_filename: 'src/allowed/kept.ts' }, { filename: 'src/allowed/mode.sh', status: 'unchanged' }],
 }
 
+// A commit's tree as GitHub lists it with every tree under it: its
+// directories, a submodule, and its files.
+const TREE = [{ path: 'README.md', type: 'blob' }, { path: 'src', type: 'tree' }, { path: 'src/allowed', type: 'tree' }, { path: 'src/allowed/a.js', type: 'blob' },
+  { path: 'src/allowed/lib/b.ts', type: 'blob' }, { path: 'src/other/secret.ts', type: 'blob' }, { path: 'vendor/sub', type: 'commit' }]
+
 // GitHub, as the reader and the changes read it: `asked` the commits whose
-// files were read of it.
+// files were read of it, and the trees.
 function github(t) {
   const asked = []
   t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+    const tree = /^\/repos\/org\/repo\/git\/trees\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
+    if (tree) asked.push(`tree:${tree}:${url.searchParams.get('recursive')}`)
+    if (tree === a) return Promise.resolve(Response.json({ sha: 't', tree: TREE, truncated: false }))
+    if (tree) return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     const sha = /^\/repos\/org\/repo\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
     if (sha) asked.push(sha)
     if (sha && FILES[sha]) return Promise.resolve(Response.json({ sha, files: FILES[sha] }))
@@ -46,9 +55,9 @@ async function fixture(t, { role = 'admin' } = {}) {
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async query => {
+  return async (query, route = 'changes') => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
-    await handler({ method: 'GET', url: `/api/admin/repositories/changes?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
+    await handler({ method: 'GET', url: `/api/admin/repositories/${route}?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
 }
@@ -106,4 +115,32 @@ test('a request naming no commits, or what isn\'t one, is refused before GitHub 
     assert.deepEqual([status, body], [400, { error: 'bad-request' }], String(shas))
   }
   assert.deepEqual(asked, [])
+})
+
+test('the files a commit holds, which Replay starts from: its blobs, as GitHub lists its whole tree at once, kept by the commit, within the reader\'s directory', async t => {
+  const request = await fixture(t)
+  const asked = github(t)
+  const { status, body } = await request({ repoId: '1', path: '', commit: a }, 'tree')
+  assert.equal(status, 200)
+  assert.deepEqual(body, { commit: a, path: '', files: ['README.md', 'src/allowed/a.js', 'src/allowed/lib/b.ts', 'src/other/secret.ts'], cut: false },
+    'no directories nor submodules')
+  assert.deepEqual((await request({ repoId: '1', path: 'src/allowed', commit: a }, 'tree')).body.files, ['src/allowed/a.js', 'src/allowed/lib/b.ts'])
+  assert.deepEqual(asked, [`tree:${a}:1`], 'read of GitHub once')
+  assert.deepEqual((await request({ repoId: '1', path: '', commit: b }, 'tree')).body, { commit: b, path: '', files: null, cut: false }, 'a commit GitHub has none of')
+  for (const commit of ['', 'main', a.slice(1)]) assert.deepEqual((await request({ repoId: '1', path: '', commit }, 'tree')).status, 400, commit)
+  const manager = await fixture(t, { role: 'manage' })
+  assert.deepEqual((await manager({ repoId: '1', path: 'src/allowed', commit: a }, 'tree')).body.files, ['src/allowed/a.js', 'src/allowed/lib/b.ts'])
+  assert.deepEqual((await manager({ repoId: '1', path: '', commit: a }, 'tree')).body, { error: 'no-directory' })
+})
+
+test('a tree of more files than are answered, or one GitHub cuts short, is told cut', async t => {
+  const kept = new Map()
+  const store = { read: sha => Promise.resolve(kept.get(sha) ?? null), write: (sha, tree) => { kept.set(sha, tree); return Promise.resolve() } }
+  const answer = (tree, truncated = false) => { t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ tree, truncated }))) }
+  answer(Array.from({ length: MAX_TREE_FILES + 1 }, (_, at) => ({ path: `f${at}`, type: 'blob' })))
+  const many = await repositoryTree('org/repo', null, a, store)
+  assert.deepEqual([many.files.length, many.cut], [MAX_TREE_FILES, true])
+  answer([{ path: 'x', type: 'blob' }], true)
+  assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['x'], cut: true })
+  assert.equal(kept.size, 2)
 })

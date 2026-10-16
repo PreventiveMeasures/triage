@@ -178,6 +178,11 @@ export function fetchRepositoryChanges(repoId, path, shas, { signal } = {}) {
     REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
 }
 
+// The files commit `commit` holds within `path`, which Replay starts from.
+export function fetchRepositoryTree(repoId, path, commit, { signal } = {}) {
+  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, response => response.json(), signal)
+}
+
 const REPOSITORY_ISSUES_ERRORS = {
   ...REPOSITORY_CODE_ERRORS,
   'no-directory': 'Issues and pull requests show only with access to the whole repository.',

@@ -6,7 +6,9 @@
 // first page of them, as many as MAX_FILES, `more` where it had more. What
 // a commit changes never changes, so each is kept by the commit (`kept`),
 // whole, read of GitHub once; what a reader is answered, only the files
-// within the directory they asked of (changesWithin).
+// within the directory they asked of (changesWithin). And the files a
+// commit holds, which Replay starts from (GET /api/admin/repositories/tree),
+// as GitHub lists its tree at once (repositoryTree), kept as well.
 
 import { GithubApiError, githubJson } from './github-app.ts'
 
@@ -93,6 +95,43 @@ export async function repositoryChanges(fullName: string, token: string | null, 
   })
   return new Map(asked.map(sha => [sha, found.get(sha) ?? null]))
 }
+
+// The files a commit holds, as many as MAX_TREE_FILES, each by its path, as
+// GitHub lists its tree and every tree under it at once
+// (GET /repos/:owner/:repo/git/trees/:commit?recursive=1): its blobs, not
+// its directories nor submodules; `cut` where some are left out, GitHub's
+// listing cut short (past 100,000 entries) or more than MAX_TREE_FILES. Null
+// for a commit GitHub has none of.
+export const MAX_TREE_FILES = 25_000
+export interface CommitTree { files: string[]; cut: boolean }
+export interface TreeStore {
+  read(commit: string): Promise<CommitTree | null>
+  write(commit: string, tree: CommitTree): Promise<void>
+}
+
+export async function repositoryTree(fullName: string, token: string | null, commit: string, kept: TreeStore,
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<CommitTree | null> {
+  if (!SHA.test(commit)) return null
+  const held = await kept.read(commit)
+  if (held) return held
+  let data: { tree?: unknown; truncated?: unknown }
+  try {
+    data = await githubJson(`https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/git/trees/${commit}?recursive=1`,
+      token, fetchImpl) as typeof data
+  } catch (err) {
+    if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) return null
+    throw err
+  }
+  if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
+  const files = (data.tree as { type?: unknown; path?: unknown }[]).flatMap(item => item?.type === 'blob' && pathOf(item.path) ? [item.path as string] : [])
+  const tree = { files: files.slice(0, MAX_TREE_FILES), cut: data.truncated === true || files.length > MAX_TREE_FILES }
+  await kept.write(commit, tree)
+  return tree
+}
+
+// The files of a tree within the directory `path` ('' the whole repository).
+export const treeWithin = ({ files, cut }: CommitTree, path: string): CommitTree =>
+  ({ files: path === '' ? files : files.filter(file => file.startsWith(`${path}/`)), cut })
 
 // The commits a request names (`shas`), each once, as many as
 // CHANGES_ASKED; null for none, or for one that isn't a commit id.

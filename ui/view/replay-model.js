@@ -67,12 +67,13 @@ export const FADE_S = 1
 const STAGGER_S = 0.06
 
 // A scene: the tree of directories from its root, each directory and file
-// by its path, those who made commits by who they are, the beams shown, the
-// changes due (made as their time comes) and whether the tree changed since
-// it was laid out (`layout`).
+// by its path, the files going (removed, not yet gone), those who made
+// commits by who they are, the beams shown, the changes due (made as their
+// time comes) and whether the tree changed since it was laid out
+// (`layout`).
 export function createScene() {
   const root = directory('', null)
-  return { root, dirs: new Map([['', root]]), files: new Map(), users: new Map(), beams: [], due: [], layout: true }
+  return { root, dirs: new Map([['', root]]), files: new Map(), going: new Set(), users: new Map(), beams: [], due: [], layout: true }
 }
 
 // A directory, grown out of its parent's place.
@@ -81,15 +82,21 @@ function directory(path, parent) {
     x: parent?.x ?? 0, y: parent?.y ?? 0, tx: 0, ty: 0, cluster: 0, ring: 0, extent: 0, touched: Number.NEGATIVE_INFINITY }
 }
 
-// The directory `path` names, made with those above it where it isn't.
+// The directory `path` names, made with those above it where it isn't,
+// among its parent's in the order of their names.
 function directoryOf(scene, path) {
   const held = scene.dirs.get(path)
   if (held) return held
   const slash = path.lastIndexOf('/')
   const parent = directoryOf(scene, slash === -1 ? '' : path.slice(0, slash))
   const made = directory(path, parent)
-  parent.dirs.push(made)
-  parent.dirs.sort((a, b) => a.name.localeCompare(b.name))
+  let [low, high] = [0, parent.dirs.length]
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (parent.dirs[middle].name < made.name) low = middle + 1
+    else high = middle
+  }
+  parent.dirs.splice(low, 0, made)
   scene.dirs.set(path, made)
   scene.layout = true
   return made
@@ -113,6 +120,8 @@ export function changeFile(scene, path, kind, at) {
   file.touched = at
   file.kind = kind
   file.removed = kind === 'D' ? file.removed ?? at : null
+  if (kind === 'D') scene.going.add(file)
+  else scene.going.delete(file)
   for (let dir = file.dir; dir; dir = dir.parent) dir.touched = at
   return file
 }
@@ -122,6 +131,7 @@ function removeFile(scene, file) {
   const { dir } = file
   dir.files.splice(dir.files.indexOf(file), 1)
   scene.files.delete(file.path)
+  scene.going.delete(file)
   for (let empty = dir; empty.parent && empty.files.length === 0 && empty.dirs.length === 0; empty = empty.parent) {
     empty.parent.dirs.splice(empty.parent.dirs.indexOf(empty), 1)
     scene.dirs.delete(empty.path)
@@ -171,7 +181,7 @@ export function advanceScene(scene, now) {
   }
   if (made > 0) scene.due.splice(0, made)
   scene.beams = scene.beams.filter(beam => now - beam.at < BEAM_S)
-  for (const file of [...scene.files.values()]) if (file.removed !== null && now - file.removed >= REMOVE_S) removeFile(scene, file)
+  for (const file of [...scene.going]) if (now - file.removed >= REMOVE_S) removeFile(scene, file)
   for (const [key, user] of scene.users) if (now - user.active > IDLE_S + FADE_S) scene.users.delete(key)
 }
 
@@ -184,7 +194,7 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 // Those who made a commit, how far from the files they change they stop,
 // and from each other.
 const STANDOFF = 46
-const SPACE = 34
+export const SPACE = 34
 
 // How far a directory's files reach from it, as many as `count`.
 export const clusterRadius = count => count === 0 ? 0 : FILE_STEP * 0.62 * Math.sqrt(count) + FILE_DOT
@@ -258,9 +268,9 @@ function place(dir, x, y, facing, wedge) {
 // Everything `dt` seconds nearer where it sits: directories toward their
 // places, files about their directories, those who made commits toward the
 // files their beams reach, stopping short of them, and apart from each other
-// where they come closer than SPACE; one new where its first beams' files
-// are, further out.
-export function moveScene(scene, dt) {
+// where they come closer than `space` (SPACE where not told, as near as the
+// scene is drawn on); one new where its first beams' files are, further out.
+export function moveScene(scene, dt, space = SPACE) {
   const ease = rate => 1 - Math.exp(-dt * rate)
   const dirs = ease(3), files = ease(6), users = ease(2.5)
   for (const dir of scene.dirs.values()) {
@@ -295,9 +305,9 @@ export function moveScene(scene, dt) {
     for (const other of placed.slice(index + 1)) {
       const [dx, dy] = [other.x - one.x, other.y - one.y]
       const apart = Math.hypot(dx, dy)
-      if (apart >= SPACE) continue
+      if (apart >= space) continue
       const [ux, uy] = apart > 0 ? [dx / apart, dy / apart] : [Math.cos(keyAngle(other.key)), Math.sin(keyAngle(other.key))]
-      const push = (SPACE - apart) / 2 * users
+      const push = (space - apart) / 2 * users
       ;[one.x, one.y, other.x, other.y] = [one.x - ux * push, one.y - uy * push, other.x + ux * push, other.y + uy * push]
     }
   }
