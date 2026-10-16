@@ -75,6 +75,10 @@ test('a tile clicked opens its popup, what the tile knew shown as it reads the r
   view.openTile(plain, item)
   assert.equal(plain.prevented, true)
   assert.deepEqual(opened, [{ repository: view.repository, target: { number: 5, preview: { ...item, kind: 'pulls' } } }])
+  // Its popup by the name the tab was handed, where it was opened by none.
+  const unnamed = Object.assign(shown('pulls', null), { repo: 'org/named' })
+  unnamed.openTile(click(), item)
+  assert.equal(opened.pop().repository.repo, 'org/named')
   for (const held of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
     const event = click(held)
     view.openTile(event, item)
@@ -116,6 +120,9 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   assert.match(text, /aria-label=Checks passed /u)
   const unnamed = shown('pulls', null)
   assert.doesNotMatch(templateText(unnamed.render()), /href=/u)
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5/u)
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

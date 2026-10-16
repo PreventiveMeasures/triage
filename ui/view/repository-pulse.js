@@ -208,15 +208,17 @@ const versus = (count, previous, before) => previous === null || count === null 
 const profile = login => login.endsWith('[bot]') ? `https://github.com/apps/${encodeURIComponent(login.slice(0, -5))}` : `https://github.com/${encodeURIComponent(login)}`
 
 // The tab's body, for the repository a directory shown (`repository`, an
-// entry's) is in.
+// entry's) is in, by its full name (`repo`, repository-code.js
+// repositoryFullName, once known).
 class RepositoryPulse extends LitElement {
-  static properties = { repository: { attribute: false } }
+  static properties = { repository: { attribute: false }, repo: { attribute: false } }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.repository = null
+    this.repo = null
   }
 
   connectedCallback() {
@@ -436,7 +438,7 @@ class RepositoryPulse extends LitElement {
   // rest on GitHub.
   renderList(answer, kind, items, title, search) {
     const { count, items: listed } = answer[kind]
-    const repo = this.repository.repo
+    const repo = this.repo ?? this.repository.repo
     const all = repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pulls' : 'issues'}?q=${encodeURIComponent(`${search}>=${isoDay(answer.since)}`)}` : null
     return html`<div class="pulse-list">
       <h3>${title}<span class="issues-count">${number(count)}</span></h3>
@@ -460,7 +462,8 @@ class RepositoryPulse extends LitElement {
   openItem(event, kind, item) {
     if (!plainClick(event)) return
     event.preventDefault()
-    openRepositoryItemDialog({ repository: this.repository, target: { number: item.number, preview: { ...item, kind, labels: [], comments: 0 } } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo },
+      target: { number: item.number, preview: { ...item, kind, labels: [], comments: 0 } } })
   }
 }
 if (!customElements.get('repository-pulse')) customElements.define('repository-pulse', RepositoryPulse)

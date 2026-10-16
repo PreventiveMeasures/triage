@@ -195,15 +195,17 @@ export function agentStats(sessions, agent) {
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an
-// entry's) is in.
+// entry's) is in, by its full name (`repo`, repository-code.js
+// repositoryFullName, once known).
 class RepositoryAgents extends LitElement {
-  static properties = { repository: { attribute: false }, _filter: { state: true } }
+  static properties = { repository: { attribute: false }, repo: { attribute: false }, _filter: { state: true } }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.repository = null
+    this.repo = null
     this._filter = ''
     this._moreButton = null
   }
@@ -316,14 +318,14 @@ class RepositoryAgents extends LitElement {
   openSession(event, session) {
     if (!plainClick(event) || event.target?.closest?.('.agent-chip.is-commit')) return
     event.preventDefault()
-    openRepositoryItemDialog({ repository: this.repository, target: { session } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { session } })
   }
 
   openItem(event, number, preview) {
     if (!plainClick(event)) return
     event.preventDefault()
     event.stopPropagation()
-    openRepositoryItemDialog({ repository: this.repository, target: { number, preview } })
+    openRepositoryItemDialog({ repository: { ...this.repository, repo: this.repo ?? this.repository.repo }, target: { number, preview } })
   }
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
@@ -335,7 +337,7 @@ class RepositoryAgents extends LitElement {
   // issues, those that fit, each with how many follow it, seen only past the
   // last of them shown (report.css); and its branch.
   renderSession(session) {
-    const repo = this.repository.repo
+    const repo = this.repo ?? this.repository.repo
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
     const author = session.authors.find(login => !commitAgent(login))

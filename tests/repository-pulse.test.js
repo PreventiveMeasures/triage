@@ -130,6 +130,11 @@ test('the pulse reads a month first: its figures beside the month before, the ye
   assert.match(text, /Closed issues<span class="issues-count">0<\/span><\/h3>\s*<p class="pulse-note">None in the period\.<\/p>/u)
   assert.match(text, /href=https:\/\/github\.com\/org\/repo\/issues\/3\s/u)
   assert.deepEqual(text.match(/All \d+ on GitHub/gu), ['All 12 on GitHub', 'All 2 on GitHub'], 'a list of all GitHub found holds no link to more')
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  const unnamed = shown(null)
+  assert.doesNotMatch(templateText(unnamed.render()), /github\.com\/org/u)
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5\s/u)
 })
 
 test('another period is read for itself, the last one shown faded meanwhile; read, it is kept', async t => {
@@ -249,6 +254,10 @@ test('an item clicked opens its popup, what the list knew shown as it reads the 
   view.openItem(plain, 'issues', item(3, { kind: 'issues', state: 'open', reason: null }))
   assert.equal(plain.prevented, true)
   assert.deepEqual(opened, [{ repository: view.repository, target: { number: 3, preview: { ...item(3, { state: 'open', reason: null }), kind: 'issues', labels: [], comments: 0 } } }])
+  // Its popup by the name the tab was handed, where it was opened by none.
+  const unnamed = Object.assign(shown(null), { repo: 'org/named' })
+  unnamed.openItem(click(), 'issues', item(3))
+  assert.equal(opened.pop().repository.repo, 'org/named')
   for (const held of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
     const event = click(held)
     view.openItem(event, 'pulls', item(5))

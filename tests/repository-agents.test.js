@@ -79,6 +79,11 @@ test('the tab reads the first page and shows a session a tile: its agent, title 
   assert.doesNotMatch(text, /Pull 4/u)
   assert.doesNotMatch(text, /codex\/old/u, 'older than those read, it waits for the rest')
   assert.match(text, />More</u)
+  // Opened by none, its name is the one its repositories list it by, once they arrive.
+  const unnamed = shown(null)
+  assert.doesNotMatch(templateText(unnamed.render()), /href=https:\/\/github\.com/u)
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/9/u)
 })
 
 test('a tile says how many tasks only where its chips don\'t count them all: not for pull requests\' or commits\' alone, or both', async () => {
@@ -228,6 +233,11 @@ test('a session clicked, its card or title, opens its popup; a pull request or i
   view.openSession(card, claudeSession)
   assert.equal(card.prevented, true)
   assert.deepEqual(opened, [{ repository: view.repository, target: { session: claudeSession } }])
+  // Its popup by the name the tab was handed, where it was opened by none.
+  const unnamed = Object.assign(shown(null), { repo: 'org/named' })
+  unnamed.openSession(click(), claudeSession)
+  unnamed.openItem(click(), 9, null)
+  assert.deepEqual(opened.splice(-2).map(props => props.repository.repo), ['org/named', 'org/named'])
   const commit = click({ target: { closest: selector => selector === '.agent-chip.is-commit' ? {} : null } })
   view.openSession(commit, claudeSession)
   assert.equal(commit.prevented, false, 'a commit opens on GitHub')
