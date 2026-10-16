@@ -89,12 +89,19 @@ const CLAUDE_MARK = /^co-authored-by: claude\b|generated with \[claude code\]|^c
 const CODEX_MARK = /^co-authored-by:[ \t]*[^<\n]*<codex@openai\.com>[ \t]*$/imu
 const MAX_LINKS = 8
 
-// A message's trailers, as git and GitHub read them: its last paragraph's,
-// where it has one past its subject's, not lines a description or example
-// before it holds.
+// A message's trailers, as git reads them (`git interpret-trailers`): its
+// last paragraph, past its subject's, where each of its lines is a trailer
+// (`Key: value`) or goes on with one (indented), or, where it holds git's
+// own `Signed-off-by:`, a quarter of them are; none where it isn't, as
+// lines a description or example holds, fenced or not, are not.
+const TRAILER_LINE = /^[A-Za-z\d-]+[ \t]*:/u
 export function trailerBlock(text: string): string {
   const paragraphs = text.replaceAll('\r\n', '\n').trim().split(/\n[ \t]*\n/u)
-  return paragraphs.length > 1 ? paragraphs.at(-1)! : ''
+  const block = paragraphs.length > 1 ? paragraphs.at(-1)! : ''
+  const lines = block.split('\n')
+  const trailers = lines.filter(line => TRAILER_LINE.test(line)).length
+  const others = lines.filter((line, at) => !TRAILER_LINE.test(line) && !(at > 0 && /^[ \t]/u.test(line))).length
+  return others === 0 || (lines.some(line => /^signed-off-by[ \t]*:/iu.test(line)) && trailers * 3 >= others) ? block : ''
 }
 
 // The sessions and tasks `texts` link, whether they carry Claude's marks and

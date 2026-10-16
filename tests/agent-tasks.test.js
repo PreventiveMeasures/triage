@@ -50,6 +50,14 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   assert.deepEqual([agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com>\n\nMore docs']), agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com> is the syntax']),
     agentSignals(['Co-authored-by: Codex <codex@openai.com>'])], [none, none, none])
   assert.deepEqual(agentSignals(['Tidy\r\n\r\nCo-authored-by: Codex <codex@openai.com>\r\n']), { ...none, codex: true }, 'after carriage returns')
+  // Its trailers as git reads them: a last paragraph of trailers alone, or with
+  // git's own Signed-off-by a quarter of them; not a fenced example, nor a note
+  // with a trailer under it.
+  const codex = { ...none, codex: true }
+  assert.deepEqual([agentSignals(['Docs\n\n```\nCo-authored-by: Codex <codex@openai.com>\n```']), agentSignals(['Docs\n\nA note\nCo-authored-by: Codex <codex@openai.com>'])],
+    [none, none])
+  assert.deepEqual([agentSignals(['Docs\n\nA note\nSigned-off-by: Ada <ada@example.com>\nCo-authored-by: Codex <codex@openai.com>']),
+    agentSignals(['Docs\n\nReviewed-by: Ada\n  <ada@example.com>\nCo-authored-by: Codex <codex@openai.com>'])], [codex, codex])
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
