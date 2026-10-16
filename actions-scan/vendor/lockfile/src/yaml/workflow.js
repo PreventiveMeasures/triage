@@ -86,19 +86,22 @@ function fold(lines, double, number) {
 
 // A quoted scalar that doesn't close on its owner's line (`first`), its
 // lines read till it does: its text folded, unescaped by `unescape`, and
-// nothing but a comment after it.
+// nothing but a comment after it. Each line's escapes are read on it first,
+// so that a bad one is told on its own line.
 export function readQuotedLines(doc, first, owner, unescape) {
-  const lines = [first.slice(1)]
+  const double = first[0] === '"', lines = [first.slice(1)], numbers = [owner.number]
   for (let line = doc.line; ; line = doc.advance()) {
     if (line === undefined || doc.isMarker(line)) throw new YamlError('a quoted scalar that does not close', owner.number)
     noTab(line)
+    numbers.push(line.number)
     const end = closingQuote(`${first[0]}${line.text}`)
     if (end === -1) { lines.push(line.text); continue }
     lines.push(line.text.slice(0, end - 1))
     if (!/^(?: +#.*| *)$/u.test(line.text.slice(end))) throw new YamlError(`unexpected ${excerpt(line.text.slice(end))} after the value`, line.number)
     doc.advance()
-    const text = fold(lines, first[0] === '"', owner.number)
-    return first[0] === '"' ? unescape(text, line.number) : text.replaceAll("''", "'")
+    if (double) for (const [at, text] of lines.entries()) unescape(text, numbers[at])
+    const text = fold(lines, double, owner.number)
+    return double ? unescape(text, owner.number) : text.replaceAll("''", "'")
   }
 }
 
