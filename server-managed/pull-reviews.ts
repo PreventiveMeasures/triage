@@ -31,7 +31,8 @@ const COMMIT = /^[a-f\d]{40}$/u
 // links with them for its popup (`detail`).
 export const reviewFields = (threads: number, detail: boolean) => `headRefOid
   latestReviews(first: ${REVIEWERS}) { totalCount nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
-  reviewRequests(first: ${REQUESTS}) { totalCount nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Bot { login databaseId } ... on Team { slug } } } }
+  reviewRequests(first: ${REQUESTS}) { totalCount nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Bot { login databaseId }
+    ... on Mannequin { login databaseId } ... on Team { slug } ... on EnterpriseTeam { slug } } } }
   reviewThreads(last: ${threads}) { totalCount nodes { isResolved isOutdated${detail ? ' path line originalLine' : ''}
     comments(first: 1) { nodes { author { ${ACTOR} } body${detail ? ' url' : ''} } } } }
   firstComments: comments(first: ${FIRST_COMMENTS}) { nodes { author { ${ACTOR} } body updatedAt } }
@@ -124,9 +125,11 @@ function codexOf(node: ReviewNode) {
 type Reviewer = { login: string | null; id: number | null; team?: string; state: string | null; requested: boolean; commit: string | null; at: number | null }
 
 // The reviewers, each once: by their latest review, its state and commit;
-// whose is requested (again, for one who reviewed), a user or a bot (Copilot's
-// code review, asked for, is its bot's); a team's by its slug.
-// Codex's reviews are its summary's where it has one (`codex`).
+// whose is requested (again, for one who reviewed), a user, a bot (Copilot's
+// code review, asked for, is its bot's) or an imported account's mannequin;
+// a team's, or an enterprise's team's, by its slug. Codex's reviews are its
+// summary's where it has one (`codex`). How many requested GitHub named no
+// one for, as `unnamed`, counted with those past the ones read.
 function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
   const own = author?.toLowerCase()
   const reviewers: Reviewer[] = (node.latestReviews?.nodes ?? []).flatMap(review => {
@@ -135,19 +138,24 @@ function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
     if (!state || (login !== null && login.toLowerCase() === own) || (codex && isCodex(review?.author))) return []
     return [{ login, id, state, requested: false, commit: commitOf(review?.commit?.oid), at: timeOf(review?.submittedAt) }]
   })
+  let unnamed = 0
   for (const request of node.reviewRequests?.nodes ?? []) {
     const reviewer = request?.requestedReviewer
-    if (reviewer?.__typename === 'Team') {
+    if (reviewer?.__typename === 'Team' || reviewer?.__typename === 'EnterpriseTeam') {
       if (typeof reviewer.slug === 'string' && reviewer.slug) reviewers.push({ login: null, id: null, team: reviewer.slug.slice(0, 100), state: null, requested: true, commit: null, at: null })
+      else unnamed++
       continue
     }
     const { login, id } = actorOf(reviewer)
-    if (login === null) continue
+    if (login === null) {
+      unnamed++
+      continue
+    }
     const reviewed = reviewers.find(item => item.login?.toLowerCase() === login.toLowerCase())
     if (reviewed) reviewed.requested = true
     else reviewers.push({ login, id, state: null, requested: true, commit: null, at: null })
   }
-  return reviewers
+  return { reviewers, unnamed }
 }
 
 // Its review threads, the latest read: how many are open and resolved,
@@ -183,6 +191,6 @@ export function pullReviews(node: ReviewNode, author: string | null, detail = fa
   // Those past the reviews and requests read, as many as GitHub counts.
   const past = (connection: { totalCount?: unknown; nodes?: unknown[] } | null | undefined) => Number.isSafeInteger(connection?.totalCount)
     ? Math.max(0, (connection!.totalCount as number) - (connection!.nodes?.length ?? 0)) : 0
-  return { head: commitOf(node.headRefOid), reviewers: reviewersOf(node, author, codex !== null), moreReviewers: past(node.latestReviews) + past(node.reviewRequests),
-    threads: threadsOf(node, detail), codex }
+  const { reviewers, unnamed } = reviewersOf(node, author, codex !== null)
+  return { head: commitOf(node.headRefOid), reviewers, moreReviewers: past(node.latestReviews) + past(node.reviewRequests) + unnamed, threads: threadsOf(node, detail), codex }
 }

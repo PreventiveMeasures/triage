@@ -15,7 +15,8 @@ test('a pull request\'s reviewers are each by their latest review and its commit
       review({ login: 'Author', databaseId: 4 }, 'COMMENTED'), review({ login: 'alan', databaseId: 5 }, 'PENDING'), review({ login: 'kay', databaseId: 6 }, 'COMMENTED', null), null] },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'grace', databaseId: 3 } }, { requestedReviewer: { __typename: 'User', login: 'linus', databaseId: 7 } },
       { requestedReviewer: { __typename: 'Team', slug: 'security' } }, { requestedReviewer: { __typename: 'Bot', login: 'Copilot', databaseId: 175728472 } },
-      { requestedReviewer: null }] } }, 'author')
+      { requestedReviewer: { __typename: 'Mannequin', login: 'imported-ada', databaseId: 8 } }, { requestedReviewer: { __typename: 'EnterpriseTeam', slug: 'auditors' } },
+      { requestedReviewer: { __typename: 'SomethingNew' } }, { requestedReviewer: null }] } }, 'author')
   assert.equal(reviews.head, head, 'the head commit, as GitHub names it, in lowercase')
   assert.deepEqual(reviews.reviewers, [
     { login: 'ada', id: 2, state: 'approved', requested: false, commit: head, at: Date.parse('2026-10-16T05:00:00Z') },
@@ -24,9 +25,11 @@ test('a pull request\'s reviewers are each by their latest review and its commit
     { login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
     { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null },
     { login: 'Copilot', id: 175728472, state: null, requested: true, commit: null, at: null },
-  ], 'none pending, none the author\'s; one reviewed and requested again once; Copilot\'s code review asked for, by its bot')
+    { login: 'imported-ada', id: 8, state: null, requested: true, commit: null, at: null },
+    { login: null, id: null, team: 'auditors', state: null, requested: true, commit: null, at: null },
+  ], 'none pending, none the author\'s; one reviewed and requested again once; Copilot\'s code review asked for, by its bot; a mannequin and an enterprise\'s team')
   assert.deepEqual(reviews.threads, { open: 0, resolved: 0, more: false, severity: null })
-  assert.equal(reviews.moreReviewers, 0)
+  assert.equal(reviews.moreReviewers, 2, 'those GitHub names no one for, counted rather than gone: a reviewer of a kind unknown, and a request naming none')
   const many = pullReviews({ headRefOid: head, latestReviews: { totalCount: 23, nodes: [review({ login: 'ada', databaseId: 2 }, 'APPROVED')] }, reviewRequests: { totalCount: 12, nodes: [] } }, 'author')
   assert.equal(many.moreReviewers, 22 + 12, 'those past the reviews and requests read, as GitHub counts them')
   assert.equal(reviews.codex, null)
@@ -86,7 +89,7 @@ test('the fields read for reviews are those GitHub may refuse alone; a popup rea
   assert.match(reviewFields(50, false), /headRefOid[^]*latestReviews\(first: 20\) \{ totalCount[^]*reviewRequests\(first: 10\) \{ totalCount[^]*reviewThreads\(last: 50\)[^]*/u)
   assert.match(reviewFields(50, false), /firstComments: comments\(first: 5\)[^]*lastComments: comments\(last: 20\) \{[^]*body createdAt updatedAt \} \}$/u)
   assert.doesNotMatch(reviewFields(50, false), /path line/u)
-  assert.match(reviewFields(50, false), /requestedReviewer \{ __typename \.\.\. on User \{ login databaseId \} \.\.\. on Bot \{ login databaseId \} \.\.\. on Team \{ slug \}/u)
+  assert.match(reviewFields(50, false), /requestedReviewer \{ __typename \.\.\. on User \{ login databaseId \} \.\.\. on Bot \{ login databaseId \}\s+\.\.\. on Mannequin \{ login databaseId \} \.\.\. on Team \{ slug \} \.\.\. on EnterpriseTeam \{ slug \}/u)
   assert.match(reviewFields(100, true), /reviewThreads\(last: 100\) \{ totalCount nodes \{ isResolved isOutdated path line originalLine[^]*body url/u)
   assert.equal(reviewsRefused({ type: 'FORBIDDEN', path: ['repository', 'page', 'nodes', 0, 'reviewThreads'] }), true)
   assert.equal(reviewsRefused({ type: 'FORBIDDEN', path: ['repository', 'page'] }), false)
