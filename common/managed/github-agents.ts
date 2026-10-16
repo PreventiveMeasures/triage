@@ -12,7 +12,11 @@
 // `Co-authored-by: Codex <codex@openai.com>` trailer, an address GitHub
 // names someone else's account for, so Codex is known by the address, not
 // that account. Copilot's coding agent authors its commits as its account,
-// Copilot; Dependabot, its GitHub App, as its bot,
+// Copilot; Copilot's code review reviews as another, its bot, which GitHub
+// names Copilot as well where it is asked to review and in its threads, and
+// `copilot-pull-request-reviewer` (`[bot]` to GitHub's REST API) on its
+// reviews, the accounts' ids telling the two apart: a login may so be more
+// than one account's. Dependabot, its GitHub App, as its bot,
 // `dependabot` to GitHub's GraphQL API, `dependabot[bot]` to its REST API and
 // in its address. Cursor's agents commit as whoever ran them, with a
 // `Co-authored-by: Cursor Agent <cursoragent@cursor.com>` trailer; the app
@@ -26,14 +30,22 @@ export const GITHUB_AGENTS = {
   claude: { name: 'Claude', mark: 'anthropic', accounts: [{ id: 81847, logins: ['claude'] }, { logins: ['claude[bot]'] }], names: ['Claude'], emails: ['noreply@anthropic.com'] },
   codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'],
     emails: ['codex@openai.com'] },
-  copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }], names: ['Copilot'] },
+  copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] },
+    { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'] },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'] },
   cursor: { name: 'Cursor', accounts: [], names: ['Cursor Agent'], emails: ['cursoragent@cursor.com'] },
 } as const satisfies Record<string, GithubAgent>
 export type GithubAgentId = keyof typeof GITHUB_AGENTS
 
 const agents = Object.entries(GITHUB_AGENTS) as [GithubAgentId, GithubAgent][]
-const byLogin = new Map(agents.flatMap(([agent, { accounts }]) => accounts.flatMap(({ id, logins }) => logins.map(login => [login.toLowerCase(), { agent, id }] as const))))
+// Each login's agent, and the ids of the accounts it names, undefined for
+// one whose id the app doesn't know.
+const byLogin = new Map<string, { agent: GithubAgentId; ids: (number | undefined)[] }>()
+for (const [agent, { accounts }] of agents) {
+  for (const { id, logins } of accounts) {
+    for (const login of logins) byLogin.set(login.toLowerCase(), { agent, ids: [...byLogin.get(login.toLowerCase())?.ids ?? [], id] })
+  }
+}
 const byName = new Map(agents.flatMap(([agent, { names }]) => names.map(name => [name.toLowerCase(), agent] as const)))
 const byEmail = new Map(agents.flatMap(([agent, { emails = [] }]) => emails.map(email => [email, agent] as const)))
 
@@ -50,5 +62,5 @@ export const emailAgent = (email: unknown): GithubAgentId | null => typeof email
 export function githubAgent(login: string | null, account: number | null = null, name: string | null = null): GithubAgentId | null {
   if (typeof login !== 'string') return typeof name === 'string' ? byName.get(name.trim().toLowerCase()) ?? null : null
   const known = byLogin.get(login.toLowerCase())
-  return known && (known.id === undefined || account === null || known.id === account) ? known.agent : null
+  return known && (account === null || known.ids.includes(undefined) || known.ids.includes(account)) ? known.agent : null
 }

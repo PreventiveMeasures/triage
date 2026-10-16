@@ -1829,7 +1829,9 @@ review required) while open and its checks (passed, failed or running),
 each an icon, room held for both; then how many comments it has. An open
 pull request's tile has a line of its reviews (`pull-reviews.js`): each
 reviewer by a mark of how their latest review stands (approved, changes
-requested, commented, or review requested, a team's by its slug), and their
+requested, commented, or review requested, a team's by its slug, Copilot's
+code review's by its bot, which GitHub names Copilot as it does Copilot's
+coding agent, told apart by its id), and their
 name, an agent's by its mark alone, dimmed where their review was on an
 earlier commit than the latest; Codex first, by its summary comment rather
 than its reviews, since it posts a review only where it finds something:
@@ -1870,14 +1872,17 @@ an issue's with its `reason` (`completed`, `not-planned` or `duplicate`), a
 pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
 `deletions`, `head` and `base`, its `state` `merged` where it was; an open
 one's with its `reviews` (`pull-reviews.ts`): `{ head, reviewers: [{ login,
-id, team?, state, requested, commit, at }], threads: { open, resolved, more,
-severity }, codex: { login, id, code: { commit, status }, security,
-requested, failed } | null }`, read from each reviewer's latest review
-(fifty threads, the first comments for Codex's summary, its hidden
-`codex-review-state:v1` marker, and the last twenty for asking it again and
-its failures since); a closed page reads none, keeping its query as cheap as
+id, team?, state, requested, commit, at }], moreReviewers, threads: { open,
+resolved, more, severity }, codex: { login, id, code: { commit, status },
+security, requested, failed } | null }`, read from each reviewer's latest
+review (twenty, and ten reviews requested, how many more GitHub counts in
+`moreReviewers`, the tile saying `+N`), the latest fifty threads (open ones
+being, mostly, those lately opened), the first five comments and the last
+twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which
+it posts as it is first asked, and the last twenty for asking it again and
+its failures since; a closed page reads none, keeping its query as cheap as
 it was. The item (`GET …/item`) has its pull request's `reviews` whether open
-or not, its threads' `list` (a hundred read) with each open one's `severity`,
+or not, its threads' `list` (the latest hundred read) with each open one's `severity`,
 `title`, `path`, `line`, `outdated`, `author` and `url`. They are
 the whole repository's, so they are read only where the reader's grants
 reach all of it (`404 no-directory` otherwise), with the reader's own GitHub

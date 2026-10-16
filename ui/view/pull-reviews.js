@@ -62,9 +62,10 @@ export function reviewStandings(reviews) {
 }
 
 // Whether a review is on the latest commit: one that reviewed it, or Codex,
-// done with it.
+// done with it; taken as so where more reviewers are than were read, one
+// of them perhaps its.
 export function headReviewed(reviews) {
-  if (!reviews.head) return true
+  if (!reviews.head || reviews.moreReviewers > 0) return true
   const codex = reviews.codex?.code
   return (codex?.status === 'done' && codex.commit === reviews.head)
     || reviews.reviewers.some(reviewer => STANDING[reviewer.state] && reviewer.state !== 'dismissed' && reviewer.commit === reviews.head)
@@ -80,15 +81,17 @@ export function reviewLine(reviews) {
   if (!reviews) return nothing
   const standings = reviewStandings(reviews)
   const { open, more, severity: gravest } = reviews.threads
-  const threads = open > 0 ? `${plural(open, 'open review thread', more)}${gravest ? `, the gravest ${gravest.toUpperCase()}` : ''}` : null
+  const threads = open > 0 ? `${plural(open, 'open review thread', more)}${gravest ? `, the gravest ${gravest.toUpperCase()}` : ''}`
+    : more ? 'No open review thread among those read; more on GitHub' : null
   const unreviewed = !headReviewed(reviews)
   return html`<span class="issue-reviews">
     ${standings.map(({ who, standing: [state, glyph, name], commit, stale, requested }) => {
       // Named on its mark, as the reviewer is on their name.
       const said = `${name}${requested ? ', and requested again' : ''}${stale ? `, on an earlier commit (${short(commit)})` : commit ? ', on the latest commit' : ''}`
       return html`<span class=${`review-mark is-${state}${stale ? ' is-stale' : ''}`}><span class="review-glyph" role="img" aria-label=${said}
-        data-tooltip=${said}>${glyph}</span>${who}</span>`
+        data-tooltip=${said}>${glyph}</span><span class="review-who">${who}</span></span>`
     })}
+    ${reviews.moreReviewers > 0 ? html`<span class="review-more" data-tooltip=${plural(reviews.moreReviewers, 'more reviewer')}>+${reviews.moreReviewers}</span>` : nothing}
     ${threads ? html`<span class="review-threads" role="img" aria-label=${threads} data-tooltip=${threads}>${THREAD}<span>${open}${more ? '+' : ''}</span>${severity(gravest)}</span>` : nothing}
     ${unreviewed ? html`<span class="review-unreviewed" data-tooltip=${standings.length > 0 ? 'No review is on the latest commit' : 'No reviews yet'}>Unreviewed</span>` : nothing}
   </span>`
@@ -121,13 +124,15 @@ export function reviewSections(reviews, repo) {
   const { open, resolved, more, list = [] } = reviews.threads
   return html`<section class="repo-item-section"><h4>Reviews</h4>
       ${rows.length > 0 ? html`<ul>${rows}</ul>` : html`<p class="repo-item-quiet">No reviews yet.</p>`}
+      ${reviews.moreReviewers > 0 ? html`<p class="repo-item-quiet">And ${plural(reviews.moreReviewers, 'more reviewer')}, on GitHub.</p>` : nothing}
       ${rows.length > 0 && !headReviewed(reviews) ? html`<p class="repo-item-quiet">No review is on the latest commit, <code>${short(head)}</code>.</p>` : nothing}
     </section>
     ${open > 0 || resolved > 0 ? html`<section class="repo-item-section"><h4>Open threads</h4>
       ${list.length > 0 ? html`<ul>${list.map(thread => html`<li><a class="repo-item-row review-thread" href=${thread.url ?? nothing} target="_blank" rel="noopener noreferrer">
         ${severity(thread.severity)}<span class="repo-item-title">${thread.title || '(no comment)'}</span>
         ${thread.path ? html`<code class="review-path">${thread.path}${thread.line ? `:${thread.line}` : ''}</code>` : nothing}
-        ${thread.outdated ? html`<span class="repo-item-quiet">outdated</span>` : nothing}</a></li>`)}</ul>` : html`<p class="repo-item-quiet">None open.</p>`}
+        ${thread.outdated ? html`<span class="repo-item-quiet">outdated</span>` : nothing}</a></li>`)}</ul>`
+        : html`<p class="repo-item-quiet">${more ? 'None open among those read.' : 'None open.'}</p>`}
       ${resolved > 0 || more ? html`<p class="repo-item-quiet">${resolved > 0 ? `${plural(resolved, 'thread')} resolved` : ''}${
         more ? `${resolved > 0 ? '; ' : ''}more on GitHub` : ''}.</p>` : nothing}
     </section>` : nothing}`

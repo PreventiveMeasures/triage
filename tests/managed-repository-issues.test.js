@@ -122,13 +122,13 @@ test('open pull requests are read with their reviews: each reviewer\'s latest, t
       body: `<!-- codex-review-state:v1 ${JSON.stringify({ code_review: { commit_sha: head, status: 'completed' }, security_review: { commit_sha: head, status: 'completed' } })} -->` }] },
     lastComments: { nodes: [] } }]))
   const { body } = await request({ repoId: '1', kind: 'pulls', state: 'open' })
-  assert.deepEqual(body.items[0].reviews, { head, reviewers: [{ login: 'ada', id: 5, state: null, requested: true, commit: null, at: null }],
+  assert.deepEqual(body.items[0].reviews, { head, reviewers: [{ login: 'ada', id: 5, state: null, requested: true, commit: null, at: null }], moreReviewers: 0,
     threads: { open: 1, resolved: 0, more: false, severity: 'p1' },
     codex: { login: 'chatgpt-codex-connector', id: 199175422, code: { commit: head, status: 'done' }, security: { commit: head, status: 'done' }, requested: false, failed: false } },
     'the author\'s own reply aside')
   assert.deepEqual(body.users['chatgpt-codex-connector'], { agent: 'codex' }, 'Codex, by its summary\'s account')
   assert.deepEqual(body.users.ada, undefined, 'a reviewer the app does not know is no user')
-  assert.match(asked[0].query, /page: pullRequests\(states: \[OPEN\][^]*headRefOid[^]*latestReviews[^]*reviewThreads\(first: 50\)/u)
+  assert.match(asked[0].query, /page: pullRequests\(states: \[OPEN\][^]*headRefOid[^]*latestReviews[^]*reviewThreads\(last: 50\)/u)
 })
 
 test('issues are read only with a token, by a reader whose grants reach the whole repository, and of a repository GitHub has', async t => {
@@ -222,7 +222,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
     body: '    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
     commits: 4, files: 2, mergedBy: 'ada', mergedById: 5, reviews: { head: 'c'.repeat(40), codex: null,
-      reviewers: [{ login: 'ada', id: 5, state: 'approved', requested: false, commit: 'c'.repeat(40), at: Date.parse('2026-10-02T00:00:00Z') }],
+      reviewers: [{ login: 'ada', id: 5, state: 'approved', requested: false, commit: 'c'.repeat(40), at: Date.parse('2026-10-02T00:00:00Z') }], moreReviewers: 0,
       threads: { open: 1, resolved: 0, more: false, severity: null,
         list: [{ severity: null, title: 'Darker?', path: 'ui/chips.js', line: 3, outdated: false, author: 'ada', authorId: 5, url: 'https://github.com/org/repo/pull/7#discussion_r1' }] } },
     users: {} })
@@ -233,7 +233,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', number: 7 })
   // Each type's state named apart, as GitHub's GraphQL requires of an issue's and a pull request's.
   assert.match(asked[0].query, /issueState: state[^]*pullState: state/u)
-  assert.match(asked[0].query, /reviewThreads\(first: 100\) \{ totalCount nodes \{ isResolved isOutdated path line originalLine/u, 'its threads, each where it is')
+  assert.match(asked[0].query, /reviewThreads\(last: 100\) \{ totalCount nodes \{ isResolved isOutdated path line originalLine/u, 'its threads, each where it is')
   assert.deepEqual(await item('9'), { status: 404, body: { error: 'github-not-found' } })
   for (const number of ['0', '-1', '1.5', 'x', '', '2147483648']) assert.equal((await item(number)).status, 400, number)
 })

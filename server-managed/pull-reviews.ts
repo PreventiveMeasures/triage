@@ -2,8 +2,10 @@
 // tab and a pull request's popup show it (repository-issues.ts): who
 // reviewed it and how, each by their latest review and the commit it was on,
 // its author's own aside (the replies GitHub makes reviews of in a thread);
-// whose review is requested; its review threads open and resolved, the
-// gravest open one by the P0–P3 badge Codex marks a finding with; and
+// whose review is requested, and how many more than those read; its review
+// threads open and resolved, the latest read (open ones are, mostly, those
+// lately opened), the gravest open one by the P0–P3 badge Codex marks a
+// finding with; and
 // Codex's own, which it keeps in a comment of its own (its summary, edited in
 // place) rather than in reviews, reviewing only where it finds something:
 // the commit its code review and its security review were last on, either
@@ -17,7 +19,8 @@ const REQUESTS = 10
 export const TILE_THREADS = 50
 export const ITEM_THREADS = 100
 // The comments read for Codex's: its summary among the first, posted as the
-// pull request opens; asking it again, and its failures, among the last.
+// pull request opens, or among the last, where it was first asked later;
+// asking it again, and its failures, among the last.
 const FIRST_COMMENTS = 5
 const LAST_COMMENTS = 20
 const MAX_TITLE = 200
@@ -27,12 +30,12 @@ const COMMIT = /^[a-f\d]{40}$/u
 // The fields a pull request's reviews are read by, its threads' places and
 // links with them for its popup (`detail`).
 export const reviewFields = (threads: number, detail: boolean) => `headRefOid
-  latestReviews(first: ${REVIEWERS}) { nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
-  reviewRequests(first: ${REQUESTS}) { nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Team { slug } } } }
-  reviewThreads(first: ${threads}) { totalCount nodes { isResolved isOutdated${detail ? ' path line originalLine' : ''}
+  latestReviews(first: ${REVIEWERS}) { totalCount nodes { author { ${ACTOR} } state submittedAt commit { oid } } }
+  reviewRequests(first: ${REQUESTS}) { totalCount nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Bot { login databaseId } ... on Team { slug } } } }
+  reviewThreads(last: ${threads}) { totalCount nodes { isResolved isOutdated${detail ? ' path line originalLine' : ''}
     comments(first: 1) { nodes { author { ${ACTOR} } body${detail ? ' url' : ''} } } } }
   firstComments: comments(first: ${FIRST_COMMENTS}) { nodes { author { ${ACTOR} } body updatedAt } }
-  lastComments: comments(last: ${LAST_COMMENTS}) { nodes { author { ${ACTOR} } body createdAt } }`
+  lastComments: comments(last: ${LAST_COMMENTS}) { nodes { author { ${ACTOR} } body createdAt updatedAt } }`
 
 // The fields read for reviews that GitHub may refuse alone, as it refuses an
 // App a pull request's checks: their pull request then shows no reviews.
@@ -45,8 +48,8 @@ type Thread = { isResolved?: unknown; isOutdated?: unknown; path?: unknown; line
   comments?: { nodes?: (Comment & { url?: unknown })[] } | null } | null
 export type ReviewNode = {
   headRefOid?: unknown
-  latestReviews?: { nodes?: ({ author?: GraphAccount; state?: unknown; submittedAt?: unknown; commit?: { oid?: unknown } | null } | null)[] } | null
-  reviewRequests?: { nodes?: ({ requestedReviewer?: { __typename?: unknown; login?: unknown; databaseId?: unknown; slug?: unknown } | null } | null)[] } | null
+  latestReviews?: { totalCount?: unknown; nodes?: ({ author?: GraphAccount; state?: unknown; submittedAt?: unknown; commit?: { oid?: unknown } | null } | null)[] } | null
+  reviewRequests?: { totalCount?: unknown; nodes?: ({ requestedReviewer?: { __typename?: unknown; login?: unknown; databaseId?: unknown; slug?: unknown } | null } | null)[] } | null
   reviewThreads?: { totalCount?: unknown; nodes?: Thread[] } | null
   firstComments?: { nodes?: Comment[] } | null
   lastComments?: { nodes?: Comment[] } | null
@@ -56,7 +59,8 @@ const STATES: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED
 const CODEX_STATES: Record<string, string> = { completed: 'done', running: 'running', queued: 'running', pending: 'running', in_progress: 'running', failed: 'failed', error: 'failed' }
 const SEVERITY = /!\[(P[0-3]) Badge\]/u
 const SUMMARY = /<!--\s*codex-review-state:v1\s+(\{[^]*?\})\s*-->/u
-const ASKED = /^@codex\s+(?:security\s+)?review\b/iu
+// Asking it to review again reruns its code review alone, never its security review.
+const ASKED = /^@codex\s+review\b/iu
 const FAILED = /^Codex Review: Something went wrong/u
 
 const timeOf = (value: unknown) => {
@@ -102,7 +106,8 @@ function summaryState(body: string): { code_review?: unknown; security_review?: 
 // names it; whether it was asked again since the summary last changed
 // (`@codex review`), and whether it failed since it was last asked.
 function codexOf(node: ReviewNode) {
-  const summary = (node.firstComments?.nodes ?? []).find(comment => comment && isCodex(comment.author) && SUMMARY.test(textOf(comment.body)))
+  const summary = [...node.firstComments?.nodes ?? [], ...node.lastComments?.nodes ?? []]
+    .find(comment => comment && isCodex(comment.author) && SUMMARY.test(textOf(comment.body)))
   if (!summary) return null
   const state = summaryState(textOf(summary.body))
   if (!state) return null
@@ -119,7 +124,8 @@ function codexOf(node: ReviewNode) {
 type Reviewer = { login: string | null; id: number | null; team?: string; state: string | null; requested: boolean; commit: string | null; at: number | null }
 
 // The reviewers, each once: by their latest review, its state and commit;
-// whose is requested (again, for one who reviewed); a team's by its slug.
+// whose is requested (again, for one who reviewed), a user or a bot (Copilot's
+// code review, asked for, is its bot's); a team's by its slug.
 // Codex's reviews are its summary's where it has one (`codex`).
 function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
   const own = author?.toLowerCase()
@@ -144,8 +150,8 @@ function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
   return reviewers
 }
 
-// Its review threads: how many are open and resolved, whether more than
-// those read are, the gravest open one; and, for its popup (`detail`), each
+// Its review threads, the latest read: how many are open and resolved,
+// whether more than those read are, the gravest open one; and, for its popup (`detail`), each
 // open one: its gravity, title, file and line, whether its code changed
 // since, who opened it and where it is on GitHub.
 function threadsOf(node: ReviewNode, detail: boolean) {
@@ -168,9 +174,15 @@ function threadsOf(node: ReviewNode, detail: boolean) {
 }
 
 // A pull request's reviews (`author` its author's login), for its tile or,
-// with its threads listed, its popup (`detail`); null where none was read.
+// with its threads listed, its popup (`detail`); null where none was read, or
+// GitHub refused its reviews, requests or threads (reviewsRefused), rather
+// than none.
 export function pullReviews(node: ReviewNode, author: string | null, detail = false) {
-  if (node.headRefOid === undefined) return null
+  if (node.headRefOid === undefined || node.latestReviews === null || node.reviewRequests === null || node.reviewThreads === null) return null
   const codex = codexOf(node)
-  return { head: commitOf(node.headRefOid), reviewers: reviewersOf(node, author, codex !== null), threads: threadsOf(node, detail), codex }
+  // Those past the reviews and requests read, as many as GitHub counts.
+  const past = (connection: { totalCount?: unknown; nodes?: unknown[] } | null | undefined) => Number.isSafeInteger(connection?.totalCount)
+    ? Math.max(0, (connection!.totalCount as number) - (connection!.nodes?.length ?? 0)) : 0
+  return { head: commitOf(node.headRefOid), reviewers: reviewersOf(node, author, codex !== null), moreReviewers: past(node.latestReviews) + past(node.reviewRequests),
+    threads: threadsOf(node, detail), codex }
 }

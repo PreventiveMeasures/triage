@@ -19,6 +19,7 @@ test('a tile\'s reviews mark each reviewer by how their latest review stands, di
   assert.match(text, /class=review-mark is-requested>[^]*aria-label=Review requested[^]*linus/u)
   assert.match(text, /@security/u, 'a team by its slug')
   assert.doesNotMatch(text, /Unreviewed/u, 'Codex reviewed the latest commit')
+  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviewers: 3 })), /class="review-more" data-tooltip=3 more reviewers>\+3</u)
 })
 
 test('a tile says its open threads, the gravest by its badge, and that the latest commit is unreviewed where no review is on it', () => {
@@ -32,6 +33,9 @@ test('a tile says its open threads, the gravest by its badge, and that the lates
     /is-requested>[^]*aria-label=Asked to review again, on the latest commit/u)
   assert.match(templateText(reviewLine({ head, codex: codex({ commit: head, status: 'running' }, { failed: true }), threads: counted(), reviewers: [] })), /is-failed>[^]*Review failed/u)
   assert.equal(reviewLine(null), reviewLine(undefined), 'none read, none')
+  // Those read all resolved, more unread: that it can't tell, not that none is open.
+  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(0, null, { more: true }), reviewers: [] })),
+    /aria-label=No open review thread among those read; more on GitHub[^]*<span>0\+<\/span>/u)
 })
 
 test('the latest commit is reviewed by a review on it, or Codex done with it; one dismissed, or Codex still running, is none', () => {
@@ -41,6 +45,7 @@ test('the latest commit is reviewed by a review on it, or Codex done with it; on
   assert.equal(reviewed([{ login: 'ada', state: null, requested: true, commit: null }]), false)
   assert.equal(reviewed([], { commit: head, status: 'running' }), false)
   assert.equal(reviewed([], { commit: head, status: 'done' }), true)
+  assert.equal(headReviewed({ head, codex: null, reviewers: [], moreReviewers: 2, threads: counted() }), true, 'more reviewers than read: perhaps one of them, not said unreviewed')
 })
 
 test('a popup lists each review, Codex\'s code and security reviews apart, on which commit, linked; then each open thread by its badge, title and place', () => {
@@ -54,6 +59,8 @@ test('a popup lists each review, Codex\'s code and security reviews apart, on wh
   assert.match(text, /<h4>Open threads<\/h4>[^]*href=https:\/\/github\.com\/org\/repo\/pull\/5#discussion_r1[^]*is-p2>P2<[^]*Keep the cache[^]*server\/a\.ts:12[^]*outdated/u)
   assert.match(text, /2 threads resolved\./u)
   assert.doesNotMatch(text, /No review is on the latest commit/u)
+  const unread = templateText(reviewSections({ head, codex: null, reviewers: [], threads: { open: 0, resolved: 100, more: true, severity: null, list: [] } }, null))
+  assert.match(unread, /None open among those read\.[^]*100 threads resolved; more on GitHub\./u)
   const none = templateText(reviewSections({ head, codex: null, reviewers: [], threads: { open: 0, resolved: 0, more: false, severity: null, list: [] } }, null))
   assert.match(none, /No reviews yet\./u)
   assert.doesNotMatch(none, /Open threads/u, 'no threads, no list')

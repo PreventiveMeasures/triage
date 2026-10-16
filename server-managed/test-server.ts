@@ -452,11 +452,12 @@ function issuesFixture(url: URL, res: ServerResponse): void {
 // An open pull request's reviews, as server-managed/pull-reviews.ts reads
 // them, one of six ways by `index`: Codex done on the latest commit; Codex
 // and an approval on an earlier one, a P1 open; Codex asked again, changes
-// requested, P2s open and some resolved; none yet, a user and a team asked;
+// requested, P2s open and some resolved; none yet, a user, a team and
+// Copilot's code review asked;
 // Codex and an approval on the latest, a question open; Codex failed, a
 // comment. Its popup's (`detail`) lists its open threads.
 const CODEX_ACCOUNT = { login: 'chatgpt-codex-connector', id: 199175422 }
-const REVIEW_USERS = { 'chatgpt-codex-connector': { agent: 'codex' } }
+const REVIEW_USERS = { 'chatgpt-codex-connector': { agent: 'codex' }, 'Copilot': { agent: 'copilot' } }
 function reviewsFixture(index: number, number: number, now: number, detail = false) {
   const earlier = number.toString(16).padStart(40, 'b'), head = number.toString(16).padStart(40, 'e')
   const at = (hours: number) => now - hours * 3_600_000
@@ -472,14 +473,15 @@ function reviewsFixture(index: number, number: number, now: number, detail = fal
       threads: [finding('p2', 'Keep the cached year when crossing the threshold', 'server-managed/repository-pulse.ts', 88),
         finding('p2', 'Read the next page from where the last one stopped', 'ui/view/repository-history.js', 404)] },
     { reviewers: [{ login: 'linus', id: 7, state: null, requested: true, commit: null, at: null },
-      { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null }], threads: [], resolved: 0, codex: null },
+      { login: null, id: null, team: 'security', state: null, requested: true, commit: null, at: null },
+      { login: 'Copilot', id: 175728472, state: null, requested: true, commit: null, at: null }], threads: [], resolved: 0, codex: null },
     { reviewers: [{ login: 'ada', id: 2, state: 'approved', requested: false, commit: head, at: at(2) }], resolved: 0, codex: codex(head, 'done', earlier),
       threads: [finding(null, 'Why not a Set here?', 'ui/view/pull-reviews.js', 61, { login: 'ada', id: 2 })] },
     { reviewers: [{ login: 'kay', id: 6, state: 'commented', requested: false, commit: head, at: at(1) }], threads: [], resolved: 0, codex: codex(earlier, 'done', earlier, { failed: true }) },
   ]
   const { reviewers, threads, resolved, codex: summary } = variants[index % variants.length]!
   const counted = { open: threads.length, resolved, more: false, severity: threads.map(thread => thread.severity).filter(Boolean).toSorted()[0] ?? null }
-  return { head, reviewers, codex: summary, threads: detail ? { ...counted, list: threads } : counted }
+  return { head, reviewers, moreReviewers: index % variants.length === 3 ? 2 : 0, codex: summary, threads: detail ? { ...counted, list: threads } : counted }
 }
 
 // The issues' or pull requests' tiles, as of `now`.
@@ -527,7 +529,7 @@ function itemFixture(url: URL, res: ServerResponse): void {
   for (const kind of ['pulls', 'issues'] as const) {
     const tile = issueTiles(kind, now).find(item => item.number === number)
     if (tile) {
-      const index = issueTiles(kind, now).indexOf(tile)
+      const index = issueTiles(kind, now).findIndex(item => item.number === number)
       sendJson(res, 200, kind === 'pulls' ? { kind, ...tile, ...shared, labels: tile.labels, closes: [], commits: number % 5 + 1, files: number % 9 + 1, mergedBy: tile.state === 'merged' ? 'ada' : null,
         reviews: reviewsFixture(index, number, now, true), users: REVIEW_USERS }
         : { kind, ...tile, ...shared, labels: tile.labels, closedBy: [] })

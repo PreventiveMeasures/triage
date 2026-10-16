@@ -40,6 +40,9 @@ test('an agent\'s account is told by its login, its id confirming it where both 
   assert.deepEqual([['dependabot', 49699333], ['Dependabot[bot]', null], ['dependabot', 1], ['Copilot', 198982749], ['ada', 198982749], ['claude', 81847], ['claude', 5],
     ['claude[bot]', 123], ['chatgpt-codex-connector', 199175422]].map(([login, id]) => githubAgent(login, id)),
   ['dependabot', 'dependabot', null, 'copilot', null, 'claude', null, 'claude', 'codex'], 'an account whose id GitHub gives no agent, by its login alone')
+  // Copilot's code review, by its own bot, which GitHub names Copilot as it names Copilot's coding agent.
+  assert.deepEqual([['Copilot', 175728472], ['copilot-pull-request-reviewer', 175728472], ['copilot-pull-request-reviewer[bot]', null], ['Copilot', 1], ['copilot-swe-agent', 175728472]]
+    .map(([login, id]) => githubAgent(login, id)), ['copilot', 'copilot', 'copilot', null, null], 'a login two accounts are named by is either\'s, by its id')
   assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
     .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
 })
