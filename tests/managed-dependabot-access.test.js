@@ -61,11 +61,15 @@ test('an admin whose access doesn\'t let them see the alerts on GitHub is refuse
   }
 })
 
-test('an admin whose sign-in can\'t be verified is refused so, nothing more asked; GitHub not reached told as it is', async () => {
+test('an admin whose sign-in can\'t be verified is refused so, nothing more asked; GitHub failing to answer told as it is', async () => {
   const { asked, fetchImpl } = github()
-  await assert.rejects(appDependabotAlerts(config, repo, readerOf({ identity: Promise.reject(new GithubApiError(404, 'no-repository')) }), fetchImpl), { message: 'dependabot-unverified' })
-  await assert.rejects(appDependabotAlerts(config, repo, readerOf({ identity: Promise.reject(new GithubApiError(502, 'github-unreachable', null, 'TypeError: fetch failed')) }), fetchImpl),
-    { message: 'github-unreachable', detail: 'TypeError: fetch failed' })
+  for (const code of ['no-repository', 'github-unauthorized']) {
+    await assert.rejects(appDependabotAlerts(config, repo, readerOf({ identity: Promise.reject(new GithubApiError(404, code)) }), fetchImpl), { message: 'dependabot-unverified' }, code)
+  }
+  for (const failed of [new GithubApiError(502, 'github-unreachable', null, 'TypeError: fetch failed'), new GithubApiError(502, 'github-status-500'),
+    new GithubApiError(502, 'github-malformed'), new GithubApiError(429, 'github-rate-limited', 60)]) {
+    await assert.rejects(appDependabotAlerts(config, repo, readerOf({ identity: Promise.reject(failed) }), fetchImpl), failed, failed.message)
+  }
   assert.deepEqual([tokensFor(asked, PERMISSION), tokensFor(asked, ALERTS)], [[], []])
 })
 

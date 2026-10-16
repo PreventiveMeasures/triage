@@ -9,8 +9,10 @@ import { GithubApiError, type GithubIdentity, githubRepoPermission, repoAccessTo
 // The levels GitHub lets see a repository's Dependabot alerts by default
 // (maintain's reads `write`).
 const SEES_ALERTS: ReadonlySet<string> = new Set(['admin', 'write'])
-// Failures of verifying the sign-in that are GitHub's, not the sign-in's.
-const PASSING: ReadonlySet<string> = new Set(['github-unreachable', 'github-rate-limited'])
+// Failures of verifying the sign-in that are the sign-in's own: no token, or
+// one of another account (repository-browser.ts getIdentity), or one GitHub no
+// longer takes. Any other, as GitHub failing to answer, is told as it is.
+const UNVERIFIED: ReadonlySet<string> = new Set(['no-repository', 'github-unauthorized'])
 
 // What of a repository's reader (repository-browser.ts) the alerts are asked
 // with: its installation's token, the user's verified identity, and their
@@ -36,8 +38,7 @@ export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<Sele
   if (token == null) throw new GithubApiError(403, 'dependabot-not-installed')
   let who
   try { who = await reader.identity() } catch (error) {
-    if (error instanceof GithubApiError && PASSING.has(error.message)) throw error
-    throw new GithubApiError(403, 'dependabot-unverified')
+    throw error instanceof GithubApiError && UNVERIFIED.has(error.message) ? new GithubApiError(403, 'dependabot-unverified') : error
   }
   const permission = reader.permission() ?? await githubRepoPermission(repo.fullName, token, who, fetchImpl)
   if (!SEES_ALERTS.has(permission)) {
