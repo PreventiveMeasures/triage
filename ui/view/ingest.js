@@ -18,7 +18,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
-import { configureReportRevalidation, render, renderEmptyWorkspace } from './render.js'
+import { configureReportRevalidation, render, renderEmptyWorkspace, renderTriageLoading } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { createManagedAnnotationRead, hydrateManagedReportTriage } from './managed-triage.js'
 import { resetBundleTerminal } from './terminal-attach.js'
@@ -799,10 +799,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   closeSessionsExcept(new Set())
   // Replace the previous report's controls while the new view is loading.
   // No partially hydrated findings may remain interactive during the awaits.
-  const loading = document.createElement('p')
-  loading.setAttribute('role', 'status')
-  loading.textContent = 'Loading report triage…'
-  report.replaceChildren(loading)
+  // A team keeps its header meanwhile.
+  renderTriageLoading(reportId === null && !deduplication ? team.id : null)
   report.classList.add('active')
   dropZone.classList.add('hidden')
   state.currentView = 'findings'
