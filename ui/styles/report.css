@@ -3948,9 +3948,9 @@ repository-agents { --claude: #d97757; }
    under them; two a row where narrower, one where narrower still. The
    activity is the period alone, a column each: commits with agents in
    blue atop, those without in amber under them, releases in magenta at the
-   foot, a gap of the surface between; under them
-   lines added above a baseline and removed below it, green and red as every
-   diff's are (--green, --critical), which way from the line telling them
+   foot, flush, no gap between; under them lines added above a baseline and
+   removed below it, green and red as every diff's are (--green,
+   --critical), which way from the line telling them
    apart where their hues don't; a month's weekends lightly shaded, a week's
    figures written on its bars. The column pointed at washed across both,
    its figures in a card beside it, the one picked in the accent. The punch
@@ -4078,8 +4078,9 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   &.is-added { background: var(--pulse-added); }
   &.is-removed { border-radius: 0 0 4px 4px; background: var(--pulse-removed); }
   /* Commits with agents atop, those without under them, releases at the
-     foot, each its share of the bar, the surface between. */
-  &.is-split { display: flex; flex-direction: column; gap: 2px; overflow: hidden; background: none; }
+     foot, each its share of the bar, flush: a gap would split even the
+     thinnest share off as a line of its own. */
+  &.is-split { display: flex; flex-direction: column; overflow: hidden; background: none; }
 }
 .pulse-part {
   flex: var(--part) 1 0; min-height: 0; background: var(--pulse-accent);
