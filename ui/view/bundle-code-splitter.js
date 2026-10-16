@@ -101,16 +101,23 @@ class BundleCodeSplitter extends HTMLElement {
   _startDrag(e) {
     if (e.button !== 0 || !e.isPrimary || this._drag || !this._view) return
     e.preventDefault()
-    this._drag = { id: e.pointerId, at: this._client(e), size: this._paneSize() }
+    // The whole Code view keeps the drag's cursor and selects nothing
+    // until it ends (report.css). A class rather than `:has()` there:
+    // `.bundle-code-view:has(…) *` had Chrome restyle every element on
+    // the page at each DOM change anywhere — over a second to open a
+    // finding on a board of two thousand.
+    this._drag = { id: e.pointerId, at: this._client(e), size: this._paneSize(), view: this.closest('.bundle-code-view') }
     this.setPointerCapture(e.pointerId)
     this.classList.add('dragging')
+    this._drag.view?.classList.add('splitting')
   }
 
   _endDrag() {
     if (!this._drag) return
-    const { id } = this._drag
+    const { id, view } = this._drag
     this._drag = null
     this.classList.remove('dragging')
+    view?.classList.remove('splitting')
     if (this.hasPointerCapture(id)) this.releasePointerCapture(id)
   }
 

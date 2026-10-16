@@ -30,6 +30,12 @@ globalThis.localStorage = globalThis.sessionStorage = {
   setItem() { assert.fail('must not write storage') },
 }
 
+// A view's class list: the drag marks the whole Code view while it lasts.
+function viewClasses() {
+  const classes = new Set()
+  return { classes, classList: { add: name => classes.add(name), remove: name => classes.delete(name) } }
+}
+
 let boot = 0
 async function reload() {
   const path = `../ui/view/bundle-code-splitter.js?boot=${boot++}`
@@ -40,6 +46,7 @@ function mount(width = 1000) {
   const view = {
     width,
     railWidth: 320,
+    ...viewClasses(),
     getBoundingClientRect() { return { width: this.width } },
     querySelector() { return { getBoundingClientRect: () => ({ width: this.railWidth }) } },
     style: { setProperty(_name, value) { view.railWidth = parseFloat(value) } },
@@ -55,6 +62,7 @@ function mountTerminal(height = 800) {
   const view = {
     height,
     paneHeight: null,
+    ...viewClasses(),
     getBoundingClientRect() { return { height: this.height } },
     querySelector() { return { getBoundingClientRect: () => ({ height: this.paneHeight }) } },
     style: { setProperty(name, value) { assert.equal(name, '--bundle-code-terminal-height'); view.paneHeight = parseFloat(value) } },
@@ -78,6 +86,7 @@ test('dragging preserves the grab offset, clamps both panes, and ignores other p
   assert.equal(view.railWidth, 320)
   assert.equal(fire(handle, 'pointerdown').defaultPrevented, true)
   assert.equal(handle.capture, 1)
+  assert.equal(view.classes.has('splitting'), true)
   fire(handle, 'pointermove', { clientX: 402 })
   assert.equal(view.railWidth, 400)
   assert.equal(handle.attributes.get('aria-valuenow'), '400')
@@ -92,6 +101,7 @@ test('dragging preserves the grab offset, clamps both panes, and ignores other p
   fire(handle, 'pointerup')
   assert.equal(handle.capture, null)
   assert.equal(handle.classes.has('dragging'), false)
+  assert.equal(view.classes.has('splitting'), false)
   fire(handle, 'pointermove', { clientX: 500 })
   assert.equal(view.railWidth, 180, 'moves after release do not resize')
 })
@@ -104,6 +114,7 @@ test('secondary buttons and secondary touches cannot start a drag', async () => 
     fire(handle, 'pointermove', { clientX: 502 })
     assert.equal(view.railWidth, 320)
     assert.equal(handle.capture, null)
+    assert.equal(view.classes.has('splitting'), false)
   }
 })
 
@@ -118,6 +129,7 @@ test('cancellation, lost capture, and unmount all end the drag', async () => {
     assert.equal(view.railWidth, 320)
     assert.equal(handle.capture, null)
     assert.equal(handle.classes.has('dragging'), false)
+    assert.equal(view.classes.has('splitting'), false)
     if (end === 'unmount') assert.equal(view.observer.disconnected, true)
   }
 })

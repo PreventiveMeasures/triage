@@ -876,7 +876,8 @@ bundle-code-terminal-splitter {
   height: 7px; margin-block: -3px;
   &::before { inset: 3px 0; }
 }
-.bundle-code-view:has(> bundle-code-splitter.dragging, bundle-code-terminal-splitter.dragging) {
+/* While either handle is dragged (view/bundle-code-splitter.js). */
+.bundle-code-view.splitting {
   &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
