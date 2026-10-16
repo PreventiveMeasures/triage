@@ -25,8 +25,8 @@ const CODE = [
   '<div class="a" onclick="b()">&amp; &lt; &copy; &#x3c;<!-- c --><![CDATA[d]]></div><script>e()</script><style>f{}</style>',
   '<?php echo "<b>$x</b>"; $a = <<<EOT\nhi {$y}\nEOT; ?>',
   '# Title\n\n**b** `c` [l](https://github.com/org/repo)\n\n```html\n<img src=x onerror=alert(1)>\n```\n\n| a | b |\n|---|---|\n| <i>x</i> | y |',
-  'fn main() { let s = "<a href=\'x\'>"; println!("{}", s); } // \u0000 ‮ ​',
-  'def f(x):\n    return f"<{x}>"  #   ok',
+  'fn main() { let s = "<a href=\'x\'>"; println!("{}", s); } // \u0000 \u202E \u200B',
+  'def f(x):\n    return f"<{x}>"  # \u2028 ok',
   'a { background: url("javascript:x"); content: "<b>"; } @media (x) { b { c: d } }',
   'echo "<x>" | sh; cat <<EOF\n<y>\nEOF',
   '{"a": "<b>", "c": [1, 2.5e3, null, true]}',
@@ -94,7 +94,7 @@ test('nothing else passes, however it is spelled', () => {
     '<a class="source-node-doc" href="https://nodejs.org/api/fs.html" target="_self">', '<path d="M0 0" fill="url(https://evil.example/x.svg#p)"></path>',
     // Spellings a parser reads differently from what a pattern might.
     '<SPAN>x</SPAN>', '<span CLASS="token">', '<span class=token>', '<span class=\'token\'>', '<span hidden>', '<span/onclick="alert(1)">',
-    '<span onclick="alert(1)">', '<span class="token" onclick="alert(1)">', '<span class="token"onclick="alert(1)">', '<span class="token" onclick=alert(1)>',
+    '<span\u00A0onclick="alert(1)">', '<span class="token"\u00A0onclick="alert(1)">', '<span class="token"onclick="alert(1)">', '<span class="token" onclick=alert(1)>',
     '<!-- x -->', '<!---->', '<!doctype html>', '<?xml x?>', '<![CDATA[x]]>', '< span>', '<', 'x<', '<span', '</script>', '<spanx>', '<span1>',
   ]
   assert.deepEqual(refused.filter(html => isAppMarkup(html)), [])

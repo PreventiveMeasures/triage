@@ -166,7 +166,7 @@ describe('template literals in JavaScript', () => {
   })
 
   it('ends a line comment at every line terminator', () => {
-    for (const end of ['\n', '\r', ' ', ' ']) {
+    for (const end of ['\n', '\r', '\u2028', '\u2029']) {
       const code = `a = \`\${b // c${end}}\`; let h = \`\${1}\``
       assert.deepEqual(templates(code), [`\`\${b // c${end}}\``, '`${1}`'], JSON.stringify(end))
     }
