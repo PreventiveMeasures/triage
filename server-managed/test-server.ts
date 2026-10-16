@@ -835,7 +835,11 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
   if (url.pathname.endsWith('/pulse')) { pulseFixture(url, res); return }
-  const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
+  // Main's and develop's heads, as the directory's reads below give them, a
+  // release tagged at develop's and another at an older commit.
+  const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)],
+    branchCommits: [{ name: 'main', sha: 'a'.repeat(40) }, { name: 'develop', sha: 'b'.repeat(40) }],
+    tagCommits: [{ name: 'v1.0.0', sha: 'b'.repeat(40) }, { name: 'v0.19.0', sha: 'c'.repeat(40) }] } : null
   if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
   const path = refs ? '' : url.searchParams.get('path') ?? ''
   const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'

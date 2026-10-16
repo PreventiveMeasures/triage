@@ -1486,7 +1486,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     if (!current) return
     // This request (or another reader) may have refreshed the shared hint.
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, refs ? { ...listed, ...(withDefault ? {
+    sendJson(res, 200, refs ? { ...listed, tagCommits, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
     } : {}) } : scopeRepositoryContents(contents, current.virtualEntries))
   } catch (err) {
