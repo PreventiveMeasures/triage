@@ -23,12 +23,14 @@ const branches = {
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 // Repository 8's a page at a time, more than are read.
-const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false })], 8: { '': [pull(2)], p2: [pull(6)], p3: [pull(7, { touchesLockfile: false })] }, 9: [pull(5)] }
+const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9)], 8: { '': [pull(2)], p2: [pull(6)], p3: [pull(7, { touchesLockfile: false })] }, 9: [pull(5)] }
 const page = (repoId, after = '') => Array.isArray(pulls[repoId]) ? { items: pulls[repoId], more: false }
   : { items: pulls[repoId][after] ?? [], more: true, after: after === '' ? 'p2' : `p${Number(after.slice(1)) + 1}` }
 const dependencies = {
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared'), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
   '7#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('fine', { reviews: 2 }), wants('known', { baseline: true })] })] },
+  // Its own passed, but held by those its lockfiles locked before it.
+  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old')], moreUnreviewed: 3 })] },
   '8#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared'), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
@@ -61,12 +63,15 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.branches.toSorted(), [7, 8, 9], 'each repository once')
   assert.deepEqual(asked.pulls.map(([repoId, kind, options]) => [repoId, kind, options.state, options.after ?? null]).toSorted(),
     [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], [8, 'pulls', 'open', 'p2'], [8, 'pulls', 'open', 'p3']], 'of those whose review is in effect, three pages at most')
-  assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(), [[7, 1, true], [7, 3, true], [8, 2, true], [8, 6, true]],
+  assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(), [[7, 1, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')
   assert.match(text, /role="alert">Only org\/b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = text.slice(text.indexOf('team-deps-pulls'), text.indexOf('</ol></section>')).split('<li class="team-deps-pull">').slice(1)
-  assert.equal(cards.length, 3, 'one adding none wanting reviews not shown')
+  assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
+  assert.match(cards[3], />org\/a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*Its own versions pass; those its lockfiles locked before want reviews</u,
+    'one held only by the versions its lockfiles locked before it, last')
+  assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it')
   assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>org\/b#2<[^]*>Pull 2<[^]*class=team-deps-count>2 versions to review</u, 'that adding fewest first')
   assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*shared[^]*class="team-deps-review is-wanted" data-tooltip=0 reviews of 2 required>0\/2<[^]*data-tooltip=Added by org\/a#1 too>\+1</u)
   assert.match(cards[0], /href=\/npm\/rej@1\.0\.0\/review [^]*class="team-deps-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected, however many pass it')

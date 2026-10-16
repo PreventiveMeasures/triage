@@ -2123,7 +2123,9 @@ out), it reads the open pull requests (three pages at most, those updated
 latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and lists the pull requests whose versions want reviews, or whose
-review fails, those adding fewest first, each a card opening its popup: how
+review fails, those adding fewest first, then those held only by other
+versions their lockfiles lock (the default branch's mostly, counted, not
+listed), each a card opening its popup: how
 many versions it wants reviewed, and its versions with their review (`0/2`,
 **rejected**, **patched** or **can't review**), eight at most, the rest
 counted, those past the versions its answer lists too. A version is told under the first pull request adding it alone, of

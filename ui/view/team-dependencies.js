@@ -182,14 +182,18 @@ class TeamDependencies extends StateElement {
       .map(item => ({ repo, item, entry: pullDependencies(repo.repoId, item.number, true) })))
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
-    // it is kept and ordered.
+    // it is kept and ordered; and the other versions its lockfiles lock that
+    // want them (`others`), the default branch's mostly, which hold it too:
+    // one held by those alone after those adding some.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, pull.entry.review)))
       const told = wanted.filter(pkg => reviewOf(pkg, pull.entry.review) === 'wanted').length
       const toReview = Math.max(pull.entry.review.toReview ?? told, told)
-      return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: toReview - told, size: wanted.length + toReview - told }
-    }).filter(pull => pull.size > 0 || pull.failed)
-      .toSorted((a, b) => a.size - b.size || (a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number))
+      return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: toReview - told, size: wanted.length + toReview - told,
+        others: unreviewedVersions(pull.entry).count }
+    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed)
+      .toSorted((a, b) => Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others
+        || (a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number))
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
     const adding = new Map()
@@ -226,13 +230,16 @@ class TeamDependencies extends StateElement {
       return html`<li class="team-deps-pull">
         <a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${pullName(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
-          <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : `${plural(pull.toReview, 'version')} to review`}</span>
+          <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
+            : `${plural(pull.others, 'other version')} unreviewed`}</span>
         </a>
         ${own.length > 0 ? html`<ul class="team-deps-versions">${own.slice(0, SHOWN_VERSIONS).map(pkg => versionRow(pkg, pull.entry.review,
           (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName)))}</ul>` : nothing}
         ${own.length > SHOWN_VERSIONS ? html`<p class="team-deps-quiet">and ${(own.length - SHOWN_VERSIONS).toLocaleString('en-US')} more</p>` : nothing}
         ${pull.untold > 0 ? html`<p class="team-deps-quiet">and ${plural(pull.untold, 'more version')} past those listed</p>` : nothing}
         ${above.length > 0 ? html`<p class="team-deps-quiet" data-tooltip=${above.map(versionKey).join(', ')}>and ${plural(above.length, 'version')} a pull request above adds too</p>` : nothing}
+        ${pull.others > 0 ? html`<p class="team-deps-quiet" data-tooltip="Versions its lockfiles locked before it, the default branch’s mostly: its popup lists them">${pull.size > 0 || pull.failed
+          ? `and ${plural(pull.others, 'other version')} its lockfiles lock want reviews` : 'Its own versions pass; those its lockfiles locked before want reviews'}</p>` : nothing}
       </li>`
     })}</ol></section>`
   }
