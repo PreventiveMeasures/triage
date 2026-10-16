@@ -156,9 +156,9 @@ function flowScan(text, open, last) {
 // is a key over more than one line, or its `:` on a line after it. A tab
 // is read in a comment line and a line of nothing but spaces and tabs, as
 // parse.js's peek reads them, but not in one a plain scalar folds into its
-// text, as YAML has it.
+// text (`tabbed`), as YAML has it, once the line after it shows it does.
 export function readFlowLines(doc, first, owner) {
-  let breaks = 0, ended = false, last = null, plain = false, scan = flowScan(first, 0, null), text = ''
+  let breaks = 0, ended = false, last = null, plain = false, scan = flowScan(first, 0, null), tabbed = null, text = ''
   for (let line = owner; ;) {
     if (scan.open === -1) throw new YamlError('a quoted scalar in a flow collection does not close on its line', line.number)
     const kept = scan.kept.replace(/ +$/u, '')
@@ -166,12 +166,14 @@ export function readFlowLines(doc, first, owner) {
       const goesOn = plain && !/^(?:[,\]}]|:(?:[ ,[\]{}]|$))/u.test(kept)
       if (goesOn && ended) throw new YamlError('a plain scalar in a flow collection goes on past a comment', line.number)
       if (scan.keyed || (kept.startsWith(':') && !goesOn && (last === 'plain' || last === 'quoted'))) throw new YamlError('a key over more than one line is not supported', line.number)
+      if (goesOn && tabbed !== null) noTab(tabbed)
       if (text !== '') text += goesOn && breaks > 1 ? '\n'.repeat(breaks - 1) : ' '
       text += kept
       breaks = 0
       last = scan.last
       plain = last === 'plain'
       ended = false
+      tabbed = null
     }
     ended ||= plain && scan.comment
     if (scan.after !== undefined) {
@@ -182,7 +184,8 @@ export function readFlowLines(doc, first, owner) {
     line = line === owner ? doc.line : doc.advance()
     if (line === undefined || doc.isMarker(line)) throw new YamlError('a flow collection that does not close', owner.number)
     const blank = /^[\t ]*$/u.test(line.text)
-    if (blank ? plain && !ended : !line.text.startsWith('#')) noTab(line)
+    if (!blank && !line.text.startsWith('#')) noTab(line)
+    else if (blank && plain && !ended && line.text.includes('\t')) tabbed ??= line
     breaks++
     scan = flowScan(blank ? '' : line.text, scan.open, plain && !ended ? 'plain' : null)
   }
