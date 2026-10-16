@@ -1613,7 +1613,7 @@ apart where the first page of a hundred branches by name leaves it out. Between 
 a directory's path in the repository, each part opening its own directory,
 and after them the commit, linking its tree on GitHub; none of the three
 shows on Issues, Pull requests, Agents or Pulse, which read the whole
-repository whatever its revision and directory, both kept for the other
+repository whatever its revision and directory (Replay plays the revision's), both kept for the other
 tabs. Each file's head links it on GitHub at
 the commit, and admins have a breadcrumb back to the Repositories page. A
 directory too large to read whole, or one the reader's grants reach only part

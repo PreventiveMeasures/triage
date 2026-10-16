@@ -248,8 +248,9 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
         showOpening({ ...opening, error: 'The server answered with no commit.' })
         return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
       }
-      if (revision) revisionNames.set(`${repoId}\0${at}`, revision)
     }
+    // Named so for its other tabs too, as one picked on Commits is.
+    if (revision) revisionNames.set(`${repoId}\0${at}`, revision)
     showOpening({ ...opening, commit: at, ref: null, historyOnly: true })
     renderSidebar()
     return { view: 'repository-code', repoId, commit: at, path, bundleTab: tab }

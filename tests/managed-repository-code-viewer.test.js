@@ -264,6 +264,14 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
+  // A commit picked on Commits by the tag naming it, named so on Code too,
+  // whatever the repository's branches and tags list.
+  const tagged = 'e'.repeat(40)
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: tagged, revision: { kind: 'tag', name: 'v9' }, path: '', bundleTab: 'commits' },
+    () => true, () => {})
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, commit: tagged, path })
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: tagged, path: '', bundleTab: 'code' }, () => true, () => {})
+  assert.deepEqual(state.bundles[0].repository.revision, { kind: 'tag', name: 'v9' })
   // One its listing can't read says why.
   contents = () => Promise.reject(Object.assign(new Error('This repository is not available to you.'), { code: 'no-repository' }))
   assert.equal((await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/gone', path: '', bundleTab: 'commits' }, () => true, () => {})).commit, null)
@@ -305,7 +313,7 @@ test('the header opens another repository at its default branch, another revisio
   // Issues, Pull requests, Agents and Pulse, the whole repository's whatever
   // its revision and directory, pick neither, nor link the commit; the
   // others do.
-  for (const tab of ['code', 'treemap', 'search', 'compare', 'commits', 'issues', 'pulls', 'agents', 'pulse']) {
+  for (const tab of ['code', 'treemap', 'search', 'compare', 'commits', 'replay', 'issues', 'pulls', 'agents', 'pulse']) {
     header.tab = tab
     header._edit = null
     const text = templateText(header.render())
