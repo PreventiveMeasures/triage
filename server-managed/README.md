@@ -1945,15 +1945,21 @@ repository or item gone) is no longer kept, the next to ask refused as
 GitHub refused it. The
 Agents tab's pages are kept so too.
 
-### New dependencies
+### New dependency versions
 
-A pull request that changes a lockfile tells the packages its lockfiles lock
-that they locked none of before it (`pull-dependencies.ts`): an open one's
-tile, under its branches, as a line of their names, shortened as the tile's
-width does, and how many (each named on hover, twenty at most); and its
-popup, open, merged or closed, under **New dependencies**, each directory's
-lockfiles over their packages, each by its name and version, npm's opening
-in the app's npm viewer, one from git, a tarball, a file or a mirror tagged
+A pull request that changes a lockfile tells every package version its
+lockfiles lock that they didn't before it (`pull-dependencies.ts`): of a
+package new to them, or a new version of one they locked others of, an
+update's. What the app reviews is a version, so an update's is as new as a
+package's. An open one's tile tells them under its branches, as a line of
+their packages' names, those new to its lockfiles first, shortened as the
+tile's width does, and how many of each (`2 new, 1 updated`), each version
+named on hover with those it was, twenty at most; and its popup, open,
+merged or closed, under **New dependency versions**, each directory's
+lockfiles over their versions, each by its name and version: a package new
+to them tagged **new**, an update by the versions it was (`from 1.0.0-alpha.7`);
+npm's opening in the app's npm viewer, an update's compared with the
+highest version it was; one from git, a tarball, a file or a mirror tagged
 so, and one only devDependencies need tagged **dev**. The lockfiles are those
 of npm's ecosystem that repository risk reads (`package-lock.json` and
 `npm-shrinkwrap.json` of `lockfileVersion: 3`, `pnpm-lock.yaml` of pnpm 9 to
@@ -1974,12 +1980,14 @@ changes, three hundred at most; one changing as many has them listed from its
 own list, a hundred a page, three thousand at most. Each directory's
 lockfiles it changes (`paths`, as many directories as twenty) are read at its
 merge base and at its head, each held to its blob as repository risk reads
-them: `added` the packages its lockfiles lock at its head of names none of
-them locked at the merge base, whichever version, so a version bump adds
-none and a lockfile replaced by another, Yarn's by pnpm's, is read as the one
-it replaced, each `{ name, version, source, from?, dev? }` as a scan's
-lockfile line tells it, its integrity left out, by name, two hundred at most,
-the rest counted (`more`); or, where a lockfile there couldn't be read, its
+them: `added` the package versions its lockfiles lock at its head that none
+of them locked at the merge base, from where it is installed, so a lockfile
+replaced by another, Yarn's by pnpm's, is read as the one it replaced, each
+`{ name, version, source, from?, dev?, was? }` as a scan's lockfile line
+tells it, its integrity left out, with the versions of its name they locked
+before (`was`, the highest first; none of a package new to them), by name and
+version, two hundred at most, the rest counted (`more`); or, where a
+lockfile there couldn't be read, its
 `error` (`lockfile-unreadable`, with its reader's `detail`, or
 `github-not-found`). `cut` is set where it changes more files than are
 listed, or lockfiles in more directories than are read. What a pull

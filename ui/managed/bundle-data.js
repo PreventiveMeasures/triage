@@ -235,8 +235,8 @@ const PULL_DEPENDENCIES_ERRORS = {
   400: 'Not a pull request of a repository.',
 }
 
-// The packages a pull request's lockfiles lock that they locked none of where
-// its branch left its base, by directory.
+// The package versions a pull request's lockfiles lock that they didn't where
+// its branch left its base, by directory, an update's with those it was.
 export function fetchPullDependencies(repoId, number, { signal } = {}) {
   return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number })}`, PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
 }

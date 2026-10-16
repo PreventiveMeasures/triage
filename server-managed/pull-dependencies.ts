@@ -1,6 +1,6 @@
-// The packages a pull request's lockfiles lock that they locked none of
-// before it, by name, as the code viewer's Pull requests tab shows them on an
-// open one's tile and its popup on any (GET
+// The package versions a pull request's lockfiles lock that they didn't
+// before it, as the code viewer's Pull requests tab shows them on an open
+// one's tile and its popup on any (GET
 // /api/admin/repositories/pull-dependencies): read only where it changes a
 // lockfile of npm's ecosystem that @preventive/lockfile reads
 // (package-lock.json and npm-shrinkwrap.json of `lockfileVersion: 3`,
@@ -14,15 +14,18 @@
 // many, from its own list of them, a page at a time, as many as PULL_FILES.
 // Each directory's lockfiles it changes are read at its merge base and at its
 // head, a lockfile replaced by another, Yarn's by pnpm's say, read as the
-// one it replaced; a package new to a directory is one its lockfiles lock at
-// the head that none of them locked at the merge base, whichever version, a
-// version bump none. What a pair of commits holds never changes, so what is
-// told of one is kept by them (`kept`), and each lockfile read is kept in
-// this instance's memory by its commit (`lockfileReads`): the pull requests
-// branching off the same commit, as a bot's do, read their base's once.
+// one it replaced; a version new to a directory is one its lockfiles lock at
+// the head that none of them locked at the merge base, from where it is
+// installed: a package new to it, or a version of one they locked others of,
+// a bump's, told with those (`was`). What a pair of commits holds never
+// changes, so what is told of one is kept by them (`kept`), and each
+// lockfile read is kept in this instance's memory by its commit
+// (`lockfileReads`): the pull requests branching off the same commit, as a
+// bot's do, read their base's once.
 import { createClient } from '@preventive/upstream/github.js'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { upstreamGithub } from './github-errors.ts'
+import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
 import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import { type ChangedFile, commitChanges } from './repository-changes.ts'
@@ -39,7 +42,7 @@ export const MAX_ADDED = 200
 const READ_PARALLEL = 4
 // The rules what is told was told by, kept with it (http.ts
 // pullDependencyKept): one told by others is told again.
-export const PULL_DEPENDENCIES_READ = 1
+export const PULL_DEPENDENCIES_READ = 2
 const SHA = /^[a-f\d]{40}$/u
 
 type Format = 'npm' | 'pnpm' | 'yarn'
@@ -64,13 +67,16 @@ export function touchesLockfile(paths: string[], changed: number): boolean | nul
   return changed > paths.length ? null : false
 }
 
-// A package new to a directory, as its lockfile locks it, its integrity left out.
-export type AddedPackage = Omit<LockedPackage, 'integrity'>
+// A package version new to a directory, as its lockfile locks it, its
+// integrity left out; of a package its lockfiles locked before, the versions
+// of it they did (`was`, the highest first), none of one new to it.
+export type AddedPackage = Omit<LockedPackage, 'integrity'> & { was?: string[] }
 // A directory's lockfiles the pull request changes (`paths`, those it adds,
-// modifies, removes or renames, by either name): the packages they lock new to it,
-// as many as MAX_ADDED, by name, how many more (`more`); or why they couldn't
-// be told, a lockfile's reader refusing one (`lockfile-unreadable`, with what
-// it said) or GitHub having none at a commit compared.
+// modifies, removes or renames, by either name): the package versions they
+// lock new to it, as many as MAX_ADDED, by name and version, how many more
+// (`more`); or why they couldn't be told, a lockfile's reader refusing one
+// (`lockfile-unreadable`, with what it said) or GitHub having none at a
+// commit compared.
 export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number } | { error: string; detail?: string })
 // What a pull request's lockfiles add: the commits compared (`base`, its
 // merge base, and `head`); each directory's, of those it changes a lockfile
@@ -184,22 +190,38 @@ async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Prom
   return results
 }
 
-const byName = (a: AddedPackage, b: AddedPackage) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+// Versions by semver, the highest first, any semver can't read after them.
+function byVersion(a: string, b: string) {
+  const [exactA, exactB] = [isExactVersion(a), isExactVersion(b)]
+  if (exactA && exactB) return compareVersions(b, a)
+  if (exactA === exactB) return a < b ? -1 : a > b ? 1 : 0
+  return exactA ? -1 : 1
+}
+const byName = (a: AddedPackage, b: AddedPackage) => a.name < b.name ? -1 : a.name > b.name ? 1 : -byVersion(a.version ?? '', b.version ?? '')
+// A package as it is installed: its name and version, and where from.
+const lockedAs = (pkg: Omit<LockedPackage, 'integrity'>) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // What a directory's lockfiles add, from each read before and after: the
-// packages after of names none before has, each once, by name; or the first
-// failure among them.
+// package versions after none before has, each once, by name and version,
+// each with the versions of its name before; or the first failure among them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
   if (failed && 'error' in failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
-  const known = new Set(before.flatMap(read => 'packages' in read ? read.packages.map(pkg => pkg.name) : []))
+  const known = new Set<string>()
+  const versions = new Map<string, Set<string>>()
+  for (const pkg of before.flatMap(read => 'packages' in read ? read.packages : [])) {
+    known.add(lockedAs(pkg))
+    const of = versions.get(pkg.name) ?? versions.set(pkg.name, new Set()).get(pkg.name)!
+    if (pkg.version) of.add(pkg.version)
+  }
   const added = new Map<string, AddedPackage>()
   for (const read of after) {
     for (const { integrity: _, ...pkg } of 'packages' in read ? read.packages : []) {
-      if (known.has(pkg.name)) continue
-      const key = `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+      const key = lockedAs(pkg)
+      if (known.has(key)) continue
       const had = added.get(key)
-      if (!had) added.set(key, pkg)
+      const was = versions.get(pkg.name)
+      if (!had) added.set(key, { ...pkg, ...was ? { was: [...was].toSorted(byVersion) } : {} })
       else if (had.dev && !pkg.dev) delete had.dev
     }
   }

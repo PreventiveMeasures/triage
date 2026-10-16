@@ -3,8 +3,8 @@
 // a grid of compact tiles rather than a list, those open or those closed, a
 // page at a time as the end of the scroll nears. A tile shows its state,
 // number, author and age, its title and labels, and a pull request's
-// branches, size, review and checks, and an open one's packages new to its
-// lockfiles, where it changes any (pull-dependencies.js); it opens on
+// branches, size, review and checks, and an open one's package versions new
+// to its lockfiles, where it changes any (pull-dependencies.js); it opens on
 // GitHub. The server reads them with the reader's own GitHub access (GET
 // /api/admin/repositories/issues); what it answered is kept a while, for the
 // session that read it.
@@ -17,7 +17,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
-import { addedNames, pullDependencies, readsDependencies, subscribePullDependencies } from './pull-dependencies.js'
+import { addedVersions, pullDependencies, readsDependencies, subscribePullDependencies } from './pull-dependencies.js'
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
@@ -27,7 +27,7 @@ export { issueState }
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 const MAX_LABELS = 8
-// The new packages a tile's tooltip names, those past them counted.
+// The new package versions a tile's tooltip names, those past them counted.
 const TOLD_PACKAGES = 20
 
 const lists = new Map()
@@ -134,18 +134,22 @@ function labelChips(item) {
   return html`${shown.length > 0 ? run(shown) : nothing}${total > shown.length ? html`<span class="issue-label is-more">+${total - shown.length}</span>` : nothing}`
 }
 
-// The packages new to a pull request's lockfiles, once read, where there are
-// any: their icon, their names, as many as the tile's width shows, and how
-// many, "+" where there are more than were sent; each named on hover, as many
-// as TOLD_PACKAGES.
+// The package versions new to a pull request's lockfiles, once read, where
+// there are any: their icon, their packages' names, those new to them first,
+// as many as the tile's width shows, and how many are new packages and how
+// many new versions of others, "+" where there are more than were sent; each
+// version named on hover, with the versions it was, as many as TOLD_PACKAGES.
 function dependencyLine(entry) {
   if (entry.status !== 'ready') return nothing
-  const { names, more } = addedNames(entry)
-  if (names.length === 0) return nothing
-  const rest = names.length - TOLD_PACKAGES
-  const told = `New dependencies: ${names.slice(0, TOLD_PACKAGES).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${more ? '+' : ''} more` : more ? ' and more' : ''}`
-  return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${names.join(', ')}</span>
-    <span class="issue-deps-count">${names.length.toLocaleString('en-US')}${more ? '+' : ''} new</span></span>`
+  const { versions, fresh, updated, more } = addedVersions(entry)
+  if (versions.length === 0) return nothing
+  const plus = more ? '+' : ''
+  const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')})` : ' (new)'}`
+  const rest = versions.length - TOLD_PACKAGES
+  const told = `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}`
+  const counted = [fresh ? `${fresh.toLocaleString('en-US')} new` : null, updated ? `${updated.toLocaleString('en-US')} updated` : null].filter(Boolean).join(', ')
+  return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${[...new Set(versions.map(pkg => pkg.name))].join(', ')}</span>
+    <span class="issue-deps-count">${counted}${plus}</span></span>`
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an
@@ -268,7 +272,7 @@ class RepositoryIssues extends LitElement {
   // A tile: its state's icon, and under it a pull request's review and
   // checks and how many comments, as a rail beside its title, number, author
   // and age, labels, a pull request's branches and size, and an open one's
-  // reviews (pull-reviews.js) and packages new to its lockfiles.
+  // reviews (pull-reviews.js) and package versions new to its lockfiles.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
     const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number) : null
