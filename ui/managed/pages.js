@@ -582,7 +582,7 @@ class ManagedAdminRepos extends ManagedPage {
   _aliasesPage() {
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       ${this._back('Aliases')}
-      <div class="manage-list"><managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases></div>
+      <div class="manage-list has-intro"><managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases></div>
     </div>`
   }
 

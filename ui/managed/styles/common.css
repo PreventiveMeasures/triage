@@ -95,6 +95,14 @@ code,
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+/* A list whose page intro scrolls with it (repository aliases): its lone
+   action overhangs the intro's row (.page-intro > .btn), so the list starts
+   that much higher, in the breadcrumb's margin, and pads it back, the action
+   whole and the intro where it was. */
+.manage-list.has-intro {
+  margin-top: calc(-.45rem - 1px);
+  padding-top: calc(.45rem + 1px);
+}
 .manage-nav button {
   flex: 0 0 auto;
   position: relative;
