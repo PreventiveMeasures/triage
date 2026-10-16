@@ -8,8 +8,11 @@
 // them. Claude Code's commits are authored as Claude <noreply@anthropic.com>,
 // which GitHub names `claude`; the Claude GitHub App's as `claude[bot]`.
 // Codex's GitHub connector's are its own; Codex otherwise commits as whoever
-// ran it, and those commits are theirs. Copilot's coding agent authors its
-// commits as its account, Copilot; Dependabot, its GitHub App, as its bot,
+// ran it, and those commits are theirs, with a
+// `Co-authored-by: Codex <codex@openai.com>` trailer, an address GitHub
+// names someone else's account for, so Codex is known by the address, not
+// that account. Copilot's coding agent authors its commits as its account,
+// Copilot; Dependabot, its GitHub App, as its bot,
 // `dependabot` to GitHub's GraphQL API, `dependabot[bot]` to its REST API and
 // in its address. Cursor's agents commit as whoever ran them, with a
 // `Co-authored-by: Cursor Agent <cursoragent@cursor.com>` trailer; the app
@@ -21,7 +24,8 @@ export interface GithubAgent { name: string; mark?: 'anthropic' | 'openai' | 'gi
 
 export const GITHUB_AGENTS = {
   claude: { name: 'Claude', mark: 'anthropic', accounts: [{ id: 81847, logins: ['claude'] }, { logins: ['claude[bot]'] }], names: ['Claude'], emails: ['noreply@anthropic.com'] },
-  codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'] },
+  codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'],
+    emails: ['codex@openai.com'] },
   copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }], names: ['Copilot'] },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'] },
   cursor: { name: 'Cursor', accounts: [], names: ['Cursor Agent'], emails: ['cursoragent@cursor.com'] },

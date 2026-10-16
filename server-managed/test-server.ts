@@ -26,7 +26,7 @@ import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
-import { coauthorsOf } from './commit-coauthors.ts'
+import { type Maker, coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './repository-agents.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
@@ -399,8 +399,12 @@ const HISTORY_MESSAGES: Record<string, string> = {
   bp2: 'Co-authored-by: Cursor Agent <cursoragent@cursor.com>',
   m3: 'Co-authored-by: Copilot <198982749+Copilot@users.noreply.github.com>',
   m9: 'https://chatgpt.com/codex/tasks/task_e_fixture123',
+  f1: 'Co-authored-by: Codex <codex@openai.com>',
   t2: '🤖 Generated with [Neo](https://neo.example)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nCo-authored-by: Ken Thompson <ken@example.com>',
 }
+// Co-authors as GitHub's GraphQL API lists them, by the accounts it knows
+// their addresses by: Codex's, someone else's.
+const HISTORY_LISTED: Record<string, Maker[]> = { f1: [{ name: 'Codex', email: 'codex@openai.com', account: { login: 'someone-else', id: 9_999_999 } }] }
 const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
 const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3'], ['fix/flaky-upload', 's43b']]
 // Pull requests squashed into main, each its own commits: #43's branch still
@@ -618,8 +622,8 @@ type FixturePull = { number: number; title: string; state: string; draft: boolea
 // The agents' work, as of `now`.
 function agentsData(now: number) {
   const hours = (count: number) => now - count * 3_600_000
-  const none = { sessions: [], tasks: [], claude: false, agents: [] }
-  const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true, agents: [] })
+  const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
+  const session = (id: string) => ({ sessions: [`session_${id}`], tasks: [], claude: true, codex: false, agents: [] })
   const neo = { ...none, agents: ['neo'] }
   const commits: object[] = [], pulls: FixturePull[] = []
   const pull = (number: number, title: string, head: string, at: number, signals: object, more: object = {}) => pulls.push({ number, title, state: 'merged', draft: false,
@@ -655,6 +659,9 @@ function agentsData(now: number) {
   // Dependabot: a dependency bumped, opened as its app.
   pull(187, 'build(deps): bump ws from 8.20.1 to 8.21.0', 'dependabot/npm_and_yarn/npm_and_yarn-b3b4accef5', 27, { ...none, agents: ['dependabot'] },
     { author: 'dependabot' })
+  // A commit pushed straight to main with Codex, its co-author.
+  commits.push({ oid: createHash('sha1').update('direct codex').digest('hex'), title: 'CI: cache node_modules between runs', at: hours(20), author: 'ChristopherTuring',
+    additions: 8, deletions: 2, signals: { ...none, codex: true } })
   // A commit Claude authored straight to main, naming no session.
   commits.push({ oid: createHash('sha1').update('direct').digest('hex'), title: 'Fix a flaky upload test', at: hours(26), author: null, additions: 3, deletions: 1,
     signals: { ...none, claude: true } })
@@ -676,7 +683,7 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
   const commitOf = ([label, subject, parents, hours, author]: [string, string, string[], number, string]) => ({
     sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
-    coauthors: coauthorsOf(`${subject}\n\n${HISTORY_MESSAGES[label] ?? ''}`, { name: author, account: { login: null, id: null } }),
+    coauthors: coauthorsOf(`${subject}\n\n${HISTORY_MESSAGES[label] ?? ''}`, { name: author, account: { login: null, id: null } }, HISTORY_LISTED[label]),
   })
   const commits = HISTORY_FIXTURE.map(commitOf)
   // A pull request's branch still at its head is read as any branch is.

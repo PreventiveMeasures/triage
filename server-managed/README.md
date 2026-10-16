@@ -140,7 +140,8 @@ and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
 agent's `Copilot` and Dependabot's `dependabot[bot]`
 (`common/managed/github-agents.ts`). Commits GitHub names no account for are
 matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
-Codex otherwise commits as whoever ran it, and those commits show as theirs.
+Codex otherwise commits as whoever ran it, and those commits show as theirs,
+Codex beside them as a co-author (below).
 Pulse counts each agent as one contributor.
 
 # Managed browser navigation
@@ -1712,8 +1713,10 @@ listing them by the accounts it knows their addresses by, its REST API by the
 trailers, an account's no-reply address naming it), then the agents its
 message marks: Claude by Claude Code's trailer (`Claude … <noreply@anthropic.com>`,
 the model in its name), its `🤖 Generated with [Claude Code]` line, its
-`Claude-Session:` trailer or a session's link; Codex by a task's link
-(`chatgpt.com/codex/tasks/…`); Cursor by its agents' trailer
+`Claude-Session:` trailer or a session's link; Codex by its trailer
+(`Codex <codex@openai.com>`, by its address, though GitHub names someone
+else's account for it) or a task's link (`chatgpt.com/codex/tasks/…`);
+Cursor by its agents' trailer
 (`Cursor Agent <cursoragent@cursor.com>`) or link (`cursor.com/agents?id=bc-…`);
 an app agent by its fingerprint (as the Agents tab tells them, below). An
 agent shows by its mark, a solid avatar as its app's icon is (Claude's
@@ -1722,8 +1725,9 @@ GitHub's dark, as Replay draws them), or its avatar (Dependabot's, an app
 agent's), Cursor, whose mark the app has none of, by its letter; the author
 none of them (`server-managed/commit-coauthors.ts`).
 The server reads each commit's message for them, keeping and answering
-those alone, never the message; a page kept before they were read is read
-again.
+those alone, never the message; a page kept before they were read, or
+read by rules since changed (`COAUTHORS_READ`, raised as they change), is
+read again.
 
 - A whole repository's history, from a revision or all branches, is read a
   page from a commit at a time: the first hundred commits of the history
@@ -1879,6 +1883,9 @@ pull request merged. It is told by the links and marks the agents leave:
   request's body, its head or merge (or squash) commit's message (the
   `Claude-Session:` trailer), a commit's message, or a branch's tip commit;
 - a Codex task, by `https://chatgpt.com/codex/tasks/task_…` in the same;
+- without a task named, Codex by its co-author trailer
+  (`Co-authored-by: Codex <codex@openai.com>`) on a pull request or commit,
+  as it marks the commits it makes as whoever ran it;
 - without a session named, by its branch, `claude/…` or `codex/…`, one
   session a branch, its pull requests together; and by Claude's marks
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
