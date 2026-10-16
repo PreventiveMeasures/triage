@@ -369,7 +369,9 @@ test('a year read again for a head moved on: the year as it was shown meanwhile,
   view.render()
   await setImmediate()
   let text = templateText(view.render())
-  assert.match(text, /class="pulse-note pulse-updating" role="status">Reading this repository’s latest commits… 500 of the last year so far</u)
+  // Said in the bar, at its end, the year shown under it.
+  const bar = text.slice(0, text.indexOf('class=pulse-scroll'))
+  assert.match(bar, /class="pulse-range">[^<]*<\/span>\s*<span class="pulse-updating" role="status">Reading this repository’s latest commits… 500 of the last year so far<\/span>\s*<\/div>/u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ 21% from 33/u, 'the year as it was')
   assert.equal(text.split('class=pulse-column').length - 1, 56)
   // An answer telling no year, the last read shown.
@@ -407,7 +409,7 @@ test('the pull requests merged in the year read a few pages an answer: how many 
   await setImmediate()
   text = templateText(view.render())
   assert.equal(requests.length, 2)
-  assert.match(text, /class="pulse-note pulse-updating" role="status">Reading the pull requests merged in this repository… 1,000 so far</u)
+  assert.match(text.slice(0, text.indexOf('class=pulse-scroll')), /class="pulse-updating" role="status">Reading the pull requests merged in this repository… 1,000 so far</u, 'in the bar')
   assert.equal(text.split('class=pulse-column').length - 1, 56)
   answer = () => Promise.resolve(pulse())
   t.mock.timers.tick(1000)

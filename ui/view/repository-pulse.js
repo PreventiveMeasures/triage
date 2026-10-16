@@ -428,12 +428,15 @@ class RepositoryPulse extends LitElement {
     const answer = own?.stats ? own : year && entry.status !== 'error' ? withYear(own, year, shownWeeks, now) : own
     const faded = !answer && entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
     const shown = answer ? { answer, asking: entry.asking === true } : faded
+    // The year shown while a later one is read, said at the bar's end.
+    const updating = shown?.answer.stats && (progress(shown.answer) !== null || shown.answer.pending)
     return html`<div class="history-bar">
         ${activityPicker('pulse')}
         <div class="history-modes" role="group" aria-label="Period">
           ${PERIODS.map(([weeks, name]) => html`<button type="button" aria-pressed=${String(shownWeeks === weeks)} @click=${() => this.pick(weeks)}>${name}</button>`)}
         </div>
         ${shown ? html`<span class="pulse-range">${rangeName(shown.answer.since, now)}</span>` : nothing}
+        ${updating ? html`<span class="pulse-updating" role="status">${this.renderWaiting(shown, waitingTexts(shown.answer, true))}</span>` : nothing}
       </div>
       ${shown ? html`<div class=${`pulse-scroll${faded ? ' is-reading' : ''}`} aria-busy=${String(entry.status !== 'ready')}>${this.renderPulse(shown, now)}</div>`
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
@@ -465,8 +468,6 @@ class RepositoryPulse extends LitElement {
               ? null : versusShare(share(summary.agents, summary.commits), share(summary.previousAgents, summary.previous), before),
             summary.commits === 0 ? 'no commits' : `${number(summary.agents)} of ${plural(summary.commits, 'commit')}`)}
       </section>
-      ${answer.stats && (progress(answer) !== null || answer.pending) ? html`<p class="pulse-note pulse-updating" role="status">${this.renderWaiting(entry,
-        waitingTexts(answer, true))}</p>` : nothing}
       <div class="pulse-grid">
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
           : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, waitingTexts(answer))}</div>`}
