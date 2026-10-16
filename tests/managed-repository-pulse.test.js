@@ -152,9 +152,11 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   ], first)
   assert.equal(read.weeks.length, 52)
   const none = [0, 0]
-  assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1, dayLines: [none, [3, 1], none, none, none, none, none] })
+  const noAgents = [0, 0, 0, 0, 0, 0, 0]
+  assert.deepEqual(read.weeks[0], { week: first, days: [0, 1, 0, 0, 0, 0, 0], commits: 1, additions: 3, deletions: 1, dayLines: [none, [3, 1], none, none, none, none, none],
+    agentDays: noAgents })
   assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1,
-    dayLines: [[1, 1], none, [10, 0], none, none, none, none] })
+    dayLines: [[1, 1], none, [10, 0], none, none, none, none], agentDays: noAgents })
   assert.deepEqual(read.contributors, [
     { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
     { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0]] },
@@ -162,6 +164,24 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
   assert.equal(read.lines, true)
+})
+
+test('a year counts each day the commits an agent made or co-authored: one of GitHub\'s agents their author, by account, else by name, or any co-author an agent', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const claude = { name: 'Claude', login: null, id: null, agent: 'claude' }
+  const commit = (sha, more) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: first + DAY, coauthors: [], ...more })
+  const read = commitStats([
+    commit('alone'),
+    commit('with a person', { coauthors: [{ name: 'Grace', login: 'grace', id: 9 }] }),
+    commit('with Claude', { coauthors: [{ name: 'Grace', login: 'grace', id: 9 }, claude] }),
+    commit('by Claude', { authorLogin: 'claude', authorId: 81847, authorName: 'Claude', committedAt: first + 2 * DAY }),
+    commit('another account of its login', { authorLogin: 'claude', authorId: 5, authorName: 'Claude', committedAt: first + 2 * DAY }),
+    commit('by Cursor', { authorLogin: null, authorId: null, authorName: 'Cursor Agent', committedAt: first + WEEK }),
+    commit('kept before co-authors were read', { coauthors: undefined, committedAt: first + WEEK }),
+    commit('merge', { parents: ['p', 'q'], coauthors: [claude] }),
+  ], first)
+  assert.deepEqual(read.weeks.slice(0, 2).map(week => [week.days, week.agentDays]), [
+    [[0, 3, 2, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0]], [[2, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]])
 })
 
 test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {

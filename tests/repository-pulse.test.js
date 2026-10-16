@@ -67,11 +67,12 @@ const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { 
 
 test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
   const read = pulse()
-  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, additions: 40, deletions: 8, authors: 3 })
+  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, additions: 40, deletions: 8, authors: 3 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')
   const large = pulseSummary({ ...read, stats: stats({ lines: false }) }, NOW)
   assert.deepEqual([large.additions, large.deletions], [null, null])
-  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, additions: null, deletions: null, authors: null })
+  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, additions: null,
+    deletions: null, authors: null })
 })
 
 test('the period\'s contributors, or a day\'s, the most commits first, and a scale\'s round ticks', () => {
@@ -114,11 +115,13 @@ test('the pulse reads a month first: its figures beside the month before, the mo
   assert.match(text, /aria-pressed=true [^\n]*>Month</u)
   assert.doesNotMatch(text, /Table|pulse-table/u, 'its figures in no table')
   assert.match(text, /class="pulse-range">Sep 20 – Oct 15</u)
-  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ from 33 the month before</u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ 21% from 33 the month before</u)
   assert.match(text, /Contributors<\/span>\s*<span class="pulse-tile-value">3</u)
-  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12<\/span>\s*<span class="pulse-tile-note">↑ from 8 the month before<\/span>\s*<span class="pulse-tile-note">2 opened/u)
-  assert.match(text, /Issues closed<\/span>\s*<span class="pulse-tile-value">0<\/span>\s*<span class="pulse-tile-note">↓ from 3 the month before/u)
-  assert.match(text, /<span>\+40<\/span> <span>−8<\/span>/u)
+  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12<\/span>\s*<span class="pulse-tile-note">↑ 50% from 8 the month before<\/span>\s*<span class="pulse-tile-note">2 opened/u)
+  assert.match(text, /Issues closed<\/span>\s*<span class="pulse-tile-value">0<\/span>\s*<span class="pulse-tile-note">↓ 100% from 3 the month before/u)
+  assert.match(text, /<span class="is-added">\+40<\/span> <span class="is-removed">−8<\/span><\/span>\s*<span class="pulse-ratio" aria-hidden="true"><span class=is-added style=--share: 0\.83\d*><\/span><span class=is-removed style=--share: 0\.16\d*>/u,
+    'lines added beside those removed, each as long as its share')
+  assert.doesNotMatch(text, /With agents|pulse-part|pulse-figure/u, 'none of the commits agents took part in counted; no day\'s figures written in a month')
   // The month alone, a column a day in each plot, its weekends shaded, the days to come empty; the lines' named by the commits'.
   assert.match(text, /<h3>Commits<\/h3><span>a day<\/span>[^]*<h3>Lines<\/h3><span>added and removed a day<\/span>/u)
   const columns = text.split('class=pulse-column').slice(1)
@@ -128,13 +131,14 @@ test('the pulse reads a month first: its figures beside the month before, the mo
   assert.match(columns[26], /^ is-future role=img\s+aria-label=Fri, Oct 16: 0 commits/u)
   assert.match(columns[27], /^ is-future is-weekend /u)
   assert.match(columns[28], /^ is-weekend role=\s+aria-label= aria-hidden=true/u)
-  assert.match(text, /<span style=--at: 1><span>1<\/span>/u, 'commits\' scale to a round top over the most')
-  assert.match(text, /<span style=--at: 1><span>\+10<\/span>/u, 'and lines\'')
+  assert.match(text, /style=--at: 1><span>1<\/span>/u, 'commits\' scale to a round top over the most')
+  assert.match(text, /style=--at: 1><span>\+10<\/span>/u, 'and lines\'')
+  assert.match(text, /<span class=is-zero\s+style=--at: 0><span>0<\/span>[^]*<span class=is-zero\s+style=--at: 0\.5><span>0<\/span>/u, 'naught each plot\'s baseline')
   const axis = text.match(/class=pulse-axis aria-hidden="true">[^]*?<\/div>/u)[0]
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Sep 20', 'Sep 27', 'Oct 4', 'Oct 11'], 'each week by its Sunday')
   assert.doesNotMatch(text, /class=pulse-tip/u, 'no column\'s figures till one is pointed at')
   assert.match(text, /<h3>Contributors<\/h3><span>by their commits in the period<\/span>/u)
-  assert.match(text, /href=https:\/\/github\.com\/ada [^>]*>ada<\/a>[^]*--value: 1[^]*>5<\/span>[^]*\+35 −5/u)
+  assert.match(text, /href=https:\/\/github\.com\/ada [^>]*>ada<\/a>[^]*--value: 1[^]*>5<\/span>[^]*<span class="is-added">\+35<\/span> <span\s+class="is-removed">−5</u)
   assert.match(text, /href=https:\/\/github\.com\/apps\/claude [^>]*><span class="app-user" data-tooltip=@claude\[bot\] on GitHub>[^]*?is-claude[^]*?app-user-name">Claude</u,
     'an app by its page, Claude\'s by its mark')
   assert.match(text, /<span class="pulse-rank-name">Alan Kay<\/span>/u, 'one GitHub names no account for, by name, unlinked')
@@ -236,6 +240,37 @@ test('another repository\'s pulse in the same element: none of its columns point
   assert.equal(view._picked, SINCE, 'its own state changed alone, kept')
 })
 
+test('a week, each day\'s figures written on it, today\'s named; the commits agents made or co-authored over the rest, and their share beside the week before\'s', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const week = Date.UTC(2026, 9, 11)
+  // Mondays' commits made with agents, and this week's Wednesday's.
+  const agents = stats({ weeks: year().map(row => ({ ...row, agentDays: row.days.map((count, day) => day === 1 || (row.week === week && day === 3) ? count : 0) })) })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: week, stats: agents }))
+  const view = shown()
+  view.pick(1)
+  view.render()
+  await setImmediate()
+  view.point(1)
+  const text = templateText(view.render())
+  view.pick(4)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">5<\/span>\s*<span class="pulse-tile-note">Same as the week before</u)
+  assert.match(text, /With agents<\/span><\/span>\s*<span class="pulse-tile-value">40%<\/span>\s*<span class="pulse-tile-note">↑ from 20% the week before<\/span>\s*<span class="pulse-tile-note">2 of 5 commits</u)
+  assert.match(text, /<h3>Commits<\/h3><span>a day<\/span><span class="pulse-legend"><span\s+class="pulse-key"><\/span>With agents<span class="pulse-key is-without"><\/span>Without</u)
+  const columns = text.split('class=pulse-column').slice(1)
+  assert.equal(columns.length, 14)
+  assert.match(columns[0], /^ role=img\s+aria-label=Sun, Oct 11: 1 commit, 0 with agents, \+10 −2 lines aria-hidden=/u, 'a week\'s weekend unshaded')
+  assert.match(columns[0], /<span class="pulse-figure">1<\/span><span class=pulse-bar is-split style=--value: 1><span class=pulse-part is-without style=--part: 1><\/span><\/span>/u)
+  assert.match(columns[1], /aria-label=Mon, Oct 12: 1 commit, 1 with agents[^]*<span class=pulse-part style=--part: 1><\/span><\/span>/u)
+  assert.doesNotMatch(columns[1], /is-without/u)
+  assert.match(columns[5], /^ is-future role=img/u)
+  assert.doesNotMatch(columns[5], /pulse-figure/u, 'none written on a day to come')
+  assert.match(columns[7], /<span class="pulse-figure">\+10<\/span>[^]*<span class="pulse-figure">−2<\/span>/u)
+  const axis = text.match(/class=pulse-axis is-each aria-hidden="true">[^]*?<\/div>/u)[0]
+  assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Sun 11', 'Mon 12', 'Tue 13', 'Wed 14', 'Thu 15', 'Fri 16', 'Sat 17'])
+  assert.match(axis, /class=is-today>Thu 15</u)
+  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>\s*<span class="pulse-tip-row"><span class="pulse-tip-key"><\/span><strong>1<\/strong> with agents/u)
+})
+
 test('a quarter, a column a week, every other one named; this week\'s figures so far', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW })
   answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: SINCE - 9 * WEEK }))
@@ -276,7 +311,7 @@ test('another period is read for itself, the last one shown faded meanwhile; rea
   assert.match(text, /Oct 19, 2025 – Oct 15, 2026/u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">369<\/span>\s*<span class="pulse-tile-note">to the default branch/u, 'no year before it to compare')
   assert.equal(text.split('class=pulse-column').length - 1, 104, 'a column a week in each plot')
-  assert.match(text, /<span style=--at: 1><span>15<\/span>/u, 'commits\' scale to a round top over the most')
+  assert.match(text, /style=--at: 1><span>15<\/span>/u, 'commits\' scale to a round top over the most')
   const axis = text.match(/class=pulse-axis aria-hidden="true">[^]*?<\/div>/u)[0]
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label).slice(0, 4), ['Nov', 'Dec', '2026', 'Feb'], 'months named where they start, January by its year')
   view.pick(4)
@@ -373,6 +408,7 @@ test('where GitHub\'s statistics count the year: a day\'s lines a week\'s, its c
   assert.match(text, /class=pulse-column is-at role=img\s+aria-label=Mon, Sep 28: 1 commit aria-hidden=/u)
   assert.match(text, /class="pulse-tip-people"><span class="pulse-tip-note">Its week’s<\/span>\s*<span class="pulse-tip-person">ada<strong>2<\/strong>/u)
   assert.match(text, /in each author’s own time zone, not only the period’s<\/span>/u)
+  assert.doesNotMatch(text, /With agents/u, 'none of the commits agents took part in counted')
   view.pickColumn(pulseColumns(pulse({ stats: counted() }), NOW), 8)
   text = templateText(view.render())
   assert.match(text, /class="pulse-picked" aria-label=Week of Sep 27: show the whole period’s/u)

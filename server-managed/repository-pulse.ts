@@ -1,23 +1,25 @@
 // What the code viewer's Pulse tab shows of a repository
 // (GET /api/admin/repositories/pulse): how its default branch moves, week by
 // week over the last year: its commits each day, the lines they add and
-// remove, who made them and when in the week, counted from its commits as
-// the Commits tab reads and keeps them (repository-history.ts historyFrom),
-// so that only those not kept yet are read of GitHub, a few queries an
-// answer, the client asking again for the rest; a year past YEAR_COMMITS is
-// counted by GitHub's statistics instead, which GitHub computes when first
-// asked and again once the default branch moves, answering 202 till they
-// are (told pending, StatsPending, for the client to ask again). And, since
+// remove, those an agent made or co-authored, who made them and when in the
+// week, counted from its commits as the Commits tab reads and keeps them
+// (repository-history.ts historyFrom), so that only those not kept yet are
+// read of GitHub, a few queries an answer, the client asking again for the
+// rest; a year past YEAR_COMMITS is counted by GitHub's statistics instead,
+// which GitHub computes when first asked and again once the default branch
+// moves, answering 202 till they are (told pending, StatsPending, for the
+// client to ask again). And, since
 // the start of the week `weeks` weeks back, and over the same days of the
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
+import { githubAgent } from '../common/managed/github-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 2
+export const PULSE_YEAR_VERSION = 3
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -47,8 +49,10 @@ export class StatsPending extends Error {
 
 // A week: its commits each day (Sunday first) and in all, the lines they
 // added and removed, and, counted from its commits, each day's lines
-// (`dayLines`, `[added, removed]`), which GitHub's statistics don't count.
-export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][] }
+// (`dayLines`, `[added, removed]`) and the commits an agent made or
+// co-authored each day (`agentDays`), which GitHub's statistics don't count.
+export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
+  agentDays?: number[] }
 // A contributor, by their login and their account's numeric id (`id`, where
 // GitHub named it), else by the name their commits carry, and their weeks,
 // each `[week, commits, additions, deletions]`, those with any; counted from
@@ -196,9 +200,17 @@ export async function yearCommits(fullName: string, token: string, head: string,
   return { complete: true, commits: [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since) }
 }
 
+// Whether an agent made `commit` or co-authored it: its author one of
+// GitHub's agents (common/managed/github-agents.ts githubAgent), or any of
+// its co-authors an agent (commit-coauthors.ts coauthorsOf), as Commits
+// marks them.
+const withAgent = (commit: HistoryCommit) => githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null
+  || (commit.coauthors ?? []).some(coauthor => coauthor.agent)
+
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
-// (UTC) and in all and the lines they added and removed, in all and each day;
+// (UTC) and in all and the lines they added and removed, in all and each day,
+// and those an agent made or co-authored (withAgent) each day;
 // its contributors,
 // by account (its id, by the login it committed as first listed, the newest,
 // whatever it was renamed from; a login's commits read before ids were, the
@@ -210,7 +222,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
 // and each period's (PULSE_WEEKS, its last weeks).
 export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0,
-    dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]) }))
+    dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]), agentDays: Array.from({ length: 7 }, () => 0) }))
   type Counts = Map<number, [number, number, number]>
   const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Counts; days: Counts; commits: number }>()
   const punches = Object.fromEntries(PULSE_WEEKS.map(span => [span, emptyPunch()]))
@@ -231,6 +243,7 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
     week.commits++
     week.additions += additions
     week.deletions += deletions
+    if (withAgent(commit)) week.agentDays[weekday]!++
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     for (const span of PULSE_WEEKS) if (at >= 52 - span) punches[span]![local.getUTCDay()]![local.getUTCHours()]!++
     const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin.toLowerCase()}`
