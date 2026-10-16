@@ -1108,12 +1108,13 @@ only once the admin's own access to the repository is found to let them see
 them on GitHub: their sign-in verified as for private repositories, and their
 permission on the repository, as the installation asks GitHub of it
 (`GET /repos/:repo/collaborators/:login/permission`, its teams', organization's
-and enterprise's grants among it), admin or write, maintain's among it, as
+and enterprise's grants among it, the level a private repository's access check
+asked already), admin or write, maintain's among it, as
 GitHub lets those see a repository's Dependabot alerts by default. That is
 stricter than GitHub where a custom role or the security manager role grants
 them on read access: those are refused. The installation is the one the
-connection keeps, else, or where that one is gone, the one GitHub tells the App
-of now. The App needs **Dependabot alerts: read**. Where they can't be had,
+repository is read with, as the connection keeps it, else, where it keeps none
+or that one is gone, the one GitHub tells the App of now. The App needs **Dependabot alerts: read**. Where they can't be had,
 the line tells why, and the scan goes on: the App not installed on the
 repository (`dependabot-not-installed`), the admin's sign-in not verified
 (`dependabot-unverified`), their access not letting them see the alerts

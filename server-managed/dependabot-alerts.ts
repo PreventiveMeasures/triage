@@ -162,10 +162,9 @@ async function listAlerts(fullName: string, states: readonly string[], token: st
 
 // `fullName`'s Dependabot alerts of npm's ecosystem, open or dismissed, as
 // `token`, the App's installation's (dependabot-access.ts), may see them, in
-// GitHub's order. Asked
-// at once, but where they are more than a listing holds, as newer dismissed
-// ones would leave older open ones out, the open ones are listed again on
-// their own, and the dismissed ones had kept after them.
+// GitHub's order. Asked at once, but where they are more than a listing holds,
+// as newer dismissed ones would leave older open ones out, the open ones are
+// listed again on their own, and the dismissed ones had kept after them.
 export async function dependabotAlerts(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<DependabotAlert[]> {
   const all = await listAlerts(fullName, STATES, token, fetchImpl)
   if (all.whole) return all.alerts
