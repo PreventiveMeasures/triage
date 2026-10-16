@@ -308,6 +308,21 @@ test('the commits pushed to the branch directly: on its first parents from the h
     'none read, every one on its first parents but the merge')
 })
 
+test('a pull request rebased of more commits than its latest read: how many more kept, as many commits below its copies its own, not pushed directly', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const own = ['Two', 'Three'].map((subject, at) => ({ commit: { oid: shaOf(at + 10), messageHeadline: subject, changedFilesIfAvailable: 1 } }))
+  github(t, { graphql: mergedPulls([{ updatedAt: when, mergedAt: when, headRefName: 'fix/large', labels: { nodes: [] },
+    mergeCommit: { oid: shaOf(3), parents: { totalCount: 1 } }, commits: { totalCount: 4, nodes: own } }]) })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.pullRebases, [[shaOf(3), since + DAY, ['Two', 'Three'], 2]])
+  const commit = (sha, parents, subject) => ({ sha, parents, subject, authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: since + DAY, coauthors: [] })
+  // Its four commits copied onto the branch over one pushed directly.
+  const commits = [commit(shaOf(3), [shaOf(2)], 'Three'), commit(shaOf(2), [shaOf(1)], 'Two'), commit(shaOf(1), [shaOf(0)], 'One'), commit(shaOf(0), ['pushed'], 'Zero'),
+    commit('pushed', ['first'], 'Pushed'), commit('first', [], 'First')]
+  assert.deepEqual([...directCommits(read, commits, shaOf(3))].toSorted(), ['first', 'pushed'])
+})
+
 test('a year counts the commits pushed to the branch directly each day, each contributor\'s too, the latest listed; a period, its own alone', () => {
   const first = Date.UTC(2025, 9, 19)
   const commit = (sha, at, more) => ({ sha, parents: ['p'], subject: `Commit ${sha}`, authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: first + at, coauthors: [],
