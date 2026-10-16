@@ -52,7 +52,7 @@ import { managedHistory } from './managed-history.js'
 import { npmPackageInput, renderNpmLookup } from './npm-package.js'
 import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
-import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triageLoadingTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
@@ -1645,6 +1645,18 @@ function ensureReportSlot(id) {
     report.replaceChildren(slot)
   }
   return slot
+}
+
+// A team's or a report's triage loading (ingest.js switchToManagedTeam):
+// the status in the middle of the page. A team's shows its header above it,
+// Findings selected, as its findings will, so moving to them from another
+// of its tabs keeps the header in place; a report's, or a link report's,
+// shows the status alone.
+export function renderTriageLoading(teamId = null) {
+  const team = teamId == null ? null : state.managedTeams.find(t => t.id === teamId)
+  const context = team ? workspaceContent({ currentWorkspace: `managed-team:${team.id}`, currentManagedTeam: team.id,
+    managedTeams: state.managedTeams, managedSession: state.managedSession }, []) : null
+  litRender(triageLoadingTemplate(context), ensureReportSlot('triage-loading-slot'))
 }
 
 export function renderEmptyWorkspace() {

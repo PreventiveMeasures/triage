@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triageLoadingTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
 import { templateText as text } from './_lit.js'
 
 test('workspace bundle count and list share membership, including unavailable bundles', () => {
@@ -121,4 +121,21 @@ test('team reports include hidden individual previews from the current accessibl
   assert.doesNotMatch(list, /foreign.json/u)
   assert.match(text(workspaceContentButton(context, 'reports', 'workspace-reports')), /aria-pressed=true/u)
   assert.match(text(workspaceContentButton(context, 'reports', 'findings')), /aria-pressed=false/u)
+})
+
+test("a team's triage loads under its header, Findings selected, as its findings will show it; a report's shows the status alone", () => {
+  const team = { id: 'a', name: 'First', app: { appMode: false, findings: 7 }, repos: [{ repoId: 1, fullName: 'o/a', path: null }],
+    reports: [{ id: 'r1', filename: 'a.json', repoFullName: 'o/a' }], bundles: [] }
+  const context = workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedTeams: [team] }, [])
+  const loading = text(triageLoadingTemplate(context))
+  // The header the list shows, but for the tab selected, so moving between
+  // them changes nothing else.
+  const list = text(renderWorkspaceContent(context, 'reports'))
+  const header = list.slice(list.indexOf('<bundle-slide-header'), list.indexOf('</bundle-slide-header>'))
+  assert.equal(loading.slice(0, header.length).replace('aria-selected=true', 'aria-selected=false'), header.replace('aria-selected=true', 'aria-selected=false'))
+  assert.match(loading, /aria-selected=true\s+data-action=workspace-findings>Findings<span class="n">7</u)
+  assert.match(loading, /<\/bundle-slide-header><p class="triage-loading" role="status">Loading report triage…<\/p>$/u)
+  for (const none of [null, { scope: 'workspace', title: 'Workspace: App', reports: [], bundles: [] }]) {
+    assert.equal(text(triageLoadingTemplate(none)), '<p class="triage-loading" role="status">Loading report triage…</p>')
+  }
 })

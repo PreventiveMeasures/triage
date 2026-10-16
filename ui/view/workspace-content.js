@@ -70,6 +70,12 @@ export function teamHeaderTemplate(context, view, { findings = context.findings,
   </header></bundle-slide-header>`
 }
 
+// Report triage loading (render.js renderTriageLoading): its status, under
+// a team's header, Findings selected, where `context` is a team's.
+export function triageLoadingTemplate(context) {
+  return html`${context?.scope === 'team' ? teamHeaderTemplate(context, 'findings') : nothing}<p class="triage-loading" role="status">Loading report triage…</p>`
+}
+
 export function workspaceTitleTemplate(context, view) {
   return view === 'findings' ? context.title
     : html`<button type="button" class="workspace-title-link" data-action="workspace-findings">${context.title}</button>`
