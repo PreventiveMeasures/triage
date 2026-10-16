@@ -2093,7 +2093,7 @@ id, subject and who made it, as Commits shows them) along the foot, and what is 
 commits play, merges left out (their other parents' commits change their
 files), the oldest first, ordered as Commits orders them (by their times,
 but never a commit before its parent, whatever a clock off dates it): read
-as Commits reads This revision (a
+as Commits reads a revision's history (a
 directory's, below the root), as many pages as hold them. Each plays a day
 of its time a second after the one before at 1×, but no sooner than 0.08s
 nor later than 0.6s, quiet spells skipped as Gource's `--auto-skip-seconds`
