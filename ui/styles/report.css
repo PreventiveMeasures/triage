@@ -3866,22 +3866,26 @@ repository-agents { --claude: #d97757; }
    then its panels: the period's activity, two columns of three wide beside
    its contributors, its pull requests, issues and when commits are made
    under them; two a row where narrower, one where narrower still. The
-   activity is the period alone, commits in blue over lines added above a
-   line in blue and removed below it in red, a column each, a day's
-   weekend lightly shaded; the column pointed at washed across both, its
-   figures in a card beside it, the one picked in the accent. The punch card
-   one blue, a step lighter for more in the dark, darker in the light, an
-   hour of none the gridlines' gray. Each step of each is told apart by
-   every kind of color vision. */
+   activity is the period alone, a column each: commits in blue, those
+   without agents in amber at their foot, those with them in blue over
+   them, a gap of the surface between; under them
+   lines added above a baseline and removed below it, green and red as every
+   diff's are (--green, --critical), which way from the line telling them
+   apart where their hues don't; a month's weekends lightly shaded, a week's
+   figures written on its bars. The column pointed at washed across both,
+   its figures in a card beside it, the one picked in the accent. The punch
+   card one blue, a step lighter for more in the dark, darker in the light,
+   an hour of none the gridlines' gray. Blue and amber, and each step of the
+   punch card's, are told apart by every kind of color vision. */
 repository-pulse {
-  --pulse-accent: #3987e5; --pulse-added: #3987e5; --pulse-removed: #e66767;
-  --pulse-zero: #2c2c2a; --pulse-grid: #2c2c2a;
+  --pulse-accent: #3987e5; --pulse-without: #c98500; --pulse-added: var(--green); --pulse-removed: var(--critical);
+  --pulse-zero: #2c2c2a; --pulse-grid: #2c2c2a; --pulse-axis: #4a4a47;
   --pulse-1: #0d366b; --pulse-2: #184f95; --pulse-3: #256abf; --pulse-4: #3987e5; --pulse-5: #6da7ec; --pulse-6: #9ec5f4;
   container: pulse / inline-size;
 }
 body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
-  --pulse-accent: #2a78d6; --pulse-added: #2a78d6; --pulse-removed: #e34948;
-  --pulse-zero: #e1e0d9; --pulse-grid: #e1e0d9;
+  --pulse-accent: #2a78d6;
+  --pulse-zero: #e1e0d9; --pulse-grid: #e1e0d9; --pulse-axis: #c3c2b7;
   --pulse-1: #cde2fb; --pulse-2: #9ec5f4; --pulse-3: #6da7ec; --pulse-4: #3987e5; --pulse-5: #256abf; --pulse-6: #184f95;
 }
 .pulse-scroll {
@@ -3889,16 +3893,33 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   transition: opacity .15s;
   &.is-reading { opacity: .5; }
 }
-.pulse-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: .5rem; }
+/* What the period reads still, another period's meanwhile, faded. */
+.pulse-panel.is-reading { opacity: .5; transition: opacity .15s; }
+.pulse-updating { margin: -.25rem 0; }
+/* The tiles a row where all fit, else three a row, two where narrower. */
+.pulse-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+@container pulse (width >= 32rem) { .pulse-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container pulse (width >= 72rem) { .pulse-tiles { grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); } }
 .pulse-tile, .pulse-panel {
   min-width: 0; margin: 0; padding: .6rem .75rem .7rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); background: var(--surface);
 }
-.pulse-tile { display: flex; flex-direction: column; gap: .1rem; }
+/* A tile's figures on one line, those of lines smaller as the tile narrows. */
+.pulse-tile { display: flex; flex-direction: column; gap: .1rem; container-type: inline-size; }
 .pulse-tile-label, .pulse-tile-note { color: var(--muted); }
 .pulse-tile-value {
   color: var(--text); font-size: 1.6rem; font-weight: 600; line-height: 1.25;
-  & > span { font-size: 1.15rem; }
+  white-space: nowrap;
+  & > span { font-size: min(1.15rem, 9cqi); }
+  & > .is-added { color: var(--pulse-added); }
+  & > .is-removed { color: var(--pulse-removed); }
+}
+/* Lines added beside those removed, each as long as its share. */
+.pulse-ratio {
+  display: flex; gap: 2px; height: 4px; margin: .2rem 0 .3rem;
+  & > span { flex: var(--share) 1 0; min-width: 2px; border-radius: 2px; }
+  & > .is-added { background: var(--pulse-added); }
+  & > .is-removed { background: var(--pulse-removed); }
 }
 .pulse-tile-note { font-size: .72rem; }
 .pulse-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; }
@@ -3918,54 +3939,79 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
 .pulse-legend { display: inline-flex; align-items: center; gap: .3rem; margin-left: auto; }
 .pulse-key {
   width: .65rem; height: .65rem; border-radius: 2px; background: var(--pulse-accent);
+  &:not(:first-child) { margin-left: .5rem; }
+  &.is-without { background: var(--pulse-without); }
   &.is-added { background: var(--pulse-added); }
-  &.is-removed { margin-left: .5rem; background: var(--pulse-removed); }
+  &.is-removed { background: var(--pulse-removed); }
 }
 .pulse-activity {
   --gutter: 2.6rem;
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
 .pulse-plots { position: relative; }
-/* A plot: its scale's hairlines across it, their labels in the gutter left of
-   it, its columns over them, each as tall as the plot, which its hover and
-   its click take, its bar from the baseline, or for lines from the middle,
-   up for added, down for removed, no wider than 24px. */
+/* A plot: its scale's hairlines across it, naught's the firmer baseline,
+   their labels in the gutter left of it, its columns over them, each as
+   tall as the plot, which its hover and its click take, its bar from the
+   baseline, or for lines from either side of the middle, up for added, down
+   for removed: two thirds of its column wide, no wider than 40px, a week's
+   56px. A week's figures are written past each bar's end, in the room its
+   plots keep above and below. */
 .pulse-plot {
   position: relative; height: 8.5rem; margin-left: var(--gutter);
   &.is-diverging { height: 6.5rem; }
+  .is-written & { margin-top: 1.1rem; }
+  .is-written &.is-diverging { margin-bottom: 1.1rem; }
 }
 .pulse-ticks {
   position: absolute; inset: 0; pointer-events: none;
   & > span { position: absolute; right: 0; bottom: calc(var(--at) * 100%); left: 0; border-top: 1px solid var(--pulse-grid); }
+  & > .is-zero { border-top-color: var(--pulse-axis); }
   & > span > span {
     position: absolute; top: 0; right: calc(100% + .4rem); transform: translateY(-50%);
     color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; white-space: nowrap;
   }
 }
-.pulse-columns, .pulse-axis { display: flex; gap: 2px; }
+.pulse-columns, .pulse-axis { display: flex; }
 .pulse-columns { position: absolute; inset: 0; }
 .pulse-column {
+  --bar-max: 40px;
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1 1 0; min-width: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   &.is-weekend { background: color-mix(in srgb, var(--text) 3%, transparent); }
-  &.is-at { background: color-mix(in srgb, var(--text) 9%, transparent); }
-  &.is-picked { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-  &.is-picked.is-at { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  &.is-at { background: color-mix(in srgb, var(--text) 7%, transparent); }
+  &.is-picked { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  &.is-picked.is-at { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+  .is-written & { --bar-max: 56px; }
   .is-diverging & { justify-content: stretch; }
 }
 .pulse-half {
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 100%; height: 50%;
-  &.is-below { justify-content: flex-start; }
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 100%; height: 50%; padding-bottom: 1px;
+  &.is-below { justify-content: flex-start; padding: 1px 0 0; }
 }
 .pulse-bar {
-  flex: none; width: min(24px, 100%); height: calc(var(--value) * 100%); border-radius: 4px 4px 0 0; background: var(--pulse-accent);
+  flex: none; width: clamp(2px, 66%, var(--bar-max)); height: calc(var(--value) * 100%);
+  border-radius: 4px 4px 0 0; background: var(--pulse-accent);
   &.is-added { background: var(--pulse-added); }
   &.is-removed { border-radius: 0 0 4px 4px; background: var(--pulse-removed); }
+  /* Commits without agents at the foot, those with them over them, each
+     its share of the bar, the surface between. */
+  &.is-split { display: flex; flex-direction: column; gap: 2px; overflow: hidden; background: none; }
+}
+.pulse-part {
+  flex: var(--part) 1 0; min-height: 0; background: var(--pulse-accent);
+  &.is-without { background: var(--pulse-without); }
+}
+.pulse-figure {
+  flex: none; padding: 0 0 .2rem;
+  color: var(--text); font-size: .7rem; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap;
+  .is-diverging & { color: var(--muted); }
+  .is-below > & { padding: .2rem 0 0; }
 }
 .pulse-axis {
   margin: .3rem 0 0 var(--gutter); color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums;
   & > span { flex: 1 1 0; min-width: 0; white-space: nowrap; }
   &.is-each > span { text-align: center; }
+  & > .is-today { color: var(--text); font-weight: 600; }
   & > .is-future { opacity: .5; }
 }
 /* A column's figures, in a card beside it on the side with more room, over
@@ -3988,6 +4034,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
 .pulse-tip-row { display: flex; align-items: center; gap: .35rem; white-space: nowrap; }
 .pulse-tip-key {
   flex: none; width: .75rem; height: 2px; border-radius: 1px; background: var(--pulse-accent);
+  &.is-none { background: none; }
   &.is-added { background: var(--pulse-added); }
   &.is-removed { background: var(--pulse-removed); }
 }
@@ -4028,7 +4075,11 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   }
 }
 .pulse-rank-value { color: var(--text); font-variant-numeric: tabular-nums; }
-.pulse-rank-lines { color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; text-align: right; }
+.pulse-rank-lines {
+  font-size: .72rem; font-variant-numeric: tabular-nums; text-align: right;
+  & > .is-added { color: var(--pulse-added); }
+  & > .is-removed { color: var(--pulse-removed); }
+}
 .pulse-punch {
   display: grid; grid-template-columns: 2rem repeat(24, minmax(0, 1fr)); gap: 2px; max-width: 36rem;
   & .pulse-cell { aspect-ratio: 1; }

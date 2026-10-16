@@ -4,9 +4,11 @@
 // today as GitHub counts them (Sunday first, UTC). Its figures first, each
 // beside what the same days of the week a period earlier gave, where
 // counted by the day: the default branch's commits, who made them, the pull
-// requests merged and the issues closed, the lines added and removed. Then
+// requests merged and the issues closed, the lines added and removed, and
+// the share of commits an agent made or co-authored, where counted. Then
 // the period alone, a column a day in a week or a month, else a week:
-// commits, and lines added over removed, a column's figures and who made its
+// commits, those with agents apart, and lines added over removed, a week's
+// days each its figures written on it, a column's figures and who made its
 // commits shown as it is hovered or read with the keyboard, a click picking
 // it for its contributors; the period's contributors ranked by their
 // commits; the pull requests merged or opened and the issues closed or
@@ -14,8 +16,11 @@
 // made. A year whose commits are not all read yet is asked for again, a
 // second apart, as long as each answer reads more; statistics GitHub is
 // still computing, a few times, a while apart. What was read is kept a
-// while, for the session that read it; a period read anew shows the last one
-// read, faded, till it is.
+// while, for the session that read it. Every answer holds the whole year,
+// so a period read anew, or one whose year is being read again, is shown
+// at once from the year last read, only its pull requests and issues
+// waited for; with no year read yet, the last period read is shown, faded,
+// till it is.
 import { LitElement, html, nothing } from 'lit'
 import { styleMap } from './style-map.js'
 import { state } from '#client/index.js'
@@ -50,6 +55,8 @@ const PUNCH_STEPS = 6
 
 const reads = new Map()
 const lastShown = new Map()
+// Each repository's year last read, the answer holding it.
+const lastYear = new Map()
 const shownElements = new Set()
 let keptFor = null
 // The period the reader last picked, and the pull requests and issues.
@@ -66,6 +73,7 @@ function sessionReads() {
   if (session !== keptFor) {
     reads.clear()
     lastShown.clear()
+    lastYear.clear()
     keptFor = session
   }
   return reads
@@ -79,19 +87,32 @@ function checked(answer) {
   if (!Number.isSafeInteger(answer?.since) || !PERIODS.some(([weeks]) => weeks === answer.weeks)) throw new Error('The server answered with no period.')
   const told = kind => ({ count: counted(answer[kind]?.count), previous: Number.isSafeInteger(answer[kind]?.previous) ? answer[kind].previous : null,
     items: Array.isArray(answer[kind]?.items) ? answer[kind].items.filter(item => Number.isSafeInteger(item?.number) && typeof item.title === 'string') : [] })
-  // A week's lines each day, where counted: seven `[added, removed]`.
+  // A week's lines each day, where counted: seven `[added, removed]`; and
+  // its commits with agents each day, where counted.
   const dayLines = lines => Array.isArray(lines) && lines.length === 7 && lines.every(Array.isArray) ? lines.map(([added, removed]) => [counted(added), counted(removed)]) : null
+  const dayCounts = days => Array.isArray(days) && days.length === 7 ? days.map(counted) : null
+  const weeks = Array.isArray(answer.stats?.weeks) ? answer.stats.weeks.filter(week => Number.isSafeInteger(week?.week) && Array.isArray(week.days))
+    .map(week => ({ ...week, dayLines: dayLines(week.dayLines), agentDays: dayCounts(week.agentDays) })) : []
   const stats = answer.stats && Array.isArray(answer.stats.weeks) && Array.isArray(answer.stats.contributors) && Array.isArray(answer.stats.punch) ? {
-    weeks: answer.stats.weeks.filter(week => Number.isSafeInteger(week?.week) && Array.isArray(week.days)).map(week => ({ ...week, dayLines: dayLines(week.dayLines) })),
+    weeks,
     contributors: answer.stats.contributors.filter(person => (typeof person?.login === 'string' || typeof person?.name === 'string') && Array.isArray(person.weeks))
       .map(person => ({ login: typeof person.login === 'string' ? person.login : null, name: typeof person.name === 'string' ? person.name : null, weeks: person.weeks,
         days: Array.isArray(person.days) ? person.days : null })),
     punch: PUNCH_DAYS.map(day => Array.from({ length: 24 }, (_, hour) => counted(answer.stats.punch[day]?.[hour]))),
     periodPunch: answer.stats.periodPunch === true,
     lines: typeof answer.stats.lines === 'boolean' ? answer.stats.lines : null,
+    // Whether the commits agents took part in are counted, each day of the year.
+    agents: weeks.length > 0 && weeks.every(week => week.agentDays !== null),
   } : null
   return { weeks: answer.weeks, since: answer.since, merged: told('merged'), opened: told('opened'), closed: told('closed'), created: told('created'),
-    stats, reading: !stats && Number.isSafeInteger(answer.reading) ? answer.reading : null, pending: answer.pending === true }
+    stats, reading: Number.isSafeInteger(answer.reading) ? answer.reading : null, pending: answer.pending === true }
+}
+
+// A period read, the last shown of its repository, and its year the last
+// read where it holds one.
+function keep(repoId, entry) {
+  lastShown.set(repoId, entry)
+  if (entry.answer.stats) lastYear.set(repoId, entry.answer)
 }
 
 // How long after an answer to ask again, and how many times: while the year
@@ -114,7 +135,7 @@ function pulseRead(repoId, weeks) {
     if (data.get(key) !== loading) return null
     const entry = { status: 'ready', until: Date.now() + KEEP_MS, answer, tries: 0, asking: false }
     data.set(key, entry)
-    lastShown.set(repoId, entry)
+    keep(repoId, entry)
     if (waitFor(answer)) askAgain(key, entry, repoId, weeks, waitFor(answer)[0])
     return null
   }, err => {
@@ -150,25 +171,46 @@ function askAgain(key, entry, repoId, weeks, wait) {
   }, wait)
 }
 
-// The commits a week's `days` hold from `from` to `to` (both days, UTC).
-const commitsBetween = (weeks, from, to) => weeks.reduce((sum, week) => sum + week.days.reduce((days, count, day) => {
+// The commits weeks' days hold from `from` to `to` (both days, UTC): all
+// of them, or `of` each week's, its `agentDays` those with agents.
+const commitsBetween = (weeks, from, to, of = 'days') => weeks.reduce((sum, week) => sum + week[of].reduce((days, count, day) => {
   const at = week.week + day * DAY_MS
   return at >= from && at <= to ? days + counted(count) : days
 }, 0), 0)
 
+// Where a period of `weeks` weeks starts, `now` in its last day, as the
+// server counts it (repository-pulse.ts pulseSince): the Sunday (UTC) that
+// many weeks back, this week the last of them.
+export function periodSince(weeks, now = Date.now()) {
+  const today = Math.floor(now / DAY_MS) * DAY_MS
+  return today - new Date(today).getUTCDay() * DAY_MS - (weeks - 1) * WEEK_MS
+}
+
+// A period of `weeks` weeks as the year another answer holds (`year`) shows
+// it, `own` its own answer where read: its pull requests and issues, none
+// while it reads, and how its own year is read; when commits are made the
+// other period's, said so (`otherPunch`).
+export function withYear(own, year, weeks, now = Date.now()) {
+  return { weeks, since: own?.since ?? periodSince(weeks, now), merged: own?.merged ?? null, opened: own?.opened ?? null, closed: own?.closed ?? null,
+    created: own?.created ?? null, stats: { ...year.stats, otherPunch: year.weeks !== weeks }, reading: own?.reading ?? null, pending: own?.pending ?? false }
+}
+
 // The period's figures, `now` in its last day: its commits, and those of the
 // same days of the week a period earlier (a week's Sunday to Thursday beside
-// the week before's), where the year's weeks reach that far back; its lines
-// added and removed, where GitHub counts them; and how many made commits.
+// the week before's), where the year's weeks reach that far back; those of
+// each an agent made or co-authored, where counted; its lines added and
+// removed, where GitHub counts them; and how many made commits.
 export function pulseSummary(answer, now = Date.now()) {
   const { stats, since } = answer
-  if (!stats) return { commits: null, previous: null, additions: null, deletions: null, authors: null }
+  if (!stats) return { commits: null, previous: null, agents: null, previousAgents: null, additions: null, deletions: null, authors: null }
   const today = Math.floor(now / DAY_MS) * DAY_MS
   const back = answer.weeks * WEEK_MS
   const period = stats.weeks.filter(week => week.week >= since)
   const reaches = stats.weeks.length > 0 && stats.weeks[0].week <= since - back
   const lines = kind => stats.lines === true ? period.reduce((sum, week) => sum + counted(week[kind]), 0) : null
   return { commits: commitsBetween(stats.weeks, since, today), previous: reaches ? commitsBetween(stats.weeks, since - back, today - back) : null,
+    agents: stats.agents ? commitsBetween(stats.weeks, since, today, 'agentDays') : null,
+    previousAgents: stats.agents && reaches ? commitsBetween(stats.weeks, since - back, today - back, 'agentDays') : null,
     additions: lines('additions'), deletions: lines('deletions'), authors: periodContributors(stats.contributors, since).length }
 }
 
@@ -194,13 +236,15 @@ export function periodContributors(contributors, since, until = Number.POSITIVE_
 
 // The period's columns, `now` in its last day: a day each in a week or a
 // month, else a week each; each from when till when (`from`, `to`), its
-// commits, the lines added and removed (null where they are not counted so,
-// a day's where GitHub counts lines a week), and whether it is yet to come.
+// commits and those an agent made or co-authored (null where not counted),
+// the lines added and removed (null where they are not counted so, a day's
+// where GitHub counts lines a week), and whether it is yet to come.
 export function pulseColumns(answer, now = Date.now()) {
   const { stats, since, weeks: span } = answer
   const lines = stats.lines === true
   if (span > 4) {
     return stats.weeks.filter(week => week.week >= since).map(week => ({ from: week.week, to: week.week + WEEK_MS, day: false, commits: counted(week.commits),
+      agents: stats.agents ? week.agentDays.reduce((sum, count) => sum + count, 0) : null,
       additions: lines ? counted(week.additions) : null, deletions: lines ? counted(week.deletions) : null, future: false }))
   }
   const today = Math.floor(now / DAY_MS) * DAY_MS
@@ -210,8 +254,8 @@ export function pulseColumns(answer, now = Date.now()) {
     const week = stats.weeks.find(item => from >= item.week && from < item.week + WEEK_MS)
     const weekday = week ? Math.floor((from - week.week) / DAY_MS) : 0
     const added = lines ? week?.dayLines?.[weekday] ?? null : null
-    return { from, to: from + DAY_MS, day: true, commits: counted(week?.days[weekday]), additions: added?.[0] ?? null, deletions: added?.[1] ?? null,
-      future: from > today }
+    return { from, to: from + DAY_MS, day: true, commits: counted(week?.days[weekday]), agents: stats.agents ? counted(week?.agentDays[weekday]) : null,
+      additions: added?.[0] ?? null, deletions: added?.[1] ?? null, future: from > today }
   })
 }
 
@@ -252,9 +296,9 @@ const rangeName = (since, now) => {
 const columnName = (column, now) => column.day
   ? new Date(column.from).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...otherYear(column.from, now) ? { year: 'numeric' } : {}, timeZone: 'UTC' })
   : `Week of ${day(column.from, otherYear(column.from, now))}`
-// A column's figures, in words.
-const columnText = (column, now) => `${columnName(column, now)}: ${plural(column.commits, 'commit')}${column.additions === null ? ''
-  : `, +${number(column.additions)} −${number(column.deletions)} lines`}`
+// A column's figures, in words: with agents, where the plots split them.
+const columnText = (column, now, split = false) => `${columnName(column, now)}: ${plural(column.commits, 'commit')}${split
+  ? `, ${number(column.agents)} with agents` : ''}${column.additions === null ? '' : `, +${number(column.additions)} −${number(column.deletions)} lines`}`
 // What names a column under the plots: in a week, each day; in a month, each
 // week's Sunday; in a quarter, every other week; in a year, each month where
 // it starts, January by its year.
@@ -267,9 +311,15 @@ function columnLabel(columns, at, span) {
   const starts = at === 0 ? columns.length > 3 && new Date(columns[3].from).getUTCMonth() === month : new Date(columns[at - 1].from).getUTCMonth() !== month
   return starts ? month === 0 ? String(date.getUTCFullYear()) : date.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : ''
 }
-// A figure beside what the same days a period earlier gave.
+// A figure beside what the same days a period earlier gave, how much more
+// or less where that was any.
 const versus = (count, previous, before) => previous === null || count === null ? null
-  : count === previous ? `Same as ${before}` : `${count > previous ? '↑' : '↓'} from ${number(previous)} ${before}`
+  : count === previous ? `Same as ${before}`
+  : `${count > previous ? '↑' : '↓'}${previous > 0 ? ` ${Math.max(1, Math.round(Math.abs(count - previous) / previous * 100))}%` : ''} from ${number(previous)} ${before}`
+// `part` of `whole`, in whole percents: none and all alone 0 and 100.
+const share = (part, whole) => part === 0 ? 0 : part === whole ? 100 : Math.min(99, Math.max(1, Math.round(part / whole * 100)))
+// A share beside the one the same days a period earlier gave.
+const versusShare = (now, then, before) => now === then ? `Same as ${before}` : `${now > then ? '↑' : '↓'} from ${then}% ${before}`
 const profile = login => login.endsWith('[bot]') ? `https://github.com/apps/${encodeURIComponent(login.slice(0, -5))}` : `https://github.com/${encodeURIComponent(login)}`
 // A contributor as the app shows them: an agent, a user of the app, else
 // their login or name.
@@ -348,10 +398,15 @@ class RepositoryPulse extends LitElement {
     if (!this.repository) return nothing
     const { repoId } = this.repository
     const entry = pulseRead(repoId, shownWeeks)
-    if (entry.status === 'ready') lastShown.set(repoId, entry)
-    // While a period reads, the last one read, faded.
-    const shown = entry.status === 'ready' ? entry : entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
+    if (entry.status === 'ready') keep(repoId, entry)
     const now = Date.now()
+    // The period's answer where it holds its year, else as the year last read
+    // shows it; with none read, while it reads, the last period read, faded.
+    const own = entry.status === 'ready' ? entry.answer : null
+    const year = lastYear.get(repoId)
+    const answer = own?.stats ? own : year && entry.status !== 'error' ? withYear(own, year, shownWeeks, now) : own
+    const faded = !answer && entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
+    const shown = answer ? { answer, asking: entry.asking === true } : faded
     return html`<div class="history-bar">
         ${activityPicker('pulse')}
         <div class="history-modes" role="group" aria-label="Period">
@@ -359,7 +414,7 @@ class RepositoryPulse extends LitElement {
         </div>
         ${shown ? html`<span class="pulse-range">${rangeName(shown.answer.since, now)}</span>` : nothing}
       </div>
-      ${shown ? html`<div class=${`pulse-scroll${shown === entry ? '' : ' is-reading'}`} aria-busy=${String(shown !== entry)}>${this.renderPulse(shown, now)}</div>`
+      ${shown ? html`<div class=${`pulse-scroll${faded ? ' is-reading' : ''}`} aria-busy=${String(entry.status !== 'ready')}>${this.renderPulse(shown, now)}</div>`
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionReads().delete(`${repoId}\0${shownWeeks}`); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading the repository’s pulse…</div>`}`
@@ -369,16 +424,31 @@ class RepositoryPulse extends LitElement {
     const { answer } = entry
     const before = PERIODS.find(([weeks]) => weeks === answer.weeks)[2]
     const summary = pulseSummary(answer, now)
-    const counting = answer.reading === null ? answer.stats ? null : 'Counting…' : 'Reading commits…'
+    const counting = answer.stats ? null : answer.reading === null ? 'Counting…' : 'Reading commits…'
     const linesCounting = counting ?? (answer.stats?.lines === null ? 'Counting…' : null)
+    // Pull requests merged or issues closed, beside those opened; none while
+    // the period reads.
+    const told = (label, kind, opened) => answer[kind] ? this.renderTile(label, number(answer[kind].count), versus(answer[kind].count, answer[kind].previous, before),
+      `${number(answer[opened].count)} opened`) : this.renderTile(label, '–', 'Reading…', '')
     return html`<section class="pulse-tiles" aria-label="Figures">
         ${this.renderTile('Commits', summary.commits === null ? '–' : number(summary.commits), counting ?? versus(summary.commits, summary.previous, before), 'to the default branch')}
         ${this.renderTile('Contributors', summary.authors === null ? '–' : number(summary.authors), counting, 'who made them')}
-        ${this.renderTile('Pull requests merged', number(answer.merged.count), versus(answer.merged.count, answer.merged.previous, before), `${number(answer.opened.count)} opened`)}
-        ${this.renderTile('Issues closed', number(answer.closed.count), versus(answer.closed.count, answer.closed.previous, before), `${number(answer.created.count)} opened`)}
+        ${told('Pull requests merged', 'merged', 'opened')}
+        ${told('Issues closed', 'closed', 'created')}
         ${answer.stats?.lines === false ? nothing : this.renderTile('Lines', summary.additions === null ? '–'
-          : html`<span>+${number(summary.additions)}</span> <span>−${number(summary.deletions)}</span>`, linesCounting, 'added and removed')}
+          : html`<span class="is-added">+${number(summary.additions)}</span> <span class="is-removed">−${number(summary.deletions)}</span>`, linesCounting,
+        'added and removed', summary.additions === null ? nothing : this.renderRatio(summary.additions, summary.deletions))}
+        ${summary.agents === null || !answer.stats.weeks.some(week => week.agentDays.some(count => count > 0)) ? nothing
+          : this.renderTile(html`<span data-tooltip="Commits an agent made or co-authored">With agents</span>`,
+            summary.commits === 0 ? '–' : `${share(summary.agents, summary.commits)}%`, summary.previousAgents === null || summary.commits === 0 || summary.previous === 0
+              ? null : versusShare(share(summary.agents, summary.commits), share(summary.previousAgents, summary.previous), before),
+            summary.commits === 0 ? 'no commits' : `${number(summary.agents)} of ${plural(summary.commits, 'commit')}`)}
       </section>
+      ${answer.stats && (answer.reading !== null || answer.pending) ? html`<p class="pulse-note pulse-updating" role="status">${this.renderWaiting(entry,
+        answer.reading === null
+          ? ['GitHub is still counting this repository’s latest commits…', 'GitHub hasn’t counted this repository’s latest commits yet.', 'Ask again']
+          : [`Reading this repository’s latest commits… ${number(answer.reading)} of the last year so far`,
+            `${number(answer.reading)} of this repository’s commits of the last year read so far: the year shown is as it was before.`, 'Read on'])}</p>` : nothing}
       <div class="pulse-grid">
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
           : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, answer.reading === null
@@ -396,21 +466,31 @@ class RepositoryPulse extends LitElement {
     return entry.asking ? asking : html`${left} <button type="button" class="history-link" @click=${() => this.askAgain()}>${again}</button>`
   }
 
-  renderTile(label, value, note, detail) {
+  renderTile(label, value, note, detail, more = nothing) {
     return html`<div class="pulse-tile">
       <span class="pulse-tile-label">${label}</span>
       <span class="pulse-tile-value">${value}</span>
+      ${more}
       <span class="pulse-tile-note">${note ?? detail}</span>
       ${note ? html`<span class="pulse-tile-note">${detail}</span>` : nothing}
     </div>`
   }
 
+  // Lines added beside those removed, a bar each as long as its share.
+  renderRatio(additions, deletions) {
+    return additions + deletions === 0 ? nothing : html`<span class="pulse-ratio" aria-hidden="true">${[['is-added', additions], ['is-removed', deletions]]
+      .map(([kind, count]) => count > 0 ? html`<span class=${kind} style=${styleMap({ '--share': `${count / (additions + deletions)}` })}></span>` : nothing)}</span>`
+  }
+
   // The period alone, a column a day or a week: commits over a scale of
-  // counts, and under them lines added above a line and removed below it,
-  // one scale for both; each column named under them. A column pointed at,
-  // or read with the arrow keys, is marked in both, its figures and who made
-  // its commits beside it; clicked, or picked with Enter, it is the one the
-  // contributors are of, till it is again, or Escape.
+  // counts, those an agent made or co-authored over the rest where the
+  // period holds any, and under them lines added above a line and removed
+  // below it, one scale for both; each column named under them, today's
+  // marked. A week's days each their figures written on them; a month's
+  // weekends shaded. A column pointed at, or read with the arrow keys, is
+  // marked in both, its figures and who made its commits beside it; clicked,
+  // or picked with Enter, it is the one the contributors are of, till it is
+  // again, or Escape.
   renderActivity(entry, now) {
     const { answer } = entry
     const { stats } = answer
@@ -423,44 +503,55 @@ class RepositoryPulse extends LitElement {
     const commits = niceScale(Math.max(...columns.map(column => column.commits)))
     const lines = stats.lines === true && columns.every(column => column.additions !== null)
       ? niceScale(Math.max(...columns.flatMap(column => [column.additions, column.deletions]))) : null
+    const split = columns.some(column => column.agents > 0)
+    const written = answer.weeks === 1
+    const today = Math.floor(now / DAY_MS) * DAY_MS
     const at = columns[this._column] && !columns[this._column].future ? this._column : null
     const picked = columns.findIndex(column => column.from === this._picked)
     const column = (item, index, labelled, bars) => html`<span class=${`pulse-column${index === at ? ' is-at' : ''}${index === picked ? ' is-picked' : ''}${item.future
-      ? ' is-future' : ''}${item.day && [0, 6].includes(new Date(item.from).getUTCDay()) ? ' is-weekend' : ''}`} role=${labelled ? 'img' : nothing}
-      aria-label=${labelled ? columnText(item, now) : nothing} aria-hidden=${labelled ? nothing : 'true'}
+      ? ' is-future' : ''}${item.day && answer.weeks === 4 && [0, 6].includes(new Date(item.from).getUTCDay()) ? ' is-weekend' : ''}`} role=${labelled ? 'img' : nothing}
+      aria-label=${labelled ? columnText(item, now, split) : nothing} aria-hidden=${labelled ? nothing : 'true'}
       @pointerenter=${() => this.point(item.future ? null : index)} @click=${() => this.pickColumn(columns, index)}>${bars}</span>`
-    return html`<figure class="pulse-panel pulse-activity" tabindex="0"
+    // A day's figure written on its bar, in a week.
+    const figure = (item, text) => written && !item.future ? html`<span class="pulse-figure">${text}</span>` : nothing
+    const bar = (kind, value, parts = nothing) => html`<span class=${`pulse-bar${kind}`} style=${styleMap({ '--value': `${value}` })}>${parts}</span>`
+    // Commits without agents at the foot of a column's, those with them over them.
+    const parts = item => [['', item.agents], [' is-without', item.commits - item.agents]].map(([kind, count]) => count > 0
+      ? html`<span class=${`pulse-part${kind}`} style=${styleMap({ '--part': `${count}` })}></span>` : nothing)
+    return html`<figure class=${`pulse-panel pulse-activity${written ? ' is-written' : ''}`} tabindex="0"
         aria-label=${`Commits${lines ? ' and lines' : ''} a ${unit}: the arrow keys read each ${unit}, Enter picks it for its contributors`}
         @keydown=${event => this.readColumns(event, columns)} @focus=${event => this.focusColumns(event, columns)} @blur=${() => this.point(null)}>
-      <figcaption class="pulse-head"><h3>Commits</h3><span>a ${unit}</span></figcaption>
+      <figcaption class="pulse-head"><h3>Commits</h3><span>a ${unit}</span>${split ? html`<span class="pulse-legend"><span
+        class="pulse-key"></span>With agents<span class="pulse-key is-without"></span>Without</span>` : nothing}</figcaption>
       <div class="pulse-plots" @pointerleave=${() => this.point(null)}>
         <div class="pulse-plot">
-          ${this.renderTicks(commits.ticks.map(tick => [tick / commits.top, compact(tick)]))}
+          ${this.renderTicks(commits.ticks.map(tick => [tick / commits.top, compact(tick), tick === 0]))}
           <div class="pulse-columns">${columns.map((item, index) => column(item, index, true,
-            html`<span class="pulse-bar" style=${styleMap({ '--value': `${item.commits / commits.top}` })}></span>`))}</div>
+            html`${figure(item, number(item.commits))}${split ? bar(' is-split', item.commits / commits.top, parts(item)) : bar('', item.commits / commits.top)}`))}</div>
         </div>
         ${lines ? html`<div class="pulse-head is-sub"><h3>Lines</h3><span>added and removed a ${unit}</span>
             <span class="pulse-legend"><span class="pulse-key is-added"></span>Added<span class="pulse-key is-removed"></span>Removed</span></div>
           <div class="pulse-plot is-diverging">
-            ${this.renderTicks([[1, `+${compact(lines.top)}`], [0.5, '0'], [0, `−${compact(lines.top)}`]])}
+            ${this.renderTicks([[1, `+${compact(lines.top)}`], [0.5, '0', true], [0, `−${compact(lines.top)}`]])}
             <div class="pulse-columns">${columns.map((item, index) => column(item, index, false, html`
-              <span class="pulse-half"><span class="pulse-bar is-added" style=${styleMap({ '--value': `${item.additions / lines.top}` })}></span></span>
-              <span class="pulse-half is-below"><span class="pulse-bar is-removed" style=${styleMap({ '--value': `${item.deletions / lines.top}` })}></span></span>`))}</div>
+              <span class="pulse-half">${figure(item, `+${compact(item.additions)}`)}${bar(' is-added', item.additions / lines.top)}</span>
+              <span class="pulse-half is-below">${bar(' is-removed', item.deletions / lines.top)}${figure(item, `−${compact(item.deletions)}`)}</span>`))}</div>
           </div>` : stats.lines === false ? html`<p class="pulse-note">GitHub doesn’t count lines added and removed in a repository of 10,000 commits or more.</p>`
           : stats.lines === true ? html`<p class="pulse-note">GitHub counts this repository’s lines a week, not a day: the quarter and the year show them.</p>`
           : html`<p class="pulse-note" role="status">${this.renderWaiting(entry, ['GitHub is still counting lines added and removed…', 'GitHub hasn’t counted lines added and removed yet.', 'Ask again'])}</p>`}
-        <div class=${`pulse-axis${answer.weeks === 1 ? ' is-each' : ''}`} aria-hidden="true">${columns.map((item, index) => html`<span
-          class=${item.future ? 'is-future' : ''}>${columnLabel(columns, index, answer.weeks)}</span>`)}</div>
-        ${at === null ? nothing : this.renderTip(answer, columns, at, now)}
+        <div class=${`pulse-axis${written ? ' is-each' : ''}`} aria-hidden="true">${columns.map((item, index) => html`<span
+          class=${item.future ? 'is-future' : item.day && item.from === today ? 'is-today' : ''}>${columnLabel(columns, index, answer.weeks)}</span>`)}</div>
+        ${at === null ? nothing : this.renderTip(answer, columns, at, now, split)}
       </div>
-      <span class="sr-only" aria-live="polite">${this._typed && at !== null ? columnText(columns[at], now) : ''}</span>
+      <span class="sr-only" aria-live="polite">${this._typed && at !== null ? columnText(columns[at], now, split) : ''}</span>
     </figure>`
   }
 
   // A column's figures beside it, on the side with more room: its day or
-  // week, its commits, lines and who made the most of them (its week's,
-  // where a day's are not counted).
-  renderTip(answer, columns, at, now) {
+  // week, its commits, those with agents where the plots split them, lines
+  // and who made the most of them (its week's, where a day's are not
+  // counted).
+  renderTip(answer, columns, at, now, split) {
     const column = columns[at]
     const today = Math.floor(now / DAY_MS) * DAY_MS
     const [from, to, week] = columnSpan(column, answer.stats.contributors)
@@ -469,7 +560,9 @@ class RepositoryPulse extends LitElement {
     return html`<div class=${`pulse-tip${middle > 0.6 ? ' is-left' : ''}`} style=${styleMap({ '--x': `${middle}` })} aria-hidden="true">
       <span class="pulse-tip-when">${columnName(column, now)}${column.day ? column.from === today ? html` <span>today</span>` : nothing
         : now < column.to ? html` <span>so far</span>` : nothing}</span>
-      <span class="pulse-tip-row"><span class="pulse-tip-key"></span><strong>${number(column.commits)}</strong> ${column.commits === 1 ? 'commit' : 'commits'}</span>
+      <span class="pulse-tip-row"><span class=${`pulse-tip-key${split ? ' is-none' : ''}`}></span><strong>${number(column.commits)}</strong> ${column.commits === 1
+        ? 'commit' : 'commits'}</span>
+      ${split ? html`<span class="pulse-tip-row"><span class="pulse-tip-key"></span><strong>${number(column.agents)}</strong> with agents</span>` : nothing}
       ${column.additions === null ? nothing : html`<span class="pulse-tip-row"><span class="pulse-tip-key is-added"></span><strong>+${number(column.additions)}</strong> added</span>
         <span class="pulse-tip-row"><span class="pulse-tip-key is-removed"></span><strong>−${number(column.deletions)}</strong> removed</span>`}
       ${people.length > 0 ? html`<span class="pulse-tip-people">${week ? html`<span class="pulse-tip-note">Its week’s</span>` : nothing}
@@ -520,9 +613,11 @@ class RepositoryPulse extends LitElement {
     event.preventDefault()
   }
 
-  // A plot's scale: a hairline at each tick, its label beside.
+  // A plot's scale: a hairline at each tick, its label beside, naught's
+  // the baseline.
   renderTicks(ticks) {
-    return html`<div class="pulse-ticks" aria-hidden="true">${ticks.map(([at, label]) => html`<span style=${styleMap({ '--at': `${at}` })}><span>${label}</span></span>`)}</div>`
+    return html`<div class="pulse-ticks" aria-hidden="true">${ticks.map(([at, label, zero]) => html`<span class=${zero ? 'is-zero' : nothing}
+      style=${styleMap({ '--at': `${at}` })}><span>${label}</span></span>`)}</div>`
   }
 
   // Who made the period's commits, or the picked column's, the most first,
@@ -545,7 +640,8 @@ class RepositoryPulse extends LitElement {
         ${person.login ? html`<a class="pulse-rank-name" href=${profile(person.login)} target="_blank" rel="noopener noreferrer">${contributor(person)}</a>`
           : html`<span class="pulse-rank-name">${contributor(person)}</span>`}
         <span class="pulse-rank-bar"><span style=${styleMap({ '--value': `${person.commits / top}` })}></span><span class="pulse-rank-value">${number(person.commits)}</span></span>
-        ${lines ? html`<span class="pulse-rank-lines">+${compact(person.additions)} −${compact(person.deletions)}</span>` : nothing}
+        ${lines ? html`<span class="pulse-rank-lines"><span class="is-added">+${compact(person.additions)}</span> <span
+          class="is-removed">−${compact(person.deletions)}</span></span>` : nothing}
       </li>`)}</ol>
       ${people.length > TOP_CONTRIBUTORS ? html`<button type="button" class="history-link pulse-more" @click=${() => { this._everyone = !this._everyone }}>${this._everyone
         ? 'Fewer' : `and ${plural(people.length - TOP_CONTRIBUTORS, 'more', 'more')}`}</button>` : nothing}`}
@@ -555,11 +651,11 @@ class RepositoryPulse extends LitElement {
   // Commits by day of the week, a row each, Monday first, and hour, a cell
   // each, each a step darker or lighter the more it holds, as the scale
   // under them shows; an hour of none plain. The period's, where counted
-  // from its commits.
+  // from its commits; another period's faded, while the period reads.
   renderPunch(stats) {
     const { punch } = stats
     const most = Math.max(1, ...punch.flat())
-    return html`<figure class="pulse-panel">
+    return html`<figure class=${`pulse-panel${stats.otherPunch ? ' is-reading' : ''}`} aria-busy=${String(stats.otherPunch === true)}>
       <figcaption class="pulse-head"><h3>When commits are made</h3><span>by day and hour, in each author’s own time zone${stats.periodPunch ? '' : ', not only the period’s'}</span></figcaption>
       <div class="pulse-punch">
         ${punch.map((hours, row) => html`<span class="pulse-punch-day">${DAYS[PUNCH_DAYS[row]].slice(0, 3)}</span>${hours.map((count, hour) => {
@@ -575,19 +671,20 @@ class RepositoryPulse extends LitElement {
   // The latest pull requests merged or opened, or issues closed or opened,
   // as the reader picks, GitHub found in the period, each its state, title,
   // number, author and when, opening its popup; where there were more, the
-  // rest on GitHub.
+  // rest on GitHub. None, while the period reads.
   renderList(answer, items) {
     const [title, kinds] = LISTS[items]
     const [kind, , search] = kinds.find(([name]) => name === shownLists[items])
-    const { count, items: listed } = answer[kind]
+    const { count, items: listed } = answer[kind] ?? { count: null, items: null }
     const repo = this.repo ?? this.repository.repo
     const all = repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pulls' : 'issues'}?q=${encodeURIComponent(`${search}>=${isoDay(answer.since)}`)}` : null
     return html`<section class="pulse-panel pulse-list" aria-label=${title}>
       <div class="pulse-head"><h3>${title}</h3>
         <div class="history-modes" role="group" aria-label=${`${title} shown`}>${kinds.map(([name, label]) => html`<button type="button"
-          aria-pressed=${String(name === kind)} @click=${() => this.showList(items, name)}>${label}<span class="n">${number(answer[name].count)}</span></button>`)}</div>
+          aria-pressed=${String(name === kind)} @click=${() => this.showList(items, name)}>${label}<span class="n">${answer[name] ? number(answer[name].count)
+            : '–'}</span></button>`)}</div>
       </div>
-      ${listed.length === 0 ? html`<p class="pulse-note">None in the period.</p>` : html`<ol>${listed.map(item => {
+      ${listed === null ? html`<p class="pulse-note" role="status">Reading…</p>` : listed.length === 0 ? html`<p class="pulse-note">None in the period.</p>` : html`<ol>${listed.map(item => {
         const [stateClass, stateName] = issueState(items, item)
         return html`<li><a class=${`pulse-item is-${stateClass}`} href=${repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pull' : 'issues'}/${item.number}` : nothing}
           target="_blank" rel="noopener noreferrer" @click=${event => this.openItem(event, items, item)}>
@@ -597,7 +694,7 @@ class RepositoryPulse extends LitElement {
             ${item.at == null ? nothing : html`<time datetime=${new Date(item.at).toISOString()}>${compactTime(item.at)}</time>`}</span>
         </a></li>`
       })}</ol>`}
-      ${all && count > listed.length ? html`<a class="pulse-all" href=${all} target="_blank" rel="noopener noreferrer">All ${number(count)} on GitHub</a>` : nothing}
+      ${all && listed !== null && count > listed.length ? html`<a class="pulse-all" href=${all} target="_blank" rel="noopener noreferrer">All ${number(count)} on GitHub</a>` : nothing}
     </section>`
   }
 

@@ -500,8 +500,9 @@ function itemFixture(url: URL, res: ServerResponse): void {
 }
 
 // A repository's pulse, for its Pulse tab: a year of weeks, busier lately and
-// quiet over the holidays, a few contributors doing most of it, commits on
-// weekdays' working hours, and the pull requests and issues the Issues and
+// quiet over the holidays, a few contributors doing most of it, agents taking
+// part in more of their commits as the year goes, commits on weekdays'
+// working hours, and the pull requests and issues the Issues and
 // Pull requests tabs list, in the last `weeks` weeks and the same days a
 // period earlier.
 // Repository 102's year is read over its first three answers, as one whose
@@ -541,8 +542,10 @@ function pulseFixture(url: URL, res: ServerResponse): void {
 
 // The default branch's statistics over the year to `now`, as
 // repository-pulse.ts commitStats counts them and periodStats answers them
-// for a period of `span` weeks: each day's lines and each contributor's days
-// too, and when the period's commits are made.
+// for a period of `span` weeks: each day's lines, the commits agents made or
+// co-authored and each contributor's days too, and when the period's commits
+// are made: the agents' own all theirs, a share of everyone else's, a tenth
+// at the year's start, over half by its end.
 function pulseStats(now: number, span: number) {
   let seed = 7
   const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647
@@ -558,6 +561,7 @@ function pulseStats(now: number, span: number) {
     const days = [0.03, 0.22, 0.24, 0.2, 0.19, 0.1, 0.02].map((share, day) => week + day * 86_400_000 > now ? 0 : Math.round(commits * share * (0.7 + random() * 0.6)))
     const total = days.reduce((sum, day) => sum + day, 0)
     const dayLines = days.map(() => [0, 0] as [number, number])
+    const agentDays = days.map(() => 0)
     let additions = 0, deletions = 0
     for (const [at, login] of people.entries()) {
       const theirCommits = Math.min(total, Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2)))
@@ -569,7 +573,12 @@ function pulseStats(now: number, span: number) {
       // Their commits on the week's days that had any, their lines with them.
       const busy = days.flatMap((count, day) => count > 0 ? [day] : [])
       const made = busy.map(() => 0)
-      for (let commit = 0; commit < theirCommits; commit++) made[Math.floor(random() * busy.length)]!++
+      const agent = login.endsWith('[bot]')
+      for (let commit = 0; commit < theirCommits; commit++) {
+        const slot = Math.floor(random() * busy.length)
+        made[slot]!++
+        if (agent || random() < 0.1 + index / 52 * 0.5) agentDays[busy[slot]!]!++
+      }
       for (const [slot, day] of busy.entries()) {
         if (made[slot] === 0) continue
         const share = made[slot]! / theirCommits
@@ -579,7 +588,7 @@ function pulseStats(now: number, span: number) {
         theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved])
       }
     }
-    return { week, days, commits: total, additions, deletions, dayLines }
+    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)) }
   })
   // One whose commits name no GitHub account, by name.
   const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, ...theirs.get(login)! }))
