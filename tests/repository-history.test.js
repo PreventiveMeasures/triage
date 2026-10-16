@@ -154,7 +154,7 @@ test('Unmerged shows the branches every branch\'s holds not merged, read as ever
 test('a pull request\'s head is named by its number, beside the branch still at it; an open one\'s too, each number once', () => {
   const named = historyRefs({ branches: [{ name: 'claude/feature', sha: a }], tags: [], pulls: [{ merge: c, number: 2, head: a, commits: [] }],
     openPulls: [{ number: 4, sha: b }, { number: 2, sha: b }] }, 'main')
-  assert.deepEqual([named.get(a), named.get(b)], [[{ kind: 'branch', name: 'claude/feature', main: false }, { kind: 'pull', name: '#2' }], [{ kind: 'pull', name: '#4' }]])
+  assert.deepEqual([named.get(a), named.get(b)], [[{ kind: 'branch', name: 'claude/feature', main: false }, { kind: 'pull', name: '#2', number: 2 }], [{ kind: 'pull', name: '#4', number: 4 }]])
 })
 
 test('the tab draws the pull requests squashed into the history it reads, their heads named by number', async () => {
@@ -166,7 +166,12 @@ test('the tab draws the pull requests squashed into the history it reads, their 
   await setImmediate()
   const text = templateText(view.render())
   assert.match(text, /2 commits on 1 branch</u, 'those of the branches read counted')
-  assert.match(text, /2222222<\/code>[^]*<span>#2<\/span>[^]*Started the feature/u)
+  // Its chip opens it on GitHub, in a new tab, as a line's id does its
+  // commit, and so does the subject naming it.
+  assert.match(text, new RegExp(`>Feature \\(<a href=https://github.com/org/repo/issues/2 target="_blank" rel="noopener noreferrer"\\s+tabindex="-1">#2</a>\\)</span>`
+    + `\\s*<button type="button" class="history-commit" id=history-commit-${squash}`, 'u'))
+  assert.match(text, new RegExp('>2222222</a>\\s*<span class="history-refs"[^]*<a class=[^>]* href=https://github.com/org/repo/pull/2 target="_blank" '
+    + 'rel="noopener noreferrer" tabindex="-1"\\s+aria-label=Pull request #2 on GitHub>[^]*<span>#2</span></a>[^]*>Started the feature</span>', 'u'))
 })
 
 const allAnswer = { all: true, commits: [commit(a, [b], 20, 'Merge work'), commit(b, [], 10, 'First')], branches: [{ name: 'main', sha: a }], tags: [{ name: 'v1', sha: b }],
@@ -185,10 +190,14 @@ test('the tab reads every branch at the root, marks the commit shown, and opens 
   assert.deepEqual(requests, [[7, '', '', { page: 1, all: true }]])
   assert.match(text, /aria-pressed=true [^\n]*>All branches</u)
   assert.match(text, /2 commits on 1 branch</u)
-  assert.match(text, /aria-current=true[^]*aaaaaaa<\/code>[^]*<span>main<\/span>[^]*Merge work/u)
+  // Its short id opens it on GitHub, in a new tab, out of the lines' keys'
+  // way; the rest of it, its code, its button named by its subject.
+  assert.match(text, new RegExp(`<a class="history-sha" href=https://github.com/org/repo/commit/${a} target="_blank" rel="noopener noreferrer" tabindex="-1"\\s+`
+    + `aria-label=Commit aaaaaaa on GitHub>aaaaaaa</a>[^]*<span>main</span></span>[^]*<span class="history-subject" id=history-subject-${a}>Merge work</span>\\s*`
+    + `<button type="button" class="history-commit" id=history-commit-${a} tabindex=0\\s+aria-labelledby=history-subject-${a} history-commit-${a} aria-current=true`, 'u'))
   // The default branch's chip, marked so, and in the shown revision's, as is
   // the tag's in none.
-  const chips = templates(view.render()).filter(template => template.strings.join('').includes('</span></span>') && template.strings[0].startsWith('<span class='))
+  const chips = templates(view.render()).filter(template => template.strings.join('') === '<span class=></span>')
   assert.deepEqual(chips.map(chip => chip.values[0].values[0]), [
     { 'history-ref': true, 'is-branch': true, 'is-default': true, 'is-shown': false },
     { 'history-ref': true, 'is-tag': true, 'is-default': false, 'is-shown': false },
@@ -203,6 +212,12 @@ test('the tab reads every branch at the root, marks the commit shown, and opens 
   // A commit older than those listed offers its own history.
   const older = shownAt(x)
   assert.match(templateText(older.render()), /fffffff<\/code> isn’t among these commits\.[^]*Show its history/u)
+  // Opened by none, its name is the one its repositories list it by, once
+  // they arrive: its ids are only text until then.
+  const unnamed = Object.assign(shownAt(a), { repository: { ...shownAt(a).repository, repo: null } })
+  assert.match(templateText(unnamed.render()), /<code class="history-sha">aaaaaaa<\/code>/u)
+  unnamed.repo = 'org/named'
+  assert.match(templateText(unnamed.render()), new RegExp(`<a class="history-sha" href=https://github.com/org/named/commit/${a} `, 'u'))
   assert.equal(requests.length, 1, 'what was read is kept')
 })
 
@@ -365,4 +380,32 @@ test('a directory\'s history lists the commits touching it, in a line, and says 
   denied.render()
   await setImmediate()
   assert.match(templateText(denied.render()), /role="alert">This directory’s history is not available to you\.[^]*Retry/u)
+})
+
+test('keys move up and down between lines\' buttons, and along a line through its links on GitHub to its button, the one reached the list\'s stop for Tab', () => {
+  let focused = null
+  const key = name => ({ name, tabIndex: -1, focus() { focused = name } })
+  const lines = [['sha 1', 'pull 1', 'open 1'], ['sha 2', 'open 2'], ['sha 3', 'subject 3', 'open 3']].map(names => {
+    const items = names.map(key)
+    const line = { items, querySelectorAll: () => items, querySelector: () => items.at(-1) }
+    for (const item of items) item.closest = () => line
+    return line
+  })
+  const view = Object.assign(new History(), { querySelectorAll: selector => selector === '.history-row' ? lines : lines.flatMap(line => line.items) })
+  const press = (from, name) => {
+    let prevented = false
+    view.keydown({ key: name, target: lines.flatMap(line => line.items).find(item => item.name === from), preventDefault() { prevented = true } })
+    return prevented ? focused : null
+  }
+  assert.equal(press('open 1', 'ArrowDown'), 'open 2')
+  assert.equal(press('open 2', 'ArrowLeft'), 'sha 2')
+  assert.equal(press('sha 2', 'ArrowLeft'), null, 'none before a line\'s first')
+  assert.equal(press('sha 2', 'ArrowDown'), 'open 3', 'a line\'s button, from any of its keys')
+  assert.equal(press('open 3', 'ArrowLeft'), 'subject 3')
+  assert.equal(press('subject 3', 'ArrowRight'), 'open 3')
+  assert.equal(press('open 3', 'ArrowRight'), null, 'none after its button')
+  assert.equal(press('open 3', 'Home'), 'open 1')
+  assert.equal(press('pull 1', 'End'), 'open 3')
+  assert.equal(press('open 3', 'ArrowDown'), null, 'none past the last line')
+  assert.deepEqual(lines.flatMap(line => line.items).filter(item => item.tabIndex === 0).map(item => item.name), ['open 3'])
 })

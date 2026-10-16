@@ -44,7 +44,8 @@ import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMet
 import { NPM_LICENSE_FILE } from './npm-entries.js'
 import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../common/managed/routes.js'
 import { activityTab } from './repository-activity.js'
-import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryRefs } from './repository-code.js'
+import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryFullName,
+  repositoryRefs } from './repository-code.js'
 import './repository-history.js'
 import './repository-agents.js'
 import './repository-pulse.js'
@@ -2005,7 +2006,8 @@ const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['s
 // (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents or
 // Pulse.
 function repositoryFilelessTab(repository, tab) {
-  return tab === 'commits' ? html`<repository-history .repository=${repository} .refs=${repositoryRefs(repository.repoId)}></repository-history>`
+  return tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
+    .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository}></repository-pulse>`
     : html`<repository-issues .repository=${repository} .kind=${tab}></repository-issues>`
