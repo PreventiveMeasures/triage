@@ -12,7 +12,10 @@ class TestDialog {
 const asked = []
 let answer = null
 mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: TestDialog, openAppDialog() {} } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) } } })
+const dependencyAsked = []
+let dependencies = () => new Promise(() => {})
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
+  fetchPullDependencies(repoId, number) { dependencyAsked.push([repoId, number]); return dependencies(number) } } })
 mock.module('../ui/view/render-finding.js', { namedExports: { renderHighlighted: text => text } })
 mock.module('../ui/view/format.js', { namedExports: { flowText: text => `[flowed]${text}` } })
 await import('../ui/view/dialogs/repository-item-dialog.js')
@@ -102,4 +105,61 @@ test('a session shows who, when and what it did: its pull requests and issues op
   assert.deepEqual(asked, [[7, 9]])
   dialog.back()
   assert.match(templateText(dialog.render()), /Open in Claude Code/u)
+})
+
+test('a pull request changing a lockfile, merged or closed as well as open, shows the packages new to its lockfiles as they are read, npm\'s opening in its viewer', async () => {
+  let told
+  dependencies = () => new Promise(resolve => { told = resolve })
+  answer = () => new Promise(() => {})
+  dependencyAsked.length = 0
+  const dialog = shown()
+  dialog.open({ number: 21, preview: { ...tile, number: 21, state: 'merged', touchesLockfile: true } })
+  let text = templateText(dialog.render())
+  assert.deepEqual(dependencyAsked, [[7, 21]], 'asked as it opens, what its tile knew enough')
+  assert.match(text, /<h4>New dependencies<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
+  told({ number: 21, cut: true, lockfiles: [
+    { paths: ['package-lock.json'], more: 3, added: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' },
+      { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }] },
+    { paths: ['gone/package-lock.json'], added: [], more: 0 },
+    { paths: ['web/pnpm-lock.yaml', 'web/yarn.lock'], error: 'lockfile-unreadable', detail: 'a yarn.lock of Yarn 2 or later, which is not read' },
+  ] })
+  await setImmediate()
+  text = templateText(dialog.render())
+  assert.match(text, /<code>package-lock\.json<\/code>[^]*<span class="repo-item-row"><svg[^]*mine<span class="repo-item-version">@1\.0\.0<\/span>[^]*data-tooltip=git\+ssh:\/\/github\.com\/org\/mine\.git>git</u,
+    'one from git unlinked, by where it is from')
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/@scope\/tool@2\.0\.0 target="_blank" rel="noopener noreferrer">[^]*@scope\/tool[^]*>dev</u)
+  assert.match(text, /and 3 more/u)
+  assert.doesNotMatch(text, /gone\/package-lock\.json/u, 'a directory none is new to left out')
+  assert.match(text, /<code>web\/pnpm-lock\.yaml<\/code>, <code>web\/yarn\.lock<\/code>[^]*role="alert">A lockfile here couldn’t be read: a yarn\.lock of Yarn 2 or later, which is not read</u)
+  assert.match(text, /more directories, than are read/u)
+})
+
+test('a pull request whose lockfiles add none says so; one changing none, or an issue, shows nothing of them; one failing says why', async () => {
+  answer = number => Promise.resolve({ ...tile, number, body: '', closes: [], commits: 1, files: 1, mergedBy: null, touchesLockfile: number === 23 ? null : number !== 26 })
+  const replies = { 22: { cut: false, lockfiles: [{ paths: ['yarn.lock'], added: [], more: 0 }] }, 23: { cut: false, lockfiles: [] } }
+  dependencies = number => number === 25 ? Promise.reject(new Error('GitHub’s API rate limit has been reached. Try again later.')) : Promise.resolve({ number, ...replies[number] })
+  dependencyAsked.length = 0
+  const none = shown()
+  none.open({ number: 22, preview: { ...tile, number: 22, touchesLockfile: true } })
+  templateText(none.render())
+  await setImmediate()
+  assert.match(templateText(none.render()), /<h4>New dependencies<\/h4>[^]*None: its lockfiles lock no package they didn’t already\./u)
+  // Its tile knew nothing of its files (a closed one's): asked once it is read, that it may.
+  const maybe = shown()
+  maybe.open({ number: 23, preview: { ...tile, number: 23, state: 'closed' } })
+  assert.doesNotMatch(templateText(maybe.render()), /New dependencies/u)
+  await setImmediate()
+  templateText(maybe.render())
+  await setImmediate()
+  assert.doesNotMatch(templateText(maybe.render()), /New dependencies/u, 'it changed none after all')
+  const changesNone = shown()
+  changesNone.open({ number: 26, preview: { ...tile, number: 26, touchesLockfile: false } })
+  await setImmediate()
+  assert.doesNotMatch(templateText(changesNone.render()), /New dependencies/u)
+  const failing = shown()
+  failing.open({ number: 25, preview: { ...tile, number: 25, touchesLockfile: true } })
+  templateText(failing.render())
+  await setImmediate()
+  assert.match(templateText(failing.render()), /<h4>New dependencies<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
+  assert.deepEqual(dependencyAsked.map(([, number]) => number), [22, 23, 25])
 })

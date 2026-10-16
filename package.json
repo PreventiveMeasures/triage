@@ -161,6 +161,7 @@
     "server-managed/rename-diff.ts",
     "server-managed/rename-diff-worker.js",
     "server-managed/public-workspace.ts",
+    "server-managed/pull-dependencies.ts",
     "server-managed/queue.ts",
     "server-managed/repo-path.ts",
     "server-managed/report-migration.ts",

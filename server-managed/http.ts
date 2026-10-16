@@ -46,6 +46,8 @@
 //        the default branch no pull request merged, with issues, agents' branches and the app agents first | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/pull-dependencies?repoId=&number= → the packages a pull request's npm, pnpm and Yarn 1
+//        lockfiles lock that they locked none of at its merge base, by directory | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
@@ -117,7 +119,8 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmVersionStore, repositoryReadStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmVersionStore, pullDependencyStore, repositoryReadStore, riskLineStore,
+  scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -192,6 +195,7 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, repositoryIssues, repositoryItem } from './repository-issues.ts'
+import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
@@ -226,6 +230,7 @@ const REPO_TREE_PATH = '/api/admin/repositories/tree'
 const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
 const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
+const REPO_PULL_DEPENDENCIES_PATH = '/api/admin/repositories/pull-dependencies'
 const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
@@ -1920,11 +1925,44 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
 // repositoryItem). It is the whole repository's (readWholeRepository).
 async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
-  const number = Number(query.get('number'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !/^[1-9]\d{0,9}$/u.test(query.get('number') ?? '') || number > 2 ** 31 - 1) {
-    sendJson(res, 400, { error: 'bad-request' }); return
-  }
+  const number = itemNumber(query)
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${number}`)
+}
+
+// The issue's or pull request's number a request names, as GraphQL takes one
+// (an Int, at most 2³¹ − 1); null for none.
+function itemNumber(query: URLSearchParams): number | null {
+  const number = Number(query.get('number'))
+  return /^[1-9]\d{0,9}$/u.test(query.get('number') ?? '') && number <= 2 ** 31 - 1 ? number : null
+}
+
+// GET /api/admin/repositories/pull-dependencies: the packages pull request
+// `number`'s lockfiles add (pull-dependencies.ts), what its base's and head's
+// commits tell kept by them (pullDependencyKept), its `number` with them.
+// They are the whole repository's (readWholeRepository), kept by its number
+// as its popup's item is, its head moving with each push.
+async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const number = itemNumber(query)
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }),
+    `pull-dependencies\0${PULL_DEPENDENCIES_READ}\0${number}`)
+}
+
+// What repository `repoId`'s pull requests' lockfiles add, kept by the
+// commits of each's base and head and the rules they were told by
+// (PULL_DEPENDENCIES_READ, pullDependencyStore).
+function pullDependencyKept(deps: ManagedHttpDeps, repoId: number): PullDependencyStore {
+  const store = pullDependencyStore<PullDependencies>(deps.db, deps.config.debug)
+  const keyOf = (commits: string) => `${repoId}\0${PULL_DEPENDENCIES_READ}\0${commits}`
+  return {
+    async read(commits) {
+      const value = (await store.read(keyOf(commits)))?.value
+      return value && Array.isArray(value.lockfiles) ? value : null
+    },
+    write: (commits, told) => store.write(keyOf(commits), told, Date.now()),
+  }
 }
 
 // GET /api/admin/repositories/pulse: what the code viewer's Pulse tab shows
@@ -4022,6 +4060,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_ITEM_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryItem(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_PULL_DEPENDENCIES_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryPullDependencies(res, deps, cookie, url.searchParams); return
     }
     if (path === REPO_PULSE_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
